@@ -1,5 +1,7 @@
 # AgenticTrader
 
+[![CI](https://github.com/AshJha0/agentic-trader/actions/workflows/ci.yml/badge.svg)](https://github.com/AshJha0/agentic-trader/actions/workflows/ci.yml)
+
 AgenticTrader is a multi-agent LLM trading framework for **equities and FX**. It has a
 **C++ quant core** (indicators, backtester, risk) exposed to **Python** through pybind11.
 
