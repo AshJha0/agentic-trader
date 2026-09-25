@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-trader"
+version = "0.1.0"
+description = "Multi-agent LLM trading framework for equities and FX with a C++ quant core"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "pandas>=2.0"]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.70"]
+data = ["yfinance>=0.2.40"]
+cpp = ["pybind11>=2.11", "cmake>=3.18"]
+dev = ["pytest>=7"]
+all = ["anthropic>=0.70", "yfinance>=0.2.40", "pybind11>=2.11", "pytest>=7"]
+
+[project.scripts]
+agentic-trader = "agentic_trader.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agentic_trader*"]
+
+[tool.setuptools.package-data]
+"agentic_trader.quant" = ["_atcore*.pyd", "_atcore*.so"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
