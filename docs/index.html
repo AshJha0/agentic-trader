@@ -32,6 +32,14 @@ pre{background:#10222a;color:#d7e3ea;padding:1rem 1.2rem;border-radius:4px;overf
 .boundary div{background:#fff;border-top:3px solid var(--green);box-shadow:0 1px 3px rgba(0,0,0,.12);
   border-radius:4px;padding:.7rem .9rem;font-size:.88rem;line-height:1.4}
 .boundary strong{display:block;color:var(--teal);margin-bottom:.2rem}
+.tablewrap{overflow-x:auto;margin:1rem 0}
+table.results{border-collapse:collapse;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12);
+  border-radius:4px;font-size:.88rem;min-width:36rem;width:100%}
+table.results th,table.results td{padding:.45rem .7rem;text-align:right;border-bottom:1px solid #eef1f4}
+table.results th:first-child,table.results td:first-child{text-align:left}
+table.results th{color:var(--teal);font-weight:600;background:#f3f7f8}
+table.results tr.agent td{font-weight:600}
+.caption{font-size:.85rem;color:var(--muted);margin:.3rem 0 1rem}
 footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 </style>
 </head>
@@ -42,11 +50,12 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <p>A multi-agent LLM trading framework for <strong>equities and FX</strong>, modelled on a real
        trading desk. An analyst team (technical, fundamentals or macro/rates, news, sentiment)
        writes structured reports; bull and bear researchers debate them under a facilitator; a
-       trader sizes the trade; aggressive, neutral and conservative risk analysts argue the size;
-       a portfolio manager decides — inside hard limits no model output can override. Every
-       number comes from a C++17 quant core; Claude writes the reasoning.
-       Inspired by the TradingAgents paper, written from scratch.
-       Python · C++17 · pybind11 · Claude (Anthropic SDK) · walk-forward backtesting.</p>
+       trader sizes the trade around a strategic weight; aggressive, neutral and conservative risk
+       analysts argue the size; a portfolio manager decides — inside hard limits no model output
+       can override. Every number comes from a C++17 quant core; Claude writes the reasoning.
+       Evaluated on real prices with a design / holdout split. Inspired by the TradingAgents
+       paper, written from scratch.
+       Python · C++17 · pybind11 · Claude (Anthropic SDK) · FRED · walk-forward backtesting.</p>
     <nav>
       <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md">Learn (guide)</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md">Cookbook</a>
@@ -65,107 +74,126 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 <div class="wrap">
   <h2>Measured, not claimed</h2>
   <div class="numbers">
-    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 18 pytest tests green (11 pipeline · 7 quant, incl. a C++ vs numpy cross-check to 1e-9) · 7 C++ test groups / 21 checks under ctest<br>
+    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 116 pytest tests green (36 quant edge cases incl. 8 randomised C++ vs numpy cross-checks · 25 agent · 16 workflow/CLI · 13 data · 26 pipeline/quant) · 13 C++ test groups / 34 checks<br>
     CI&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 8 jobs per push: Python 3.10–3.14 on the numpy backend · C++ build + ctest + pytest on Linux (GCC), Windows (MSVC) and macOS (Clang)<br>
-    One decision&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 12 agents · 4 analyst reports → 4 debate turns → verdict → proposal → 3 risk views → decision · ≈3–4 ms offline with the C++ backend<br>
-    LLM budget&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 14 calls per decision at default rounds: 4 quick-tier (analysts) · 10 deep-tier (researchers, facilitator, trader, risk team, PM)<br>
-    Backtest&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Q1 2024 walk-forward, 63 bars, 13 full agent decisions + 5 baselines ≈0.08 s offline · metrics: CR · AR · Vol · Sharpe · Sortino · MDD · Calmar · win rate<br>
-    Real prices&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Q1 2024, rules-only agents: lower max drawdown than buy-and-hold on all 5 equities · lower return on the 4 that rallied (NVDA +35.2% vs +87.6%)<br>
-    C++ core&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 indicators · 6 risk functions · 5 paper baselines · backtester with costs, FX carry and borrow fees · standalone <code>at_backtest</code> CLI<br>
-    Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈2.4k lines of Python in <code>agentic_trader</code> (24 files) · ≈0.9k lines of C++17 · MSVC /W4 and GCC -Wall -Wextra clean
+    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 15 instruments (10 equities, 5 FX pairs) · design 2016–21 used for every choice · holdout 2022–26 run once · Q1 2024 paper window<br>
+    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 15-sleeve portfolio Sharpe 1.14 vs 1.06 buy &amp; hold vs 1.24 vol-targeted B&amp;H · max drawdown 6.8% vs 20.8% · per instrument: lower drawdown on 14 of 15<br>
+    Rules v0.2 → v0.3&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; design equity Sharpe 0.76 → 0.99 · holdout 0.60 → 0.63 · holdout return 21% → 32% · trades −47% · chosen by a 16-variant ablation on design data only<br>
+    One decision&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 12 agents · ≈3–4 ms offline (C++ backend) · 14 LLM calls at default rounds (4 quick · 10 deep), none for an analyst with no data · optional hard call budget<br>
+    Point in time&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; prices clipped twice · FRED rates publication-lagged and staleness-checked · fundamentals lagged 30 days · memory resolves only after its horizon · stale feeds refused<br>
+    C++ core&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 indicators · 6 risk functions · 5 paper baselines · backtester with costs, per-bar FX carry, borrow, intraday stops with gap fills · Sharpe t-stat and exposure<br>
+    Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈3.2k lines of Python in <code>agentic_trader</code> (26 files) · ≈1.1k lines of C++17 · ≈0.75k lines of tests · MSVC /W4 and GCC -Wall -Wextra clean
   </div>
 
   <div class="honest">
-    <strong>The LLM reasons; the numbers and the limits come from deterministic code.</strong>
-    Every agent computes its facts with tools first (the C++ core), forms a transparent rule-based
-    judgement, and only then asks Claude — whose JSON is clipped to valid ranges and replaced by
-    the rule-based result on any error, refusal or unparsable reply. After the portfolio manager
-    decides, hard limits run in code: position cap, 1-day VaR95 cap, shorting policy, minimum
-    trade size; a test drives a model that tries to short an equity and checks it is forced flat.
-    The results above were produced by the rule-based agents; <em>the LLM mode has not been
-    evaluated</em>, so none of the paper's LLM results are claimed here. On real Q1 2024 prices the
-    rules-only firm cut drawdown but lagged buy-and-hold in a strong rally — reported, not tuned away.
+    <strong>The agents do not beat buy &amp; hold on risk-adjusted returns out of sample — and the
+    page says so.</strong> On the 2022–26 holdout the rule-based firm's mean Sharpe per instrument
+    is 0.44 against 0.55 for buy &amp; hold; what it reliably delivers is about <em>half the
+    drawdown</em> in every period, and as a diversified portfolio it edges plain buy &amp; hold
+    (1.14 vs 1.06) but not buy &amp; hold scaled to the same volatility (1.24). The v0.3 rule changes
+    were picked on 2016–21 data only; their Sharpe gain there (0.76 → 0.99 in equities) mostly did
+    not survive the holdout, their return and turnover gains did. Most literature-backed signal
+    tweaks (time-series momentum, trend-filtered reversals, abstention) measured as noise and stay
+    off. <em>The LLM mode has not been evaluated</em>, so none of the paper's LLM results are claimed.
   </div>
 
   <h2>The architectural boundary</h2>
   <div class="boundary">
     <div><strong>LLM (Claude)</strong>reasoning, debate, narrative — returns structured JSON, never computes a metric</div>
-    <div><strong>C++ quant core</strong>indicators, VaR/CVaR, sizing, backtests — numpy twin for portability</div>
+    <div><strong>C++ quant core</strong>indicators, VaR/CVaR, sizing, backtests with stops and carry — numpy twin for portability</div>
     <div><strong>Data providers</strong>point-in-time only: nothing after the as-of close reaches an agent</div>
-    <div><strong>Rule-based agents</strong>the transparent baseline and the fallback for every LLM call</div>
-    <div><strong>Portfolio manager limits</strong>authority: size, VaR, shorting, min trade — enforced after the model</div>
-    <div><strong>Memory</strong>outcomes resolve only after their horizon — reflection without look-ahead</div>
+    <div><strong>Untrusted text</strong>headlines and posts reach the model only inside escaped &lt;untrusted_data&gt; blocks</div>
+    <div><strong>Portfolio manager limits</strong>size, VaR, shorting, min trade — enforced after the model, band only if legal</div>
+    <div><strong>Evaluation</strong>design data for every choice; holdout run once; vol-targeted B&amp;H as the fair control</div>
   </div>
+
+  <h2>Real prices, out of sample</h2>
+  <p class="caption">Holdout 2022-01-03 → 2026-06-30, Yahoo Finance total-return prices, FRED point-in-time
+     FX carry, costs included, rules frozen before the run. Portfolio = 15 equal-capital sleeves.</p>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Portfolio (holdout)</th><th>Sharpe</th><th>t(SR)</th><th>Return</th><th>Max DD</th><th>Exposure</th></tr>
+    <tr class="agent"><td>AgenticTrader v0.3</td><td>1.14</td><td>2.41</td><td>31.5%</td><td>6.8%</td><td>51%</td></tr>
+    <tr><td>AgenticTrader v0.2</td><td>1.21</td><td>2.55</td><td>20.5%</td><td>3.6%</td><td>36%</td></tr>
+    <tr><td>Buy &amp; hold</td><td>1.06</td><td>2.24</td><td>86.6%</td><td>20.8%</td><td>98%</td></tr>
+    <tr><td>B&amp;H vol-target (fair control)</td><td>1.24</td><td>2.63</td><td>46.3%</td><td>9.8%</td><td>74%</td></tr>
+    <tr><td>SMA(20/50)</td><td>0.84</td><td>1.79</td><td>34.6%</td><td>13.3%</td><td>72%</td></tr>
+    <tr><td>MACD</td><td>0.54</td><td>1.14</td><td>20.2%</td><td>16.3%</td><td>66%</td></tr>
+  </table></div>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Per instrument, mean over 10 equities</th><th>Design Sharpe</th><th>Holdout Sharpe</th><th>Holdout return</th><th>Holdout max DD</th><th>Holdout trades</th></tr>
+    <tr><td>AgenticTrader v0.2</td><td>0.76</td><td>0.60</td><td>30.4%</td><td>15.1%</td><td>143</td></tr>
+    <tr class="agent"><td>AgenticTrader v0.3</td><td>0.99</td><td>0.63</td><td>47.4%</td><td>19.1%</td><td>74</td></tr>
+    <tr><td>Buy &amp; hold</td><td>0.96</td><td>0.68</td><td>131.3%</td><td>40.2%</td><td>1</td></tr>
+    <tr><td>B&amp;H vol-target</td><td>1.04</td><td>0.71</td><td>63.4%</td><td>21.9%</td><td>962</td></tr>
+  </table></div>
 
   <h2>What's inside</h2>
   <div class="grid">
     <div class="card"><h3>Analyst team</h3>
-      <p>Technical (SMA 20/50/200, MACD, RSI, Bollinger %B, KDJ, ATR, vol-adjusted momentum),
-         Fundamentals for equities (P/E vs sector, growth, margins, leverage, FCF yield, EPS
-         surprise, insiders), News (recency-weighted headline tone) and Sentiment (social posts
-         plus contrarian crowding proxies). Each returns signal, confidence, summary and key points.</p></div>
+      <p>Technical (SMA 20/50/200, MACD, RSI, Bollinger %B, KDJ, ATR, momentum), Fundamentals for
+         equities, News (recency-weighted headline tone) and Sentiment (social posts plus crowding
+         proxies). Each returns signal, confidence, key points — or abstains when it has no data,
+         and then makes no LLM call.</p></div>
     <div class="card"><h3>FX macro analyst</h3>
-      <p>Replaces company fundamentals for currency pairs: policy-rate differential (carry),
-         inflation differential (PPP drag) and distance from the 200-day average. Rates come from
-         config or FRED; FX headlines are scored from the base currency's point of view, so
-         "JPY weakens" is bullish USD/JPY.</p></div>
+      <p>Carry from the policy-rate differential, inflation (PPP) and distance from the 200-day
+         average — fed by point-in-time FRED rates: daily series lagged a day, monthly averages
+         ~40 days, stale series treated as missing instead of carried forward for years.</p></div>
     <div class="card"><h3>Bull / bear debate</h3>
-      <p>Two deep-tier researchers argue for n rounds, each citing the strongest supporting
-         reports and rebutting the other side's latest turn. A facilitator records the verdict —
-         winner, signed score, conviction, summary — as structured data for the trader.</p></div>
-    <div class="card"><h3>Trader</h3>
-      <p>Turns the verdict into a proposal: action, signed target weight, stop-loss and
-         take-profit at ATR multiples, holding horizon. Sizes down automatically when the
-         instrument's recent track record from memory is poor.</p></div>
+      <p>Two deep-tier researchers argue for n rounds, citing the strongest supporting reports and
+         rebutting the other side; a facilitator records winner, signed score and conviction as
+         structured data for the trader.</p></div>
+    <div class="card"><h3>Strategic weight + tilt</h3>
+      <p>The trader holds a benchmark weight when it has no view (equities fully invested, FX
+         flat) and tilts with conviction — how real mandates work, and the one v0.3 change that
+         moved design-period results. Stops and targets at ATR multiples, sanity-checked.</p></div>
     <div class="card"><h3>Risk team &amp; portfolio manager</h3>
-      <p>Aggressive, neutral (volatility-targeted) and conservative (VaR-capped) analysts debate
-         the size over m rounds. The PM blends their views 25/50/25 (or takes Claude's call), then
-         firm limits apply: max position, 1-day VaR95 cap, shorting policy, minimum trade size.</p></div>
-    <div class="card"><h3>Structured global state</h3>
-      <p>Agents write typed documents — AnalystReport, DebateOutcome, TradeProposal, RiskView,
-         FinalDecision — into one <code>TradingState</code> instead of a growing chat history,
-         avoiding the paper's "telephone effect". <code>to_markdown()</code> renders the full
-         audit trail of any decision.</p></div>
-    <div class="card"><h3>Two model tiers</h3>
-      <p>Quick tier (<code>claude-haiku-4-5</code>) for analysts summarising tool output; deep tier
-         (<code>claude-opus-5</code>, adaptive thinking, configurable effort) for everything that
-         reasons. Server-side refusal fallback on by default; typed SDK error handling.</p></div>
+      <p>Aggressive, neutral (vol-targeted) and conservative (VaR-capped) views, blended 25/50/25;
+         then firm limits run in code: max position, 1-day VaR95, shorting, minimum trade, and a
+         no-trade band that keeps the current position only if it is still legal.</p></div>
+    <div class="card"><h3>Portfolio context</h3>
+      <p><code>propagate(..., current_weight=)</code> tells the firm what it holds. The trader and
+         PM see it; the band avoids paying spread for trivial changes (−44% trades at equal
+         Sharpe on design data).</p></div>
+    <div class="card"><h3>Prompt-injection containment</h3>
+      <p>Third-party text reaches the model only inside &lt;untrusted_data&gt; blocks whose tags
+         cannot be closed from inside; model output is clipped and every limit runs afterwards.
+         Tests feed injected headlines and hijacked replies and check nothing leaks or breaches.</p></div>
+    <div class="card"><h3>LLM cost control</h3>
+      <p>Two model tiers (Haiku 4.5 analysts, Opus 5 with adaptive thinking for reasoning),
+         request timeouts, typed SDK error handling, server-side refusal fallback, and an optional
+         hard call budget after which agents fall back to rules.</p></div>
     <div class="card"><h3>C++17 quant core</h3>
-      <p>SMA, EMA, rolling std, z-score, Wilder RSI, MACD, Bollinger, ATR, KDJ, returns,
-         realised vol; historical VaR/CVaR, Kelly, vol-target weights, stop-based units; a
-         vectorised backtester with costs, slippage, FX carry, equity borrow and leverage caps;
-         exposed via pybind11.</p></div>
+      <p>Indicators, risk and baselines, plus a backtester with costs, per-bar carry, borrow,
+         leverage caps and intraday stop/target fills (level, or the open on a gap; stop first if
+         both trade). Sharpe t-stat and exposure in every result.</p></div>
     <div class="card"><h3>numpy reference twin</h3>
-      <p>A line-for-line numpy implementation of the core. The package uses C++ when the
-         extension is built and falls back transparently otherwise; CI asserts which backend is
-         active and cross-checks every indicator, strategy and backtest between the two.</p></div>
-    <div class="card"><h3>Paper baselines</h3>
-      <p>Buy &amp; Hold, MACD, KDJ+RSI, ZMR (z-score mean reversion) and SMA crossover — the
-         strategies the TradingAgents paper compares against — implemented in C++ and run on the
-         same window and cost model as the agent firm.</p></div>
-    <div class="card"><h3>Walk-forward backtester</h3>
-      <p>Runs the complete agent graph at every rebalance date with data up to that close,
-         holds the decision to the next rebalance, and reports CR, AR, volatility, Sharpe,
-         Sortino, max drawdown, Calmar, win rate and trades against all baselines.</p></div>
-    <div class="card"><h3>Point-in-time data</h3>
-      <p>Synthetic (seeded, regime-switching, fat-tailed prices with news, social posts and
-         lagged quarterly fundamentals), Yahoo Finance + FRED, and CSV providers. Yahoo's
-         current-snapshot fundamentals are refused for past dates rather than leaked.</p></div>
+      <p>A line-for-line numpy implementation used automatically without a compiler. CI asserts
+         the active backend; randomised tests cross-check the extended backtester (stops, gaps,
+         carry, re-arming, shorts) between the two to 1e-11.</p></div>
+    <div class="card"><h3>Evaluation harness</h3>
+      <p><code>evaluate()</code> runs a universe over named periods and reports per-instrument
+         and aggregate results, head-to-head counts and failures. Design / holdout / paper-window
+         protocol, 16-variant ablation, everything reproducible from the CLI.</p></div>
+    <div class="card"><h3>Fair baselines</h3>
+      <p>The paper's five (Buy &amp; Hold, SMA, MACD, KDJ+RSI, ZMR) plus buy &amp; hold scaled to the
+         same volatility target from trailing vol — the control that separates "held less" from
+         "called direction well".</p></div>
+    <div class="card"><h3>Watchlists &amp; portfolios</h3>
+      <p><code>scan</code> decides a whole watchlist with current positions and exports CSV/JSON
+         (one bad ticker becomes an error row, not a crash); <code>portfolio</code> runs equal-capital
+         multi-asset sleeves across equity and FX calendars.</p></div>
+    <div class="card"><h3>Edge cases handled</h3>
+      <p>Messy CSVs (unsorted, duplicate dates, blank closes, impossible bars), weekends and
+         holidays, stale or ended feeds, mistyped pairs, flat prices, NaN weights, corrupt memory
+         logs, out-of-range or non-numeric model output — each with a test.</p></div>
     <div class="card"><h3>Decision memory</h3>
-      <p>Every decision is logged; once its horizon passes, the realised P&amp;L and a lesson are
-         attached and fed to later runs on the same instrument, together with a hit-rate track
-         record. Outcomes are resolved only with prices known at the current as-of date.</p></div>
+      <p>Decisions are logged atomically; once their horizon passes, realised P&amp;L and a lesson
+         feed later runs with a hit-rate track record. Outcomes resolve only with prices known at
+         the current date.</p></div>
     <div class="card"><h3>Offline by default</h3>
-      <p>No API key, no network: every agent's rule-based reasoning runs deterministically on
-         synthetic data, so the whole pipeline, the tests and the backtests work out of the box.
-         Switch on Claude and real data with two flags.</p></div>
-    <div class="card"><h3>CLI &amp; examples</h3>
-      <p><code>agentic-trader analyze · backtest · baselines · info</code>, plus a standalone C++
-         <code>at_backtest</code> for any OHLC CSV, and runnable equity, FX and baseline-comparison
-         examples.</p></div>
-    <div class="card"><h3>CI on three platforms</h3>
-      <p>GitHub Actions builds the C++ core with GCC, MSVC and Clang, runs ctest and pytest on
-         the C++ backend, and runs the Python suite on five Python versions without a compiler.</p></div>
+      <p>No API key, no network: deterministic rule-based agents on synthetic data run the whole
+         pipeline, tests and backtests out of the box. <code>--data yahoo --llm anthropic</code>
+         switches to real data and Claude.</p></div>
   </div>
 
   <h2>What a decision looks like</h2>
@@ -180,28 +208,18 @@ AgenticTrader | AAPL as of 2024-03-01 | llm=offline data=synthetic quant=cpp
   [  debate] 4 turns -> winner bull, score +0.51 [rules]
   [  trader] BUY +1.00 [rules]
   [    risk] aggr +1.00, neut +0.46, cons +0.23
-  [decision] BUY target weight +0.54 (approved=True) [rules]
+  [decision] BUY target weight +0.54 (approved=True) [rules]</pre>
 
-# AAPL (equity) — 2024-03-01
-## Analyst team ... ## Research debate ... ## Trader proposal ... ## Risk management team ...
-## Portfolio manager decision
-**BUY** target weight +0.54 (approved=True, confidence 0.51)</pre>
+  <h2>A watchlist with positions</h2>
+<pre>$ agentic-trader scan AAPL,NVDA,JPM,EURUSD,USDJPY,EUR/XYZ --date 2024-03-01 --positions '{"AAPL": 0.5}'
 
-  <h2>And a backtest on real prices</h2>
-<pre>$ agentic-trader backtest NVDA --data yahoo --start 2024-01-02 --end 2024-03-28 --every 5
-
-NVDA: 61 bars, cost 1.00bps + slippage 1.00bps, carry +0.00% p.a., shorts off
-                 CR%      AR%   Vol%  Sharpe  Sortino  MDD%  Calmar   Win%  Trades
-AgenticTrader  35.23   255.24  23.94    5.42    14.79  4.54   56.22  65.00    12.0
-Buy&amp;Hold       87.56  1303.30  50.85    5.46    13.48  8.70  149.83  65.00     1.0
-SMA(20/50)     87.56  1303.30  50.85    5.46    13.48  8.70  149.83  65.00     1.0
-MACD           48.02   419.14  35.61    4.81     9.44  7.44   56.33  61.36     4.0
-KDJ+RSI         0.00     0.00   0.00    0.00     0.00  0.00    0.00   0.00     0.0
-ZMR             0.00     0.00   0.00    0.00     0.00  0.00    0.00   0.00     0.0
-
-# rules-only agents: half the volatility and half the drawdown of buy-and-hold, at a
-# similar Sharpe, but far less of NVDA's +88% quarter. KDJ+RSI and ZMR never saw an
-# oversold signal in a one-way rally, so they never entered.</pre>
+ symbol action  target_weight  confidence  stop_loss  take_profit   debate  error
+   AAPL    BUY         0.5000       0.509   204.9485     250.6255     bull          # 0.54 target within the band: keep 0.50
+   NVDA    BUY         0.6184       0.271    33.5589      40.2795     bull
+    JPM    BUY         0.5359       0.357    96.4875     116.1058     bull
+ EURUSD   HOLD         0.0000       0.023        NaN          NaN balanced
+ USDJPY    BUY         0.8003       0.199   132.3608     135.8998     bull
+EUR/XYZ  ERROR            NaN         NaN        NaN          NaN      NaN  'EUR/XYZ' is not a recognised currency pair</pre>
 
   <h2>Part of a wider portfolio</h2>
   <div class="grid">
@@ -232,20 +250,25 @@ pip install -e ".[all]"
 # one decision, offline: synthetic data, rule-based agents, no API key
 agentic-trader analyze EURUSD --date 2024-03-01
 
-# walk-forward backtest against the paper's five baselines
-agentic-trader backtest AAPL --start 2024-01-02 --end 2024-03-29 --every 5
+# a watchlist, a backtest, a multi-asset portfolio
+agentic-trader scan AAPL,MSFT,EURUSD --date 2024-03-01 --out decisions.csv
+agentic-trader backtest AAPL --start 2024-01-02 --end 2024-03-28
+agentic-trader portfolio AAPL,MSFT,EURUSD --start 2023-01-02 --end 2023-12-29
 
-# optional: build the C++ core (CMake + a C++17 compiler)
+# the evaluation on real prices (design / holdout / paper window)
+agentic-trader evaluate --data yahoo --periods design,holdout,paper
+
+# optional: build the C++ core (CMake + a C++17 compiler), then the suites
 ./scripts/build_cpp.sh            # Windows: scripts\build_cpp.ps1
-
-# the suites: pytest (Python) and ctest (C++)
 pytest && ctest --test-dir build -C Release
 
 # live: Claude + real prices (export ANTHROPIC_API_KEY=... or `ant auth login`)
-agentic-trader analyze MSFT --llm anthropic --data yahoo</pre>
+agentic-trader analyze MSFT --llm anthropic --data yahoo --max-llm-calls 50</pre>
 
   <footer>agentic-trader — a multi-agent LLM trading framework for equities and FX, for research
     and education only; not investment advice. See
+    <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/evaluation.md">the
+    evaluation</a>,
     <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/SPECIFICATION.md">the
     specification</a> and
     <a href="https://github.com/AshJha0/agentic-trader/blob/main/README.md">README</a>.</footer>

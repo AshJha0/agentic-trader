@@ -1,4 +1,4 @@
-from .base import MarketDataProvider, NewsItem
+from .base import MarketDataProvider, NewsItem, clean_ohlcv
 from .csv_provider import CSVProvider
 from .synthetic import SyntheticProvider
 from .yahoo import YahooProvider
@@ -15,4 +15,4 @@ def get_provider(config: dict) -> MarketDataProvider:
 
 
 __all__ = ["MarketDataProvider", "NewsItem", "SyntheticProvider", "YahooProvider",
-           "CSVProvider", "get_provider", "PROVIDERS"]
+           "CSVProvider", "get_provider", "PROVIDERS", "clean_ohlcv"]

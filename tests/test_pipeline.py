@@ -16,6 +16,22 @@ def test_instrument_parsing():
     assert (fx.asset_class, fx.base, fx.quote, fx.pip_size) == ("fx", "EUR", "USD", 1e-4)
     assert Instrument.parse("USDJPY=X").pip_size == 0.01
     assert Instrument.parse("EURUSD", "equity").asset_class == "equity"
+    assert Instrument.parse(" brk.b ").symbol == "BRK.B"
+    assert Instrument.parse("^GSPC").asset_class == "equity"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "EUR/XYZ", "ABC=X", "AAPL MSFT", "AA$PL",
+                                 "TOOLONGTICKER12"])
+def test_instrument_parsing_rejects_bad_symbols(bad):
+    with pytest.raises(ValueError):
+        Instrument.parse(bad)
+
+
+def test_instrument_parsing_rejects_unknown_asset_class():
+    with pytest.raises(ValueError):
+        Instrument.parse("AAPL", "crypto")
+    with pytest.raises(ValueError):
+        Instrument.parse("AAPL", "fx")
 
 
 @pytest.mark.parametrize("symbol,expected", [

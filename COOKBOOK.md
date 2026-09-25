@@ -34,6 +34,20 @@ on synthetic data and is executed as-is when the docs are checked.
   23. [Add a custom analyst](#23-add-a-custom-analyst)
   24. [Persist memory across runs](#24-persist-memory-across-runs)
   25. [C++ baselines from the command line](#25-c-baselines-from-the-command-line)
+- [Real-life workflows](#real-life-workflows)
+  26. [Tell the firm what you already hold](#26-tell-the-firm-what-you-already-hold)
+  27. [Morning run over a watchlist](#27-morning-run-over-a-watchlist)
+  28. [Compare two rule sets on the same data](#28-compare-two-rule-sets-on-the-same-data)
+  29. [Choose the strategic (benchmark) weight](#29-choose-the-strategic-benchmark-weight)
+  30. [Enforce stop-loss and take-profit in a backtest](#30-enforce-stop-loss-and-take-profit-in-a-backtest)
+  31. [Backtest a multi-asset portfolio](#31-backtest-a-multi-asset-portfolio)
+  32. [Evaluate on your own universe and periods](#32-evaluate-on-your-own-universe-and-periods)
+  33. [Judge a result: t-stat and the vol-targeted control](#33-judge-a-result-t-stat-and-the-vol-targeted-control)
+  34. [Stress the cost assumptions](#34-stress-the-cost-assumptions)
+  35. [Point-in-time FX carry from FRED](#35-point-in-time-fx-carry-from-fred)
+  36. [Cap LLM spend](#36-cap-llm-spend)
+  37. [Clean messy price files](#37-clean-messy-price-files)
+  38. [Fail safely on bad input](#38-fail-safely-on-bad-input)
 
 ## Decisions
 
@@ -402,3 +416,254 @@ After `scripts/build_cpp.*`:
 build/Release/at_backtest prices.csv            # Windows (MSVC); Linux/macOS: build/at_backtest
 build/Release/at_backtest fx.csv --fx --carry 0.0375 --cost-bps 0.3
 ```
+
+## Real-life workflows
+
+### 26. Tell the firm what you already hold
+
+Pass the current position. The trader and the portfolio manager see it. The no-trade band
+(`risk.rebalance_band`, 0.10 by default) keeps the position when the new target is close,
+so you don't pay spread for trivial changes. The band only applies if the position still
+passes every firm limit today.
+
+```python
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.memory import DecisionMemory
+
+g = TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None)
+_, fresh = g.propagate("AAPL", "2024-03-01")                      # no position: +0.5354
+_, held = g.propagate("AAPL", "2024-03-01", current_weight=0.50)  # within 0.10 of the target
+print(fresh.target_weight, held.target_weight, held.adjustments)
+# 0.5354 0.5 ['within no-trade band (0.04 < 0.10): keep +0.50']
+```
+
+### 27. Morning run over a watchlist
+
+One call decides every symbol. A bad ticker becomes an `ERROR` row instead of stopping the
+run, and the result is a DataFrame ready for an order-management system.
+
+```python
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.memory import DecisionMemory
+
+g = TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None)
+df = g.scan(["AAPL", "NVDA", "EURUSD", "USD/XYZ"], "2024-03-01", positions={"AAPL": 0.5})
+print(df[["symbol", "action", "target_weight", "stop_loss", "error"]].to_string(index=False))
+orders = df[(df.action != "ERROR")]
+orders.to_csv("orders.csv", index=False)
+```
+
+From the command line:
+
+```bash
+agentic-trader scan AAPL,NVDA,EURUSD --date 2024-03-01 --positions '{"AAPL": 0.5}' --out orders.json
+```
+
+### 28. Compare two rule sets on the same data
+
+Any config difference can be measured this way. `RULES_V02` reproduces the v0.2 rules
+exactly.
+
+```python
+from agentic_trader import make_config, run_agent_backtest
+from agentic_trader.config import RULES_V02
+
+variants = {
+    "v0.2": make_config(RULES_V02),
+    "v0.3 default": make_config(),
+    "v0.3 + momentum": make_config(rules={"tsmom": True}),
+}
+for name, cfg in variants.items():
+    t = run_agent_backtest("MSFT", "2023-01-02", "2023-12-29", cfg).table()
+    a = t.loc["AgenticTrader"]
+    print(f"{name:<16} Sharpe {a['Sharpe']:5.2f}  t {a['t(SR)']:5.2f}  CR {a['CR%']:6.2f}%  trades {a['Trades']:.0f}")
+```
+
+Choose rule changes on a *design* period and judge them once on a *holdout* (recipe 32).
+Comparing many variants on the same window you report is how backtests overfit.
+
+### 29. Choose the strategic (benchmark) weight
+
+With no directional view the trader holds `risk.neutral_weight` for the asset class, and
+conviction tilts around it. The defaults are equities 1.0 (fully invested, collecting the
+equity premium) and FX 0.0 (flat). Use 0 for an absolute-return mandate that should sit in
+cash without a view.
+
+```python
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.memory import DecisionMemory
+
+for neutral in (0.0, 0.5, 1.0):
+    cfg = make_config(risk={"neutral_weight": {"equity": neutral}}, decision_threshold=5.0)  # force "no view"
+    _, d = TradingGraph(cfg, memory=DecisionMemory(None), on_event=lambda *_: None).propagate("JPM", "2024-03-01")
+    print(neutral, d.target_weight)   # the benchmark weight, after vol-targeting and VaR limits
+```
+
+### 30. Enforce stop-loss and take-profit in a backtest
+
+The engine closes a position inside the bar when its stop or target trades. It fills at the
+level, or at the open when the market gaps through it. If both levels trade in the same bar,
+it assumes the stop filled first. The position stays flat until the next rebalance.
+
+```python
+from agentic_trader import make_config, run_agent_backtest
+
+cfg = make_config(backtest={"use_stops": True})
+rep = run_agent_backtest("NVDA", "2023-01-02", "2023-12-29", cfg)
+print(rep.table().loc[["AgenticTrader", "Buy&Hold"], ["CR%", "Sharpe", "MDD%", "Trades", "Stops"]])
+```
+
+`agentic-trader backtest NVDA --start 2023-01-02 --end 2023-12-29 --stops on` does the same.
+On real 2016–2021 data, stops lowered returns at a similar Sharpe, which is why they are
+off by default.
+
+### 31. Backtest a multi-asset portfolio
+
+Each symbol is a sleeve with 1/N of the capital and its own costs, carry and positions. The
+portfolio return is the daily mean of the sleeves, and equity and FX calendars are aligned.
+
+```python
+from agentic_trader import make_config, run_portfolio_backtest
+
+rep = run_portfolio_backtest(["AAPL", "JPM", "XOM", "EURUSD", "USDJPY"], "2023-01-02", "2023-12-29", make_config())
+print(rep.table())
+print(rep.returns["AgenticTrader"].describe())
+```
+
+### 32. Evaluate on your own universe and periods
+
+The evaluation harness runs every (period, symbol) pair, records failures instead of
+raising, and summarises the results.
+
+```python
+from agentic_trader import evaluate, make_config
+
+res = evaluate(["AAPL", "MSFT", "EURUSD"],
+               {"design": ("2021-01-04", "2022-12-30"), "holdout": ("2023-01-02", "2023-12-29")},
+               make_config(), rebalance_every=5)
+print(res.summary())
+print(res.head_to_head())            # on how many instruments the agent's Sharpe wins
+res.to_json("my_eval.json")
+```
+
+The real-data protocol used in [docs/evaluation](docs/evaluation/evaluation.md) is
+`agentic-trader evaluate --data yahoo --periods design,holdout,paper` *(network)*.
+
+### 33. Judge a result: t-stat and the vol-targeted control
+
+Two questions to ask of any backtest before believing it:
+
+- **Is the Sharpe distinguishable from luck?** Check `t(SR)`. It is about Sharpe × √years,
+  and a value around 2 or more is needed.
+- **Did the strategy add value beyond holding less?** Compare it with `B&H vol-target`,
+  buy & hold scaled to the same volatility target from trailing volatility.
+
+```python
+from agentic_trader import make_config, run_agent_backtest
+
+t = run_agent_backtest("GOOGL", "2023-01-02", "2023-12-29", make_config()).table()
+print(t.loc[["AgenticTrader", "Buy&Hold", "B&H vol-target"], ["Sharpe", "t(SR)", "Vol%", "MDD%", "Exp%"]])
+```
+
+### 34. Stress the cost assumptions
+
+A strategy that only works at 1 bp is not a strategy. Re-run with higher costs and watch
+Sharpe and the trade count:
+
+```python
+from agentic_trader import make_config, run_agent_backtest
+
+for bps in (1, 5, 20):
+    cfg = make_config(costs={"equity_cost_bps": bps, "equity_slippage_bps": bps})
+    a = run_agent_backtest("AMZN", "2023-01-02", "2023-12-29", cfg).table().loc["AgenticTrader"]
+    print(f"{bps:>3} bps + {bps} bps slippage: Sharpe {a['Sharpe']:.2f}, CR {a['CR%']:.1f}%, trades {a['Trades']:.0f}")
+```
+
+### 35. Point-in-time FX carry from FRED
+
+*(network)*
+
+On real data, FX rates come from FRED as they were known on each date. Values are lagged
+by their publication delay, and a series that has stopped updating counts as missing
+rather than being carried forward.
+
+```python
+from datetime import date
+from agentic_trader import Instrument, make_config
+from agentic_trader.data import YahooProvider
+
+p = YahooProvider(make_config())
+print(p.macro(Instrument.parse("USDJPY"), date(2024, 1, 15)))     # USD 5.33 vs JPY -0.01
+import pandas as pd
+carry = p.carry_series(Instrument.parse("EURUSD"), pd.bdate_range("2022-01-03", "2023-12-29"))
+print(carry[:3], carry[-3:])                                        # the ECB-Fed gap moving through the hiking cycle
+```
+
+### 36. Cap LLM spend
+
+*(API key for the real model; the example below uses a stand-in)*
+
+`max_llm_calls` is a hard cap per graph. Beyond it, every agent falls back to its rules and
+the run completes normally. At default rounds one decision is 14 calls, so a one-year
+weekly backtest of one instrument is about 730.
+
+```python
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.memory import DecisionMemory
+
+class StandIn:                      # replace with llm_provider="anthropic" for Claude
+    def complete(self, system, prompt, *, deep):
+        return None
+
+g = TradingGraph(make_config(max_llm_calls=20), llm=StandIn(), memory=DecisionMemory(None), on_event=lambda *_: None)
+for day in ("2024-02-01", "2024-02-15", "2024-03-01"):
+    g.propagate("AAPL", day)
+print(g.llm.calls, g.llm.refused)   # 20 calls made, the rest refused -> rules
+```
+
+```bash
+agentic-trader backtest AAPL --llm anthropic --start 2024-01-02 --end 2024-03-28 --max-llm-calls 200
+```
+
+### 37. Clean messy price files
+
+`clean_ohlcv` is what every provider uses. It does four things:
+
+- sorts the dates and drops duplicates;
+- drops rows without a positive close;
+- fills missing open, high and low from the close;
+- widens impossible bars so the stop logic never sees a high below the close.
+
+```python
+import pandas as pd
+from agentic_trader.data import clean_ohlcv
+
+raw = pd.DataFrame({"Open": [10, None, 12], "High": [9, 12, 13], "Low": [9, 11, 0],
+                    "Close": [10, 11.5, 0]},
+                   index=["2024-01-03", "2024-01-02", "2024-01-04"])
+print(clean_ohlcv(raw))
+```
+
+### 38. Fail safely on bad input
+
+Every guard raises `ValueError` with a clear message. The CLI turns these into exit status 2
+and a one-line `error:` instead of a traceback.
+
+```python
+from agentic_trader import Instrument, TradingGraph, make_config, run_agent_backtest
+from agentic_trader.memory import DecisionMemory
+
+g = TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None)
+for attempt in (lambda: Instrument.parse("EUR/XYZ"),                      # mistyped pair
+                lambda: g.propagate("AAPL", "2015-01-20"),                # not enough history
+                lambda: g.propagate("AAPL", "2024-03-01", current_weight=float("nan")),
+                lambda: run_agent_backtest("AAPL", "2024-03-01", "2024-01-01", make_config())):
+    try:
+        attempt()
+    except ValueError as e:
+        print("refused:", e)
+```
+
+A feed that has stopped updating is refused too. If the latest bar is more than
+`max_data_staleness_days` (7) before the decision date, `propagate` raises instead of
+trading on an old price.

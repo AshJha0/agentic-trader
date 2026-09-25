@@ -20,7 +20,7 @@ NEGATIVE = {
     "declines", "cut", "cuts", "falls", "fall", "slides", "drops", "drop", "probe",
     "slowdown", "concerns", "fears", "recession", "bearish", "puts", "dump", "sell",
     "breakdown", "loss", "ugly", "disappoints", "dovish", "pressuring", "lawsuit",
-    "underperform", "plunge", "plunges", "risk-off", "worse", "rising costs",
+    "underperform", "plunge", "plunges", "risk-off", "worse",
 }
 NEGATORS = {"not", "no", "never", "without", "hardly"}
 _WORD = re.compile(r"[a-z][a-z\-']*")

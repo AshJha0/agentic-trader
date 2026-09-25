@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import math
-from collections import Counter
-from datetime import timedelta
 from typing import Any
 
 import numpy as np
@@ -12,7 +10,7 @@ from .. import quant
 from ..data.base import MarketDataProvider, NewsItem
 from ..sentiment import score_fx_headline, score_text
 from ..state import AnalystReport, TradingState
-from .base import Agent, clip, fmt_facts
+from .base import Agent, clip, fmt_facts, untrusted_block
 
 
 def _last(x) -> float | None:
@@ -31,6 +29,9 @@ def _direction_note(state: TradingState) -> str:
 class Analyst(Agent):
     deep = False
     instructions = ""
+    # Fact keys holding third-party free text. They are removed from the JSON facts
+    # and shown to the model inside an <untrusted_data> block instead.
+    untrusted_keys: tuple[str, ...] = ()
 
     def gather(self, state: TradingState, provider: MarketDataProvider) -> dict[str, Any]:
         raise NotImplementedError
@@ -38,31 +39,43 @@ class Analyst(Agent):
     def rules(self, facts: dict[str, Any], state: TradingState) -> AnalystReport:
         raise NotImplementedError
 
-    def run(self, state: TradingState, provider: MarketDataProvider) -> AnalystReport:
-        facts = self.gather(state, provider)
-        report = self.rules(facts, state)
-        prompt = (
+    def prompt(self, facts: dict[str, Any], state: TradingState) -> str:
+        plain = {k: v for k, v in facts.items() if k not in self.untrusted_keys}
+        blocks = [untrusted_block(k, [str(x) for x in facts[k]])
+                  for k in self.untrusted_keys if facts.get(k)]
+        return (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}). "
             f"As-of date: {state.as_of.isoformat()}. Last close: {state.last_price:.6g}.\n"
-            f"Data from your tools:\n{fmt_facts(facts)}\n\n{self.instructions}\n"
-            f"Signal direction refers to {_direction_note(state)}.\n"
+            f"Data from your tools:\n{fmt_facts(plain)}\n"
+            + ("\n".join(blocks) + "\n" if blocks else "")
+            + f"\n{self.instructions}\nSignal direction refers to {_direction_note(state)}.\n"
             'JSON keys: "signal" (number in [-1, 1]), "confidence" (number in [0, 1]), '
             '"summary" (2-3 sentences), "key_points" (list of at most 5 short strings).'
         )
-        data = self.ask_json(prompt, ("signal", "confidence", "summary"))
-        if data:
-            kp = data.get("key_points") or []
-            report = AnalystReport(
-                analyst=self.name,
-                signal=clip(data["signal"], -1, 1),
-                confidence=clip(data["confidence"], 0, 1, 0.5),
-                summary=str(data["summary"]),
-                key_points=[str(k) for k in kp][:5] if isinstance(kp, list) else [],
-                facts=facts,
-                source="llm",
-            )
+
+    def run(self, state: TradingState, provider: MarketDataProvider) -> AnalystReport:
+        facts = self.gather(state, provider)
+        report = self.rules(facts, state)
+        # Nothing to analyse -> no model call (saves cost, and the model cannot
+        # invent a view from an empty input).
+        if not report.abstained:
+            data = self.ask_json(self.prompt(facts, state), ("signal", "confidence", "summary"))
+            if data:
+                kp = data.get("key_points") or []
+                report = AnalystReport(
+                    analyst=self.name,
+                    signal=clip(data["signal"], -1, 1),
+                    confidence=clip(data["confidence"], 0, 1, 0.5),
+                    summary=str(data["summary"]),
+                    key_points=[str(k) for k in kp][:5] if isinstance(kp, list) else [],
+                    facts=facts,
+                    source="llm",
+                )
         state.reports[self.name] = report
         return report
+
+    def abstain(self, reason: str, facts: dict[str, Any]) -> AnalystReport:
+        return AnalystReport(self.name, 0.0, 0.1, reason, [], facts, abstained=True)
 
 
 # --------------------------------------------------------------------------
@@ -70,8 +83,9 @@ class TechnicalAnalyst(Analyst):
     name = "technical"
     role = ("Technical Analyst. You read price action and indicators (trend, momentum, "
             "mean-reversion, volatility) to forecast the direction over the next 1-4 weeks.")
-    instructions = ("Weigh trend (moving averages), momentum (MACD, returns), overbought/"
-                    "oversold conditions (RSI, Bollinger %B, KDJ) and volatility (ATR).")
+    instructions = ("Weigh trend (moving averages), momentum (MACD, returns, 12-1 month "
+                    "time-series momentum), overbought/oversold conditions (RSI, Bollinger "
+                    "%B, KDJ) and volatility (ATR).")
 
     def gather(self, state, provider):
         h = state.history
@@ -82,8 +96,10 @@ class TechnicalAnalyst(Analyst):
         k, d, j = quant.kdj(hi, lo, c, 9)
         a = quant.atr(hi, lo, c, 14)
 
-        def ret(n):
-            return float(c[-1] / c[-1 - n] - 1.0) if len(c) > n else None
+        def ret(n, skip=0):
+            if len(c) <= n:
+                return None
+            return float(c[-1 - skip] / c[-1 - n] - 1.0)
 
         facts = {
             "close": float(c[-1]),
@@ -98,6 +114,10 @@ class TechnicalAnalyst(Analyst):
             "realized_vol_20d_annual": _last(quant.realized_vol(c, 20, ppy)),
             "zscore20": _last(quant.zscore(c, 20)),
             "return_5d": ret(5), "return_20d": ret(20), "return_60d": ret(60),
+            # 12-1 month momentum: the year's return skipping the last month, the
+            # standard time-series momentum definition (Moskowitz, Ooi, Pedersen 2012).
+            "return_12_1m": ret(252, skip=21),
+            "realized_vol_1y_annual": _last(quant.realized_vol(c, 252, ppy)) if len(c) > 252 else None,
             "bars": len(c),
         }
         if facts["atr14"]:
@@ -105,14 +125,17 @@ class TechnicalAnalyst(Analyst):
         return facts
 
     def rules(self, f, state):
+        opts = self.config.get("rules", {})
         s, pts = 0.0, []
         c = f["close"]
+        uptrend = downtrend = False
         if f["sma50"]:
             up = c > f["sma50"]
             s += 0.30 if up else -0.30
             pts.append(f"Price {'above' if up else 'below'} 50-day SMA ({f['sma50']:.5g})")
         if f["sma50"] and f["sma200"]:
             golden = f["sma50"] > f["sma200"]
+            uptrend, downtrend = golden, not golden
             s += 0.20 if golden else -0.20
             pts.append(f"50-day SMA {'above' if golden else 'below'} 200-day SMA "
                        f"({'uptrend' if golden else 'downtrend'} regime)")
@@ -127,11 +150,21 @@ class TechnicalAnalyst(Analyst):
             mom = math.tanh(f["return_20d"] / scale) if scale > 0 else 0.0
             s += 0.15 * mom
             pts.append(f"20-day return {f['return_20d']:+.2%} ({mom:+.2f} vol-adjusted)")
+        if opts.get("tsmom") and f["return_12_1m"] is not None and f["realized_vol_1y_annual"]:
+            ts = math.tanh(f["return_12_1m"] / f["realized_vol_1y_annual"])
+            s += 0.25 * ts
+            pts.append(f"12-1 month momentum {f['return_12_1m']:+.1%} ({ts:+.2f} vol-adjusted)")
+
+        filt = opts.get("trend_filtered_reversal", False)
         if f["rsi14"] is not None:
             r = f["rsi14"]
-            if r > 70:
+            if r > 70 and filt and uptrend:
+                pts.append(f"RSI {r:.0f}: overbought, but in an uptrend - fade suppressed")
+            elif r > 70:
                 s -= 0.15
                 pts.append(f"RSI {r:.0f}: overbought")
+            elif r < 30 and filt and downtrend:
+                pts.append(f"RSI {r:.0f}: oversold, but in a downtrend - fade suppressed")
             elif r < 30:
                 s += 0.15
                 pts.append(f"RSI {r:.0f}: oversold")
@@ -139,10 +172,10 @@ class TechnicalAnalyst(Analyst):
                 pts.append(f"RSI {r:.0f}: neutral")
         if f["bollinger_pct_b"] is not None:
             b = f["bollinger_pct_b"]
-            if b > 1:
+            if b > 1 and not (filt and uptrend):
                 s -= 0.05
                 pts.append("Close above upper Bollinger band (stretched)")
-            elif b < 0:
+            elif b < 0 and not (filt and downtrend):
                 s += 0.05
                 pts.append("Close below lower Bollinger band (stretched)")
         if f.get("atr_pct"):
@@ -166,15 +199,18 @@ class FundamentalsAnalyst(Analyst):
         return provider.fundamentals(state.instrument, state.as_of)
 
     def rules(self, f, state):
-        if not f:
-            return AnalystReport(self.name, 0.0, 0.1,
-                                 "No point-in-time fundamental data available.", [], f)
+        usable = {k: v for k, v in f.items() if isinstance(v, (int, float)) and v is not None}
+        if not usable:
+            return self.abstain("No point-in-time fundamental data available.", f)
         s, pts = 0.0, []
         pe, spe = f.get("pe_ratio"), f.get("sector_pe") or 22.0
         if pe and pe > 0:
             v = clip((spe - pe) / spe, -0.3, 0.3)
             s += v
             pts.append(f"P/E {pe:.1f} vs sector {spe:.1f} ({'cheap' if v > 0 else 'rich'})")
+        elif pe is not None and pe <= 0:
+            s -= 0.1
+            pts.append("Negative earnings (P/E not meaningful)")
         if (g := f.get("revenue_growth_yoy")) is not None:
             s += 0.3 * math.tanh(g / 0.15)
             pts.append(f"Revenue growth {g:+.1%} YoY")
@@ -221,7 +257,7 @@ class MacroAnalyst(Analyst):
     def rules(self, f, state):
         ins = state.instrument
         if "rate_diff" not in f:
-            return AnalystReport(self.name, 0.0, 0.1, "No macro data for this pair.", [], f)
+            return self.abstain("No point-in-time policy-rate data for this pair.", f)
         s, pts = 0.0, []
         rd = f["rate_diff"]
         s += 0.5 * math.tanh(rd / 1.5)
@@ -258,7 +294,7 @@ def _weighted_tone(items: list[NewsItem], state: TradingState, half_life_days: f
     scored = []
     num = den = 0.0
     for it in items:
-        age = (state.as_of - it.published).days
+        age = max((state.as_of - it.published).days, 0)
         w = 0.5 ** (age / half_life_days)
         sc = _score(it, state)
         num += w * sc
@@ -273,6 +309,7 @@ class NewsAnalyst(Analyst):
             "how they are likely to move the instrument over the coming days.")
     instructions = ("Judge the net impact of the headlines. Recent and material news "
                     "(earnings, guidance, central-bank signals, regulation) matters most.")
+    untrusted_keys = ("headlines",)
 
     def gather(self, state, provider):
         days = self.config["news_lookback_days"]
@@ -286,8 +323,7 @@ class NewsAnalyst(Analyst):
     def rules(self, f, state):
         items = f.pop("_items")
         if not items:
-            return AnalystReport(self.name, 0.0, 0.1, "No relevant news in the lookback window.",
-                                 [], f)
+            return self.abstain("No relevant news in the lookback window.", f)
         tone, scored = _weighted_tone(items, state)
         sig = clip(math.tanh(2.0 * tone), -1, 1)
         top = sorted(scored, key=lambda x: abs(x[1]), reverse=True)[:4]
@@ -307,6 +343,7 @@ class SentimentAnalyst(Analyst):
             "a contrarian signal.")
     instructions = ("Estimate short-term sentiment. Moderate optimism supports the trend; "
                     "euphoric or capitulating extremes are contrarian warnings.")
+    untrusted_keys = ("sample_posts",)
 
     def gather(self, state, provider):
         posts = provider.social(state.instrument, state.as_of, 7)
@@ -325,13 +362,14 @@ class SentimentAnalyst(Analyst):
             f["return_5d"] = float(c[-1] / c[-6] - 1.0)
         f["rsi14"] = _last(quant.rsi(c, 14))
         vol = h["Volume"].to_numpy(dtype=float)
-        if vol[-20:].sum() > 0 and len(vol) >= 60:
+        if len(vol) >= 60 and vol[-20:].sum() > 0:
             base = vol[-60:-1]
             f["volume_zscore"] = float((vol[-1] - base.mean()) / (base.std() or 1.0))
         return f
 
     def rules(self, f, state):
         s, pts = 0.0, []
+        extreme = False
         if f.get("posts"):
             m = f["mean_post_sentiment"]
             s += 0.6 * m
@@ -344,11 +382,15 @@ class SentimentAnalyst(Analyst):
             pts.append("No social-media feed; using market-based proxies only")
         rsi = f.get("rsi14")
         if rsi is not None and (rsi > 78 or rsi < 22):
+            extreme = True
             s += -0.3 if rsi > 78 else 0.3
             pts.append(f"RSI {rsi:.0f} signals crowd {'euphoria' if rsi > 78 else 'capitulation'} "
                        "(contrarian)")
         if (vz := f.get("volume_zscore")) is not None and abs(vz) > 2:
             pts.append(f"Volume spike ({vz:+.1f} sigma): attention elevated")
+        if not f.get("posts") and not extreme:
+            return AnalystReport(self.name, 0.0, 0.15, "No sentiment data and no crowding "
+                                 "extreme; no view.", pts, f, abstained=True)
         sig = clip(s, -1, 1)
         conf = 0.45 if f.get("posts") else 0.15
         return AnalystReport(self.name, sig, conf, f"Crowd sentiment score {sig:+.2f}.", pts, f)

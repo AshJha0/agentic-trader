@@ -4,8 +4,10 @@
 //
 // The CSV needs a header row containing a Close (or "Adj Close") column; High and
 // Low are optional (Close is used when missing). Rows must be in date order.
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -90,14 +92,24 @@ int main(int argc, char** argv) {
         return 1;
     }
     at::Series close, high, low;
+    int skipped = 0;
+    auto field = [](const std::vector<std::string>& cells, int i, double fallback) {
+        if (i < 0 || i >= static_cast<int>(cells.size())) return fallback;
+        const double v = std::atof(cells[i].c_str());
+        return v > 0.0 ? v : fallback;  // blank / non-numeric / non-positive -> fallback
+    };
     while (std::getline(in, line)) {
         const auto cells = split(line);
-        if (static_cast<int>(cells.size()) <= ci || cells[ci].empty()) continue;
-        const double c = std::atof(cells[ci].c_str());
+        const double c = field(cells, ci, 0.0);
+        if (!(c > 0.0)) {  // blank, non-numeric or non-positive close: not a tradable bar
+            ++skipped;
+            continue;
+        }
         close.push_back(c);
-        high.push_back(hi >= 0 && hi < static_cast<int>(cells.size()) ? std::atof(cells[hi].c_str()) : c);
-        low.push_back(li >= 0 && li < static_cast<int>(cells.size()) ? std::atof(cells[li].c_str()) : c);
+        high.push_back(std::max(field(cells, hi, c), c));
+        low.push_back(std::min(field(cells, li, c), c));
     }
+    if (skipped) std::cerr << "skipped " << skipped << " rows without a positive close\n";
     if (close.size() < 60) {
         std::cerr << "need at least 60 rows, got " << close.size() << "\n";
         return 1;
@@ -118,12 +130,17 @@ int main(int argc, char** argv) {
 
     std::printf("%-12s %9s %9s %8s %8s %8s %7s\n", "Strategy", "CR%", "AR%", "Sharpe", "MDD%",
                 "Win%", "Trades");
-    for (const auto& st : strategies) {
-        const auto r = at::run_backtest(close, st.w, cfg);
-        const auto& m = r.metrics;
-        std::printf("%-12s %9.2f %9.2f %8.2f %8.2f %8.1f %7d\n", st.name,
-                    100 * m.cumulative_return, 100 * m.annualized_return, m.sharpe,
-                    100 * m.max_drawdown, 100 * m.win_rate, m.num_trades);
+    try {
+        for (const auto& st : strategies) {
+            const auto r = at::run_backtest(close, st.w, cfg);
+            const auto& m = r.metrics;
+            std::printf("%-12s %9.2f %9.2f %8.2f %8.2f %8.1f %7d\n", st.name,
+                        100 * m.cumulative_return, 100 * m.annualized_return, m.sharpe,
+                        100 * m.max_drawdown, 100 * m.win_rate, m.num_trades);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
     }
     return 0;
 }

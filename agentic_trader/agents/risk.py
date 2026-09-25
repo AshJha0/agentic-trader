@@ -9,7 +9,7 @@ import numpy as np
 from .. import quant
 from ..state import FinalDecision, RiskView, TradingState
 from .base import Agent, clip, fmt_facts
-from .trader import action_for, allow_short
+from .trader import action_for, allow_short, atr14, protective_levels, sane_levels
 
 
 def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
@@ -21,13 +21,16 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
     p = state.proposal
     return {
         "proposed_weight": p.target_weight if p else 0.0,
+        "current_position": state.current_weight,
         "realized_vol_20d_annual": float(rv[-1]) if len(rv) and not math.isnan(rv[-1]) else None,
         "var_95_1d": quant.historical_var(r, 0.95),
         "cvar_95_1d": quant.historical_cvar(r, 0.95),
         "drawdown_from_60d_high": float(1.0 - c[-1] / peak) if peak > 0 else 0.0,
+        "atr14": atr14(state),
         "target_vol": config["risk"]["target_vol"],
         "max_position": config["risk"]["max_position"],
         "max_var_95": config["risk"]["max_var_95"],
+        "rebalance_band": config["risk"].get("rebalance_band", 0.0),
         "short_selling_allowed": allow_short(state, config),
     }
 
@@ -159,13 +162,41 @@ class PortfolioManager(Agent):
             rationale, source = str(data["rationale"]), "llm"
 
         w, notes = self.guardrails(w, f)
+        w, band_note = self.no_trade_band(w, state.current_weight, f)
+        if band_note:
+            notes.append(band_note)
         approved = (np.sign(w) == np.sign(p.target_weight))
+
+        # Protective levels must match the final direction: keep the trader's when
+        # the direction is unchanged (and they are sane), rebuild them otherwise.
+        direction = float(np.sign(w))
+        fallback = protective_levels(direction, state.last_price, f["atr14"], self.config["risk"])
+        if direction == np.sign(p.target_weight):
+            stop, take = sane_levels(direction, state.last_price, p.stop_loss, p.take_profit,
+                                     fallback)
+        else:
+            stop, take = fallback
         d = FinalDecision(state.instrument.symbol, state.as_of,
                           action_for(w, state.debate.score, thr), round(w, 4), conf,
-                          p.stop_loss if w else None, p.take_profit if w else None,
-                          rationale, bool(approved), notes, source)
+                          stop, take, rationale, bool(approved), notes, source)
         state.decision = d
         return d
+
+    def no_trade_band(self, w: float, current: float | None,
+                      f: dict[str, Any]) -> tuple[float, str | None]:
+        """Keep the current position when the new target is within ``rebalance_band`` of it.
+
+        Small target changes cost spread and commission without changing the risk
+        materially. The current position is kept only if it would itself pass every
+        firm limit today, so the band can never hold a position the limits forbid.
+        """
+        band = f.get("rebalance_band", 0.0)
+        if current is None or band <= 0 or w == current or abs(w - current) >= band:
+            return w, None
+        kept, fixes = self.guardrails(current, f)
+        if fixes or kept != current:
+            return w, None
+        return current, f"within no-trade band ({abs(w - current):.2f} < {band:.2f}): keep {current:+.2f}"
 
 
 def run_risk_team(state: TradingState, analysts: list[RiskAnalyst], pm: PortfolioManager,

@@ -7,3 +7,6 @@ build/
 results/
 agentic_trader/quant/_atcore*.pyd
 agentic_trader/quant/_atcore*.so
+.env
+.env.*
+*.jsonl.tmp

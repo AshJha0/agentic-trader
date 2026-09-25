@@ -112,14 +112,27 @@ def compute_metrics(equity, positions, periods_per_year: float,
         _cpp.compute_metrics(_l(equity), _l(positions), periods_per_year, risk_free_annual))
 
 
-def run_backtest(prices, target_weights, config: BacktestConfig | None = None) -> BacktestResult:
+def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *,
+                 carry=None, open=None, high=None, low=None, stop=None, take=None,
+                 rebalance=None) -> BacktestResult:
+    """Backtest a target-weight path.
+
+    Optional per-bar arrays (same length as ``prices``):
+      carry      annual carry rate per bar (overrides ``config.carry_annual``)
+      open/high/low  bar ranges, required when stop or take levels are given
+      stop/take  absolute protective levels for the position held over (t, t+1]; NaN = none
+      rebalance  non-zero where a new decision was made (re-arms after a stop exit)
+    """
     config = config or BacktestConfig()
+    extras = dict(carry=carry, open=open, high=high, low=low, stop=stop, take=take,
+                  rebalance=rebalance)
     if _cpp is None:
-        return pycore.run_backtest(prices, target_weights, config)
+        return pycore.run_backtest_ex(prices, target_weights, config, **extras)
     c = _cpp.BacktestConfig()
     for f in BacktestConfig.__dataclass_fields__:
         setattr(c, f, getattr(config, f))
-    r = _cpp.run_backtest(_l(prices), _l(target_weights), c)
+    kw = {k: _l(v) for k, v in extras.items() if v is not None and len(v)}
+    r = _cpp.run_backtest_ex(_l(prices), _l(target_weights), c, **kw)
     trades = [Trade(t.index, t.from_weight, t.to_weight, t.price) for t in r.trades]
     return BacktestResult(_a(r.equity), _a(r.returns), _a(r.positions), trades,
-                          _metrics_from_cpp(r.metrics))
+                          _metrics_from_cpp(r.metrics), int(r.stop_exits))

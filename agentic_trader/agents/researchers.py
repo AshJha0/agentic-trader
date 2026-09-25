@@ -5,11 +5,19 @@ from ..state import AnalystReport, DebateOutcome, DebateTurn, TradingState
 from .base import Agent, clip
 
 
-def consensus_score(state: TradingState, weights: dict[str, float]) -> tuple[float, float]:
-    """Confidence- and role-weighted average analyst signal, and the mean confidence."""
+def consensus_score(state: TradingState, weights: dict[str, float],
+                    skip_abstained: bool = False) -> tuple[float, float]:
+    """Confidence- and role-weighted average analyst signal, and the mean confidence.
+
+    With ``skip_abstained`` an analyst that had no data does not vote: counting it
+    as a zero signal would pull every consensus towards "no view" just because a
+    data source is missing.
+    """
     num = den = 0.0
     confs = []
     for r in state.reports.values():
+        if skip_abstained and r.abstained:
+            continue
         w = weights.get(r.analyst, 0.5) * r.confidence
         num += w * r.signal
         den += w
@@ -31,12 +39,12 @@ class Researcher(Agent):
 
     def _supporting(self, state: TradingState) -> list[AnalystReport]:
         sgn = 1 if self.side == "bull" else -1
-        reps = [r for r in state.reports.values() if sgn * r.signal > 0.02]
+        reps = [r for r in state.reports.values() if not r.abstained and sgn * r.signal > 0.02]
         return sorted(reps, key=lambda r: abs(r.signal) * r.confidence, reverse=True)
 
     def _opposing(self, state: TradingState) -> list[AnalystReport]:
         sgn = 1 if self.side == "bull" else -1
-        reps = [r for r in state.reports.values() if sgn * r.signal < -0.02]
+        reps = [r for r in state.reports.values() if not r.abstained and sgn * r.signal < -0.02]
         return sorted(reps, key=lambda r: abs(r.signal) * r.confidence, reverse=True)
 
     def rules_argument(self, state: TradingState, rnd: int, history: list[DebateTurn]) -> str:
@@ -94,15 +102,19 @@ class DebateFacilitator(Agent):
     def judge(self, state: TradingState, turns: list[DebateTurn]) -> DebateOutcome:
         weights = self.config["analyst_weights"]
         thr = self.config["decision_threshold"]
-        score, avg_conf = consensus_score(state, weights)
+        skip = self.config.get("rules", {}).get("abstain_without_data", False)
+        score, avg_conf = consensus_score(state, weights, skip)
         conviction = clip(abs(score) * (0.5 + avg_conf), 0, 1)
         winner = "bull" if score > thr else "bear" if score < -thr else "balanced"
-        n_bull = sum(r.signal > 0.02 for r in state.reports.values())
-        n_bear = sum(r.signal < -0.02 for r in state.reports.values())
+        voting = [r for r in state.reports.values() if not r.abstained]
+        n_bull = sum(r.signal > 0.02 for r in voting)
+        n_bear = sum(r.signal < -0.02 for r in voting)
+        n_abs = len(state.reports) - len(voting)
         outcome = DebateOutcome(
             winner, score, conviction,
             f"Weighted analyst consensus {score:+.2f} ({n_bull} bullish vs {n_bear} bearish "
-            f"reports, mean confidence {avg_conf:.2f}); prevailing view: {winner}.",
+            f"reports, mean confidence {avg_conf:.2f}"
+            + (f", {n_abs} without data" if n_abs else "") + f"); prevailing view: {winner}.",
             turns)
 
         prompt = (

@@ -33,6 +33,11 @@ class AnalystReport:
     key_points: list[str] = field(default_factory=list)
     facts: dict[str, Any] = field(default_factory=dict)
     source: str = "rules"  # "rules" | "llm"
+    # True when the analyst had no data at all (e.g. no news in the window). An
+    # abstaining analyst is shown in the audit trail but does not vote in the
+    # consensus when rules.abstain_without_data is on: missing evidence is not
+    # neutral evidence.
+    abstained: bool = False
 
 
 @dataclass
@@ -100,6 +105,7 @@ class TradingState:
     instrument: Instrument
     as_of: date
     history: pd.DataFrame                     # OHLCV strictly <= as_of
+    current_weight: float | None = None       # position held going into this decision
     reports: dict[str, AnalystReport] = field(default_factory=dict)
     debate: DebateOutcome | None = None
     proposal: TradeProposal | None = None
@@ -116,7 +122,12 @@ class TradingState:
     def reports_digest(self) -> str:
         """Compact text of all analyst reports, used in downstream prompts."""
         lines = []
+        if self.current_weight is not None:
+            lines.append(f"[portfolio] current position weight {self.current_weight:+.2f}")
         for r in self.reports.values():
+            if r.abstained:
+                lines.append(f"[{r.analyst}] no data - abstains: {r.summary}")
+                continue
             lines.append(f"[{r.analyst}] signal={r.signal:+.2f} conf={r.confidence:.2f}: {r.summary}")
             lines.extend(f"  - {p}" for p in r.key_points[:6])
         return "\n".join(lines)
@@ -124,11 +135,15 @@ class TradingState:
     def to_markdown(self) -> str:
         ins = self.instrument
         out = [f"# {ins.display} ({ins.asset_class}) — {self.as_of.isoformat()}",
-               f"Last close: {self.last_price:.5g}", ""]
+               f"Last close: {self.last_price:.5g}"]
+        if self.current_weight is not None:
+            out.append(f"Current position: {self.current_weight:+.2f}")
+        out.append("")
         out.append("## Analyst team")
         for r in self.reports.values():
-            out.append(f"### {r.analyst.title()} ({r.source}) — signal {r.signal:+.2f}, "
-                       f"confidence {r.confidence:.2f}")
+            tag = "abstained (no data)" if r.abstained else (
+                f"signal {r.signal:+.2f}, confidence {r.confidence:.2f}")
+            out.append(f"### {r.analyst.title()} ({r.source}) — {tag}")
             out.append(r.summary)
             out.extend(f"- {p}" for p in r.key_points)
             out.append("")
