@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from ..instruments import Instrument
-from .base import MarketDataProvider, NewsItem, clip_history, static_fx_macro
+from .base import MarketDataProvider, NewsItem, clip_history
 
 _EPOCH = "2015-01-01"
 _END = "2030-12-31"
@@ -66,9 +66,10 @@ _SOCIAL = {
 
 class SyntheticProvider(MarketDataProvider):
     name = "synthetic"
+    real_world = False  # the static macro table is part of the synthetic world
 
     def __init__(self, config: dict):
-        self.config = config
+        super().__init__(config)
         self.seed = int(config.get("synthetic_seed", 7))
         self._cache: dict[str, pd.DataFrame] = {}
 
@@ -180,6 +181,3 @@ class SyntheticProvider(MarketDataProvider):
             "insider_net_buying": int(rng.integers(-5, 6)),
             "source": "synthetic",
         }
-
-    def macro(self, instrument: Instrument, as_of: date) -> dict[str, Any]:
-        return static_fx_macro(instrument, self.config) if instrument.is_fx else {}

@@ -23,6 +23,41 @@ def action_for(weight: float, score: float, thr: float) -> Action:
     return Action.HOLD
 
 
+def atr14(state: TradingState) -> float:
+    """Latest ATR(14); 2% of price when history is too short to compute it."""
+    h = state.history
+    a = quant.atr(h["High"].to_numpy(), h["Low"].to_numpy(), h["Close"].to_numpy(), 14)
+    v = float(a[-1]) if len(a) else float("nan")
+    return v if v > 0 and not math.isnan(v) else state.last_price * 0.02
+
+
+def protective_levels(direction: float, entry: float, atr: float,
+                      risk: dict) -> tuple[float | None, float | None]:
+    """ATR-based stop and target for a direction (+1 long, -1 short, 0 flat)."""
+    if direction == 0:
+        return None, None
+    stop = entry - direction * risk["stop_atr_mult"] * atr
+    take = entry + direction * risk["take_profit_atr_mult"] * atr
+    return (stop if stop > 0 else None), (take if take > 0 else None)
+
+
+def sane_levels(direction: float, entry: float, stop: float | None, take: float | None,
+                fallback: tuple[float | None, float | None]) -> tuple[float | None, float | None]:
+    """Keep model-supplied levels only when they sit on the correct side of the entry.
+
+    A long needs stop < entry < take; a short needs take < entry < stop. Anything
+    else (a stop above a long's entry, a target of 0, a level that is not a number)
+    is replaced by the ATR-based fallback so a bad model reply cannot produce a
+    stop that fires instantly or never.
+    """
+    if direction == 0:
+        return None, None
+    fs, ft = fallback
+    ok_stop = stop is not None and (stop < entry if direction > 0 else stop > entry)
+    ok_take = take is not None and (take > entry if direction > 0 else take < entry)
+    return (stop if ok_stop else fs), (take if ok_take else ft)
+
+
 class Trader(Agent):
     name = "trader"
     deep = True
@@ -35,25 +70,26 @@ class Trader(Agent):
         thr = cfg["decision_threshold"]
         debate = state.debate
         assert debate is not None, "trader runs after the research debate"
-        h = state.history
         price = state.last_price
-        a = quant.atr(h["High"].to_numpy(), h["Low"].to_numpy(), h["Close"].to_numpy(), 14)
-        atr = float(a[-1]) if len(a) and not math.isnan(a[-1]) else price * 0.02
+        atr = atr14(state)
         shorts = allow_short(state, cfg)
 
         score = debate.score
-        w = clip(2.0 * score, -1, 1) if abs(score) > thr else 0.0
+        # Strategic weight + tactical tilt: with no view hold the benchmark weight
+        # (0 = flat); conviction moves the position above or below it.
+        neutral = risk.get("neutral_weight", {}).get(state.instrument.asset_class, 0.0)
+        w = clip(neutral + 2.0 * score, -1, 1) if abs(score) > thr else neutral
         if not shorts:
             w = max(w, 0.0)
         hit = state.track_record.get("hit_rate")
         if hit is not None and state.track_record.get("n", 0) >= 5 and hit < 0.4:
             w *= 0.75  # recent calls on this instrument have been poor: trade smaller
         d = float(np.sign(w))
-        stop = price - d * risk["stop_atr_mult"] * atr if d else None
-        tp = price + d * risk["take_profit_atr_mult"] * atr if d else None
+        stop, tp = protective_levels(d, price, atr, risk)
         rationale = (f"Debate verdict {debate.winner} (score {score:+.2f}, conviction "
-                     f"{debate.conviction:.2f}) -> target weight {w:+.2f}. Stops at "
-                     f"{risk['stop_atr_mult']}x ATR ({atr:.5g}).")
+                     f"{debate.conviction:.2f}) -> target weight {w:+.2f}"
+                     + (f" (strategic weight {neutral:+.2f} plus tilt)" if neutral else "")
+                     + f". Stops at {risk['stop_atr_mult']}x ATR ({atr:.5g}).")
         if hit is not None:
             rationale += f" Track record hit rate {hit:.0%} over {int(state.track_record['n'])} calls."
         proposal = TradeProposal(action_for(w, score, thr), w, debate.conviction, price, stop, tp,
@@ -62,6 +98,8 @@ class Trader(Agent):
         facts = {"last_close": price, "atr14": atr, "short_selling_allowed": shorts,
                  "max_position": risk["max_position"], "debate_winner": debate.winner,
                  "debate_score": score, "debate_conviction": debate.conviction,
+                 "current_position": state.current_weight,
+                 "strategic_weight_when_neutral": neutral,
                  **{f"track_{k}": v for k, v in state.track_record.items()}}
         prompt = (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}), as of "
@@ -79,11 +117,14 @@ class Trader(Agent):
             w = clip(data["target_weight"], -1, 1)
             if not shorts:
                 w = max(w, 0.0)
+            d = float(np.sign(w))
+            stop, tp = sane_levels(d, price, _price_or_none(data.get("stop_loss")),
+                                   _price_or_none(data.get("take_profit")),
+                                   protective_levels(d, price, atr, risk))
             act = str(data["action"]).upper()
             proposal = TradeProposal(
                 Action(act) if act in Action.__members__ else action_for(w, score, thr),
-                w, clip(data.get("confidence"), 0, 1, debate.conviction), price,
-                _price_or_none(data.get("stop_loss")), _price_or_none(data.get("take_profit")),
+                w, clip(data.get("confidence"), 0, 1, debate.conviction), price, stop, tp,
                 int(clip(data.get("horizon_days"), 1, 90, 10)), str(data["rationale"]),
                 source="llm")
         state.proposal = proposal
@@ -95,4 +136,4 @@ def _price_or_none(x) -> float | None:
         v = float(x)
     except (TypeError, ValueError):
         return None
-    return v if v > 0 and not math.isnan(v) else None
+    return v if v > 0 and not math.isnan(v) and not math.isinf(v) else None

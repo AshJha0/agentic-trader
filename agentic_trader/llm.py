@@ -33,7 +33,8 @@ class AnthropicLLM:
         except ImportError as e:  # pragma: no cover
             raise ImportError("llm_provider='anthropic' needs `pip install anthropic`") from e
         self._anthropic = anthropic
-        self.client = anthropic.Anthropic()  # ANTHROPIC_API_KEY or `ant auth login` profile
+        # Credentials: ANTHROPIC_API_KEY or an `ant auth login` profile.
+        self.client = anthropic.Anthropic(timeout=float(config.get("llm_timeout_s", 300)))
         self.config = config
         self.calls = 0
 
@@ -74,13 +75,46 @@ class AnthropicLLM:
         return text or None
 
 
+class BudgetedLLM:
+    """Hard cap on model calls. Past the cap every call returns ``None``, so each
+    agent falls back to its rule-based reasoning and the run finishes normally.
+
+    Protects backtests from runaway cost: at default settings one decision makes
+    14 calls, so a 1-year weekly backtest of one instrument is ~730 calls.
+    """
+
+    def __init__(self, inner: LLM, max_calls: int):
+        if max_calls < 0:
+            raise ValueError("max_calls must be >= 0")
+        self.inner, self.max_calls = inner, max_calls
+        self.calls = 0
+        self.refused = 0
+
+    @property
+    def exhausted(self) -> bool:
+        return self.calls >= self.max_calls
+
+    def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
+        if self.exhausted:
+            if self.refused == 0:
+                log.warning("LLM call budget of %d reached; agents fall back to rules",
+                            self.max_calls)
+            self.refused += 1
+            return None
+        self.calls += 1
+        return self.inner.complete(system, prompt, deep=deep)
+
+
 def get_llm(config: dict) -> LLM | None:
     provider = config.get("llm_provider", "offline")
     if provider == "offline":
         return None
     if provider == "anthropic":
-        return AnthropicLLM(config)
-    raise ValueError(f"unknown llm_provider {provider!r} (use 'offline' or 'anthropic')")
+        llm: LLM = AnthropicLLM(config)
+    else:
+        raise ValueError(f"unknown llm_provider {provider!r} (use 'offline' or 'anthropic')")
+    cap = config.get("max_llm_calls")
+    return BudgetedLLM(llm, int(cap)) if cap is not None else llm
 
 
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)

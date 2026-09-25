@@ -1,198 +1,337 @@
 # Evaluation
 
 This document records how agentic-trader is evaluated, what was measured, and what the
-numbers do and do not show. Every figure here comes from a recorded run. To reproduce them,
-see [Reproducing](#reproducing).
+numbers do and do not show. Every figure comes from a recorded run, and the tables were
+generated from the saved result files rather than typed. To reproduce them, see
+[Reproducing](#reproducing).
 
-> **Scope of these results.** All numbers were produced by the **rule-based agents** (offline
-> mode, no LLM). The LLM mode, which the TradingAgents paper evaluates, has **not** been
-> evaluated here, so nothing below says anything about Claude's trading performance, and none
-> of the paper's reported results are claimed. The measurements were taken on 2026-09-25 with
+> **Scope.** All results use the **rule-based agents** (offline mode, no LLM) on **real
+> prices** from Yahoo Finance. The LLM mode, which the TradingAgents paper evaluates, has
+> **not** been evaluated, so nothing here describes Claude's trading performance, and none of
+> the paper's reported results are claimed. The measurements were taken on 2026-09-25 with
 > the C++ backend.
+
+## Summary
+
+- **Out of sample, the agents do not beat buy & hold on Sharpe instrument by instrument.**
+  Holdout mean Sharpe is 0.44 against 0.55 for buy & hold, over 15 instruments. In equities
+  alone it is 0.63 against 0.68.
+- **They consistently take about half the drawdown.** Holdout equity mean maximum drawdown is
+  19.1% against 40.2% for buy & hold, and it is lower in every period.
+- **As a portfolio of all 15 instruments they beat plain buy & hold on Sharpe** in both
+  periods: 1.14 against 1.06 on the holdout, with a drawdown of 6.8% against 20.8%. They do
+  **not** beat buy & hold scaled to the same volatility target (1.24).
+- **v0.3's rule changes were chosen on 2016–2021 data only.**
+  - On that data, equity mean Sharpe rose from 0.76 to 0.99.
+  - On the untouched 2022–2026 holdout, the gain shrank to 0.60 → 0.63. Mean return still
+    rose from 21% to 32%, and trades fell by about half (163 → 86).
+- **Most literature-backed signal tweaks did nothing** measurable on the design period. The
+  one change that worked, a strategic (benchmark) equity weight, works by collecting the
+  equity premium, not by forecasting better.
+- **FX is roughly zero** before and after the change.
 
 ## Protocol
 
-The protocol mirrors the paper's evaluation layout:
+### Periods
+
+| Period | Dates | Use |
+|---|---|---|
+| **Design** | 2016-01-04 → 2021-12-31 | The **only** data used to choose rule changes and defaults |
+| **Holdout** | 2022-01-03 → 2026-06-30 | Run **once**, with frozen rules. Never used for a choice |
+| **Paper** | 2024-01-02 → 2024-03-28 | The TradingAgents paper's window (Q1 2024), inside the holdout |
+
+### Settings
 
 | Item | Setting |
 |---|---|
-| Window | 2024-01-02 → 2024-03-28 (Q1 2024; the paper uses Jan 1 – Mar 29, 2024) |
-| Equities | AAPL, NVDA, MSFT, META, GOOGL |
-| FX (project addition) | EURUSD, USDJPY, GBPUSD |
-| Rebalancing | Every 5 bars: full `propagate()` with data up to that close; weight held to the next rebalance |
-| Warm-up | 400 calendar days of history before the window for indicators |
-| Baselines | Buy & Hold, SMA(20/50) crossover, MACD(12,26,9), KDJ(9)+RSI(14), ZMR (20-day z-score, entry 1.0, exit 0.0) |
-| Execution | Weight decided at close *t* earns the return from *t* to *t + 1* |
-| Equity costs | 1 bps commission + 1 bps slippage per unit turnover; 1% p.a. borrow on shorts (shorts disabled by default) |
-| FX costs | Half of a 0.8-pip spread converted to bps at the window's mean price, + 0.2 bps slippage; shorts enabled |
-| FX carry | `(base rate − quote rate)` from the **static illustrative config** (see caveat below), accrued daily on the position |
-| Position limits | \|weight\| ≤ 1.0; 1-day VaR95 of the position ≤ 2%; weights below 0.05 become flat |
-| Debate rounds | 2 research rounds, 1 risk round |
+| Universe | 10 equities: AAPL, NVDA, MSFT, META, GOOGL, AMZN, JPM, XOM, JNJ and SPY (the paper's names plus financials, energy, healthcare and the index). 5 FX pairs: EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD |
+| Prices | Yahoo Finance daily, dividend- and split-adjusted (total return) |
+| News and fundamentals | None for historical dates. Yahoo serves only recent news and current-snapshot fundamentals, and the point-in-time guards refuse both, so the news and fundamentals analysts have no data |
+| FX macro | Point-in-time **FRED** policy rates. Values are publication-lagged (daily series by 1 day, monthly averages by about 40 days) and treated as unavailable when stale. Carry is accrued per bar from the same series |
+| Rebalancing | Every 5 bars: a full `propagate()` with data up to that close and the current position. The weight is held to the next rebalance |
+| Warm-up | 400 calendar days of history before each window |
+| Equity costs | 1 bps commission + 1 bps slippage per unit of turnover; 1% p.a. borrow (shorts are disabled) |
+| FX costs | Half of a 0.8-pip spread, in bps at the window's first price, + 0.2 bps slippage; shorts enabled |
+| Limits | \|weight\| ≤ 1.0; 1-day VaR95 of the position ≤ 2%; weights below 0.05 become flat |
+| Execution | A weight decided at close *t* earns the return from *t* to *t + 1* |
+
+### Baselines
+
+| Baseline | What it tests |
+|---|---|
+| Buy & Hold | The market |
+| **B&H vol-target** | Buy & hold scaled every day to the risk team's 15% volatility target, from trailing 20-day volatility (ex ante), capped at 1.0. **This is the fair control.** A risk-managed strategy beats plain buy & hold on drawdown just by holding less; beating this version requires good directional calls |
+| SMA(20/50), MACD(12,26,9), KDJ(9)+RSI(14), ZMR (20-day z-score) | The paper's rule-based baselines |
 
 ### Metrics
 
-With per-period returns *r*, *n* periods and *P* periods per year (252 equity, 260 FX):
+With per-period returns *r*, *n* periods and *P* periods per year (252 for equities, 260
+for FX):
 
 | Metric | Definition |
 |---|---|
-| CR (cumulative return) | *V_end / V_start − 1* |
-| AR (annualised return) | *(1 + CR)^(P/n) − 1* |
+| CR | *V_end / V_start − 1* |
+| AR | *(1 + CR)^(P/n) − 1* |
 | Vol | *std(r, ddof = 1) · √P* |
-| Sharpe | *(mean(r) − r_f/P) / std(r) · √P*, with *r_f = 0* |
-| Sortino | *(mean(r) − r_f/P) / √mean(min(r − r_f/P, 0)²) · √P* |
-| MDD (max drawdown) | *max over t of (1 − V_t / max_{s ≤ t} V_s)* |
-| Calmar | *AR / MDD* |
-| Win rate | Share of positive returns among periods with a non-zero position |
-| Trades | Number of changes in the held weight |
+| Sharpe | *mean(r) / std(r) · √P* (risk-free rate 0) |
+| t(SR) | *mean(r) / std(r) · √n*: the t-statistic of the mean return. About 2 is needed before a Sharpe ratio is distinguishable from 0 |
+| MDD | *max over t of (1 − V_t / max_{s≤t} V_s)* |
+| Exposure | Mean \|weight\| per period |
+| Trades | Number of changes in the held weight (vol-target B&H changes weight almost daily) |
 
-AR over one quarter is heavily compounded (for example NVDA buy & hold is +1303%), so read
-CR, Sharpe and MDD first.
+Cross-instrument figures are simple means or medians over instruments. The `n` column
+counts instruments.
 
-## Results on real prices (Yahoo Finance)
+## Headline results
 
-Real daily prices for Q1 2024. Because Yahoo serves only recent news and current-snapshot
-fundamentals, the point-in-time guards give the agents **no news and no fundamentals** for
-these historical dates. The decisions are therefore driven mainly by the technical analyst,
-the market-based sentiment proxies and, for FX, the macro analyst.
+### Design period (2016–2021): used to choose the v0.3 rules
 
-### Summary: agent vs buy & hold
+| class | strategy | n | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean Vol % | mean exposure % | mean trades |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| equity | AgenticTrader v0.2 | 10 | 0.76 | 0.68 | 73.40 | 16.47 | 10.21 | 38.02 | 210.40 |
+| equity | **AgenticTrader v0.3** | 10 | **0.99** | **1.05** | 158.23 | 17.78 | 14.36 | 59.19 | 82.40 |
+| equity | Buy & hold | 10 | 0.96 | 0.99 | 622.20 | 39.66 | 28.61 | 100.00 | 1.00 |
+| equity | B&H vol-target | 10 | 1.04 | 1.13 | 187.15 | 20.89 | 16.28 | 71.58 | 1117.80 |
+| fx | AgenticTrader v0.2 | 5 | -0.04 | 0.11 | -1.04 | 11.63 | 4.87 | 51.71 | 272.40 |
+| fx | **AgenticTrader v0.3** | 5 | -0.03 | 0.12 | -0.79 | 11.58 | 4.87 | 51.69 | 154.60 |
+| fx | Buy & hold | 5 | -0.05 | -0.06 | -4.30 | 21.82 | 8.42 | 100.00 | 1.00 |
+| fx | B&H vol-target | 5 | -0.06 | -0.06 | -5.11 | 21.65 | 8.31 | 99.52 | 44.40 |
+| all | AgenticTrader v0.2 | 15 | 0.50 | 0.42 | 48.59 | 14.86 | 8.43 | 42.58 | 231.07 |
+| all | **AgenticTrader v0.3** | 15 | **0.65** | **0.55** | 105.22 | 15.72 | 11.20 | 56.69 | 106.47 |
+| all | Buy & hold | 15 | 0.63 | 0.76 | 413.36 | 33.71 | 21.88 | 100.00 | 1.00 |
+| all | B&H vol-target | 15 | 0.67 | 0.75 | 123.06 | 21.15 | 13.63 | 80.89 | 760.00 |
 
-| Symbol | Agent CR % | B&H CR % | Agent MDD % | B&H MDD % | Agent Sharpe | B&H Sharpe | Best baseline by Sharpe |
-|---|---:|---:|---:|---:|---:|---:|---|
-| AAPL | -3.49 | -7.53 | 3.49 | 13.30 | -3.84 | -1.55 | KDJ+RSI (0.35) |
-| NVDA | 35.23 | 87.56 | 4.54 | 8.70 | 5.42 | 5.46 | Buy&Hold (5.46) |
-| MSFT | 7.57 | 13.63 | 2.79 | 4.21 | 2.51 | 2.90 | KDJ+RSI (4.47) |
-| META | 23.56 | 40.34 | 2.88 | 5.58 | 3.06 | 3.10 | Buy&Hold (3.10) |
-| GOOGL | 3.58 | 9.21 | 6.93 | 14.40 | 1.07 | 1.46 | Buy&Hold (1.46) |
-| EURUSD | -0.64 | -2.57 | 2.44 | 3.25 | -0.70 | -2.05 | ZMR (0.82) |
-| USDJPY | 3.79 | 8.16 | 2.12 | 2.49 | 2.72 | 4.31 | KDJ+RSI (7.58) |
-| GBPUSD | -1.32 | -0.94 | 1.77 | 2.01 | -1.63 | -0.68 | ZMR (3.73) |
+### Holdout period (2022–2026): run once with frozen rules
 
-**What this shows:**
+| class | strategy | n | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean Vol % | mean exposure % | mean trades |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| equity | AgenticTrader v0.2 | 10 | 0.60 | 0.69 | 30.42 | 15.05 | 9.78 | 28.29 | 143.10 |
+| equity | **AgenticTrader v0.3** | 10 | **0.63** | 0.68 | 47.37 | 19.07 | 14.23 | 50.68 | 73.70 |
+| equity | Buy & hold | 10 | 0.68 | 0.74 | 131.34 | 40.24 | 31.00 | 100.00 | 1.00 |
+| equity | B&H vol-target | 10 | 0.71 | 0.71 | 63.37 | 21.85 | 17.03 | 63.28 | 962.10 |
+| fx | AgenticTrader v0.2 | 5 | 0.06 | -0.01 | 1.95 | 11.21 | 5.37 | 54.18 | 202.40 |
+| fx | **AgenticTrader v0.3** | 5 | 0.04 | -0.02 | 1.47 | 11.27 | 5.34 | 53.95 | 110.20 |
+| fx | Buy & hold | 5 | 0.28 | -0.03 | 12.97 | 16.76 | 8.76 | 100.00 | 1.00 |
+| fx | B&H vol-target | 5 | 0.26 | -0.10 | 12.02 | 16.73 | 8.66 | 99.53 | 39.00 |
+| all | AgenticTrader v0.2 | 15 | 0.42 | 0.44 | 20.93 | 13.77 | 8.31 | 36.92 | 162.87 |
+| all | **AgenticTrader v0.3** | 15 | **0.44** | 0.44 | 32.07 | 16.47 | 11.27 | 51.77 | 85.87 |
+| all | Buy & hold | 15 | 0.55 | 0.56 | 91.89 | 32.41 | 23.59 | 100.00 | 1.00 |
+| all | B&H vol-target | 15 | 0.56 | 0.62 | 46.25 | 20.15 | 14.24 | 75.36 | 654.40 |
 
-- **Drawdown.** The rule-based firm had a lower maximum drawdown than buy & hold on
-  **all 8** instruments. The volatility-targeted, VaR-capped sizing does what it is designed
-  to do.
-- **Returns.** It returned **less** than buy & hold on every instrument that rallied
-  (NVDA, MSFT, META, GOOGL, USDJPY). Q1 2024 was a strong one-way market for these names,
-  and partial sizing gives up upside.
-- **Down-trending instruments.** It lost less than buy & hold on AAPL (−3.5% vs −7.5%)
-  and EURUSD (−0.6% vs −2.6%), but slightly more on GBPUSD.
-- **Sharpe.** It did not beat the best baseline on Sharpe for any instrument. The best was
-  NVDA, where 5.42 vs 5.46 is about equal at half the volatility (23.9% vs 50.9%).
-- **Oversold baselines.** KDJ+RSI and ZMR never entered NVDA or META: a long-only oversold
-  signal never fired in a one-way rally.
+**Reading it.**
 
-### Full table
+- **The design-period Sharpe gain did not survive** out of sample: equities improved by
+  only 0.03.
+- **The return and cost gains did survive:** equity mean return rose from 30% to 47%, and
+  trades roughly halved.
+- **The drawdown profile held:** about half of buy & hold's.
+- **FX stays near zero.** Buy & hold's positive FX mean comes mostly from USDJPY (+67%) and
+  USDCAD, while the median pair lost money.
 
-| Symbol | Strategy | CR % | AR % | Sharpe | MDD % | Trades |
-|---|---|---:|---:|---:|---:|---:|
-| AAPL | **AgenticTrader** | -3.49 | -13.85 | -3.84 | 3.49 | 2 |
-|  | Buy&Hold | -7.53 | -28.02 | -1.55 | 13.30 | 1 |
-|  | SMA(20/50) | -1.63 | -6.69 | -1.00 | 2.42 | 2 |
-|  | MACD | -5.04 | -19.51 | -1.65 | 7.74 | 3 |
-|  | KDJ+RSI | 1.05 | 4.50 | 0.35 | 10.66 | 5 |
-|  | ZMR | -1.38 | -5.66 | -0.31 | 8.71 | 6 |
-| NVDA | **AgenticTrader** | 35.23 | 255.24 | 5.42 | 4.54 | 12 |
-|  | Buy&Hold | 87.56 | 1303.30 | 5.46 | 8.70 | 1 |
-|  | SMA(20/50) | 87.56 | 1303.30 | 5.46 | 8.70 | 1 |
-|  | MACD | 48.02 | 419.14 | 4.81 | 7.44 | 4 |
-|  | KDJ+RSI | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
-|  | ZMR | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
-| MSFT | **AgenticTrader** | 7.57 | 35.88 | 2.51 | 2.79 | 12 |
-|  | Buy&Hold | 13.63 | 71.02 | 2.90 | 4.21 | 1 |
-|  | SMA(20/50) | 13.63 | 71.02 | 2.90 | 4.21 | 1 |
-|  | MACD | 2.75 | 12.09 | 0.93 | 5.42 | 5 |
-|  | KDJ+RSI | 9.04 | 43.84 | 4.47 | 1.01 | 4 |
-|  | ZMR | 3.39 | 15.04 | 2.69 | 0.18 | 4 |
-| META | **AgenticTrader** | 23.56 | 143.19 | 3.06 | 2.88 | 12 |
-|  | Buy&Hold | 40.34 | 315.16 | 3.10 | 5.58 | 1 |
-|  | SMA(20/50) | 40.34 | 315.16 | 3.10 | 5.58 | 1 |
-|  | MACD | 25.70 | 161.36 | 2.34 | 4.27 | 4 |
-|  | KDJ+RSI | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
-|  | ZMR | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
-| GOOGL | **AgenticTrader** | 3.58 | 15.93 | 1.07 | 6.93 | 11 |
-|  | Buy&Hold | 9.21 | 44.80 | 1.46 | 14.40 | 1 |
-|  | SMA(20/50) | -0.79 | -3.26 | -0.02 | 11.16 | 2 |
-|  | MACD | 4.84 | 21.96 | 1.02 | 8.75 | 5 |
-|  | KDJ+RSI | 5.22 | 23.82 | 1.24 | 11.81 | 4 |
-|  | ZMR | -2.13 | -8.63 | -0.54 | 8.81 | 2 |
-| EURUSD | **AgenticTrader** | -0.64 | -2.65 | -0.70 | 2.44 | 10 |
-|  | Buy&Hold | -2.57 | -10.35 | -2.05 | 3.25 | 1 |
-|  | SMA(20/50) | -4.05 | -15.93 | -3.31 | 4.08 | 3 |
-|  | MACD | 0.39 | 1.65 | 0.34 | 2.24 | 6 |
-|  | KDJ+RSI | -0.57 | -2.36 | -0.42 | 2.68 | 2 |
-|  | ZMR | 0.88 | 3.75 | 0.82 | 1.83 | 9 |
-| USDJPY | **AgenticTrader** | 3.79 | 16.88 | 2.72 | 2.12 | 8 |
-|  | Buy&Hold | 8.16 | 38.93 | 4.31 | 2.49 | 1 |
-|  | SMA(20/50) | -1.86 | -7.57 | -0.95 | 5.53 | 2 |
-|  | MACD | -0.01 | -0.03 | 0.04 | 4.19 | 8 |
-|  | KDJ+RSI | 13.83 | 72.13 | 7.58 | 1.11 | 4 |
-|  | ZMR | -0.51 | -2.10 | -0.27 | 4.77 | 8 |
-| GBPUSD | **AgenticTrader** | -1.32 | -5.41 | -1.63 | 1.77 | 11 |
-|  | Buy&Hold | -0.94 | -3.90 | -0.68 | 2.01 | 1 |
-|  | SMA(20/50) | -3.63 | -14.37 | -2.75 | 4.13 | 3 |
-|  | MACD | 2.12 | 9.21 | 1.59 | 1.69 | 3 |
-|  | KDJ+RSI | 0.87 | 3.69 | 0.67 | 2.49 | 1 |
-|  | ZMR | 4.63 | 20.90 | 3.73 | 1.79 | 13 |
+### Paper window (Q1 2024, inside the holdout)
 
-Bars in the window: 61 for the equities, 63 for FX. Effective FX transaction cost per unit
-of turnover: EURUSD 0.37 bps, USDJPY 0.27 bps, GBPUSD 0.32 bps (plus 0.2 bps slippage).
+| class | strategy | n | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean Vol % | mean exposure % | mean trades |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| equity | AgenticTrader v0.2 | 10 | 2.22 | 2.95 | 10.12 | 3.06 | 13.04 | 45.24 | 10.10 |
+| equity | **AgenticTrader v0.3** | 10 | **2.47** | **3.07** | 11.88 | 4.30 | 15.76 | 66.07 | 3.40 |
+| equity | Buy & hold | 10 | 2.67 | 3.07 | 20.58 | 6.60 | 24.76 | 100.00 | 1.00 |
+| equity | B&H vol-target | 10 | 2.73 | 3.06 | 12.01 | 5.01 | 17.04 | 75.60 | 39.00 |
+| fx | AgenticTrader v0.2 | 5 | -0.43 | -0.25 | -0.07 | 2.20 | 4.08 | 54.26 | 10.00 |
+| fx | **AgenticTrader v0.3** | 5 | -0.44 | -0.37 | -0.11 | 2.20 | 4.01 | 53.36 | 5.60 |
+| fx | Buy & hold | 5 | 0.34 | -0.66 | 0.70 | 2.80 | 6.29 | 100.00 | 1.00 |
+| fx | B&H vol-target | 5 | 0.34 | -0.66 | 0.70 | 2.80 | 6.29 | 100.00 | 1.00 |
+| all | AgenticTrader v0.2 | 15 | 1.34 | 2.37 | 6.72 | 2.77 | 10.06 | 48.25 | 10.07 |
+| all | **AgenticTrader v0.3** | 15 | **1.50** | **2.48** | 7.88 | 3.60 | 11.84 | 61.83 | 4.13 |
+| all | Buy & hold | 15 | 1.89 | 2.90 | 13.95 | 5.33 | 18.61 | 100.00 | 1.00 |
+| all | B&H vol-target | 15 | 1.94 | 3.00 | 8.24 | 4.27 | 13.46 | 83.74 | 26.33 |
 
-> **FX carry caveat.** Carry uses the static `fx_policy_rates` in `config.py`: USD 4.25%,
-> EUR 2.00%, JPY 0.50%, GBP 4.00%. That gives EURUSD −2.25%, USDJPY +3.75% and GBPUSD
-> −0.25% p.a. These are illustrative levels, **not** the policy rates in force in Q1 2024
-> (for example, the Fed funds rate was about 5.33% and the BoJ rate negative until March
-> 2024). The same carry applies to the agent and to every baseline. For period-accurate
-> carry, set `fx_macro_source="fred"`.
+One quarter of a strong rally is a weak test (the t-statistics are below 3 even at Sharpe
+5). The paper reports this window, so it is included here; the multi-year periods above are
+the evidence.
 
-## Results on synthetic data (offline)
+## Head to head (per instrument, Sharpe)
 
-The same protocol on the seeded synthetic market (`synthetic_seed=7`). These prices, news
-and fundamentals are fake. The table demonstrates that the full pipeline (news, social
-posts, fundamentals and macro all present) runs end to end and deterministically; it says
-nothing about real-world performance.
+Number of the 15 instruments on which the agent's Sharpe exceeds each baseline's, with the
+median difference:
 
-| Symbol | Agent CR % | B&H CR % | Agent MDD % | B&H MDD % | Agent Sharpe | B&H Sharpe | Best baseline by Sharpe |
-|---|---:|---:|---:|---:|---:|---:|---|
-| AAPL | 4.30 | 23.60 | 4.46 | 7.80 | 1.58 | 2.60 | ZMR (4.09) |
-| NVDA | -4.51 | 3.88 | 7.55 | 17.69 | -1.58 | 0.58 | MACD (1.15) |
-| MSFT | 4.85 | 18.20 | 4.30 | 9.93 | 1.83 | 2.52 | ZMR (3.36) |
-| META | -5.10 | -15.84 | 8.52 | 27.18 | -2.23 | -1.86 | KDJ+RSI (-0.44) |
-| GOOGL | -0.73 | -16.59 | 2.13 | 22.82 | -0.57 | -2.14 | MACD (-0.67) |
-| EURUSD | -1.12 | -0.09 | 2.18 | 1.70 | -1.45 | -0.04 | ZMR (2.41) |
-| USDJPY | 0.41 | 1.23 | 1.26 | 1.62 | 0.47 | 1.01 | SMA(20/50) (2.15) |
-| GBPUSD | -4.45 | 3.22 | 5.15 | 3.54 | -3.71 | 1.52 | ZMR (2.82) |
+| period | baseline | v0.2 wins | v0.3 wins | v0.3 median Sharpe diff |
+|:--|:--|--:|--:|--:|
+| design | Buy & hold | 7 | 10 | +0.11 |
+| design | B&H vol-target | 5 | 6 | −0.02 |
+| design | SMA(20/50) | 5 | 8 | +0.08 |
+| design | MACD | 7 | 11 | +0.31 |
+| design | KDJ+RSI | 8 | 10 | +0.36 |
+| design | ZMR | 9 | 12 | +0.37 |
+| holdout | Buy & hold | 5 | 5 | −0.06 |
+| holdout | B&H vol-target | 6 | 4 | −0.10 |
+| holdout | SMA(20/50) | 9 | 11 | +0.24 |
+| holdout | MACD | 10 | 11 | +0.29 |
+| holdout | KDJ+RSI | 7 | 6 | −0.15 |
+| holdout | ZMR | 9 | 10 | +0.21 |
+| paper | Buy & hold | 3 | 5 | −0.07 |
+| paper | B&H vol-target | 4 | 3 | −0.28 |
+
+Out of sample the agent reliably beats the paper's trend and mean-reversion baselines
+(SMA, MACD, ZMR), loses to buy & hold on most instruments, and loses more often to
+volatility-targeted buy & hold.
+
+## How the v0.3 rules were chosen (design-period ablation)
+
+Every candidate change was run alone and in combination on the design period only. The
+columns are agent statistics across the 15 instruments. "beats" counts instruments where
+the agent's Sharpe exceeds that baseline's.
+
+| variant | mean Sharpe | median Sharpe | equity median SR | FX median SR | mean CR% | mean MDD% | mean Exp% | mean trades | beats B&H | beats vol-target B&H |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| v0.2 (control) | 0.50 | 0.42 | 0.68 | 0.11 | 48.59 | 14.86 | 42.58 | 231.07 | 7 | 5 |
+| + 12-1 month time-series momentum | 0.47 | 0.37 | 0.70 | -0.08 | 61.02 | 15.68 | 46.29 | 218.80 | 5 | 3 |
+| + trend-filtered reversal | 0.48 | 0.41 | 0.67 | 0.05 | 48.05 | 15.04 | 43.16 | 225.13 | 7 | 5 |
+| + abstain without data | 0.51 | 0.39 | 0.71 | 0.13 | 59.94 | 15.92 | 47.51 | 219.47 | 5 | 4 |
+| + no-trade band 0.10 | 0.50 | 0.37 | 0.69 | 0.12 | 48.42 | 14.77 | 42.47 | 130.33 | 7 | 5 |
+| + intraday stops | 0.47 | 0.60 | 0.72 | -0.04 | 34.82 | 14.31 | 39.01 | 258.93 | 6 | 5 |
+| signal changes (momentum + filter + abstain) | 0.51 | 0.43 | 0.73 | -0.08 | 70.49 | 15.84 | 49.80 | 203.20 | 6 | 5 |
+| signal changes + band | 0.51 | 0.41 | 0.73 | -0.09 | 68.38 | 15.74 | 49.25 | 105.67 | 6 | 5 |
+| all five | 0.50 | 0.48 | 0.77 | -0.11 | 48.69 | 14.88 | 45.08 | 152.73 | 5 | 3 |
+| strategic equity weight 0.25 | 0.54 | 0.40 | 0.79 | 0.11 | 64.44 | 15.62 | 47.50 | 235.93 | 6 | 5 |
+| strategic equity weight 0.50 | 0.58 | 0.50 | 0.87 | 0.11 | 78.30 | 15.41 | 50.89 | 231.20 | 6 | 5 |
+| strategic equity weight 1.00 | 0.66 | 0.53 | 1.06 | 0.11 | 108.43 | 15.64 | 57.36 | 231.80 | 10 | 6 |
+| strategic 0.50 + band | 0.58 | 0.53 | 0.86 | 0.12 | 76.92 | 15.43 | 50.26 | 116.33 | 7 | 5 |
+| strategic 0.50 + signal changes + band | 0.58 | 0.49 | 0.93 | -0.09 | 90.78 | 16.12 | 54.46 | 107.60 | 7 | 5 |
+| strategic 0.50 + abstain + band | 0.56 | 0.45 | 0.84 | 0.15 | 73.78 | 16.14 | 51.51 | 111.80 | 5 | 4 |
+| **frozen v0.3: strategic 1.00 + band** | **0.65** | **0.55** | **1.05** | **0.12** | 105.11 | 15.71 | 56.69 | **106.40** | **10** | **6** |
+
+**Decisions, and why:**
+
+- **Time-series momentum, trend-filtered reversal and abstention: off.** None moved mean
+  Sharpe outside ±0.02 of the control, which is within noise for 15 instruments. Momentum
+  hurt FX. The switches stay in `config["rules"]` for research.
+- **Intraday stops: off by default.** They cut mean return by about 30% at similar Sharpe.
+  The engine supports them (`backtest.use_stops`) for users whose mandate requires stops.
+- **No-trade band 0.10: on.** It gave the same Sharpe with **44% fewer trades**, which means
+  lower costs in live trading and less churn from noisy LLM targets.
+- **Strategic equity weight 1.0: on.** The effect is monotonic in the weight (0.25 → 0.5 →
+  1.0), matches a strong prior (the equity risk premium), and does not change FX, where the
+  neutral weight stays 0. It is a **benchmark choice, not a forecasting improvement**:
+  equities are held at the benchmark weight unless the firm is convinced otherwise, instead
+  of sitting flat whenever the view is weak.
+
+## Holdout per instrument
+
+| symbol | v0.2 Sharpe | v0.3 Sharpe | B&H Sharpe | vol-target B&H Sharpe | v0.3 CR % | B&H CR % | v0.3 MDD % | B&H MDD % | v0.3 trades |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| AAPL | 0.14 | 0.44 | 0.53 | 0.61 | 24.95 | 62.58 | 20.84 | 33.36 | 70 |
+| NVDA | 0.84 | 1.14 | 1.07 | 1.24 | 126.84 | 566.25 | 18.55 | 62.71 | 51 |
+| MSFT | 0.02 | 0.18 | 0.26 | 0.30 | 7.17 | 15.66 | 19.26 | 35.59 | 84 |
+| META | 1.05 | 0.77 | 0.48 | 0.63 | 65.19 | 67.82 | 19.12 | 73.74 | 63 |
+| GOOGL | 0.77 | 0.78 | 0.79 | 0.86 | 62.71 | 148.61 | 20.04 | 43.63 | 71 |
+| AMZN | 0.44 | 0.35 | 0.39 | 0.38 | 20.38 | 39.84 | 18.11 | 51.99 | 73 |
+| JPM | 0.86 | 0.80 | 0.86 | 0.81 | 60.20 | 126.97 | 17.27 | 37.93 | 80 |
+| XOM | 0.23 | 0.59 | 0.91 | 0.83 | 40.71 | 151.32 | 16.91 | 20.51 | 79 |
+| JNJ | 0.60 | 0.38 | 0.75 | 0.62 | 18.07 | 68.27 | 27.76 | 18.41 | 96 |
+| SPY | 1.05 | 0.89 | 0.73 | 0.78 | 47.50 | 66.11 | 12.80 | 24.51 | 70 |
+| EURUSD | 0.02 | 0.02 | -0.16 | -0.16 | -0.18 | -6.81 | 11.61 | 17.05 | 100 |
+| USDJPY | 0.65 | 0.63 | 1.16 | 1.18 | 18.87 | 66.73 | 10.21 | 13.96 | 97 |
+| GBPUSD | -0.34 | -0.35 | -0.03 | -0.10 | -8.09 | -2.72 | 15.79 | 21.82 | 128 |
+| AUDUSD | -0.01 | -0.06 | -0.12 | -0.20 | -2.48 | -8.07 | 12.60 | 23.67 | 126 |
+| USDCAD | -0.03 | -0.02 | 0.56 | 0.56 | -0.79 | 15.72 | 6.12 | 7.31 | 100 |
+
+Highlights:
+
+- **Drawdown:** the agent's maximum drawdown is below buy & hold's on 14 of 15 instruments.
+  The exception is JNJ, a low-volatility stock where the agent churned (96 trades) through
+  a choppy market.
+- **Sharpe:** the agent beats buy & hold on META, NVDA, SPY, EURUSD and AUDUSD.
+
+## Paper window per instrument
+
+| symbol | v0.2 Sharpe | v0.3 Sharpe | B&H Sharpe | vol-target B&H Sharpe | v0.3 CR % | B&H CR % | v0.3 MDD % | B&H MDD % | v0.3 trades |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| AAPL | -3.84 | -1.88 | -1.55 | -1.58 | -3.63 | -7.53 | 6.73 | 13.30 | 9 |
+| NVDA | 5.42 | 5.50 | 5.46 | 5.78 | 41.08 | 87.56 | 5.08 | 8.70 | 2 |
+| MSFT | 2.51 | 3.07 | 2.90 | 3.08 | 11.65 | 13.63 | 3.22 | 4.21 | 2 |
+| META | 3.06 | 2.93 | 3.10 | 3.04 | 22.44 | 40.34 | 3.34 | 5.58 | 3 |
+| GOOGL | 1.07 | 0.88 | 1.46 | 1.35 | 3.46 | 9.21 | 9.88 | 14.40 | 5 |
+| AMZN | 2.84 | 3.07 | 3.04 | 3.00 | 13.70 | 20.29 | 2.76 | 4.22 | 3 |
+| JPM | 4.96 | 4.98 | 4.98 | 4.98 | 14.84 | 17.09 | 2.63 | 3.01 | 1 |
+| XOM | 4.22 | 3.27 | 3.34 | 3.71 | 8.11 | 14.59 | 3.26 | 6.22 | 4 |
+| JNJ | -1.93 | -1.17 | -0.09 | -0.09 | -2.47 | -0.38 | 4.57 | 4.62 | 4 |
+| SPY | 3.87 | 4.06 | 4.06 | 4.06 | 9.57 | 10.99 | 1.49 | 1.71 | 1 |
+| EURUSD | -0.24 | -0.28 | -1.88 | -1.88 | -0.26 | -2.36 | 2.01 | 3.15 | 5 |
+| USDJPY | 2.37 | 2.48 | 4.51 | 4.51 | 3.21 | 8.57 | 1.93 | 2.44 | 4 |
+| GBPUSD | -2.20 | -2.22 | -0.66 | -0.66 | -1.87 | -0.92 | 2.32 | 2.01 | 5 |
+| AUDUSD | -0.25 | -0.37 | -2.45 | -2.45 | -0.45 | -4.47 | 2.64 | 5.36 | 5 |
+| USDCAD | -1.81 | -1.81 | 2.18 | 2.18 | -1.16 | 2.67 | 2.11 | 1.05 | 9 |
+
+## Portfolio view (15 equal-capital sleeves)
+
+`run_portfolio_backtest` gives each instrument 1/15 of the capital, runs every sleeve with
+its own costs, carry and position, and averages the daily returns. A sleeve with no bar on a
+date contributes 0 that day.
+
+| Portfolio | Design Sharpe (t) | Design CR % | Design MDD % | Holdout Sharpe (t) | Holdout CR % | Holdout MDD % | Holdout exposure % |
+|:--|--:|--:|--:|--:|--:|--:|--:|
+| **AgenticTrader v0.3** | **1.50** (3.69) | 78.26 | 8.05 | **1.14** (2.41) | 31.48 | 6.78 | 50.54 |
+| AgenticTrader v0.2 | 1.33 (3.27) | 38.64 | 5.86 | 1.21 (2.55) | 20.45 | 3.59 | 36.23 |
+| Buy & hold | 1.32 (3.24) | 192.18 | 22.74 | 1.06 (2.24) | 86.57 | 20.78 | 97.57 |
+| B&H vol-target | 1.49 (3.65) | 92.85 | 9.75 | 1.24 (2.63) | 46.29 | 9.84 | 73.82 |
+| SMA(20/50) | 1.42 (3.49) | 108.57 | 9.53 | 0.84 (1.79) | 34.61 | 13.28 | 72.11 |
+| MACD | 1.15 (2.83) | 64.81 | 15.37 | 0.54 (1.14) | 20.15 | 16.34 | 65.70 |
+| KDJ+RSI | 0.84 (2.06) | 60.49 | 18.18 | 0.81 (1.73) | 39.02 | 13.21 | 59.12 |
+| ZMR | 0.59 (1.44) | 37.76 | 19.30 | 0.53 (1.13) | 22.16 | 10.33 | 48.36 |
+
+Diversification across 15 instruments lifts every strategy's Sharpe. The agent portfolio
+beats plain buy & hold on Sharpe in both periods and has a third of its drawdown. It
+matches volatility-targeted buy & hold on the design period (1.50 vs 1.49) and trails it on
+the holdout (1.14 vs 1.24).
+
+**Trade-off from v0.3.** On the holdout, v0.3 has a *lower* portfolio Sharpe than v0.2
+(1.14 vs 1.21) but **54% more return** (31.5% vs 20.5%). v0.2 was mostly flat, and its low
+volatility flattered its ratio. Which is preferable depends on the mandate.
 
 ## Engineering measurements
 
 | Measurement | Value |
 |---|---|
-| One `propagate()`, offline, C++ backend | 3.7 ms (AAPL), 2.9 ms (EURUSD), mean of 20 runs after warm-up |
-| Q1 walk-forward backtest, NVDA synthetic: 63 bars, 13 agent decisions + 5 baselines | 0.08 s |
-| LLM calls per decision at default rounds | 14 = 4 quick-tier (analysts) + 10 deep-tier (2×2 debate turns, facilitator, trader, 3 risk views, PM) |
-| LLM calls for a Q1 backtest at `--every 5` | 12–13 decisions × 14 ≈ 170–180 per instrument |
-| Tests | 18 pytest (11 pipeline, 7 quant) + 7 C++ test groups (21 checks); CI: 8 jobs across 3 OSes and Python 3.10–3.14 |
+| One `propagate()`, offline, C++ backend | 3.8 ms (AAPL), 2.7 ms (EURUSD), mean of 20 runs after warm-up |
+| Q1 walk-forward backtest (NVDA, synthetic): 63 bars, 13 agent decisions + 6 baselines | 0.07 s |
+| Full evaluation: 15 instruments × 3 periods, real prices, v0.3 | 27 s (after the first data download) |
+| Real-data backtest speed-up in v0.3 | ≈8× (2.0 s → 0.24 s per quarter): Yahoo news is no longer requested for dates it cannot serve |
+| LLM calls per decision at default rounds | 14 = 4 quick-tier + 10 deep-tier. An analyst with no data makes no call, so it is 13 when news is missing |
+| Tests | 116 pytest tests (including 8 randomised C++ vs numpy cross-checks of the extended backtester) + 13 C++ test groups (34 checks) |
 
-## What would make these results stronger
+## Limitations
 
-- **Evaluate the LLM mode** on the same protocol, with several seeds or runs per date,
-  because LLM decisions are not deterministic. Report the rule-based firm as the control.
-- **Use point-in-time news and fundamentals** (a historical news vendor, as-filed
-  financials). Without them, the real-price results test only half of the analyst team.
-- **Use a longer window** covering more than one regime. One quarter of a one-way rally
-  favours buy & hold by construction.
-- **Use period-accurate FX carry** (`fx_macro_source="fred"`).
+- **No LLM results.** The whole point of the framework, whether LLM reasoning adds value
+  over the rule-based firm, is unmeasured.
+- **Half the analyst team is idle historically.** Without point-in-time news, social or
+  fundamentals data, the historical results test the technical, sentiment-proxy and macro
+  analysts only.
+- **FRED serves the latest vintage.** Policy rates are not revised, but the few CPI inputs
+  can differ slightly from what was first published. ALFRED vintages would remove this.
+- **Survivorship.** The equity universe is today's large caps, so it is biased towards
+  names that did well. Buy & hold benefits from this at least as much as the agent.
+- **15 instruments is a small sample.** Differences in mean Sharpe below about 0.1 between
+  variants should be read as noise.
+- **Execution model.** Close-to-close fills, with costs as a fixed bps per unit of turnover.
+  Stops fill at the level, or at the open on a gap. There is no market impact, which is
+  reasonable for these liquid names at modest size.
 
 ## Reproducing
 
 ```bash
-# the offline synthetic table (deterministic)
-python examples/compare_baselines.py
+pip install -e ".[all]"
 
-# one real-price row (needs network; Yahoo data can be revised slightly over time)
-agentic-trader backtest NVDA --data yahoo --start 2024-01-02 --end 2024-03-28 --every 5
+# the full protocol on real prices (design, holdout, paper), all 15 instruments
+agentic-trader evaluate --data yahoo --periods design,holdout,paper --out results/eval_v03.json
+
+# the same with the v0.2 rule set, for the before/after comparison
+agentic-trader evaluate --data yahoo --periods design,holdout,paper --rules v02 --out results/eval_v02.json
+
+# the portfolio view
+agentic-trader portfolio AAPL,NVDA,MSFT,META,GOOGL,AMZN,JPM,XOM,JNJ,SPY,EURUSD,USDJPY,GBPUSD,AUDUSD,USDCAD \
+    --data yahoo --start 2022-01-03 --end 2026-06-30
 ```
 
-To count LLM calls per decision, see the "Count LLM calls" recipe in
-[COOKBOOK.md](../../COOKBOOK.md).
+The ablation variants are ordinary config overrides (see the table above). Cookbook recipe
+28 shows how to run one. Yahoo occasionally revises adjusted history, so re-runs can differ
+in the second decimal.

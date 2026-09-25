@@ -298,6 +298,8 @@ class Metrics:
     num_trades: int = 0
     turnover: float = 0.0
     periods: int = 0
+    avg_exposure: float = 0.0
+    sharpe_tstat: float = 0.0
 
 
 @dataclass
@@ -307,6 +309,7 @@ class BacktestResult:
     positions: np.ndarray
     trades: list = field(default_factory=list)
     metrics: Metrics = field(default_factory=Metrics)
+    stop_exits: int = 0
 
 
 def max_drawdown(equity) -> float:
@@ -340,6 +343,7 @@ def compute_metrics(equity, positions, periods_per_year: float,
     ann = np.sqrt(periods_per_year)
     m.annualized_vol = sd * ann
     m.sharpe = float((mean - rf) / sd * ann) if sd > 0 else 0.0
+    m.sharpe_tstat = float((mean - rf) / sd * np.sqrt(n)) if sd > 0 else 0.0
     m.sortino = float((mean - rf) / dd * ann) if dd > 0 else 0.0
     m.max_drawdown = max_drawdown(e)
     m.calmar = m.annualized_return / m.max_drawdown if m.max_drawdown > 0 else 0.0
@@ -351,16 +355,59 @@ def compute_metrics(equity, positions, periods_per_year: float,
     held_mask = pos[:n] != 0
     held = int(held_mask.sum())
     m.win_rate = float((r[held_mask] > 0).sum() / held) if held else 0.0
+    m.avg_exposure = float(np.abs(pos[:n]).mean())
     return m
 
 
+def _exit_fill(w, stop, take, o, h, l):
+    """Fill price if a protective level trades inside the bar, else NaN (see backtest.hpp)."""
+    if w > 0:
+        if not np.isnan(stop) and o <= stop:
+            return o
+        if not np.isnan(stop) and l <= stop:
+            return stop
+        if not np.isnan(take) and o >= take:
+            return o
+        if not np.isnan(take) and h >= take:
+            return take
+    elif w < 0:
+        if not np.isnan(stop) and o >= stop:
+            return o
+        if not np.isnan(stop) and h >= stop:
+            return stop
+        if not np.isnan(take) and o <= take:
+            return o
+        if not np.isnan(take) and l <= take:
+            return take
+    return NaN
+
+
 def run_backtest(prices, target_weights, config: BacktestConfig) -> BacktestResult:
+    return run_backtest_ex(prices, target_weights, config)
+
+
+def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, open=None,
+                    high=None, low=None, stop=None, take=None, rebalance=None) -> BacktestResult:
     p, w_in = _arr(prices), _arr(target_weights)
     if p.size != w_in.size:
         raise ValueError("run_backtest: prices and weights length mismatch")
     if config.periods_per_year <= 0:
         raise ValueError("periods_per_year must be > 0")
     T = p.size
+    extras = {}
+    for name, arr in (("carry", carry), ("open", open), ("high", high), ("low", low),
+                      ("stop", stop), ("take", take), ("rebalance", rebalance)):
+        a = None if arr is None or len(arr) == 0 else _arr(arr)
+        if a is not None and a.size != T:
+            raise ValueError(f"run_backtest: {name} length does not match prices")
+        extras[name] = a
+    has_levels = extras["stop"] is not None or extras["take"] is not None
+    has_ohlc = all(extras[k] is not None for k in ("open", "high", "low"))
+    if has_levels and not has_ohlc:
+        raise ValueError("run_backtest: stop/take levels need open, high and low")
+    if T and not np.all(p > 0):
+        raise ValueError("run_backtest: prices must be positive")
+
     equity = np.full(T, config.initial_capital)
     returns = np.zeros(T)
     positions = np.zeros(T)
@@ -372,18 +419,44 @@ def run_backtest(prices, target_weights, config: BacktestConfig) -> BacktestResu
     hi = config.max_leverage
     unit_cost = (config.cost_bps + config.slippage_bps) / 1e4
     ppy = config.periods_per_year
-    prev = 0.0
+    stop_a, take_a, reb = extras["stop"], extras["take"], extras["rebalance"]
+    prev, prev_target, stopped, exits = 0.0, NaN, False, 0
     for t in range(T - 1):
-        w = 0.0 if np.isnan(w_in[t]) else float(min(max(w_in[t], lo), hi))
+        target = 0.0 if np.isnan(w_in[t]) else float(min(max(w_in[t], lo), hi))
+        rearm = (target != prev_target) if reb is None else (reb[t] != 0.0)
+        if rearm:
+            stopped = False
+        prev_target = target
+        w = 0.0 if stopped else target
+
         trade = w - prev
         if trade != 0.0:
             trades.append(Trade(t, prev, w, float(p[t])))
-        ret = (w * (p[t + 1] / p[t] - 1.0) + w * config.carry_annual / ppy
+
+        exit_px = NaN
+        if w != 0.0 and has_levels:
+            s = NaN if stop_a is None else stop_a[t]
+            k = NaN if take_a is None else take_a[t]
+            exit_px = _exit_fill(w, s, k, extras["open"][t + 1], extras["high"][t + 1],
+                                 extras["low"][t + 1])
+        exited = not np.isnan(exit_px)
+        px_end = exit_px if exited else p[t + 1]
+
+        rate = config.carry_annual
+        if extras["carry"] is not None:
+            rate = 0.0 if np.isnan(extras["carry"][t]) else extras["carry"][t]
+
+        ret = (w * (px_end / p[t] - 1.0) + w * rate / ppy
                - (-w * config.borrow_annual / ppy if w < 0 else 0.0) - abs(trade) * unit_cost)
+        if exited:
+            ret -= abs(w) * unit_cost
+            trades.append(Trade(t + 1, w, 0.0, float(exit_px)))
+            exits += 1
+            stopped = True
         positions[t] = w
         returns[t + 1] = ret
         equity[t + 1] = equity[t] * (1.0 + ret)
-        prev = w
+        prev = 0.0 if exited else w
     positions[T - 1] = prev
     metrics = compute_metrics(equity, positions, ppy, config.risk_free_annual)
-    return BacktestResult(equity, returns, positions, trades, metrics)
+    return BacktestResult(equity, returns, positions, trades, metrics, exits)

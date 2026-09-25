@@ -9,6 +9,7 @@ structured state together with the final decision.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
@@ -20,7 +21,7 @@ from .agents import (ANALYSTS, BearResearcher, BullResearcher, DebateFacilitator
 from .config import make_config
 from .data import MarketDataProvider, get_provider
 from .instruments import Instrument
-from .llm import LLM, get_llm
+from .llm import LLM, BudgetedLLM, get_llm
 from .memory import DecisionMemory
 from .state import FinalDecision, TradingState
 
@@ -41,6 +42,9 @@ class TradingGraph:
         self.config = make_config(config)
         self.provider = provider or get_provider(self.config)
         self.llm = llm if llm is not None else get_llm(self.config)
+        cap = self.config.get("max_llm_calls")
+        if self.llm is not None and cap is not None and not isinstance(self.llm, BudgetedLLM):
+            self.llm = BudgetedLLM(self.llm, int(cap))
         self.memory = memory if memory is not None else DecisionMemory(self.config.get("memory_path"))
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
 
@@ -63,9 +67,18 @@ class TradingGraph:
         return out
 
     def propagate(self, symbol: str | Instrument, as_of: date | str,
-                  asset_class: str | None = None) -> tuple[TradingState, FinalDecision]:
+                  asset_class: str | None = None,
+                  current_weight: float | None = None) -> tuple[TradingState, FinalDecision]:
+        """Run the firm once for ``symbol`` with information up to the close of ``as_of``.
+
+        ``current_weight`` is the position held going into the decision (portfolio
+        context). The trader and PM see it, and the PM's no-trade band keeps it when
+        the new target is close enough.
+        """
         ins = symbol if isinstance(symbol, Instrument) else Instrument.parse(symbol, asset_class)
         as_of = date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
+        if current_weight is not None and not math.isfinite(current_weight):
+            raise ValueError("current_weight must be a finite number")
         emit = self.on_event
 
         start = as_of - timedelta(days=self.config["lookback_days"])
@@ -74,9 +87,14 @@ class TradingGraph:
         if len(hist) < 30:
             raise ValueError(f"not enough history for {ins.display} up to {as_of} "
                              f"({len(hist)} bars)")
-        state = TradingState(ins, as_of, hist)
-        # Decisions are for the last available bar (as_of may be a weekend/holiday).
+        # Decisions are for the last available bar (as_of may be a weekend/holiday),
+        # but never on a price so old it no longer describes the market.
         bar_date = hist.index[-1].date()
+        stale = (as_of - bar_date).days
+        if stale > self.config.get("max_data_staleness_days", 7):
+            raise ValueError(f"latest {ins.display} bar is {bar_date}, {stale} days before "
+                             f"{as_of}: refusing to decide on stale data")
+        state = TradingState(ins, as_of, hist, current_weight=current_weight)
 
         self.memory.resolve(ins.symbol, as_of, state.last_price)
         state.lessons = self.memory.lessons(ins.symbol, as_of)
@@ -112,6 +130,35 @@ class TradingGraph:
             path = self.save_report(state)
             emit("report", f"saved {path}")
         return state, dec
+
+    def scan(self, symbols: list[str], as_of: date | str,
+             positions: dict[str, float] | None = None) -> pd.DataFrame:
+        """Run the firm over a watchlist and return one row per symbol.
+
+        A symbol that fails (no data, stale data, bad ticker) gets a row with its
+        error instead of stopping the scan. ``positions`` maps symbol -> current weight.
+        """
+        rows = []
+        positions = {k.upper(): v for k, v in (positions or {}).items()}
+        for sym in symbols:
+            try:
+                ins = Instrument.parse(sym)
+                state, d = self.propagate(ins, as_of,
+                                          current_weight=positions.get(ins.symbol))
+                votes = [r for r in state.reports.values() if not r.abstained]
+                rows.append({
+                    "symbol": ins.symbol, "asset_class": ins.asset_class,
+                    "last": state.last_price, "action": d.action.value,
+                    "target_weight": d.target_weight, "confidence": round(d.confidence, 3),
+                    "stop_loss": d.stop_loss, "take_profit": d.take_profit,
+                    "debate": state.debate.winner, "score": round(state.debate.score, 3),
+                    "analysts_voting": len(votes), "approved": d.approved,
+                    "adjustments": "; ".join(d.adjustments), "error": "",
+                })
+            except Exception as e:  # one bad symbol must not kill a watchlist run
+                log.warning("scan: %s failed: %s", sym, e)
+                rows.append({"symbol": sym.upper(), "action": "ERROR", "error": str(e)})
+        return pd.DataFrame(rows)
 
     def save_report(self, state: TradingState) -> Path:
         out = Path(self.config["results_dir"]) / state.instrument.symbol / state.as_of.isoformat()

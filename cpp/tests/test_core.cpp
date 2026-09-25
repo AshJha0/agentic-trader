@@ -1,6 +1,7 @@
 // Dependency-free unit tests for the C++ core. Run via `ctest` or directly.
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 #include <string>
 
 #include "at/backtest.hpp"
@@ -91,6 +92,91 @@ void test_short_clip() {
     check(near(r.metrics.cumulative_return, 0.10), "short profits on decline");
 }
 
+at::BacktestConfig no_cost() {
+    at::BacktestConfig cfg;
+    cfg.cost_bps = 0.0;
+    return cfg;
+}
+
+void test_stop_intraday_and_gap() {
+    // Long 1.0 from 100 with a stop at 95. Bar 1 trades down to 94 -> filled at 95.
+    const at::Series c = {100, 97, 99}, o = {100, 99, 97}, h = {100, 100, 99}, l = {100, 94, 96};
+    at::BacktestInputs in;
+    in.open = o; in.high = h; in.low = l;
+    in.stop = {95, 95, 95};
+    auto r = at::run_backtest_ex(c, at::Series(3, 1.0), no_cost(), in);
+    check(r.stop_exits == 1, "one stop exit");
+    check(near(r.equity[1], 100000 * 0.95), "stop filled at the level, not the close");
+    check(near(r.equity[2], r.equity[1]), "flat after the stop until re-armed");
+    // Gap: bar opens at 90, below the 95 stop -> filled at the open (worse than the stop).
+    in.open = {100, 90, 97}; in.low = {100, 89, 96};
+    r = at::run_backtest_ex(c, at::Series(3, 1.0), no_cost(), in);
+    check(near(r.equity[1], 100000 * 0.90), "gap through the stop fills at the open");
+}
+
+void test_take_profit_and_short() {
+    const at::Series c = {100, 104, 104}, o = {100, 101, 104}, h = {100, 106, 104}, l = {100, 100, 104};
+    at::BacktestInputs in;
+    in.open = o; in.high = h; in.low = l;
+    in.take = {105, 105, 105};
+    auto r = at::run_backtest_ex(c, at::Series(3, 1.0), no_cost(), in);
+    check(near(r.equity[1], 100000 * 1.05), "take-profit filled at the target");
+    // Short with stop 103: bar 1 high 106 -> stopped at 103, loss 3%.
+    in.take.clear();
+    in.stop = {103, 103, 103};
+    r = at::run_backtest_ex(c, at::Series(3, -1.0), no_cost(), in);
+    check(near(r.equity[1], 100000 * 0.97), "short stop above entry");
+}
+
+void test_stop_before_target_same_bar() {
+    const at::Series c = {100, 100}, o = {100, 100}, h = {100, 110}, l = {100, 90};
+    at::BacktestInputs in;
+    in.open = o; in.high = h; in.low = l;
+    in.stop = {95, 95}; in.take = {105, 105};
+    auto r = at::run_backtest_ex(c, at::Series(2, 1.0), no_cost(), in);
+    check(near(r.equity[1], 100000 * 0.95), "both levels in one bar: stop assumed first");
+}
+
+void test_rearm_on_rebalance() {
+    const at::Series c = {100, 95, 95, 100}, o = c, h = c, l = {100, 90, 95, 95};
+    at::BacktestInputs in;
+    in.open = o; in.high = h; in.low = l;
+    in.stop = {96, 96, 90, 90};
+    in.rebalance = {1, 0, 1, 0};
+    auto r = at::run_backtest_ex(c, at::Series(4, 1.0), no_cost(), in);
+    check(r.stop_exits == 1 && r.positions[1] == 0.0 && r.positions[2] == 1.0,
+          "stopped, then re-entered at the next rebalance");
+}
+
+void test_carry_series_and_validation() {
+    const at::Series p(3, 1.0);
+    at::BacktestConfig cfg = no_cost();
+    cfg.periods_per_year = 100;
+    at::BacktestInputs in;
+    in.carry = {0.10, 0.20, 0.0};
+    auto r = at::run_backtest_ex(p, at::Series(3, 1.0), cfg, in);
+    check(near(r.equity.back(), 100000 * 1.001 * 1.002), "per-bar carry series");
+
+    bool threw = false;
+    try { at::run_backtest(at::Series{100, 0, 101}, at::Series(3, 1.0), cfg); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check(threw, "non-positive price rejected");
+    threw = false;
+    at::BacktestInputs bad;
+    bad.stop = {1, 1, 1};
+    try { at::run_backtest_ex(p, at::Series(3, 1.0), cfg, bad); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check(threw, "stop levels without OHLC rejected");
+}
+
+void test_exposure_and_tstat() {
+    const at::Series p = {100, 101, 100, 102, 101};
+    const auto r = at::run_backtest(p, at::Series{0.5, 0.5, 0.0, 0.0, 0.0}, no_cost());
+    check(near(r.metrics.avg_exposure, 0.25), "average exposure = mean |w| per period");
+    check(std::fabs(r.metrics.sharpe_tstat - r.metrics.sharpe * std::sqrt(4.0 / 252.0)) < 1e-12,
+          "t-stat = annual Sharpe * sqrt(n / periods_per_year)");
+}
+
 void test_risk() {
     const at::Series r = {-0.05, -0.02, 0.0, 0.01, 0.03};
     check(near(at::quantile(r, 0.5), 0.0), "median");
@@ -111,6 +197,12 @@ int main() {
     test_backtest_buy_hold();
     test_backtest_costs_and_carry();
     test_short_clip();
+    test_stop_intraday_and_gap();
+    test_take_profit_and_short();
+    test_stop_before_target_same_bar();
+    test_rearm_on_rebalance();
+    test_carry_series_and_validation();
+    test_exposure_and_tstat();
     test_risk();
     if (failures == 0) std::printf("all C++ core tests passed\n");
     return failures == 0 ? 0 : 1;

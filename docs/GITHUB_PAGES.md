@@ -30,7 +30,7 @@ names begin with an underscore, add an empty `docs/.nojekyll` so Pages serves th
 
 | URL | Content |
 |---|---|
-| `/` | `docs/index.html`: the landing page (numbers block, honesty note, boundary strip, component cards, sample decision, real-price backtest, quick start) |
+| `/` | `docs/index.html`: the landing page (numbers block, honesty note, boundary strip, out-of-sample results tables, component cards, sample decision, sample watchlist scan, quick start) |
 | Everything else | Linked to Markdown rendered on github.com: `LEARN.md`, `COOKBOOK.md`, `docs/architecture/overview.md`, `docs/DIAGRAMS.md`, `docs/SPECIFICATION.md`, `docs/threat-model/threat-model.md`, `docs/evaluation/evaluation.md`, `docs/api/api.md` |
 
 The Mermaid diagrams in `docs/DIAGRAMS.md` render natively on github.com; no plugin is
@@ -43,13 +43,18 @@ change the code, re-check them against these sources:
 
 | Figure | How to re-measure |
 |---|---|
-| Test counts | `pytest --collect-only -q` (per file), and the `check(` calls in `cpp/tests/test_core.cpp` |
+| Test counts | `pytest --collect-only -q` (per file); the `void test_` functions and `check(` calls in `cpp/tests/test_core.cpp` |
 | CI jobs | `.github/workflows/ci.yml` matrix: 5 Python versions + 3 OSes |
 | Decision latency | Time `TradingGraph(...).propagate("AAPL", "2024-03-01")` over 20 runs after one warm-up run |
 | LLM calls per decision | Cookbook recipe 17 (prints `14 4 10` at default rounds) |
-| Synthetic evaluation | `python examples/compare_baselines.py` |
-| Real-price evaluation | `agentic-trader backtest <SYM> --data yahoo --start 2024-01-02 --end 2024-03-28 --every 5` |
-| Code size | Non-empty lines in `agentic_trader/**/*.py` and `cpp/**/*.{cpp,hpp}` |
-| Cookbook | Run every ```python block in `COOKBOOK.md`; all must exit 0 |
+| Real-price evaluation (per instrument, design / holdout / paper) | `agentic-trader evaluate --data yahoo --periods design,holdout,paper --out results/eval_v03.json`; the same with `--rules v02` for the "before" column |
+| Ablation table | The 16 config overrides listed in `docs/evaluation/evaluation.md`, each run with `evaluate(periods={"design": PERIODS["design"]})` |
+| Portfolio results | `agentic-trader portfolio <15 symbols> --data yahoo --start 2022-01-03 --end 2026-06-30` (and the design dates) |
+| Code size | Non-empty lines in `agentic_trader/**/*.py`, `tests/**/*.py` and `cpp/**/*.{cpp,hpp}` |
+| Cookbook | Run every ```python block in `COOKBOOK.md`; all must exit 0 (recipe 35 needs network) |
+| Diagrams | Parse every ```mermaid block in `docs/DIAGRAMS.md` with Mermaid 11 |
+
+The evaluation tables are generated from the saved JSON with pandas (`to_markdown`), not
+typed by hand. Keep it that way.
 
 A wrong number on the landing page is a documentation bug. Treat it like one.

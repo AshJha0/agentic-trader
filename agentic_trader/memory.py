@@ -9,9 +9,13 @@ backtest never sees the future through memory.
 from __future__ import annotations
 
 import json
+import logging
+import os
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,17 +37,27 @@ class DecisionMemory:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else None
         self.entries: list[MemoryEntry] = []
+        self.skipped_lines = 0
         if self.path and self.path.exists():
-            for line in self.path.read_text(encoding="utf-8").splitlines():
-                if line.strip():
+            for n, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
+                if not line.strip():
+                    continue
+                try:
                     self.entries.append(MemoryEntry(**json.loads(line)))
+                except (json.JSONDecodeError, TypeError) as e:
+                    # A torn write or a hand edit must not make every later run crash.
+                    self.skipped_lines += 1
+                    log.warning("memory %s line %d unreadable, skipped: %s", self.path, n, e)
 
     def _save(self) -> None:
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text("".join(json.dumps(asdict(e)) + "\n" for e in self.entries),
-                             encoding="utf-8")
+        # Write-then-rename so a crash mid-write never leaves a half-written log.
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text("".join(json.dumps(asdict(e)) + "\n" for e in self.entries),
+                       encoding="utf-8")
+        os.replace(tmp, self.path)
 
     def record(self, symbol: str, as_of: date, action: str, weight: float, price: float,
                summary: str, horizon_days: int = 10) -> None:
