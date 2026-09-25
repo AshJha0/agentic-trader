@@ -9,7 +9,7 @@ from .graph import TradingGraph
 from .instruments import Instrument
 from .state import Action, FinalDecision, TradingState
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["TradingGraph", "run_agent_backtest", "ComparisonReport", "DEFAULT_CONFIG",
            "make_config", "Instrument", "Action", "FinalDecision", "TradingState"]

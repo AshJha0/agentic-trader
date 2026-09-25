@@ -1,6 +1,17 @@
 # AgenticTrader
 
 [![CI](https://github.com/AshJha0/agentic-trader/actions/workflows/ci.yml/badge.svg)](https://github.com/AshJha0/agentic-trader/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-ashjha0.github.io%2Fagentic--trader-16697a)](https://ashjha0.github.io/agentic-trader/)
+
+**Documentation site: https://ashjha0.github.io/agentic-trader/**
+
+| Guide | For |
+|---|---|
+| [LEARN.md](LEARN.md) | The concepts, how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 25 copy-pasteable recipes |
+| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions |
+| [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; threats mapped to controls and tests |
+| [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Measured results and caveats; full API and CLI reference |
 
 AgenticTrader is a multi-agent LLM trading framework for **equities and FX**. It has a
 **C++ quant core** (indicators, backtester, risk) exposed to **Python** through pybind11.
