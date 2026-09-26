@@ -44,6 +44,13 @@ your understanding. Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail 
 25. [Is a Sharpe ratio real? Selection and deflation](#25-is-a-sharpe-ratio-real-selection-and-deflation)
 26. [Reading the results honestly](#26-reading-the-results-honestly)
 
+**Part V — v0.5: a wider test, real execution costs, and running it**
+
+27. [A holdout is spent the moment you look at it](#27-a-holdout-is-spent-the-moment-you-look-at-it)
+28. [Execution costs belong in the backtest, not in a footnote](#28-execution-costs-belong-in-the-backtest-not-in-a-footnote)
+29. [Cross-sectional alphas: rank the room, not the stock](#29-cross-sectional-alphas-rank-the-room-not-the-stock)
+30. [Operating the desk: budgets in dollars, records that survive, keys that are real](#30-operating-the-desk-budgets-in-dollars-records-that-survive-keys-that-are-real)
+
 ---
 
 # Part I — the trading desk
@@ -221,7 +228,7 @@ tools on 5 servers: `market_data` (history, news, social, fundamentals, macro), 
 read-only, risk level, required capabilities, evidence type. `RecordingProvider` makes the
 desk's analysts reach data through these tools without changing the analysts.
 
-**Numbers.** 15 tools, 5 servers, schemas with `additionalProperties: false`; arguments are
+**Numbers.** 16 tools, 5 servers, schemas with `additionalProperties: false`; arguments are
 coerced (dates, integers, bounds) and unknown arguments are refused.
 
 **Questions.**
@@ -573,3 +580,109 @@ critic and reporter change decisions for the better. The layer's value is demons
   the period.
 - The evaluation reports what the desk cannot do. What would you want to see before trusting
   a report that only listed what it can?
+
+## 27. A holdout is spent the moment you look at it
+
+**The idea.** A holdout period proves something only while nobody has used it for a choice.
+v0.3 chose its rules on 2016–2021 and judged them once on 2022–2026; v0.4 then *reported*
+the holdout, compared variants against it and wrote it on the landing page. From that moment
+any new rule that "improves the holdout" is being fitted to it. The honest response is to
+declare what "unseen" means from now on, before there is a new rule to test.
+
+**In the repo.** v0.5 widens the universe from 15 to 60 instruments and partitions it:
+`UNIVERSES["core"]` (the 15 every choice was made on) and `UNIVERSES["extended"]` (26
+sector equities, 9 rates / credit / commodity ETFs, 10 FX crosses) that no choice ever
+consulted, so the extended names are out of sample on *every* period, including the design
+period. `PERIODS["reserve"]` (2026-07-01 → 2026-09-25) is untouched by every published
+number and grows with time. Every result row carries a `universe` tag; `summary(universe=)`
+and `evaluate --universe core|extended|all` keep the two apart. The protocol for the next
+rule change is written in the evaluation: choose on the core design period, then judge on
+the extended universe and the reserve period, and report all three.
+
+**Numbers.** The extended universe is a harder test: on its holdout the desk's mean Sharpe
+is 0.37 against 0.50 for buy & hold (core: 0.44 vs 0.55), it beats buy & hold on 14 of 45
+names, and its drawdown is 17.7% against 27.2%. The story from the core universe (no
+Sharpe edge per instrument, about half the drawdown) survives; it does not get better.
+
+**Questions.**
+- The reserve period is three months. What is it good for now, and what would it take
+  for it to become the primary holdout?
+- Why is a universe partition a stronger out-of-sample test than a time partition for a
+  rule that was tuned on one set of names?
+
+## 28. Execution costs belong in the backtest, not in a footnote
+
+**The idea.** Close-to-close fills with a fixed bps cost are fine for a $100k account trading
+large caps and wrong for a $1B one: market impact grows with the square root of the trade's
+share of daily volume, so the same strategy has a different Sharpe at a different size. If
+the execution model lives only in a separate simulator, the backtest is quietly assuming the
+account is small.
+
+**In the repo.** `costs.impact_coeff` turns the execution simulator's square-root model into
+a per-bar coefficient for the backtester: a trade of `|dw|` costs `|dw|^1.5 · K_t` of equity
+with `K_t = coeff · daily_vol_t · sqrt(capital / (price_t · ADV_t))`, everything known at the
+close of bar `t` (trailing 20-day volatility and volume). The engine (C++ and the numpy twin)
+charges it on entries, exits and stop fills, reports `impact_paid`, and the same series is
+applied to every baseline so the comparison stays fair. FX has no exchange volume and gets
+no impact unless `costs.fx_adv_notional` is set. `--impact 1.0 --capital 1e9` on the
+backtest, portfolio and evaluation commands.
+
+**Numbers.** On the core universe with the textbook coefficient, impact over the six-year
+design period is 0.08% of equity at $100k, 0.8% at $10M and 7.7% at $1B for the desk (mean
+Sharpe 0.65 → 0.64 → 0.56). The surprise is the direction of the ranking: the daily
+volatility-target baseline, with ~1,100 trades, pays *less* (5.7% at $1B) than the desk with
+~106, because a square-root law makes many tiny adjustments cheap and a few large jumps
+dear; MACD, which flips whole positions, loses 75% to impact at $1B and its Sharpe goes
+negative. The evaluation has the full sweep.
+
+**Questions.**
+- Why does impact per trade scale with `|dw|^1.5`, and what does that imply for a strategy
+  that rebalances rarely but in big steps?
+- At which account size does the desk's ranking against the vol-target control change,
+  and what does that say about quoting a Sharpe ratio without a capital figure?
+
+## 29. Cross-sectional alphas: rank the room, not the stock
+
+**The idea.** A time-series alpha asks whether one instrument will go up. A cross-sectional
+alpha asks which instruments will do better than the others today, which removes the
+market's common move and is how most equity quant desks actually use momentum, reversal
+and quality signals. The same raw signal can be near-useless as a timing tool and useful as a
+ranking tool.
+
+**In the repo.** `xalpha.py` computes the library's signals per instrument, then standardises
+them across the names of a group every day (z-score or rank; equities and FX separately, so
+an FX cross never ranks against a stock). Evaluation is per date: Spearman IC across names,
+summarised as the mean IC, an information ratio, a t-statistic that only counts one
+independent observation per horizon (daily ICs of a 10-day return overlap), the share of
+positive days, top-minus-bottom quantile spreads rebalanced every horizon and breadth.
+`xalpha_report`, `xalpha_snapshot`, the `quant.xalpha` tool and `agentic-trader xalpha`.
+It is a research layer: no analyst consumes it yet, deliberately (see 27 for the bar a new
+input has to clear).
+
+**Questions.**
+- Why must a cross-sectional score be computed within an asset class?
+- The t-statistic divides the day count by the horizon. What happens to it if you forget?
+
+## 30. Operating the desk: budgets in dollars, records that survive, keys that are real
+
+**The idea.** Three things separate a research tool from something you can leave running:
+a spend cap in the unit the invoice uses, records that outlive the process, and a service
+that refuses to be deployed insecurely by default.
+
+**In the repo.** `max_llm_cost_usd` caps estimated spend (list prices, cache-aware) next to
+`max_llm_calls`; an Opus call is roughly fifteen Haiku calls, so a call count alone does not
+bound a bill. `agentic.task_db` (or `serve --task-db`) writes every run to SQLite at each
+state transition; a new process serves old records through the same routes, and anything
+left mid-flight by a crash is marked FAILED "process restarted", never silently resumed.
+`serve` refuses a non-loopback bind with the shipped development keys, warns about plain
+HTTP off loopback, takes `--ssl-cert/--ssl-key`, and `make_config` now *replaces*
+`agentic.api_keys` instead of merging into the dev keys. Underneath, `tests/test_fuzz.py`
+fuzzes the Python ↔ C++ boundary with hypothesis: every quant function on NaN, ±inf, empty
+and huge inputs must either answer or raise `ValueError`, and both backends must agree on
+sane inputs. It found five real divergences on its first run (see the changelog), which is
+the point.
+
+**Questions.**
+- Why is an in-flight task failed on restart instead of resumed?
+- The fuzzer's "backends agree" property is only asserted for |x| ≤ 1e6. What breaks above
+  ~2^53, and is that a bug?

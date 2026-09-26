@@ -7,16 +7,22 @@ generated from the saved result files rather than typed. To reproduce them, see
 
 > **Scope.** All results use the **rule-based agents** (offline mode, no LLM) on **real
 > prices** from Yahoo Finance. The LLM mode has **not** been evaluated, so nothing here
-> describes Claude's trading performance. The trading measurements were taken on 2026-09-25
-> and the v0.4 engineering measurements on 2026-09-26, both with the C++ backend.
+> describes Claude's trading performance. The core-universe measurements were taken on
+> 2026-09-25, the extended-universe, reserve-period and impact-sweep measurements on
+> 2026-09-26, all with the C++ backend and the frozen v0.3 rules.
 
 ## Summary
 
 - **Out of sample, the agents do not beat buy & hold on Sharpe instrument by instrument.**
-  Holdout mean Sharpe is 0.44 against 0.55 for buy & hold, over 15 instruments. In equities
-  alone it is 0.63 against 0.68.
+  Holdout mean Sharpe is 0.44 against 0.55 for buy & hold over the 15 core instruments, and
+  0.37 against 0.50 over the 45 extended instruments that no rule choice ever consulted
+  (v0.5). In core equities alone it is 0.63 against 0.68.
 - **They consistently take about half the drawdown.** Holdout equity mean maximum drawdown is
-  19.1% against 40.2% for buy & hold, and it is lower in every period.
+  19.1% against 40.2% for buy & hold on the core universe, 17.7% against 27.2% on the
+  extended one, and it is lower in every period and on 40 of the 45 extended names.
+- **Execution costs do not change the ranking below institutional size.** With square-root
+  market impact on (v0.5), the desk's mean Sharpe on the core universe is unchanged at
+  $100k, 0.01 lower at $10M and 0.09 lower at $1B; signal-flipping baselines lose far more.
 - **As a portfolio of all 15 instruments they beat plain buy & hold on Sharpe** in both
   periods: 1.14 against 1.06 on the holdout, with a drawdown of 6.8% against 20.8%. They do
   **not** beat buy & hold scaled to the same volatility target (1.24).
@@ -42,12 +48,14 @@ generated from the saved result files rather than typed. To reproduce them, see
 | **Design** | `design` | 2016-01-04 → 2021-12-31 | The **only** data used to choose rule changes and defaults |
 | **Holdout** | `holdout` | 2022-01-03 → 2026-06-30 | Run **once**, with frozen rules. Never used for a choice |
 | **Q1 2024** | `q1_2024` | 2024-01-02 → 2024-03-28 | A short reference window inside the holdout, kept because a single quarter is what many published LLM-trading results are based on |
+| **Reserve** | `reserve` | 2026-07-01 → 2026-09-25 | v0.5. Untouched by every choice and every number quoted anywhere else; it grows with time and is part of the fresh holdout for the next rule change (see [the next rule change](#the-next-rule-change-what-counts-as-unseen)) |
 
 ### Settings
 
 | Item | Setting |
 |---|---|
-| Universe | 10 equities: AAPL, NVDA, MSFT, META, GOOGL, AMZN, JPM, XOM, JNJ and SPY (large-cap technology plus financials, energy, healthcare and the index). 5 FX pairs: EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD |
+| Core universe | The 15 instruments every rule choice through v0.4 was made on. 10 equities: AAPL, NVDA, MSFT, META, GOOGL, AMZN, JPM, XOM, JNJ and SPY (large-cap technology plus financials, energy, healthcare and the index). 5 FX pairs: EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD |
+| Extended universe (v0.5) | 45 instruments that no choice ever consulted. 26 equities across sectors and styles: UNH, V, MA, PG, HD, COST, WMT, KO, PEP, CVX, LLY, ABBV, MRK, BAC, GS, CAT, BA, BRK-B, QQQ, IWM, XLF, XLE, XLV, XLU, EEM, EFA. 9 rates / credit / commodity / real-estate ETFs, traded as equities: TLT, IEF, LQD, HYG, GLD, SLV, USO, DBC, VNQ. 10 FX crosses whose both legs have FRED policy-rate series: NZDUSD, USDCHF, EURGBP, EURJPY, GBPJPY, AUDJPY, EURCHF, AUDNZD, CADJPY, EURAUD |
 | Prices | Yahoo Finance daily, dividend- and split-adjusted (total return) |
 | News and fundamentals | None for historical dates. Yahoo serves only recent news and current-snapshot fundamentals, and the point-in-time guards refuse both, so the news and fundamentals analysts have no data |
 | FX macro | Point-in-time **FRED** policy rates. Values are publication-lagged (daily series by 1 day, monthly averages by about 40 days) and treated as unavailable when stale. Carry is accrued per bar from the same series |
@@ -326,7 +334,190 @@ mean Sharpe ratios as the trials:
 The same report is available for any returns series with `agentic-trader stats returns.csv
 --trial-sharpes ...` (cookbook recipe 56).
 
-## Holdout per instrument
+## The extended universe (v0.5): out of sample on every period
+
+Every rule choice through v0.4 was made on the 15 core instruments, and by v0.4 the holdout
+itself had been reported and compared against, so it no longer counts as unseen. v0.5 adds
+45 instruments that no choice ever consulted, which makes them out of sample on *every*
+period, including the design period. The rules are the frozen v0.3 defaults; nothing was
+tuned for the new names.
+
+### Headline results, extended universe (45 instruments)
+
+| period | class | strategy | n | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean exposure % | mean trades |
+|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|
+| design | equity + ETF | **AgenticTrader** | 35 | 0.70 | 0.66 | 62.95 | 20.10 | 64.32 | 83.77 |
+| design | equity + ETF | Buy & hold | 35 | 0.70 | 0.70 | 133.13 | 37.37 | 100.00 | 1.00 |
+| design | equity + ETF | B&H vol-target | 35 | 0.77 | 0.77 | 91.70 | 22.52 | 81.82 | 838.91 |
+| design | fx | **AgenticTrader** | 10 | -0.24 | -0.25 | -6.84 | 14.61 | 48.63 | 164.60 |
+| design | fx | Buy & hold | 10 | 0.05 | 0.04 | 0.45 | 18.11 | 100.00 | 1.00 |
+| design | fx | B&H vol-target | 10 | 0.05 | 0.02 | 0.38 | 17.67 | 99.10 | 76.30 |
+| design | all | **AgenticTrader** | 45 | **0.49** | **0.56** | 47.44 | 18.88 | 60.83 | 101.73 |
+| design | all | Buy & hold | 45 | 0.56 | 0.60 | 103.65 | 33.09 | 100.00 | 1.00 |
+| design | all | B&H vol-target | 45 | 0.61 | 0.64 | 71.41 | 21.44 | 85.66 | 669.44 |
+| holdout | equity + ETF | **AgenticTrader** | 35 | 0.45 | 0.45 | 30.94 | 19.43 | 59.40 | 77.17 |
+| holdout | equity + ETF | Buy & hold | 35 | 0.53 | 0.58 | 74.53 | 30.79 | 100.00 | 1.00 |
+| holdout | equity + ETF | B&H vol-target | 35 | 0.49 | 0.50 | 41.96 | 23.17 | 77.75 | 769.86 |
+| holdout | fx | **AgenticTrader** | 10 | 0.12 | 0.17 | 4.54 | 11.48 | 57.01 | 104.20 |
+| holdout | fx | Buy & hold | 10 | 0.39 | 0.30 | 19.53 | 14.44 | 100.00 | 1.00 |
+| holdout | fx | B&H vol-target | 10 | 0.39 | 0.32 | 19.32 | 13.84 | 99.43 | 40.50 |
+| holdout | all | **AgenticTrader** | 45 | **0.37** | **0.42** | 25.07 | 17.66 | 58.87 | 83.18 |
+| holdout | all | Buy & hold | 45 | 0.50 | 0.57 | 62.31 | 27.16 | 100.00 | 1.00 |
+| holdout | all | B&H vol-target | 45 | 0.47 | 0.50 | 36.93 | 21.10 | 82.57 | 607.78 |
+| q1_2024 | all | **AgenticTrader** | 45 | 1.64 | 2.36 | 4.57 | 3.59 | 69.64 | 3.89 |
+| q1_2024 | all | Buy & hold | 45 | 2.11 | 2.47 | 6.77 | 4.86 | 100.00 | 1.00 |
+| q1_2024 | all | B&H vol-target | 45 | 2.11 | 2.34 | 6.15 | 4.13 | 90.83 | 24.04 |
+| reserve | all | **AgenticTrader** | 45 | -0.07 | -0.01 | 0.81 | 4.74 | 58.05 | 4.62 |
+| reserve | all | Buy & hold | 45 | 0.01 | 0.07 | 1.66 | 8.13 | 100.00 | 1.00 |
+| reserve | all | B&H vol-target | 45 | 0.02 | 0.11 | 0.80 | 5.75 | 79.01 | 35.07 |
+
+The 9 macro ETFs alone (rates, credit, commodities, real estate): holdout mean Sharpe 0.33
+against 0.34 for buy & hold and 0.34 vol-targeted, with a mean drawdown of 19.2% against
+30.2%; design 0.54 against 0.54 and 0.58. The desk treats them as equities (strategic weight
+1.0), and they behave like the equity sleeves: parity on Sharpe, lower drawdown.
+
+**Head to head, extended universe** (instruments on which the agent's Sharpe exceeds the
+baseline's, of 45, with the median difference):
+
+| period | Buy & hold | B&H vol-target | SMA(20/50) | MACD | KDJ+RSI | ZMR |
+|:--|--:|--:|--:|--:|--:|--:|
+| design | 18 (−0.02) | 10 (−0.10) | 27 (+0.06) | 28 (+0.05) | 31 (+0.19) | 36 (+0.33) |
+| holdout | 14 (−0.13) | 14 (−0.07) | 36 (+0.23) | 23 (+0.02) | 24 (+0.03) | 30 (+0.17) |
+| q1_2024 | 9 (−0.09) | 13 (−0.09) | 27 (+0.16) | 35 (+1.09) | 23 (+0.15) | 27 (+0.63) |
+| reserve | 16 (−0.08) | 16 (−0.14) | 29 (+0.20) | 30 (+0.56) | 14 (−0.37) | 18 (−0.51) |
+
+**Reading it.**
+
+- **The core-universe story survives, and it does not improve.** On names the rules never
+  saw, the desk again does not beat buy & hold on Sharpe (14 of 45 on the holdout, median
+  difference −0.13) and again takes about two thirds of the drawdown (17.7% against 27.2%;
+  lower on 40 of 45). The gap to buy & hold is a little wider than on the core universe
+  (0.13 against 0.11 of Sharpe), which is what one expects when a rule set moves from the
+  names it was tuned on to names it was not.
+- **FX crosses are the weak spot.** On the design period the desk *loses* on the 10 crosses
+  (−0.24 mean Sharpe against +0.05) and on the holdout it trails (0.12 against 0.39). The
+  strategic FX weight is 0, so every FX return comes from directional calls, and on crosses
+  those calls are worse than on the dollar pairs the rules were chosen on.
+- **The reserve period is three months and says little**, as expected: every strategy is
+  near zero on the extended universe and the desk trails plain buy & hold on the core one
+  (0.72 against 1.01). It is reported because it will be the primary holdout as it grows.
+- **Q1 2024 stays a weak test**: the extended-universe Sharpe of every strategy is above 1.6
+  with drawdowns under 5%.
+
+### Extended universe, holdout per instrument
+
+| symbol | group | agent Sharpe | B&H Sharpe | vol-target B&H Sharpe | agent CR % | B&H CR % | agent MDD % | B&H MDD % | agent trades |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| UNH | equity | -0.27 | 0.10 | -0.08 | -20.60 | -10.29 | 33.90 | 61.39 | 94 |
+| V | equity | 0.27 | 0.58 | 0.49 | 12.63 | 60.31 | 16.60 | 24.14 | 88 |
+| MA | equity | 0.09 | 0.46 | 0.26 | 1.31 | 42.17 | 21.56 | 28.25 | 85 |
+| PG | equity | 0.02 | 0.10 | 0.10 | -1.85 | 0.95 | 16.35 | 23.77 | 94 |
+| HD | equity | 0.10 | 0.09 | 0.02 | 2.21 | -3.17 | 20.79 | 34.20 | 89 |
+| COST | equity | 0.66 | 0.65 | 0.85 | 44.31 | 73.59 | 16.57 | 31.40 | 82 |
+| WMT | equity | 1.03 | 1.02 | 1.12 | 89.21 | 148.41 | 14.92 | 25.74 | 73 |
+| KO | equity | 0.53 | 0.69 | 0.58 | 27.08 | 56.46 | 12.15 | 17.27 | 81 |
+| PEP | equity | -0.06 | -0.02 | -0.03 | -6.47 | -9.55 | 22.87 | 30.32 | 92 |
+| CVX | equity | 0.28 | 0.58 | 0.58 | 14.45 | 66.41 | 26.87 | 24.95 | 89 |
+| LLY | equity | 1.02 | 1.20 | 1.25 | 89.83 | 359.65 | 23.70 | 34.48 | 81 |
+| ABBV | equity | 0.70 | 0.86 | 0.89 | 53.88 | 118.98 | 18.61 | 21.92 | 84 |
+| MRK | equity | 0.79 | 0.74 | 0.60 | 52.84 | 91.79 | 21.43 | 43.44 | 91 |
+| BAC | equity | 0.33 | 0.40 | 0.32 | 18.05 | 38.06 | 27.81 | 46.64 | 94 |
+| GS | equity | 0.81 | 0.97 | 0.84 | 64.37 | 185.81 | 24.88 | 30.90 | 86 |
+| CAT | equity | 1.51 | 1.37 | 1.39 | 185.69 | 456.43 | 15.80 | 34.05 | 78 |
+| BA | equity | 0.20 | 0.21 | 0.04 | 8.30 | 4.12 | 31.90 | 48.73 | 64 |
+| BRK-B | equity | 0.56 | 0.74 | 0.68 | 31.23 | 66.33 | 17.51 | 26.58 | 67 |
+| QQQ | equity | 0.90 | 0.72 | 0.88 | 58.10 | 88.42 | 14.68 | 34.84 | 75 |
+| IWM | equity | 0.45 | 0.45 | 0.35 | 24.57 | 41.02 | 17.45 | 27.50 | 82 |
+| XLF | equity | 0.49 | 0.55 | 0.49 | 24.52 | 46.53 | 17.39 | 25.81 | 70 |
+| XLE | equity | 0.48 | 0.80 | 0.71 | 30.31 | 117.15 | 16.24 | 26.04 | 82 |
+| XLV | equity | -0.04 | 0.37 | 0.32 | -3.78 | 22.46 | 16.89 | 17.11 | 74 |
+| XLU | equity | 0.43 | 0.57 | 0.43 | 22.17 | 46.43 | 16.24 | 25.26 | 77 |
+| EEM | equity | 0.75 | 0.59 | 0.50 | 44.30 | 54.07 | 12.48 | 32.71 | 70 |
+| EFA | equity | 0.64 | 0.62 | 0.46 | 31.56 | 50.59 | 12.19 | 28.74 | 63 |
+| TLT | macro ETF | -0.55 | -0.42 | -0.48 | -21.55 | -29.74 | 22.74 | 39.86 | 85 |
+| IEF | macro ETF | -0.03 | -0.10 | -0.10 | -1.29 | -4.79 | 10.59 | 18.79 | 42 |
+| LQD | macro ETF | 0.41 | 0.03 | 0.04 | 11.01 | -0.39 | 6.51 | 22.73 | 49 |
+| HYG | macro ETF | 0.77 | 0.52 | 0.52 | 18.38 | 18.41 | 8.04 | 15.54 | 23 |
+| GLD | macro ETF | 1.16 | 1.02 | 1.18 | 87.69 | 118.80 | 14.93 | 26.21 | 70 |
+| SLV | macro ETF | 0.77 | 0.74 | 0.84 | 71.86 | 152.40 | 20.02 | 50.97 | 74 |
+| USO | macro ETF | 0.28 | 0.59 | 0.59 | 15.76 | 94.09 | 35.51 | 36.23 | 87 |
+| DBC | macro ETF | 0.21 | 0.55 | 0.52 | 8.25 | 46.85 | 34.44 | 27.34 | 82 |
+| VNQ | macro ETF | -0.06 | 0.10 | -0.03 | -5.54 | -0.06 | 19.54 | 33.97 | 84 |
+| NZDUSD | fx | -0.39 | -0.34 | -0.41 | -9.83 | -17.16 | 21.82 | 20.77 | 149 |
+| USDCHF | fx | 0.30 | -0.06 | -0.07 | 7.12 | -3.62 | 7.78 | 19.28 | 109 |
+| EURGBP | fx | -0.48 | -0.06 | 0.14 | -8.00 | -4.25 | 10.48 | 18.41 | 93 |
+| EURJPY | fx | 0.62 | 1.10 | 1.11 | 16.58 | 55.36 | 8.77 | 10.23 | 86 |
+| GBPJPY | fx | 0.63 | 1.14 | 1.12 | 18.34 | 62.21 | 9.55 | 11.28 | 89 |
+| AUDJPY | fx | 0.76 | 0.89 | 0.83 | 23.14 | 53.30 | 11.77 | 17.94 | 102 |
+| EURCHF | fx | -0.41 | -0.26 | -0.26 | -7.00 | -7.09 | 9.30 | 11.26 | 108 |
+| AUDNZD | fx | 0.04 | 0.51 | 0.51 | 0.35 | 11.12 | 9.67 | 8.81 | 98 |
+| CADJPY | fx | 0.42 | 0.86 | 0.86 | 11.29 | 44.07 | 9.40 | 12.35 | 99 |
+| EURAUD | fx | -0.31 | 0.08 | 0.10 | -6.62 | 1.34 | 16.24 | 14.05 | 109 |
+
+Lower drawdown than buy & hold on 40 of 45; higher Sharpe on 14 of 45 (CAT, WMT, COST, MRK,
+QQQ, EEM, EFA, HD, IWM-tie, LQD, HYG, GLD, SLV, USDCHF). The five where the drawdown is
+*not* lower are the two low-volatility FX crosses (NZDUSD, AUDNZD), EURAUD, CVX and DBC.
+
+## Execution costs: the impact sweep (v0.5)
+
+The backtests above fill at the close with a fixed bps cost, which assumes an account small
+enough not to move prices. v0.5 charges the execution simulator's square-root market impact
+inside the backtester (`costs.impact_coeff`, see [the architecture](../architecture/overview.md)):
+a trade of `|dw|` costs `|dw|^1.5 · K_t` of equity, `K_t = coeff · daily_vol_t ·
+sqrt(capital / (price_t · ADV_t))`, applied to the desk and to every baseline. The core
+universe, textbook coefficient 1.0, three account sizes; "impact %" is the cumulative cost
+paid over the period as a percentage of equity, averaged over the 15 instruments.
+
+| strategy | period | Sharpe (off) | $100k | $10M | $1B | impact % $100k | $10M | $1B |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|
+| **AgenticTrader** | design | 0.65 | 0.65 | 0.64 | **0.56** | 0.08 | 0.77 | 7.70 |
+| B&H vol-target | design | 0.67 | 0.67 | 0.67 | 0.62 | 0.06 | 0.57 | 5.74 |
+| Buy & hold | design | 0.62 | 0.62 | 0.62 | 0.62 | 0.01 | 0.10 | 0.97 |
+| SMA(20/50) | design | 0.59 | 0.58 | 0.57 | 0.41 | 0.21 | 2.12 | 21.16 |
+| MACD | design | 0.42 | 0.41 | 0.35 | **-0.24** | 0.75 | 7.54 | 75.35 |
+| **AgenticTrader** | holdout | 0.44 | 0.44 | 0.43 | **0.35** | 0.05 | 0.52 | 5.20 |
+| B&H vol-target | holdout | 0.56 | 0.56 | 0.55 | 0.52 | 0.03 | 0.33 | 3.25 |
+| Buy & hold | holdout | 0.55 | 0.55 | 0.55 | 0.54 | 0.00 | 0.05 | 0.48 |
+| SMA(20/50) | holdout | 0.26 | 0.26 | 0.24 | 0.12 | 0.13 | 1.29 | 12.93 |
+| MACD | holdout | 0.21 | 0.20 | 0.15 | **-0.31** | 0.47 | 4.72 | 47.23 |
+
+**Reading it.**
+
+- **Impact is invisible at $100k and small at $10M** for every strategy; the published
+  tables (impact off) describe accounts up to that size well.
+- **At $1B it is material and it reorders the baselines, not the desk's verdict.** The desk
+  pays 7.7% of equity over six years and loses 0.09 of Sharpe; it still trails the
+  vol-targeted control (0.56 against 0.62) and still beats the rule-based baselines, by
+  more than before.
+- **Many small trades are cheaper than a few large ones.** The daily vol-target baseline
+  makes ~1,100 trades and pays *less* impact than the desk's ~106, because the cost of a trade
+  grows with `|dw|^1.5`: a hundred 1% adjustments cost a tenth of one 100% jump. MACD, which
+  flips whole positions, loses three quarters of its equity to impact at $1B.
+- Buy & hold is not free either: its single entry trade at $1B costs about 1%.
+
+FX sleeves get no impact in these runs (no exchange volume; set `costs.fx_adv_notional` to
+model it), so the FX rows are unchanged across the columns and the averages above are
+driven by the equities.
+
+## The next rule change: what counts as unseen
+
+By v0.4 the 2022–2026 holdout had been run, reported and compared against, so any rule
+that "improves the holdout" from now on is being fitted to it. v0.5 fixes the protocol for
+the next change before there is one:
+
+1. **Choose** on the core universe's design period only (`evaluate --universe core
+   --periods design`), exactly as before, and publish the full ablation.
+2. **Judge** on data no choice has touched: the extended universe over the design and
+   holdout periods (`--universe extended --periods design,holdout`) and the reserve period on
+   both universes (`--periods reserve`). Report all of it, including the parts that do not
+   flatter the change.
+3. **Do not touch the reserve period for a choice.** It is small now and grows every month;
+   the extended universe carries the weight until it is long enough.
+4. If the change alters what the desk trades (a new asset class, a new analyst input),
+   the alpha-analyst rule applies: measure it, and treat a result within about 0.1 of Sharpe
+   on 15 instruments (about 0.06 on 45) as noise.
+
+## Holdout per instrument (core universe)
 
 | symbol | v0.2 Sharpe | v0.3 Sharpe | B&H Sharpe | vol-target B&H Sharpe | v0.3 CR % | B&H CR % | v0.3 MDD % | B&H MDD % | v0.3 trades |
 |:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|
@@ -414,7 +605,8 @@ above remains the reference.
 | Full evaluation: 15 instruments × 3 periods, real prices, v0.3 | 27 s (after the first data download) |
 | Real-data backtest speed-up in v0.3 | ≈8× (2.0 s → 0.24 s per quarter): Yahoo news is no longer requested for dates it cannot serve |
 | LLM calls per decision at default rounds | 14 = 4 quick-tier + 10 deep-tier. An analyst with no data makes no call, so it is 13 when news is missing |
-| Tests | 197 pytest tests (agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 18, LLM evaluation 11, plus the v0.3 suites) + 13 C++ test groups (34 checks) |
+| Full v0.5 evaluation: 60 instruments × 4 periods, real prices, impact off | 115 s (after the first data download); each 15-instrument impact run ≈ 14 s |
+| Tests | 240 pytest tests (fuzz 21 property tests, v0.5 features 18, agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 19, LLM evaluation 11, plus the v0.3 suites) + 14 C++ test groups (42 checks) |
 
 ## Limitations
 
@@ -428,25 +620,35 @@ above remains the reference.
   can differ slightly from what was first published. ALFRED vintages would remove this.
 - **Survivorship.** The equity universe is today's large caps, so it is biased towards
   names that did well. Buy & hold benefits from this at least as much as the agent.
-- **15 instruments is a small sample.** Differences in mean Sharpe below about 0.1 between
-  variants should be read as noise; the alpha-analyst result is an example.
-- **The holdout has been seen.** Every v0.4 choice was made on the design period, but any
-  further tuning that consults the 2022–2026 numbers needs a new holdout.
-- **Execution model.** Close-to-close fills, with costs as a fixed bps per unit of turnover.
-  Stops fill at the level, or at the open on a gap. The backtests have no market impact; the
-  execution simulator (`agentic-trader execute`) models spread and square-root impact but is
-  not wired into the backtests.
+- **The core universe is a small sample.** Differences in mean Sharpe below about 0.1
+  between variants on 15 instruments (about 0.06 on the 45 extended ones) should be read as
+  noise; the alpha-analyst result is an example.
+- **The holdout has been seen.** Every choice was made on the design period, but the
+  2022–2026 numbers have been reported and compared against; the extended universe and the
+  reserve period are the unseen data from here (see [the next rule change](#the-next-rule-change-what-counts-as-unseen)).
+- **Execution model.** Close-to-close fills, with costs as a fixed bps per unit of turnover
+  and, optionally, square-root market impact scaled by account size (the impact sweep
+  above). Stops fill at the level, or at the open on a gap. FX impact needs a configured
+  notional ADV. There is no spread widening in stress and no venue or queue model.
+- **Macro vintages.** FRED serves the latest revision. `fred_vintages` reads revised series
+  (CPI) from the ALFRED vintage current at each date, sampled monthly, so inflation enters as
+  first published; it is off in the published runs, which therefore carry a small revision
+  leak in the FX inflation inputs (policy rates are never revised).
 
 ## Reproducing
 
 ```bash
 pip install -e ".[all]"
 
-# the full protocol on real prices (design, holdout, q1_2024), all 15 instruments
-agentic-trader evaluate --data yahoo --periods design,holdout,q1_2024 --out results/eval_v03.json
+# the core protocol on real prices (design, holdout, q1_2024), the 15 core instruments
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout,q1_2024 --out results/eval_v03.json
 
 # the same with the v0.2 rule set, for the before/after comparison
-agentic-trader evaluate --data yahoo --periods design,holdout,q1_2024 --rules v02 --out results/eval_v02.json
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout,q1_2024 --rules v02 --out results/eval_v02.json
+
+# v0.5: all 60 instruments on every period, and the impact sweep on the core universe
+agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve --out results/eval_v05_all.json
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital 1e9 --out results/eval_v05_impact_1e9.json
 
 # the alpha-analyst check (design period only)
 agentic-trader evaluate --data yahoo --periods design --analysts technical,sentiment,macro,fundamentals,news,alpha
@@ -461,5 +663,7 @@ agentic-trader stats results/portfolio_design.csv --column AgenticTrader \
 ```
 
 The ablation variants are ordinary config overrides (see the tables above). Cookbook recipe
-28 shows how to run one and recipe 56 the selection report. Yahoo occasionally revises
-adjusted history, so re-runs can differ in the second decimal.
+28 shows how to run one, recipe 56 the selection report, recipe 57 an impact backtest and
+recipe 64 the universe partition. Yahoo occasionally revises adjusted history, so re-runs can
+differ in the second decimal; the extended-universe tables above were generated from the saved
+JSON with pandas, like every other table here.

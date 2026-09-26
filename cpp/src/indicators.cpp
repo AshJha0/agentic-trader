@@ -97,7 +97,11 @@ Series zscore(const Series& x, int n) {
     Series out(x.size(), NaN);
     for (std::size_t i = 0; i < x.size(); ++i) {
         if (std::isnan(m[i]) || std::isnan(s[i])) continue;
-        out[i] = s[i] > 0.0 ? (x[i] - m[i]) / s[i] : 0.0;
+        // A window whose spread is at rounding level relative to its mean is flat:
+        // its z-score is 0, not the +-1 that (x - mean) / std would produce from
+        // cancellation noise (a constant series at 7e5 has std ~1e-10, not 0).
+        const double floor = 1e-12 * std::max(std::fabs(m[i]), 1e-300);
+        out[i] = s[i] > floor ? (x[i] - m[i]) / s[i] : 0.0;
     }
     return out;
 }
@@ -162,6 +166,8 @@ Series atr(const Series& high, const Series& low, const Series& close, int n) {
     for (std::size_t i = 0; i < close.size(); ++i) {
         if (i == 0) {
             tr[i] = high[i] - low[i];
+        } else if (std::isnan(high[i]) || std::isnan(low[i]) || std::isnan(close[i - 1])) {
+            tr[i] = NaN;  // std::max would silently drop a NaN; a missing bar is a missing range
         } else {
             tr[i] = std::max({high[i] - low[i], std::fabs(high[i] - close[i - 1]),
                               std::fabs(low[i] - close[i - 1])});
@@ -180,11 +186,16 @@ KDJ kdj(const Series& high, const Series& low, const Series& close, int n) {
     r.j.assign(close.size(), NaN);
     double k = 50.0, d = 50.0;
     for (std::size_t i = static_cast<std::size_t>(n) - 1; i < close.size(); ++i) {
-        double hh = high[i], ll = low[i];
-        for (std::size_t j = i + 1 - n; j <= i; ++j) {
+        // A window with a missing bar has no defined range: the outputs stay NaN and
+        // the smoothed state is not advanced (std::max/min would silently skip NaN).
+        double hh = -std::numeric_limits<double>::infinity(), ll = std::numeric_limits<double>::infinity();
+        bool bad = std::isnan(close[i]);
+        for (std::size_t j = i + 1 - n; j <= i && !bad; ++j) {
+            if (std::isnan(high[j]) || std::isnan(low[j])) bad = true;
             hh = std::max(hh, high[j]);
             ll = std::min(ll, low[j]);
         }
+        if (bad) continue;
         const double rsv = hh > ll ? (close[i] - ll) / (hh - ll) * 100.0 : 50.0;
         k = 2.0 / 3.0 * k + rsv / 3.0;
         d = 2.0 / 3.0 * d + k / 3.0;

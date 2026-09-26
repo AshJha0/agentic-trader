@@ -96,7 +96,8 @@ registry. To add an analyst, subclass `analysts.Analyst` (`name`, `role`, `instr
 |---|---|
 | `LLM` | Protocol: `complete(system, prompt, *, deep: bool) -> str \| None` |
 | `AnthropicLLM(config)` | Claude through the Anthropic SDK: `quick_think_llm` / `deep_think_llm`, adaptive thinking and `deep_effort`, `llm_timeout_s`, refusal fallback; returns `None` on refusal, rate limit, status or connection errors; records usage |
-| `BudgetedLLM(inner, max_calls)` | Passes the first `max_calls` calls through, then returns `None`; `calls`, `exhausted`, `usage` |
+| `BudgetedLLM(inner, max_calls=None, max_cost_usd=None)` | Passes calls through until either the call cap or the estimated-spend cap (list prices, cache-aware, checked before each call) is reached, then returns `None`; `calls`, `refused`, `spent_usd`, `exhausted`, `usage` |
+| `budget_llm(llm, config)` | Wraps `llm` when `max_llm_calls` and/or `max_llm_cost_usd` is set (idempotent) |
 | `UsageTracker` | Thread-safe tokens and outcomes per serving model; `calls`, `cost_usd`, `summary()` |
 | `get_llm(config)`, `llm_usage(llm)` | Build from config; usage summary or `None` |
 | `extract_json(text)` | The first JSON object in a reply, or `None` |
@@ -108,8 +109,16 @@ registry. To add an analyst, subclass `analysts.Analyst` (`name`, `role`, `instr
 `clean_ohlcv`), `news` and `social(instrument, as_of, lookback_days)` (published ≤ `as_of`),
 `fundamentals(instrument, as_of)`, `macro(instrument, as_of)`, `carry_series(instrument,
 dates)`; `real_world` class attribute. Implementations: `SyntheticProvider`, `YahooProvider`,
-`CSVProvider`; `get_provider(config)`, `PROVIDERS`; `fred.FredClient` with `RATE_SERIES` and
-`CPI_SERIES`; `base.fx_macro`.
+`CSVProvider`; `get_provider(config)`, `PROVIDERS`; `base.fx_macro`.
+
+`fred.FredClient(vintages=False, vintage_step_days=31, cache_dir=None, fetch=None)`:
+`value_asof(spec, as_of)`, `series_asof(spec, dates)`, `rate(ccy, as_of)`, `inflation(ccy,
+as_of)`, `vintage_date(as_of)`. With `vintages=True`, a `FredSeries` marked `revised=True`
+(every `CPI_SERIES` entry) is read from the ALFRED vintage current at `as_of`
+(`alfredgraph.csv?...&vintage_date=`), sampled every `vintage_step_days` and cached in memory
+and, with `cache_dir`, on disk; `RATE_SERIES` are never revised and bypass vintages. `fetch`
+replaces the HTTP download (tests, offline recipes). `default_client(config)` returns one
+client per (`fred_vintages`, `fred_vintage_step_days`, `fred_cache_dir`) setting.
 
 ### Memory (`agentic_trader.memory`)
 
@@ -122,14 +131,22 @@ dates)`; `real_world` class attribute. Implementations: `SyntheticProvider`, `Ya
 
 Walk-forward backtest of the desk plus six baselines. `ComparisonReport`: `instrument`,
 `dates`, `prices`, `results` (`AgenticTrader`, `Buy&Hold`, `B&H vol-target`, `SMA(20/50)`,
-`MACD`, `KDJ+RSI`, `ZMR`), `decisions`, `backtest_config`, `carry`, `table()`,
-`equity_curves()`, `returns()`.
+`MACD`, `KDJ+RSI`, `ZMR`), `decisions`, `backtest_config`, `carry`, `table()` (now with
+`Impact%`), `equity_curves()`, `returns()`.
 
-#### `run_portfolio_backtest(symbols, start, end, config=None, rebalance_every=5, provider=None, llm=None, on_decision=None, weighting="equal", cov_window=120) -> PortfolioReport`
+With `config["costs"]["impact_coeff"] > 0`, `impact_coefficients(full, ins, config)` builds
+the per-bar square-root impact coefficient `K_t = coeff · daily_vol_t · sqrt(capital /
+(price_t · ADV_t))` from trailing 20-day volatility and volume (`initial_capital` is the
+account size), and the same series is passed to the engine for the desk and every baseline.
+FX gets impact only when `costs["fx_adv_notional"]` is set.
+
+#### `run_portfolio_backtest(symbols, start, end, config=None, rebalance_every=5, provider=None, llm=None, on_decision=None, weighting="equal", cov_window=120, class_budgets=None) -> PortfolioReport`
 
 One sleeve per symbol. `weighting` ∈ `equal`, `inverse_vol`, `risk_parity`, `min_variance`,
 `mean_variance`; the covariance is re-estimated from the trailing `cov_window` returns at
-each rebalance and the same allocation is applied to every strategy. `PortfolioReport`:
+each rebalance and the same allocation is applied to every strategy. `class_budgets` (e.g.
+`{"equity": 0.6, "fx": 0.4}`) allocates within each asset class by the scheme and across
+classes by risk parity with those budgets (capital shares for `equal`). `PortfolioReport`:
 `symbols`, `dates`, `returns`, `metrics`, `sleeves`, `weighting`, `allocations` (per rebalance),
 `table()`.
 
@@ -139,11 +156,18 @@ Also: `backtest_config_for(...)`, `baseline_weights(full, allow_short, target_vo
 
 #### `evaluate(symbols=None, periods=None, config=None, rebalance_every=5, provider=None, progress=None, llm=None, workers=1) -> EvaluationResult`
 
-`symbols` defaults to `DEFAULT_UNIVERSE` (10 equities, 5 FX pairs); `periods` to `PERIODS`
-(`design` 2016-01-04 → 2021-12-31, `holdout` 2022-01-03 → 2026-06-30, `q1_2024` 2024-01-02 →
-2024-03-28). `workers > 1` runs backtests in parallel sharing one LLM budget. Failures are
-recorded in `meta["errors"]`. `EvaluationResult`: `rows`, `meta` (incl. LLM usage),
-`summary(period=None)`, `head_to_head()`, `to_json` / `from_json`.
+`symbols` defaults to `UNIVERSES["all"]` (60 instruments); `periods` to the three
+`DEFAULT_PERIODS` of `PERIODS` (`design` 2016-01-04 → 2021-12-31, `holdout` 2022-01-03 →
+2026-06-30, `q1_2024` 2024-01-02 → 2024-03-28; `reserve` 2026-07-01 → 2026-09-25 is opt-in).
+`workers > 1` runs backtests in parallel sharing one LLM budget. Failures are recorded in
+`meta["errors"]`. Every row carries `universe` (`core`, `extended`, `extended-macro`, `other`)
+from `universe_group(symbol)`. `EvaluationResult`: `rows`, `meta` (incl. LLM usage, impact and
+vintage settings), `summary(period=None, universe=None)`, `head_to_head(universe=None)`,
+`to_json` / `from_json`.
+
+`CORE_UNIVERSE` (`equity`, `fx`: the 15 instruments every rule choice was made on),
+`EXTENDED_UNIVERSE` (`equity`, `macro_etf`, `fx`: 45 never consulted), `UNIVERSES`
+(`core`, `extended`, `all`), `DEFAULT_UNIVERSE` (asset class → every symbol).
 
 ### Configuration and instruments
 
@@ -195,7 +219,7 @@ with retry → evidence record (`FAILED` on error) → metrics and span.
 ### Desk tools (`servers.py`)
 
 `DeskTools(provider, config, knowledge=None, positions=None, capital=None)` and
-`build_registry(tools)` give 15 tools on five servers:
+`build_registry(tools)` give 16 tools on five servers:
 
 | Tool | Arguments | Evidence | Notes |
 |---|---|---|---|
@@ -205,6 +229,7 @@ with retry → evidence record (`FAILED` on error) → metrics and span.
 | `quant.technical` | `symbol, as_of, lookback_days=400` | CALCULATION | Indicator snapshot |
 | `quant.risk` | `symbol, as_of, proposed_weight=0, lookback_days=400` | CALCULATION | Vol, VaR, CVaR, drawdown, ATR, limits |
 | `quant.alpha` | `symbol, as_of, horizon=10, lookback_days=900` | CALCULATION | Snapshot, IC table, best three (needs 300 bars) |
+| `quant.xalpha` | `symbols, as_of, horizon=10, lookback_days=900` | CALCULATION | Cross-sectional scores per symbol, per-date IC table, best three, groups (≥ 3 symbols, 300 bars each) |
 | `quant.baselines` | `symbol, start, end` | CALCULATION | Six baselines' CR, Sharpe, MDD |
 | `knowledge.search` | `query, k=3` | DOCUMENT | `k` in 1–10 |
 | `knowledge.list_documents` | — | DOCUMENT | |
@@ -245,17 +270,30 @@ arguments=None)`, `get`, `resolve(ev_id)` (re-hashes the payload), `unresolved(i
 
 ### Harness (`harness.py`)
 
-#### `AgentHarness(graph, policy=None, gateway=None, knowledge=None, positions=None, capital=None)`
+#### `AgentHarness(graph, policy=None, gateway=None, knowledge=None, positions=None, capital=None, store=None)`
 
 | Method | Meaning |
 |---|---|
 | `run(task) -> TaskRun` | `submit` then `resume` |
-| `submit(task) -> TaskRun` | Register a run in `CREATED` |
+| `submit(task) -> TaskRun` | Register a run in `CREATED` (and persist it) |
 | `resume(run) -> TaskRun` | Drive to a terminal state or `AWAITING_APPROVAL` |
 | `cancel(task_id) -> TaskRun` | Sets the flag; a waiting run is cancelled immediately |
 | `pending_approvals(task_id=None)` | Queued gateway only |
 | `decide_approval(approval_id, approve, decided_by="human", note="") -> TaskRun` | Records APPROVAL evidence and resumes |
-| `runs`, `registry`, `policy`, `gateway`, `tools`, `critic` | State and collaborators |
+| `record(task_id) -> dict \| None` | The JSON record of a live run or an archived one |
+| `runs`, `archive`, `store`, `registry`, `policy`, `gateway`, `tools`, `critic` | State and collaborators |
+
+`store` (or `config["agentic"]["task_db"]`) is a `TaskStore`: every run is written at each
+terminal / waiting transition and at the end of `resume`; on construction the harness fails
+any record a previous process left in a non-terminal state (`process restarted`) and loads
+all records into `archive` (read-only, served by the API).
+
+#### `TaskStore(path)` (`store.py`)
+
+`save(run)`, `save_record(dict)`, `load(task_id)`, `load_all()`, `summaries()`,
+`mark_interrupted(note="process restarted") -> int`, `delete(task_id)`, `close()`, `len()`.
+`record_of(run)` is the record shape: `TaskRun.to_dict(include_report=True)` plus
+`evidence_rows`, `spans` and `correlation_id`.
 
 `TaskRun`: `task`, `state`, `plan`, `trading_state`, `findings`, `critic`, `report`,
 `evidence`, `tracer`, `history` (state, time and note), `completed_steps`, `step_results`,
@@ -311,20 +349,27 @@ JSON lines.
 ### HTTP API (`api.py`; needs `pip install "agentic-trader[api]"`)
 
 `create_app(harness=None, graph=None, config=None, api_keys=None)` returns a FastAPI app;
-`serve(host, port, config)` runs it with uvicorn (`agentic-trader serve`). Every route except
+`serve(host="127.0.0.1", port=8000, config=None, ssl_certfile=None, ssl_keyfile=None,
+allow_dev_keys=False)` runs it with uvicorn (`agentic-trader serve`). Every route except
 `/health` and `/metrics` needs an `X-API-Key` header mapped to a role
-(`config["agentic"]["api_keys"]`, development values by default).
+(`config["agentic"]["api_keys"]`, development values by default; an override *replaces* them).
+
+`serve_options(host, config, ssl_certfile=None, ssl_keyfile=None, allow_dev_keys=False) ->
+dict` validates the deployment posture: TLS needs both files and they must exist; a
+non-loopback bind with any shipped or `dev-` key is refused unless `allow_dev_keys`; a
+non-loopback bind without TLS logs a warning. `uses_dev_keys(api_keys)` is the check.
 
 | Method and path | Capability | Returns |
 |---|---|---|
-| `GET /health` | — | `{status, tasks, tools}` |
+| `GET /health` | — | `{status, tasks, live, archived, persistent, tools}` |
 | `GET /metrics` | — | Prometheus text for every task |
 | `GET /tools` | any key | The catalogue |
+| `GET /tasks` | any key | Archived and live tasks (`task_id`, `symbol`, `as_of`, `role`, `state`, `live`) |
 | `POST /tasks` `{symbol, as_of, current_weight?, question?}` | `run_analytics` | `202 {task_id, state}`; the task runs in a thread |
-| `GET /tasks/{id}` | any key | `TaskRun.to_dict()` without the report |
+| `GET /tasks/{id}` | any key | The task record without the report, plus `live`; archived records from the store are served the same way |
 | `GET /tasks/{id}/report?format=json\|markdown` | any key | The report, or `409` before it exists |
 | `GET /tasks/{id}/trace`, `/evidence` | any key | Spans and summary; evidence rows |
-| `POST /tasks/{id}/cancel` | `run_analytics` | `{task_id, state}` |
+| `POST /tasks/{id}/cancel` | `run_analytics` | `{task_id, state}`; `409` for an archived task |
 | `GET /approvals` | `approve_trades` | Pending approvals |
 | `POST /approvals/{id}` `{approve, note?}` | `approve_trades` | `{approval_id, approved, task_id, state}`; `404` unknown, `409` already decided |
 
@@ -345,6 +390,19 @@ Errors: `401` missing or unknown key, `403` role lacks the capability, `404` unk
 | `alpha_report(df, instrument, horizon=10, names=None, carry_series=None, decay_horizons=(1,5,10,21,42), weights=None) -> AlphaReport` | `table` (IC, t(IC), n, hit%, tercile spread%, autocorr, coverage%), `decay`, `correlations`, `signals`, `best(k)` |
 | `alpha_snapshot(df, instrument, carry_series=None, weights=None) -> dict` | Latest values plus `combined` |
 
+### Cross-sectional alphas (`agentic_trader.xalpha`)
+
+| Name | Meaning |
+|---|---|
+| `signal_panels(frames, instruments, names=None, carry=None) -> dict[str, DataFrame]` | Alpha name → (dates × symbols) panel of time-series values |
+| `forward_return_panel(closes, horizon)` | Return from t to t+horizon per symbol |
+| `cs_zscore(panel, groups=None, min_names=3, clip=3.0)`, `cs_rank(panel, groups=None, min_names=3)` | Per-day standardisation across names within each group, mapped to [-1, 1]; NaN below `min_names` |
+| `cross_sectional_ic(signal, fwd, min_names=5) -> Series` | Per-date Spearman IC across names |
+| `ic_summary(ic, horizon, periods_per_year=252)` | `mean IC`, `IC IR` (annualised for non-overlapping horizons), `t(IC)` (n / horizon independent observations), `IC>0%`, `days` |
+| `quantile_spread(signal, fwd, horizon, quantile=0.2, min_names=5) -> Series` | Equal-weight top-minus-bottom quantile return, rebalanced every `horizon` bars |
+| `xalpha_report(frames, instruments, horizon=10, names=None, carry=None, groups=None, decay_horizons=(1,5,10,21,42), quantile=0.2, min_names=5, weights=None, standardise="zscore") -> XAlphaReport` | `table` (IC summary, `spread%/period`, `spread t`, `breadth` per alpha and `combined`), `decay`, `correlations`, `spreads`, `signals`, `groups`, `best(k)`. `groups` defaults to the asset class |
+| `xalpha_snapshot(frames, instruments, names=None, carry=None, groups=None, weights=None) -> dict` | Symbol → latest cross-sectional score per alpha plus `combined` |
+
 ### Execution (`agentic_trader.algo`)
 
 | Name | Meaning |
@@ -362,7 +420,7 @@ Errors: `401` missing or unknown key, `403` role lacks the capability, `404` unk
 | `sample_cov`, `ewma_cov(returns, halflife=60)`, `ledoit_wolf_shrink(returns, cov=None) -> (cov, delta)`, `estimate_cov(returns, halflife=60, shrink=True)` | Annualisation is the caller's; `construct` handles it |
 | `equal_weights(n)`, `inverse_vol_weights(cov)`, `risk_parity_weights(cov, budget=None)`, `min_variance_weights(cov, cap=1)`, `mean_variance_weights(mu, cov, risk_aversion=5, cap=1)` | Long-only allocations summing to 1 |
 | `risk_contributions(w, cov)` | `vol`, `marginal`, `component`, `pct` |
-| `construct(targets, returns, method="risk_parity", *, periods_per_year=252, halflife=60, shrink=True, max_weight=0.5, gross_cap=1, target_vol=0.15, risk_aversion=5, expected_returns=None) -> PortfolioWeights` | `symbols`, `allocation`, `weights` (signed), `method`, `expected_vol`, `contributions`, `diversification_ratio`, `correlations`, `scale`; `to_dict()` |
+| `construct(targets, returns, method="risk_parity", *, periods_per_year=252, halflife=60, shrink=True, max_weight=0.5, gross_cap=1, target_vol=0.15, risk_aversion=5, expected_returns=None, groups=None, group_budgets=None) -> PortfolioWeights` | `symbols`, `allocation`, `weights` (signed), `method`, `expected_vol`, `contributions`, `diversification_ratio`, `correlations`, `scale`, `group_risk` (budget, allocation and realised risk share per group when `group_budgets` is given); `to_dict()`. With `groups` (symbol → group) and `group_budgets` (group → share of risk) the scheme allocates within each group and risk parity with the budgets allocates across groups from the full covariance |
 | `METHODS` | The five method names |
 
 ### Statistics (`agentic_trader.stats`)
@@ -389,12 +447,16 @@ Errors: `401` missing or unknown key, `403` role lacks the capability, `404` unk
 | `almgren_chriss(total, n, kappa)` | slice quantities |
 | `quantile`, `historical_var`, `historical_cvar`, `kelly_fraction`, `vol_target_weight`, `position_units`, `max_drawdown` | floats |
 | `strat_buy_hold`, `strat_sma_cross`, `strat_macd`, `strat_kdj_rsi`, `strat_zmr` | weights |
-| `run_backtest(prices, target_weights, config=None, *, carry, open, high, low, stop, take, rebalance)` | `BacktestResult` (`equity`, `returns`, `positions`, `trades`, `metrics`, `stop_exits`) |
+| `run_backtest(prices, target_weights, config=None, *, carry, open, high, low, stop, take, rebalance, impact)` | `BacktestResult` (`equity`, `returns`, `positions`, `trades`, `metrics`, `stop_exits`, `impact_paid`). `impact` is the per-bar square-root coefficient `K_t`: a trade of `|dw|` costs `|dw|^1.5 · K_t` of equity; NaN = none |
 | `compute_metrics(equity, positions, ppy, rf=0)` | `Metrics` (incl. `sharpe_tstat`, `avg_exposure`) |
 
 `BacktestConfig`: `initial_capital`=100000, `cost_bps`=1, `slippage_bps`=0,
 `periods_per_year`=252, `carry_annual`=0, `borrow_annual`=0, `max_leverage`=1,
-`allow_short`=True, `risk_free_annual`=0. Prices must be positive and finite.
+`allow_short`=True, `risk_free_annual`=0. Prices must be positive and finite (`ValueError`
+otherwise, on both backends). Every function accepts NaN, ±inf, empty and huge inputs
+without crashing: it returns a well-formed result or raises `ValueError`, and a window
+containing NaN yields NaN (`kdj`, `atr`, rolling functions), `quantile(x, NaN)` is NaN and
+`max_drawdown` ignores NaN — properties enforced by `tests/test_fuzz.py`.
 
 ## Part 4 — CLI
 
@@ -403,25 +465,32 @@ agentic-trader analyze   SYMBOL [--date D] [--position W] [--save] [--json] [--n
 agentic-trader task      SYMBOL [--date D] [--position W] [--role R] [--approval auto|queued|deny]
                                 [--llm-planner] [--question TEXT] [--save] [--json] [--no-memory] [common]
 agentic-trader scan      SYM1,SYM2,... [--date D] [--positions JSON] [--out file.csv|.json] [common]
-agentic-trader backtest  SYMBOL --start D --end D [--every N] [--stops on|off] [--out curves.csv] [common]
-agentic-trader baselines SYMBOL --start D --end D [--out curves.csv] [common]
-agentic-trader portfolio SYM1,SYM2,... --start D --end D [--every N] [--stops on|off]
-                                [--weighting equal|inverse_vol|risk_parity|min_variance|mean_variance] [--out returns.csv] [common]
-agentic-trader evaluate  [SYM1,...] [--periods design,holdout,q1_2024] [--every N] [--workers N] [--out results.json] [common]
+agentic-trader backtest  SYMBOL --start D --end D [--every N] [--stops on|off] [--impact X] [--capital X] [--out curves.csv] [common]
+agentic-trader baselines SYMBOL --start D --end D [--impact X] [--capital X] [--out curves.csv] [common]
+agentic-trader portfolio SYM1,SYM2,... --start D --end D [--every N] [--stops on|off] [--impact X] [--capital X]
+                                [--weighting equal|inverse_vol|risk_parity|min_variance|mean_variance]
+                                [--class-budgets equity=0.6,fx=0.4] [--out returns.csv] [common]
+agentic-trader evaluate  [SYM1,...] [--universe core|extended|all] [--periods design,holdout,q1_2024,reserve]
+                                [--every N] [--workers N] [--out results.json] [common]
 agentic-trader alpha     SYMBOL --start D --end D [--horizon N] [--out signals.csv] [common]
+agentic-trader xalpha    SYM1,SYM2,... --start D --end D [--horizon N] [--standardise zscore|rank] [--out scores.csv] [common]
 agentic-trader execute   SYMBOL --target W [--current W] [--date D] [--capital X] [--algo twap|vwap|pov|ac]
                                 [--participation P] [--spread-bps X] [--impact X] [--seed N] [common]
 agentic-trader stats     returns.csv [--column NAME] [--ppy N] [--trials N] [--trial-sharpes a,b,c]
 agentic-trader tools     [--json] [common]
-agentic-trader serve     [--host H] [--port P] [--approval auto|queued|deny] [common]
+agentic-trader serve     [--host H] [--port P] [--approval auto|queued|deny] [--task-db FILE]
+                                [--ssl-cert PEM --ssl-key PEM] [--allow-dev-keys] [common]
 agentic-trader mcp       [common]
 agentic-trader info
 
 common: [--asset-class equity|fx] [--data synthetic|yahoo|csv] [--csv-dir DIR]
         [--llm offline|anthropic] [--deep-model ID] [--quick-model ID] [--deep-effort LEVEL]
-        [--rounds N] [--analysts a,b,c] [--allow-short] [--band X] [--max-llm-calls N]
-        [--rules default|v02] [--anonymize] [-v]
+        [--rounds N] [--analysts a,b,c] [--allow-short] [--band X] [--max-llm-calls N] [--max-llm-cost USD]
+        [--fred-vintages] [--fred-cache DIR] [--rules default|v02] [--anonymize] [-v]
 ```
+
+`--impact` and `--capital` apply to `backtest`, `baselines`, `portfolio` and `evaluate`
+(`--capital` on `execute` is that command's own order-sizing capital).
 
 Exit status is 0 on success; invalid input gives 2 and a one-line `error:` message; `scan`
 returns 1 when every symbol failed. `python -m agentic_trader` is equivalent.
@@ -435,10 +504,10 @@ returns 1 when every symbol failed. `python -m agentic_trader` is equivalent.
 | `indicators.hpp` | `sma`, `ema`, `rolling_std`, `zscore`, `rsi`, `macd → MACD{line, signal, hist}`, `bollinger → Bollinger{mid, upper, lower, percent_b}`, `atr`, `kdj → KDJ{k, d, j}`, `pct_change`, `realized_vol`, `rolling_max`, `rolling_min`, `spearman(x, y)`, `almgren_chriss(total, n, kappa)` |
 | `risk.hpp` | `quantile`, `historical_var`, `historical_cvar`, `kelly_fraction`, `vol_target_weight`, `position_units` |
 | `strategies.hpp` | `strat_buy_hold`, `strat_sma_cross`, `strat_macd`, `strat_kdj_rsi`, `strat_zmr` |
-| `backtest.hpp` | `BacktestConfig`, `BacktestInputs{carry, open, high, low, stop, take, rebalance}`, `Trade`, `Metrics`, `BacktestResult`, `run_backtest`, `run_backtest_ex`, `compute_metrics`, `max_drawdown` |
+| `backtest.hpp` | `BacktestConfig`, `BacktestInputs{carry, open, high, low, stop, take, rebalance, impact}`, `Trade`, `Metrics`, `BacktestResult` (incl. `impact_paid`), `run_backtest`, `run_backtest_ex`, `compute_metrics`, `max_drawdown` |
 
 Invalid inputs throw `std::invalid_argument`. Link against the `at_core` static library from
-`CMakeLists.txt`; `ctest` runs 13 test groups.
+`CMakeLists.txt`; `ctest` runs 14 test groups.
 
 ### `at_backtest` (C++ CLI)
 

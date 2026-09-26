@@ -18,6 +18,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "use_refusal_fallback": True,
     "llm_timeout_s": 300,   # per request; adaptive thinking on the deep tier can take minutes
     "max_llm_calls": None,  # hard cap per TradingGraph (None = unlimited); beyond it agents use rules
+    "max_llm_cost_usd": None,  # hard cap on estimated spend (list prices); beyond it agents use rules
     # Hide ticker, calendar and price level from the model (anonymize.py). Use it for
     # any backtest inside the model's training period: otherwise the model can recall
     # what happened next instead of reasoning from the data.
@@ -75,6 +76,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "equity_borrow_annual": 0.01,
         "fx_spread_pips": 0.8,
         "fx_slippage_bps": 0.2,
+        # Square-root market impact in backtests: a trade of q units against an
+        # average daily volume ADV moves the price by impact_coeff * daily_vol *
+        # sqrt(q / ADV) (the same model as the execution simulator). 0 disables it,
+        # which keeps the published results reproducible; 1.0 is the textbook value.
+        # Trade sizes scale with initial_capital, so the impact of a 100k account on
+        # a large cap is negligible and that of a 100M account is not.
+        "impact_coeff": 0.0,
+        # FX has no exchange volume; set a notional ADV per pair (quote currency) to
+        # apply impact to FX sleeves, or leave None for no FX impact.
+        "fx_adv_notional": None,
     },
     "initial_capital": 100_000.0,
     "risk_free_annual": 0.0,
@@ -89,6 +100,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # "static" / "fred": force one source.
     "fx_macro_source": "auto",
     "static_macro_max_age_days": 180,
+    # ALFRED vintages for revised series (CPI): read each value from the data vintage
+    # that was current at the as-of date, so the backtest sees inflation as first
+    # published, not as later revised. One download per series per month of history
+    # (cached in memory, and on disk when fred_cache_dir is set). Off by default so
+    # the published FX results stay reproducible without ~600 extra requests.
+    "fred_vintages": False,
+    "fred_vintage_step_days": 31,
+    "fred_cache_dir": None,
     # Illustrative policy-rate / CPI levels (percent), roughly mid-2025. NOT live data.
     "fx_policy_rates": {
         "USD": 4.25, "EUR": 2.00, "GBP": 4.00, "JPY": 0.50, "CHF": 0.00,
@@ -110,6 +129,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tool_timeout_s": 30.0,
         "symbol_universe": None,     # list of allowed symbols for tool calls (None = any valid)
         "deny_tools": [],
+        "task_db": None,             # SQLite path for a persistent task store (None = in memory only)
         # API keys -> roles for `agentic-trader serve`. Development values only.
         "api_keys": {"dev-viewer-key": "viewer", "dev-analyst-key": "analyst",
                      "dev-trader-key": "trader", "dev-risk-key": "risk", "dev-admin-key": "admin"},
@@ -122,9 +142,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
+# Nested dicts merge key by key, except these, which an override replaces outright: merging
+# a user's real API keys *into* the shipped development keys would leave the dev keys live.
+_REPLACE_KEYS = {"api_keys"}
+
+
 def _merge(base: dict, over: dict) -> dict:
     for k, v in over.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
+        if isinstance(v, dict) and isinstance(base.get(k), dict) and k not in _REPLACE_KEYS:
             _merge(base[k], v)
         else:
             base[k] = v

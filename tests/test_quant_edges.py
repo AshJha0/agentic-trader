@@ -141,6 +141,24 @@ def test_metrics_exposure_and_tstat():
     assert m.sharpe_tstat == pytest.approx(m.sharpe * np.sqrt(4 / 252))
 
 
+def test_impact_is_square_root_and_charged_on_exits():
+    flat = np.full(4, 100.0)
+    cfg = quant.BacktestConfig(cost_bps=0.0)
+    r = quant.run_backtest(flat, np.ones(4), cfg, impact=np.full(4, 0.01))
+    assert r.equity[1] == pytest.approx(100000 * 0.99) and r.equity[-1] == pytest.approx(r.equity[1])
+    assert r.impact_paid == pytest.approx(0.01)
+    half = quant.run_backtest(flat, np.full(4, 0.5), cfg, impact=np.full(4, 0.01))
+    assert half.equity[1] == pytest.approx(100000 * (1 - 0.5 ** 1.5 * 0.01))   # concave in size
+    stopped = quant.run_backtest(flat, np.ones(4), cfg, open=flat, high=flat,
+                                 low=np.array([100, 90, 100, 100.0]), stop=np.full(4, 95.0),
+                                 impact=np.array([0.0, 0.02, 0.0, 0.0]))
+    assert stopped.stop_exits == 1 and stopped.impact_paid == pytest.approx(0.02)
+    none = quant.run_backtest(flat, np.ones(4), cfg, impact=np.full(4, NAN))
+    assert none.impact_paid == 0.0 and none.equity[-1] == pytest.approx(100000.0)
+    with pytest.raises(ValueError):
+        quant.run_backtest(flat, np.ones(4), cfg, impact=np.full(3, 0.01))
+
+
 # ------------------------------------------------ randomised cross-check
 @pytest.mark.skipif(quant.BACKEND != "cpp", reason="C++ extension not built")
 @pytest.mark.parametrize("seed", range(8))
@@ -158,13 +176,17 @@ def test_cpp_matches_python_extended_backtest(seed):
     stop[rng.random(n) > 0.7] = NAN
     reb = (rng.random(n) > 0.8).astype(float)
     carry = rng.normal(0.01, 0.02, n)
+    impact = np.abs(rng.normal(0.002, 0.001, n))
+    impact[rng.random(n) > 0.9] = NAN
     cfg = quant.BacktestConfig(cost_bps=1.5, slippage_bps=0.5, borrow_annual=0.02,
                                allow_short=bool(seed % 2), max_leverage=1.0)
-    kw = dict(carry=carry, open=o, high=h, low=l, stop=stop, take=take, rebalance=reb)
+    kw = dict(carry=carry, open=o, high=h, low=l, stop=stop, take=take, rebalance=reb,
+              impact=impact)
     rc = quant.run_backtest(c, w, cfg, **kw)
     rp = pycore.run_backtest_ex(c, w, cfg, **kw)
     np.testing.assert_allclose(rc.equity, rp.equity, rtol=1e-11)
     np.testing.assert_array_equal(rc.positions, rp.positions)
     assert rc.stop_exits == rp.stop_exits and len(rc.trades) == len(rp.trades)
+    assert rc.impact_paid == pytest.approx(rp.impact_paid, rel=1e-11) and rc.impact_paid > 0
     for f in ("sharpe", "sharpe_tstat", "avg_exposure", "max_drawdown", "turnover"):
         assert getattr(rc.metrics, f) == pytest.approx(getattr(rp.metrics, f), rel=1e-9, abs=1e-12)

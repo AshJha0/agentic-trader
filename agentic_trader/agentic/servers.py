@@ -154,6 +154,26 @@ class DeskTools:
         return _clean({"horizon": horizon, "latest": snap, "ic": rep.table.to_dict(orient="index"),
                        "best": rep.best(3)})
 
+    def xalpha(self, symbols: list[str], as_of: date, horizon: int = 10, lookback_days: int = 900) -> dict:
+        """Cross-sectional alpha scores across a universe: today's z-scored ranks per name, the
+        per-date IC summary of every alpha over the lookback, and the best alphas."""
+        from ..xalpha import xalpha_report, xalpha_snapshot
+        if len(symbols) < 3:
+            raise ValueError("a cross-sectional view needs at least 3 symbols")
+        d = _as_date(as_of)
+        frames, instruments, carry = {}, {}, {}
+        for s in symbols:
+            ins, df = self._history(s, d, lookback_days)
+            if len(df) < 300:
+                raise ValueError(f"cross-sectional evaluation needs at least 300 bars for {ins.display}")
+            frames[ins.symbol], instruments[ins.symbol] = df, ins
+            if ins.is_fx:
+                carry[ins.symbol] = self.provider.carry_series(ins, df.index)
+        rep = xalpha_report(frames, instruments, horizon, carry=carry or None)
+        snap = xalpha_snapshot(frames, instruments, carry=carry or None)
+        return _clean({"horizon": horizon, "latest": snap, "ic": rep.table.to_dict(orient="index"),
+                       "best": rep.best(3), "groups": rep.groups})
+
     def baselines(self, symbol: str, start: date, end: date) -> dict:
         """Rule-based baseline backtests (buy & hold, vol-target, SMA, MACD, KDJ+RSI, ZMR)."""
         ins = Instrument.parse(symbol)
@@ -253,7 +273,7 @@ def build_registry(tools: DeskTools) -> ToolRegistry:
     reg = ToolRegistry()
     for fn in (tools.history, tools.news, tools.social, tools.fundamentals, tools.macro):
         reg.register("market_data", fn, annotations=_DATA)
-    for fn in (tools.technical, tools.risk, tools.alpha, tools.baselines):
+    for fn in (tools.technical, tools.risk, tools.alpha, tools.xalpha, tools.baselines):
         reg.register("quant", fn, annotations=_CALC)
     reg.register("knowledge", tools.search, annotations=_DOC)
     reg.register("knowledge", tools.list_documents, annotations=_DOC)

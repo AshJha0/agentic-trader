@@ -160,40 +160,72 @@ class AnthropicLLM:
 
 
 class BudgetedLLM:
-    """Hard cap on model calls. Past the cap every call returns ``None``, so each
-    agent falls back to its rule-based reasoning and the run finishes normally.
+    """Hard cap on model calls and / or estimated spend. Past either cap every call
+    returns ``None``, so each agent falls back to its rule-based reasoning and the
+    run finishes normally.
 
     Protects backtests from runaway cost: at default settings one decision makes
-    14 calls, so a 1-year weekly backtest of one instrument is ~730 calls.
-    Thread-safe: parallel backtests sharing one budget never exceed it.
+    14 calls, so a 1-year weekly backtest of one instrument is ~730 calls, and an
+    Opus call costs roughly 15x a Haiku call, so a call count alone does not bound
+    the bill. The dollar cap uses the inner model's ``UsageTracker`` (list prices,
+    cache-aware) and is checked before each call, so the overshoot is at most one
+    call. Thread-safe: parallel backtests sharing one budget never exceed it.
     """
 
-    def __init__(self, inner: LLM, max_calls: int):
-        if max_calls < 0:
+    def __init__(self, inner: LLM, max_calls: int | None = None, max_cost_usd: float | None = None):
+        if max_calls is None and max_cost_usd is None:
+            raise ValueError("BudgetedLLM needs max_calls and/or max_cost_usd")
+        if max_calls is not None and max_calls < 0:
             raise ValueError("max_calls must be >= 0")
-        self.inner, self.max_calls = inner, max_calls
+        if max_cost_usd is not None and max_cost_usd < 0:
+            raise ValueError("max_cost_usd must be >= 0")
+        self.inner, self.max_calls, self.max_cost_usd = inner, max_calls, max_cost_usd
         self.calls = 0
         self.refused = 0
         self._lock = threading.Lock()
 
     @property
-    def exhausted(self) -> bool:
-        return self.calls >= self.max_calls
-
-    @property
     def usage(self) -> UsageTracker | None:
         return getattr(self.inner, "usage", None)
 
+    @property
+    def spent_usd(self) -> float:
+        u = self.usage
+        return u.cost_usd if u is not None else 0.0
+
+    @property
+    def exhausted(self) -> bool:
+        if self.max_calls is not None and self.calls >= self.max_calls:
+            return True
+        return self.max_cost_usd is not None and self.spent_usd >= self.max_cost_usd
+
+    def _why_exhausted(self) -> str | None:
+        if self.max_calls is not None and self.calls >= self.max_calls:
+            return f"LLM call budget of {self.max_calls} reached"
+        if self.max_cost_usd is not None and self.spent_usd >= self.max_cost_usd:
+            return f"LLM spend budget of ${self.max_cost_usd:.2f} reached (${self.spent_usd:.2f} spent)"
+        return None
+
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
         with self._lock:
-            if self.calls >= self.max_calls:
+            why = self._why_exhausted()
+            if why is not None:
                 if self.refused == 0:
-                    log.warning("LLM call budget of %d reached; agents fall back to rules",
-                                self.max_calls)
+                    log.warning("%s; agents fall back to rules", why)
                 self.refused += 1
                 return None
             self.calls += 1
         return self.inner.complete(system, prompt, deep=deep)
+
+
+def budget_llm(llm: LLM, config: dict) -> LLM:
+    """Wrap ``llm`` in a ``BudgetedLLM`` when the config sets a call or dollar cap."""
+    cap, spend = config.get("max_llm_calls"), config.get("max_llm_cost_usd")
+    if cap is None and spend is None:
+        return llm
+    if isinstance(llm, BudgetedLLM):
+        return llm
+    return BudgetedLLM(llm, None if cap is None else int(cap), None if spend is None else float(spend))
 
 
 def get_llm(config: dict) -> LLM | None:
@@ -204,8 +236,7 @@ def get_llm(config: dict) -> LLM | None:
         llm: LLM = AnthropicLLM(config)
     else:
         raise ValueError(f"unknown llm_provider {provider!r} (use 'offline' or 'anthropic')")
-    cap = config.get("max_llm_calls")
-    return BudgetedLLM(llm, int(cap)) if cap is not None else llm
+    return budget_llm(llm, config)
 
 
 def llm_usage(llm: LLM | None) -> dict[str, Any] | None:

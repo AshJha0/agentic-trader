@@ -74,6 +74,26 @@ def test_fx_backtest_uses_carry_series_everywhere():
     assert np.allclose(rep.carry, (CFG["fx_policy_rates"]["USD"] - CFG["fx_policy_rates"]["JPY"]) / 100)
 
 
+def test_market_impact_scales_with_account_size_and_is_off_by_default():
+    base = run_agent_backtest("AAPL", "2024-01-02", "2024-02-29", CFG, rebalance_every=10)
+    assert all(r.impact_paid == 0.0 for r in base.results.values())
+    small = make_config(CFG, costs={"impact_coeff": 1.0}, initial_capital=1e5)
+    big = make_config(CFG, costs={"impact_coeff": 1.0}, initial_capital=1e9)
+    rs = run_agent_backtest("AAPL", "2024-01-02", "2024-02-29", small, rebalance_every=10)
+    rb = run_agent_backtest("AAPL", "2024-01-02", "2024-02-29", big, rebalance_every=10)
+    for name in base.results:
+        assert rs.results[name].impact_paid >= 0.0
+        assert rb.results[name].impact_paid > rs.results[name].impact_paid          # sqrt(capital)
+        assert rb.results[name].metrics.cumulative_return < base.results[name].metrics.cumulative_return
+    assert "Impact%" in rb.table().columns and rb.table().loc[AGENT, "Impact%"] > 0
+    # FX has no exchange volume: no impact unless a notional ADV is configured.
+    fx = run_agent_backtest("EURUSD", "2024-01-02", "2024-02-29", big, rebalance_every=10)
+    assert all(r.impact_paid == 0.0 for r in fx.results.values())
+    fx_adv = make_config(big, costs={"fx_adv_notional": 1e9})
+    fx2 = run_agent_backtest("EURUSD", "2024-01-02", "2024-02-29", fx_adv, rebalance_every=10)
+    assert fx2.results[AGENT].impact_paid > 0.0
+
+
 def test_vol_target_baseline_never_exceeds_max_position():
     rep = run_agent_backtest("NVDA", "2024-01-02", "2024-03-28", CFG, include_agent=False)
     pos = rep.results["B&H vol-target"].positions
@@ -142,6 +162,10 @@ def test_cli_backtest_portfolio_evaluate_info(tmp_path, capsys):
     assert main(["backtest", "EURUSD", "--start", "2024-01-02", "--end", "2024-02-29",
                  "--every", "10", "--stops", "on", "--band", "0.2"]) == 0
     assert "stops on" in capsys.readouterr().out
+    assert main(["backtest", "AAPL", "--start", "2024-01-02", "--end", "2024-02-29",
+                 "--every", "10", "--impact", "1.0", "--capital", "1e9"]) == 0
+    assert "Impact%" in capsys.readouterr().out
+    assert main(["backtest", "AAPL", "--start", "2024-01-02", "--end", "2024-02-29", "--impact", "-1"]) == 2
     assert main(["portfolio", "AAPL,EURUSD", "--start", "2024-01-02", "--end", "2024-02-29",
                  "--every", "10", "--out", str(tmp_path / "p.csv")]) == 0
     assert (tmp_path / "p.csv").exists()

@@ -211,7 +211,7 @@ def test_queued_gateway_round_trip_and_deny_gateway():
 def test_desk_tools_payloads_are_json_safe_and_point_in_time():
     tools = DeskTools(SyntheticProvider(CFG), CFG)
     reg = build_registry(tools)
-    assert len(reg) == 15 and set(reg.servers()) == {"market_data", "quant", "knowledge", "portfolio", "execution"}
+    assert len(reg) == 16 and set(reg.servers()) == {"market_data", "quant", "knowledge", "portfolio", "execution"}
     hist = tools.history("AAPL", AS_OF, 60)
     assert max(hist["dates"]) <= AS_OF.isoformat() and len(hist["Close"]) == len(hist["dates"])
     json.dumps(hist); json.dumps(tools.technical("EURUSD", AS_OF)); json.dumps(tools.risk("AAPL", AS_OF, 0.5))

@@ -65,6 +65,10 @@ struct BacktestInputs {
     Series take;       // absolute take-profit level; NaN = none
     Series rebalance;  // non-zero where a new decision was made; re-arms after a stop exit.
                        // Empty: re-arm whenever the target weight changes.
+    Series impact;     // square-root market-impact coefficient K_t (decimal). A trade of
+                       // |dw| at bar t costs |dw|^1.5 * K_t of equity on top of the bps
+                       // costs, where K_t = coeff * daily_vol_t * sqrt(capital / (price_t * ADV_t)).
+                       // NaN or empty = no impact.
 };
 
 struct BacktestResult {
@@ -73,7 +77,8 @@ struct BacktestResult {
     Series positions;  // weight actually held over (t, t+1]
     std::vector<Trade> trades;
     Metrics metrics;
-    int stop_exits = 0;  // positions closed by a stop or take-profit
+    int stop_exits = 0;       // positions closed by a stop or take-profit
+    double impact_paid = 0.0; // cumulative market-impact cost, as a fraction of equity
 };
 
 BacktestResult run_backtest(const Series& prices, const Series& target_weights,

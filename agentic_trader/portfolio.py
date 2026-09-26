@@ -194,23 +194,54 @@ class PortfolioWeights:
     diversification_ratio: float
     correlations: pd.DataFrame
     scale: float                  # vol-target scaling applied (1 = none)
+    group_risk: pd.DataFrame | None = None   # per group: budget, allocation, share of risk
 
     def to_dict(self) -> dict:
-        return {"method": self.method, "expected_vol": round(self.expected_vol, 4),
-                "diversification_ratio": round(self.diversification_ratio, 3), "scale": round(self.scale, 4),
-                "weights": {s: round(float(w), 4) for s, w in zip(self.symbols, self.weights)}}
+        d = {"method": self.method, "expected_vol": round(self.expected_vol, 4),
+             "diversification_ratio": round(self.diversification_ratio, 3), "scale": round(self.scale, 4),
+             "weights": {s: round(float(w), 4) for s, w in zip(self.symbols, self.weights)}}
+        if self.group_risk is not None:
+            d["group_risk"] = self.group_risk.round(4).to_dict(orient="index")
+        return d
+
+
+def _allocate(method: str, sub: np.ndarray, cap: float, mu: np.ndarray | None,
+              risk_aversion: float) -> np.ndarray:
+    """Long-only allocation (sums to 1) of the active sleeves by one scheme."""
+    k = sub.shape[0]
+    if method == "equal":
+        return equal_weights(k)
+    if method == "inverse_vol":
+        return inverse_vol_weights(sub)
+    if method == "risk_parity":
+        return risk_parity_weights(sub)
+    if method == "min_variance":
+        return min_variance_weights(sub, cap)
+    return mean_variance_weights(mu, sub, risk_aversion, cap)
 
 
 def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method = "risk_parity",
               *, periods_per_year: float = 252.0, halflife: float | None = 60.0, shrink: bool = True,
               max_weight: float = 0.5, gross_cap: float = 1.0, target_vol: float | None = 0.15,
-              risk_aversion: float = 5.0, expected_returns: dict[str, float] | None = None) -> PortfolioWeights:
+              risk_aversion: float = 5.0, expected_returns: dict[str, float] | None = None,
+              groups: dict[str, str] | None = None,
+              group_budgets: dict[str, float] | None = None) -> PortfolioWeights:
     """Allocate capital across the desk's signed targets.
 
     ``returns`` is a (T, N) frame of the instruments' daily returns up to the
     decision date (columns = symbols). Sleeves with a zero target get no capital.
     The result is scaled to ``target_vol`` when its expected volatility is lower
     (never levered above ``gross_cap``), and per-sleeve weights are capped.
+
+    **Cross-asset risk budgets.** With ``groups`` (symbol -> group, e.g. the asset
+    class) and ``group_budgets`` (group -> share of portfolio risk), allocation is
+    hierarchical: ``method`` allocates *within* each group, each group's
+    sub-portfolio is then treated as one asset, and risk parity with the given
+    budgets allocates *across* groups using the full cross-group covariance. So an
+    equity/FX book with budgets 0.6/0.4 has the equity sleeves contributing 60% of
+    portfolio variance regardless of how many sleeves each side holds or how
+    volatile they are. Groups with no active sleeve get nothing and the remaining
+    budgets are renormalised.
     """
     if method not in METHODS:
         raise ValueError(f"unknown method {method!r}; choose from {METHODS}")
@@ -227,22 +258,43 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
     tgt = np.array([float(targets[s]) for s in symbols])
     active = tgt != 0
     alloc = np.zeros(n)
+    group_risk = None
+    if group_budgets is not None:
+        if groups is None:
+            raise ValueError("group_budgets needs groups (symbol -> group)")
+        if any(b < 0 for b in group_budgets.values()) or sum(group_budgets.values()) <= 0:
+            raise ValueError("group budgets must be non-negative and not all zero")
+        unknown = sorted({groups.get(s, "?") for s in symbols} - set(group_budgets))
+        if unknown:
+            raise ValueError(f"no risk budget for group(s) {unknown}")
     if active.any():
-        sub = cov[np.ix_(active, active)]
         k = int(active.sum())
         cap = min(1.0, max(max_weight, 1.0 / k))  # a cap below 1/k is infeasible on the simplex
-        if method == "equal":
-            a = equal_weights(k)
-        elif method == "inverse_vol":
-            a = inverse_vol_weights(sub)
-        elif method == "risk_parity":
-            a = risk_parity_weights(sub)
-        elif method == "min_variance":
-            a = min_variance_weights(sub, cap)
+        mu_all = np.array([(expected_returns or {}).get(s, targets[s]) for s in symbols])
+        if group_budgets is None:
+            sub = cov[np.ix_(active, active)]
+            a = _allocate(method, sub, cap, mu_all[active], risk_aversion)
+            alloc[active] = np.minimum(a, cap)
         else:
-            mu = np.array([(expected_returns or {}).get(s, targets[s]) for s, on in zip(symbols, active) if on])
-            a = mean_variance_weights(mu, sub, risk_aversion, cap)
-        alloc[active] = np.minimum(a, cap)
+            live = [g for g in group_budgets if any(active[i] and groups[s] == g for i, s in enumerate(symbols))]
+            if not live:
+                raise ValueError("no active sleeve in any budgeted group")
+            # Within-group allocation, each as a column of a (n x G) portfolio matrix.
+            P = np.zeros((n, len(live)))
+            for j, g in enumerate(live):
+                idx = [i for i, s in enumerate(symbols) if active[i] and groups[s] == g]
+                subg = cov[np.ix_(idx, idx)]
+                capg = min(1.0, max(max_weight, 1.0 / len(idx)))
+                a = _allocate(method, subg, capg, mu_all[idx], risk_aversion)
+                P[idx, j] = np.minimum(a, capg) / max(np.minimum(a, capg).sum(), 1e-12)
+            # Across groups: risk parity with the budgets on the group covariance.
+            cov_g = P.T @ cov @ P
+            budget = np.array([group_budgets[g] for g in live], float)
+            b = risk_parity_weights(cov_g, budget / budget.sum())
+            alloc = P @ b
+            rc_g = risk_contributions(b, cov_g)
+            group_risk = pd.DataFrame({"budget": budget / budget.sum(), "allocation": b,
+                                       "risk_share": rc_g["pct"]}, index=live)
         alloc *= gross_cap / alloc.sum() if alloc.sum() > 0 else 1.0
     w = alloc * np.sign(tgt) * np.minimum(np.abs(tgt), 1.0)
     rc = risk_contributions(w, cov * periods_per_year)
@@ -258,4 +310,4 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
     corr = pd.DataFrame(cov / np.outer(np.sqrt(np.diag(cov)), np.sqrt(np.diag(cov))),
                         index=symbols, columns=symbols).round(3)
     return PortfolioWeights(symbols, alloc, w, method, rc["vol"], contrib, rc["diversification_ratio"],
-                            corr, scale)
+                            corr, scale, group_risk)

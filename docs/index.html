@@ -74,15 +74,15 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 <div class="wrap">
   <h2>Measured, not claimed</h2>
   <div class="numbers">
-    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 197 pytest tests green — 30 agentic · 15 adversarial · 7 services (FastAPI client + a real MCP stdio round trip) · 18 quant research · 36 quant edge cases · 25 agent · 16 workflow · 13 data · 11 LLM-eval · 26 pipeline/quant · 13 C++ groups (34 checks)<br>
-    One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans<br>
-    Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 15 tools on 5 servers (market_data · quant · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
-    Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → read-only → argument guards → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date<br>
+    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 240 pytest tests green — 21 hypothesis fuzz properties on the C++ boundary · 18 v0.5 features · 30 agentic · 15 adversarial · 7 services (FastAPI client + a real MCP stdio round trip) · 19 quant research · 37 quant edge cases · 26 agent · 17 workflow · 13 data · 11 LLM-eval · 26 pipeline/quant · 14 C++ groups (42 checks)<br>
+    One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans · every transition written to SQLite when a task store is configured<br>
+    Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 16 tools on 5 servers (market_data · quant incl. cross-sectional alphas · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
+    Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → read-only → argument guards → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API<br>
     Knowledge (RAG)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 runbooks and policies · 59 chunks · dependency-free hashed TF-IDF · served as DOCUMENT evidence and shown to the trader and PM<br>
-    Quant research&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 9 alphas with IC / decay / hit rate / turnover · 4 execution algorithms + intraday simulator · 5 weighting schemes with Ledoit-Wolf covariance and risk attribution · bootstrap, probabilistic and deflated Sharpe<br>
-    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 15 instruments · design 2016–21 used for every choice · holdout 2022–26 run once · 16-variant rule ablation · alpha analyst measured and kept off<br>
-    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 15-sleeve portfolio Sharpe 1.14 vs 1.06 buy &amp; hold vs 1.24 vol-targeted B&amp;H · max drawdown 6.8% vs 20.8% · per instrument: lower drawdown on 14 of 15<br>
-    Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈7.1k lines of Python in <code>agentic_trader</code> (45 files; 2.4k in the agentic layer) · ≈1.2k lines of C++17 · ≈1.9k lines of tests · MSVC /W4 and GCC -Wall -Wextra clean · CI on Linux, Windows, macOS, Python 3.10–3.14
+    Quant research&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 9 alphas, time-series and cross-sectional (per-date IC, quantile spreads, breadth) · 4 execution algorithms + intraday simulator · square-root impact inside the backtester · 5 weighting schemes with Ledoit-Wolf covariance, cross-asset risk budgets and attribution · bootstrap, probabilistic and deflated Sharpe · ALFRED vintages<br>
+    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every choice) + 45 never consulted · design 2016–21 · holdout 2022–26 run once · reserve from 2026-07 untouched · 16-variant rule ablation · alpha analyst measured three times and kept off · impact sweep at $100k / $10M / $1B<br>
+    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; core: 15-sleeve portfolio Sharpe 1.14 vs 1.06 buy &amp; hold vs 1.24 vol-targeted B&amp;H, max drawdown 6.8% vs 20.8% · extended 45 names: mean Sharpe 0.37 vs 0.50 B&amp;H, lower drawdown on 40 of 45<br>
+    Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈8.1k lines of Python in <code>agentic_trader</code> (47 files; 2.7k in the agentic layer, 1.1k research) · ≈1.2k lines of C++17 · ≈2.4k lines of tests · MSVC /W4 and GCC -Wall -Wextra clean · CI on Linux, Windows, macOS, Python 3.10–3.14
   </div>
 
   <div class="honest">
@@ -94,8 +94,10 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     narrative, an injected headline that tries to close the untrusted block, a rogue plan with an order
     and a shell command, and a model that returns a 5.0 weight, and checks that each is contained.
     The performance figures above are from the <em>rule-based</em> desk; the LLM mode has not been
-    evaluated. Out of sample the desk does not beat buy &amp; hold on Sharpe per instrument; it takes
-    about half the drawdown. Adding the alpha library as an analyst measured as noise and stays off.
+    evaluated. Out of sample the desk does not beat buy &amp; hold on Sharpe per instrument — on the
+    15 names its rules were chosen on, and again on 45 names they never saw; it takes about half the
+    drawdown on both. Adding the alpha library as an analyst measured as noise three times and stays off.
+    With market impact on, the verdict holds at $100k and $10M and the desk loses 0.09 of Sharpe at $1B.
   </div>
 
   <h2>The architectural boundary</h2>
@@ -120,11 +122,27 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <tr><td>SMA(20/50)</td><td>0.84</td><td>1.79</td><td>34.6%</td><td>13.3%</td><td>72%</td></tr>
     <tr><td>MACD</td><td>0.54</td><td>1.14</td><td>20.2%</td><td>16.3%</td><td>66%</td></tr>
   </table></div>
+  <p class="caption">v0.5: the 45 extended instruments (sector equities, rates / credit / commodity ETFs, FX crosses)
+     that no rule choice ever consulted, same frozen rules, mean over instruments.</p>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Extended universe, 45 names</th><th>Design mean Sharpe</th><th>Holdout mean Sharpe</th><th>Holdout mean max DD</th><th>Beats B&amp;H (holdout)</th><th>Lower DD than B&amp;H</th></tr>
+    <tr class="agent"><td>AgenticTrader (frozen v0.3 rules)</td><td>0.49</td><td>0.37</td><td>17.7%</td><td>14 / 45</td><td>40 / 45</td></tr>
+    <tr><td>Buy &amp; hold</td><td>0.56</td><td>0.50</td><td>27.2%</td><td>—</td><td>—</td></tr>
+    <tr><td>B&amp;H vol-target (fair control)</td><td>0.61</td><td>0.47</td><td>21.1%</td><td>—</td><td>—</td></tr>
+  </table></div>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Market impact, core universe, design period</th><th>Sharpe, impact off</th><th>$100k</th><th>$10M</th><th>$1B</th><th>Impact paid at $1B</th></tr>
+    <tr class="agent"><td>AgenticTrader (≈106 trades)</td><td>0.65</td><td>0.65</td><td>0.64</td><td>0.56</td><td>7.7%</td></tr>
+    <tr><td>B&amp;H vol-target (≈1,100 trades)</td><td>0.67</td><td>0.67</td><td>0.67</td><td>0.62</td><td>5.7%</td></tr>
+    <tr><td>Buy &amp; hold</td><td>0.62</td><td>0.62</td><td>0.62</td><td>0.62</td><td>1.0%</td></tr>
+    <tr><td>MACD</td><td>0.42</td><td>0.41</td><td>0.35</td><td>−0.24</td><td>75.4%</td></tr>
+  </table></div>
   <div class="tablewrap"><table class="results">
     <tr><th>Design period 2016–21, agent mean over 15 instruments</th><th>Mean Sharpe</th><th>Median Sharpe</th><th>Beats B&amp;H</th><th>Beats vol-target B&amp;H</th></tr>
     <tr class="agent"><td>Current default analysts</td><td>0.65</td><td>0.55</td><td>10 / 15</td><td>6 / 15</td></tr>
-    <tr><td>+ alpha analyst</td><td>0.60</td><td>0.60</td><td>9 / 15</td><td>5 / 15</td></tr>
-    <tr><td>alpha analyst replaces technical</td><td>0.63</td><td>0.68</td><td>8 / 15</td><td>3 / 15</td></tr>
+    <tr><td>+ alpha analyst (v0.4.0)</td><td>0.60</td><td>0.60</td><td>9 / 15</td><td>5 / 15</td></tr>
+    <tr><td>+ alpha analyst (significance-gated, window fixed)</td><td>0.65</td><td>0.62</td><td>8 / 15</td><td>6 / 15</td></tr>
+    <tr><td>alpha analyst replaces technical</td><td>0.57</td><td>0.59</td><td>5 / 15</td><td>5 / 15</td></tr>
   </table></div>
 
   <h2>What's inside</h2>
@@ -135,7 +153,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
          the 11-state task machine with its legal transitions. Nothing here imports an LLM SDK,
          MCP or a web framework.</p></div>
     <div class="card"><h3>Tool servers &amp; executor</h3>
-      <p>15 tools on 5 servers with schemas derived from Python signatures and annotations for
+      <p>16 tools on 5 servers with schemas derived from Python signatures and annotations for
          read-only, risk level, capabilities and evidence type. The executor checks policy,
          coerces arguments, retries transient errors, times out, traces, and writes an evidence
          record for every call — including failures.</p></div>
@@ -178,21 +196,30 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
          point-in-time data, evaluation protocol, incident runbook, alpha research, portfolio
          construction, agentic governance — chunked by heading, embedded with hashed TF-IDF,
          retrieved as DOCUMENT evidence and shown to the trader and PM.</p></div>
-    <div class="card"><h3>Alpha library</h3>
+    <div class="card"><h3>Alpha library, time-series and cross-sectional</h3>
       <p>12-1 momentum, vol-adjusted momentum, short-term reversal, 52-week high, Donchian
          breakout, MACD, RSI, low-vol and FX carry — all in [-1, 1], point in time by
-         construction. Reports give IC with t-stat, decay across horizons, hit rate, tercile
-         spread, autocorrelation (turnover) and correlations; a combined alpha and an analyst agent.</p></div>
-    <div class="card"><h3>Execution algorithms</h3>
+         construction. Per name: IC with t-stat, decay, hit rate, tercile spread, turnover.
+         Across a universe (v0.5): daily z-scores or ranks within asset class, per-date IC with
+         an overlap-aware t-statistic, top-minus-bottom quantile spreads, breadth.</p></div>
+    <div class="card"><h3>Execution, in the simulator and in the backtest</h3>
       <p>TWAP, VWAP, participation-of-volume and Almgren-Chriss schedules; a simulator that
-         builds intraday bars from the daily bar (Brownian bridge inside the high/low), charges
-         half the spread and square-root impact, and reports implementation shortfall and
-         slippage vs VWAP. Decisions become parent orders with algorithm selection by ADV.</p></div>
-    <div class="card"><h3>Portfolio construction</h3>
+         builds intraday bars from the daily bar, charges half the spread and square-root
+         impact, and reports implementation shortfall. v0.5 puts the same square-root model
+         inside the backtester: a trade of |dw| costs |dw|^1.5 · K<sub>t</sub> of equity, scaled by
+         account size, charged to the desk and every baseline alike.</p></div>
+    <div class="card"><h3>Portfolio construction with risk budgets</h3>
       <p>EWMA and Ledoit-Wolf shrunk covariance; equal, inverse-vol, risk parity, minimum
          variance and mean-variance weights with per-sleeve caps and a portfolio vol target;
-         marginal and component risk, diversification ratio. The portfolio backtest re-estimates
-         allocations from trailing returns only.</p></div>
+         marginal and component risk, diversification ratio. v0.5 adds cross-asset risk
+         budgets: allocate within each class, then risk parity with the budgets across classes
+         from the full covariance, with budget vs realised share reported.</p></div>
+    <div class="card"><h3>Operations</h3>
+      <p>A SQLite task store that writes every run at each state transition and serves old
+         records after a restart (in-flight runs are failed, never silently resumed); a dollar
+         LLM budget next to the call budget; TLS on the API and a refusal to bind a public
+         interface with the shipped development keys; ALFRED vintages so revised macro series
+         enter the backtest as first published.</p></div>
     <div class="card"><h3>Backtest statistics</h3>
       <p>Block-bootstrap Sharpe confidence intervals, the probabilistic Sharpe ratio, the
          deflated Sharpe ratio for the number of variants tried, and the minimum track record
@@ -201,11 +228,13 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
       <p>FastAPI gateway with API-key roles: 202-accepted tasks run in the background; reports as
          JSON or markdown; traces; evidence; cancel; an approvals queue for the risk role; the tool
          catalogue; health; Prometheus text metrics. Spans with parent ids and JSON-lines logs.</p></div>
-    <div class="card"><h3>Adversarial suite</h3>
+    <div class="card"><h3>Adversarial suite and fuzzing</h3>
       <p>Injected headlines that try to close the untrusted block, rogue plans with orders and
          shell commands, unparsable planner output, a critic that tries to raise confidence,
          fabricated numbers and ids, unresolvable evidence, hostile arguments, role escalation,
-         a plan without governance — each mapped to a control in the threat model.</p></div>
+         a plan without governance — each mapped to a control in the threat model. Plus
+         hypothesis fuzzing of the Python ↔ C++ boundary on NaN, ±inf, empty and huge inputs,
+         which found and fixed five backend divergences on its first run.</p></div>
     <div class="card"><h3>Offline by default</h3>
       <p>No API key, no network: deterministic rule-based agents on synthetic data run the whole
          harness, the API, the MCP server, the tests and the backtests out of the box.
@@ -244,8 +273,8 @@ risk team's views were aggressive +0.00, neutral +0.00, conservative +0.00. The 
 trace: {'spans': 18, 'errors': 0, 'ms_by_kind': {'plan': 0.1, 'prepare': 8.7, 'tool': 12.4, 'agent': 4.9, ...}}</pre>
 
   <h2>The same tools over MCP, and the API</h2>
-<pre>$ agentic-trader mcp                      # stdio server: 15 tools with read-only / risk / capability annotations
-$ agentic-trader serve                    # http://127.0.0.1:8000/docs
+<pre>$ agentic-trader mcp                      # stdio server: 16 tools with read-only / risk / capability annotations
+$ agentic-trader serve --task-db results/tasks.sqlite      # http://127.0.0.1:8000/docs, records survive restarts
 $ curl -s -X POST http://127.0.0.1:8000/tasks -H "X-API-Key: dev-trader-key" \
        -H "Content-Type: application/json" -d '{"symbol": "AAPL", "as_of": "2024-03-01", "current_weight": 0.1}'
 {"task_id": "TASK-67732293", "state": "EXECUTING"}
@@ -286,14 +315,16 @@ agentic-trader tools
 agentic-trader serve                      # docs at http://127.0.0.1:8000/docs
 agentic-trader mcp
 
-# research: alphas, execution, portfolio construction, statistics
+# research: alphas (per name and cross-sectional), execution, portfolio construction, statistics
 agentic-trader alpha USDJPY --start 2021-01-04 --end 2024-03-28
+agentic-trader xalpha AAPL,MSFT,NVDA,JPM,XOM --start 2021-01-04 --end 2024-03-28
 agentic-trader execute AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 5000000
-agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start 2023-01-02 --end 2023-12-29 --weighting risk_parity
+agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start 2023-01-02 --end 2023-12-29 --weighting risk_parity --class-budgets equity=0.6,fx=0.4
+agentic-trader backtest NVDA --start 2024-01-02 --end 2024-03-28 --impact 1.0 --capital 1e9
 agentic-trader stats returns.csv --trials 16
 
-# the evaluation on real prices (design / holdout / Q1 2024)
-agentic-trader evaluate --data yahoo --periods design,holdout,q1_2024
+# the evaluation on real prices: 60 instruments, design / holdout / Q1 2024 / reserve
+agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve
 
 # the suites (C++ core optional: scripts/build_cpp.sh or scripts\build_cpp.ps1)
 pytest && ctest --test-dir build -C Release

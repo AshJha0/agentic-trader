@@ -71,7 +71,7 @@ class MarketDataProvider(ABC):
             from .fred import RATE_SERIES, default_client
             b, q = RATE_SERIES.get(instrument.base), RATE_SERIES.get(instrument.quote)
             if b and q:
-                c = default_client()
+                c = default_client(self.config)
                 diff = c.series_asof(b, dates) - c.series_asof(q, dates)
                 return (diff / 100.0).to_numpy(dtype=float)
         out = [self.macro(instrument, ts.date()).get("rate_diff", float("nan")) for ts in dates]
@@ -147,7 +147,7 @@ def fx_macro(instrument: Instrument, as_of: date, config: dict, real_world: bool
         raise ValueError(f"unknown fx_macro_source {src!r} (auto, static or fred)")
 
     from .fred import default_client
-    c = default_client()
+    c = default_client(config)
     b, q = instrument.base, instrument.quote
     br, qr = c.rate(b, as_of), c.rate(q, as_of)
     recent = (date.today() - as_of).days <= config.get("static_macro_max_age_days", 180)

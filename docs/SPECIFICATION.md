@@ -34,7 +34,7 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 | C6 | Deterministic rule-based reasoning when no LLM is configured, and as the fallback on any LLM failure | realised; tested with a garbage-emitting model | `Agent.ask_json`, `rules()` |
 | C7 | LLM output clipped to valid ranges, validated for required keys, non-numeric values coerced | realised; tested with `inf`, `nan`, strings and wrong-side stops | `clip`, `extract_json`, `sane_levels` |
 | C8 | Third-party text isolated from instructions in prompts | realised; tested with injected headlines and tag-escape attempts | `untrusted_block`, `Analyst.untrusted_keys` |
-| C9 | Hard cap on model calls, a request timeout and usage/cost accounting | realised; tested | `BudgetedLLM`, `UsageTracker`, `max_llm_calls`, `llm_timeout_s` |
+| C9 | Hard caps on model calls and on estimated spend, a request timeout and usage/cost accounting | realised; tested | `BudgetedLLM`, `UsageTracker`, `max_llm_calls`, `max_llm_cost_usd`, `llm_timeout_s` |
 | C10 | Portfolio context: the firm knows the current position | realised | `propagate(current_weight=)`, `scan(positions=)` |
 | C11 | Prompts can be anonymised (symbols, names, dates replaced) before leaving the process | realised; tested | `anonymize.py`, `llm_anonymize` |
 | C12 | Agents read retrieved policy passages | realised: the trader and risk prompts include `state.knowledge` | `trader.policy_passages` |
@@ -47,6 +47,7 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 | R2 | ATR-based stop-loss and take-profit on every directional decision, consistent with the final direction | realised; tested | `protective_levels`, `sane_levels` |
 | R3 | Volatility-targeted sizing for the neutral view; VaR-capped conservative view | realised | `RiskAnalyst.rules_weight` |
 | R4 | Transaction costs, slippage, equity borrow fees and point-in-time FX carry in backtests | realised; tested | `run_backtest` (`carry=`) |
+| R9 | Market impact in backtests, scaled by account size, charged to the agent and every baseline alike | realised (v0.5); tested and cross-checked C++ vs numpy; FX needs a configured notional ADV | `costs.impact_coeff`, `backtest.impact_coefficients`, `run_backtest(impact=)` |
 | R5 | No-trade band that never holds a position the limits forbid | realised; tested | `PortfolioManager.no_trade_band` |
 | R6 | Protective stops simulated intraday with gap fills | realised; tested in C++ and Python, cross-checked | `run_backtest_ex` |
 | R7 | Refuse decisions on stale or insufficient data | realised; tested | `graph.prepare` |
@@ -63,7 +64,7 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 | D5 | Macro inputs for FX: policy rates and inflation | realised: FRED with publication lags and staleness checks; the static table only for synthetic data or recent dates | `data/fred.py`, `fx_macro` |
 | D6 | Deterministic offline dataset | realised: seeded, regime-switching, fat-tailed | `SyntheticProvider` |
 | D7 | Robust ingestion of messy files | realised; tested | `clean_ohlcv`, `CSVProvider` |
-| D8 | Vintage-accurate macro data (as first published) | roadmap: FRED serves latest vintages; ALFRED would fix CPI revisions | — |
+| D8 | Vintage-accurate macro data (as first published) | realised (v0.5), opt-in: revised series are read from the ALFRED vintage current at each date, sampled monthly; policy rates are never revised. Off in the published runs | `fred_vintages`, `FredClient(vintages=True)` |
 | D9 | Every data access under the harness is a catalogued, evidenced tool call | realised; tested | `RecordingProvider` |
 
 ## 5. Evaluation
@@ -76,6 +77,8 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 | E4 | Volatility-matched control baseline | realised | `B&H vol-target` |
 | E5 | FX evaluation on the same protocol | realised (rule-based) | [evaluation/evaluation.md](evaluation/evaluation.md) |
 | E6 | A short reference window (Q1 2024) inside the holdout | realised | `PERIODS["q1_2024"]` |
+| E11 | A universe wide enough that Sharpe differences are not noise, partitioned into the names choices were made on and names never consulted | realised (v0.5): 15 core + 45 extended instruments, tagged per row | `UNIVERSES`, `universe_group`, `evaluate --universe` |
+| E12 | A fresh holdout for the next rule change, declared before the change exists | realised (v0.5): the extended universe on every period plus a `reserve` period from 2026-07-01 untouched by any published number; protocol written down | `PERIODS["reserve"]`, [evaluation](evaluation/evaluation.md#the-next-rule-change-what-counts-as-unseen) |
 | E7 | Reproducible before/after for every rule change | realised | `RULES_V02`, `--rules v02` |
 | E8 | Multi-asset portfolio evaluation with a chosen weighting scheme | realised | `run_portfolio_backtest(weighting=)` |
 | E9 | Selection-aware statistics: bootstrap interval, probabilistic and deflated Sharpe, minimum track record | realised | `stats.selection_report`, `agentic-trader stats` |
@@ -87,11 +90,11 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 |---|---|---|---|
 | G1 | C++17 quant core exposed to Python | realised: pybind11 | `cpp/`, `quant/` |
 | G2 | Runs without a compiler | realised: numpy twin, selected automatically | `quant/pycore.py` |
-| G3 | C++ and numpy backends numerically identical | realised: cross-checked to 1e-9 (indicators) and 1e-11 (randomised extended backtests) in CI, including rolling extremes, Spearman and Almgren-Chriss | `tests/test_quant.py`, `tests/test_quant_edges.py`, `tests/test_quant_research.py` |
+| G3 | C++ and numpy backends numerically identical | realised: cross-checked to 1e-9 (indicators) and 1e-11 (randomised extended backtests) in CI, including rolling extremes, Spearman, Almgren-Chriss and impact; property-based fuzzing (hypothesis) asserts crash-freedom on wild inputs and agreement on sane ones | `tests/test_quant.py`, `tests/test_quant_edges.py`, `tests/test_quant_research.py`, `tests/test_fuzz.py` |
 | G4 | CI on Linux, Windows and macOS; Python 3.10–3.14 | realised | `.github/workflows/ci.yml` |
 | G5 | Reflection / memory of past decisions, crash-safe | realised: horizon-gated, atomic writes, corrupt lines skipped | `memory.py` |
-| G6 | Checkpoint and resume of long runs | partial: a task pauses in AWAITING_APPROVAL and resumes in-process; there is no on-disk checkpoint | `AgentHarness.resume` |
-| G7 | Portfolio-level (multi-asset) allocation | realised: five weighting schemes with shrunk covariance and risk attribution | `portfolio.py` |
+| G6 | Checkpoint and resume of long runs | partial: a task pauses in AWAITING_APPROVAL and resumes in-process, and every run is persisted at each transition (v0.5), but a run interrupted by a crash is failed on reload, not resumed; long backtests have no checkpoint | `AgentHarness.resume`, `TaskStore` |
+| G7 | Portfolio-level (multi-asset) allocation | realised: five weighting schemes with shrunk covariance and risk attribution, and (v0.5) hierarchical risk budgets across asset classes | `portfolio.py` (`groups`, `group_budgets`), `run_portfolio_backtest(class_budgets=)` |
 | G8 | Watchlist runs that survive individual failures | realised; tested | `TradingGraph.scan`, `agentic-trader scan` |
 | G9 | Friendly CLI failures (no tracebacks for bad input) | realised; tested | `cli.main` |
 
@@ -115,7 +118,8 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 | V14 | Tracing spans, Prometheus-style metrics and JSON logs | realised | `tracing.py`, `/metrics` |
 | V15 | The registry served over MCP (stdio), and remote MCP tools usable under the same policy | realised; tested with a real stdio round trip | `mcp_server.py` |
 | V16 | An HTTP API with API-key roles, asynchronous tasks and approvals | realised; tested with the FastAPI client | `api.py`, `agentic-trader serve` |
-| V17 | Persistent task store and multi-process workers | roadmap: tasks live in the process that runs them | — |
+| V17 | Persistent task store | realised (v0.5): SQLite records written at every transition, served by the same routes after a restart, in-flight runs failed on reload; multi-process workers remain roadmap | `agentic/store.py`, `agentic.task_db`, `serve --task-db` |
+| V18 | Deployment guards: TLS, no development keys off loopback, keys replaced rather than merged | realised (v0.5); tested | `serve_options`, `serve --ssl-cert/--ssl-key`, `config._REPLACE_KEYS` |
 
 ## 8. Quant research
 
@@ -130,4 +134,4 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 | Q7 | Weighting schemes: equal, inverse-vol, risk parity, minimum variance, mean-variance, with risk attribution | realised; tested | `portfolio.py` |
 | Q8 | Backtest statistics that account for selection | realised | `stats.py` |
 | Q9 | Research results feed decisions only through measured, opt-in switches | realised: the alpha analyst was measured on the design period and is off by default | [evaluation/evaluation.md](evaluation/evaluation.md) |
-| Q10 | Cross-sectional (multi-name) alpha models | roadmap: alphas are per instrument | — |
+| Q10 | Cross-sectional (multi-name) alpha models | realised (v0.5): per-day z-scores / ranks within asset class, per-date IC with an overlap-aware t-statistic, quantile spreads, breadth; a tool and a CLI command. Not consumed by an analyst (deliberately: it has to clear the evaluation bar first) | `xalpha.py`, `quant.xalpha`, `agentic-trader xalpha` |

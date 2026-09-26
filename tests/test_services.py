@@ -43,7 +43,7 @@ def test_api_auth_roles_and_task_lifecycle(client):
     assert c.get("/health").json()["status"] == "ok"
     assert c.get("/tools").status_code == 401
     assert c.get("/tools", headers={"X-API-Key": "nope"}).status_code == 401
-    assert len(c.get("/tools", headers={"X-API-Key": "dev-viewer-key"}).json()) == 15
+    assert len(c.get("/tools", headers={"X-API-Key": "dev-viewer-key"}).json()) == 16
     assert c.post("/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01"},
                   headers={"X-API-Key": "dev-viewer-key"}).status_code == 403
     r = c.post("/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01", "current_weight": 0.1},
@@ -106,7 +106,7 @@ def test_mcp_stdio_round_trip_and_remote_registry():
     from agentic_trader.agentic.mcp_server import call, discover, registry_from_stdio
     tools = discover()
     names = {t["name"] for t in tools}
-    assert len(tools) == 15 and "market_data__news" in names and "execution__submit_order" in names
+    assert len(tools) == 16 and "market_data__news" in names and "execution__submit_order" in names
     order = next(t for t in tools if t["name"] == "execution__submit_order")
     assert order["read_only"] is False and order["meta"]["risk"] == "high"
     docs = call("knowledge__list_documents", {})
@@ -117,7 +117,7 @@ def test_mcp_stdio_round_trip_and_remote_registry():
         call("market_data__news", {"symbol": "EUR/XYZ", "as_of": "2024-03-01", "lookback_days": 7})
 
     reg = registry_from_stdio()
-    assert len(reg) == 15 and "quant.technical" in reg
+    assert len(reg) == 16 and "quant.technical" in reg
     ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER)
     r = ex.call("quant.technical", symbol="AAPL", as_of="2024-03-01")
     assert r.ok and "rsi14" in r.payload and len(ex.evidence) == 1
@@ -144,7 +144,7 @@ def test_cli_task_tools_and_research_commands(tmp_path, capsys):
     assert rec["state"] == "COMPLETED" and rec["report"]["warnings"] == []
 
     assert main(["tools"]) == 0
-    assert "15 tools on 5 servers" in capsys.readouterr().out
+    assert "16 tools on 5 servers" in capsys.readouterr().out
     assert main(["tools", "--json"]) == 0
     cat = capsys.readouterr().out
     assert json.loads(cat[cat.index("["):])[0]["name"] == "market_data.history"

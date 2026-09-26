@@ -89,7 +89,11 @@ def zscore(x, n: int) -> np.ndarray:
     m, s = sma(x, n), rolling_std(x, n)
     out = np.full(len(x), NaN)
     ok = ~np.isnan(m) & ~np.isnan(s)
-    out[ok] = np.where(s[ok] > 0, (x[ok] - m[ok]) / np.where(s[ok] > 0, s[ok], 1.0), 0.0)
+    # A window whose spread is at rounding level relative to its mean is flat: z = 0,
+    # not the +-1 that cancellation noise in (x - mean) / std would give (mirrors C++).
+    floor = 1e-12 * np.maximum(np.abs(m[ok]), 1e-300)
+    live = s[ok] > floor
+    out[ok] = np.where(live, (x[ok] - m[ok]) / np.where(live, s[ok], 1.0), 0.0)
     return out
 
 
@@ -149,7 +153,10 @@ def kdj(high, low, close, n: int = 9):
     K, D, J = (np.full(len(c), NaN) for _ in range(3))
     k = d = 50.0
     for i in range(n - 1, len(c)):
-        hh, ll = h[i - n + 1 : i + 1].max(), l[i - n + 1 : i + 1].min()
+        hw, lw = h[i - n + 1 : i + 1], l[i - n + 1 : i + 1]
+        if np.isnan(c[i]) or np.isnan(hw).any() or np.isnan(lw).any():
+            continue  # a window with a missing bar has no range; the smoothed state does not advance
+        hh, ll = hw.max(), lw.min()
         rsv = (c[i] - ll) / (hh - ll) * 100.0 if hh > ll else 50.0
         k = 2.0 / 3.0 * k + rsv / 3.0
         d = 2.0 / 3.0 * d + k / 3.0
@@ -240,6 +247,8 @@ def realized_vol(close, n: int, periods_per_year: float) -> np.ndarray:
 
 # ---------------------------------------------------------------------- risk
 def quantile(x, q: float) -> float:
+    if np.isnan(q):
+        return NaN
     v = _arr(x)
     v = v[~np.isnan(v)]
     if v.size == 0:
@@ -380,10 +389,12 @@ class BacktestResult:
     trades: list = field(default_factory=list)
     metrics: Metrics = field(default_factory=Metrics)
     stop_exits: int = 0
+    impact_paid: float = 0.0  # cumulative market-impact cost as a fraction of equity
 
 
 def max_drawdown(equity) -> float:
     e = _arr(equity)
+    e = e[~np.isnan(e)]  # a missing point neither sets a peak nor counts as a drawdown (mirrors C++)
     if e.size == 0:
         return 0.0
     peak = np.maximum.accumulate(np.maximum(e, 0.0))
@@ -402,10 +413,11 @@ def compute_metrics(equity, positions, periods_per_year: float,
     m.periods = n
     r = e[1:] / e[:-1] - 1.0
     m.cumulative_return = float(e[-1] / e[0] - 1.0)
-    m.annualized_return = (
-        float((1.0 + m.cumulative_return) ** (periods_per_year / n) - 1.0)
-        if m.cumulative_return > -1.0 else -1.0
-    )
+    with np.errstate(over="ignore"):  # a huge one-bar gain annualises to inf, as in C++ (no exception)
+        m.annualized_return = (
+            float(np.power(np.float64(1.0 + m.cumulative_return), periods_per_year / n) - 1.0)
+            if m.cumulative_return > -1.0 else -1.0
+        )
     rf = risk_free_annual / periods_per_year
     mean = r.mean()
     sd = float(r.std(ddof=1)) if n > 1 else 0.0
@@ -457,7 +469,8 @@ def run_backtest(prices, target_weights, config: BacktestConfig) -> BacktestResu
 
 
 def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, open=None,
-                    high=None, low=None, stop=None, take=None, rebalance=None) -> BacktestResult:
+                    high=None, low=None, stop=None, take=None, rebalance=None,
+                    impact=None) -> BacktestResult:
     p, w_in = _arr(prices), _arr(target_weights)
     if p.size != w_in.size:
         raise ValueError("run_backtest: prices and weights length mismatch")
@@ -466,7 +479,8 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
     T = p.size
     extras = {}
     for name, arr in (("carry", carry), ("open", open), ("high", high), ("low", low),
-                      ("stop", stop), ("take", take), ("rebalance", rebalance)):
+                      ("stop", stop), ("take", take), ("rebalance", rebalance),
+                      ("impact", impact)):
         a = None if arr is None or len(arr) == 0 else _arr(arr)
         if a is not None and a.size != T:
             raise ValueError(f"run_backtest: {name} length does not match prices")
@@ -475,8 +489,8 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
     has_ohlc = all(extras[k] is not None for k in ("open", "high", "low"))
     if has_levels and not has_ohlc:
         raise ValueError("run_backtest: stop/take levels need open, high and low")
-    if T and not np.all(p > 0):
-        raise ValueError("run_backtest: prices must be positive")
+    if T and not np.all((p > 0) & np.isfinite(p)):
+        raise ValueError("run_backtest: prices must be positive and finite")
 
     equity = np.full(T, config.initial_capital)
     returns = np.zeros(T)
@@ -490,7 +504,12 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
     unit_cost = (config.cost_bps + config.slippage_bps) / 1e4
     ppy = config.periods_per_year
     stop_a, take_a, reb = extras["stop"], extras["take"], extras["rebalance"]
-    prev, prev_target, stopped, exits = 0.0, NaN, False, 0
+    imp = extras["impact"]
+
+    def impact_k(i: int) -> float:
+        return 0.0 if imp is None or np.isnan(imp[i]) else float(imp[i])
+
+    prev, prev_target, stopped, exits, impact_paid = 0.0, NaN, False, 0, 0.0
     for t in range(T - 1):
         target = 0.0 if np.isnan(w_in[t]) else float(min(max(w_in[t], lo), hi))
         rearm = (target != prev_target) if reb is None else (reb[t] != 0.0)
@@ -516,10 +535,15 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         if extras["carry"] is not None:
             rate = 0.0 if np.isnan(extras["carry"][t]) else extras["carry"][t]
 
+        impact_in = abs(trade) ** 1.5 * impact_k(t)
         ret = (w * (px_end / p[t] - 1.0) + w * rate / ppy
-               - (-w * config.borrow_annual / ppy if w < 0 else 0.0) - abs(trade) * unit_cost)
+               - (-w * config.borrow_annual / ppy if w < 0 else 0.0) - abs(trade) * unit_cost
+               - impact_in)
+        impact_paid += impact_in
         if exited:
-            ret -= abs(w) * unit_cost
+            impact_out = abs(w) ** 1.5 * impact_k(t + 1)
+            ret -= abs(w) * unit_cost + impact_out
+            impact_paid += impact_out
             trades.append(Trade(t + 1, w, 0.0, float(exit_px)))
             exits += 1
             stopped = True
@@ -529,4 +553,4 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         prev = 0.0 if exited else w
     positions[T - 1] = prev
     metrics = compute_metrics(equity, positions, ppy, config.risk_free_annual)
-    return BacktestResult(equity, returns, positions, trades, metrics, exits)
+    return BacktestResult(equity, returns, positions, trades, metrics, exits, impact_paid)

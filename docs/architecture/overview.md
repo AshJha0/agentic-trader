@@ -25,8 +25,8 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 | `agents/researchers.py` | Bull, bear, facilitator, weighted consensus |
 | `agents/trader.py` | Strategic weight plus tilt, ATR stops and targets, `sane_levels`, policy passages in the prompt |
 | `agents/risk.py` | Three risk analysts, portfolio manager, firm limits, no-trade band |
-| `llm.py`, `anonymize.py` | Claude client with tiers, timeout, refusal fallback, usage and cost; call budget; anonymised prompts |
-| `data/` | `MarketDataProvider`, `clean_ohlcv`, synthetic / Yahoo / CSV providers, `fred.py` point-in-time macro |
+| `llm.py`, `anonymize.py` | Claude client with tiers, timeout, refusal fallback, usage and cost; call and dollar budgets (`BudgetedLLM`); anonymised prompts |
+| `data/` | `MarketDataProvider`, `clean_ohlcv`, synthetic / Yahoo / CSV providers, `fred.py` point-in-time macro with optional ALFRED vintages for revised series |
 | `memory.py` | Atomic, corruption-tolerant decision log; horizon-gated outcomes |
 
 ### The agentic layer (`agentic_trader.agentic`)
@@ -35,7 +35,8 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 |---|---|
 | `domain.py` | Frozen dataclasses: `Task`, `Plan`, `PlanStep`, `StepType`, `ToolDescriptor`, `ToolAnnotations`, `ToolRequest`/`ToolResult`, `Evidence`, `EvidenceType`, `Finding`, `PolicyDecision`, `Role`, `Capability`, `TaskState` and the legal `TRANSITIONS` |
 | `tools.py` | `ToolRegistry` (schemas derived from signatures, `register_descriptor` for remote tools), `coerce_arguments`, `ToolExecutor` (policy → gateway → coerce → timed run with retry → evidence, traced) |
-| `servers.py` | `DeskTools` and `build_registry`: 15 tools on `market_data`, `quant`, `knowledge`, `portfolio`, `execution`; `RecordingProvider` |
+| `servers.py` | `DeskTools` and `build_registry`: 16 tools on `market_data`, `quant` (incl. `xalpha`), `knowledge`, `portfolio`, `execution`; `RecordingProvider` |
+| `store.py` | `TaskStore`: SQLite records of every run, written at each transition; archived records served read-only after a restart, in-flight ones failed on reload |
 | `policy.py` | Rules, `PolicyEngine`, `ROLE_CAPABILITIES`, `AutoApprovalGateway`, `QueuedApprovalGateway`, `DenyApprovalGateway` |
 | `planner.py` | `canonical_plan`, `propose_plan` (model), `validate_plan`, `make_plan` |
 | `harness.py` | `AgentHarness`, `TaskRun`: the state machine, tool batching, approvals, cancellation, governance steps |
@@ -44,18 +45,19 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 | `rag.py`, `knowledge/docs` | `KnowledgeBase` with a hashed TF-IDF embedder over 11 documents |
 | `tracing.py` | `Tracer` spans, `Metrics` (Prometheus text), JSON-lines logging |
 | `mcp_server.py` | The registry as an MCP stdio server; `discover`, `call`, `registry_from_stdio` |
-| `api.py` | FastAPI gateway with API-key roles |
+| `api.py` | FastAPI gateway with API-key roles; `serve_options` (TLS, no development keys off loopback); archive fallback on the read routes |
 
 ### The quant research layer
 
 | Module | Responsibility |
 |---|---|
-| `alpha.py` | Nine alphas, `compute_alphas`, `combine`, `alpha_report` (IC, decay, hit rate, spread, autocorrelation, correlations), `alpha_snapshot` |
+| `alpha.py` | Nine alphas, `compute_alphas`, `combine`, `alpha_report` (IC, decay, hit rate, spread, autocorrelation, correlations), `alpha_snapshot`, `significant_alpha_signal` |
+| `xalpha.py` | Cross-sectional alphas: per-day z-scores / ranks within asset class, per-date IC with an overlap-aware t-statistic, quantile spreads, breadth; `xalpha_report`, `xalpha_snapshot` |
 | `algo.py` | Volume profiles, intraday bars, TWAP / VWAP / POV / Almgren-Chriss schedules, `simulate_execution`, `plan_execution` |
-| `portfolio.py` | EWMA and Ledoit-Wolf covariance, five weighting schemes, `risk_contributions`, `construct` |
+| `portfolio.py` | EWMA and Ledoit-Wolf covariance, five weighting schemes, hierarchical risk budgets across groups, `risk_contributions`, `construct` |
 | `stats.py` | `sharpe_stats`, `sharpe_ci_bootstrap`, `probabilistic_sharpe`, `expected_max_sharpe`, `deflated_sharpe`, `min_track_record`, `selection_report` |
-| `backtest.py` | Walk-forward agent backtest vs six baselines; `run_portfolio_backtest(weighting=...)` |
-| `evaluation.py` | Design / holdout / Q1-2024 harness with parallel workers and LLM usage accounting |
+| `backtest.py` | Walk-forward agent backtest vs six baselines with optional square-root market impact (`impact_coefficients`); `run_portfolio_backtest(weighting=..., class_budgets=...)` |
+| `evaluation.py` | Design / holdout / Q1-2024 / reserve harness over the core and extended universes, with parallel workers and LLM usage accounting |
 | `quant/`, `cpp/` | Indicators (incl. rolling extremes, Spearman), risk, strategies, backtester with stops and carry, Almgren-Chriss; numpy twin |
 
 ## One task, step by step
@@ -175,11 +177,13 @@ See `config.py` for the full dictionary.
 | Key | Default | Effect |
 |---|---|---|
 | `llm_provider`, `deep_think_llm`, `quick_think_llm`, `deep_effort` | `offline`, `claude-opus-5`, `claude-haiku-4-5`, `high` | Model tiers |
-| `llm_timeout_s`, `max_llm_calls`, `llm_anonymize` | 300, None, False | Timeout; hard call cap; anonymised prompts |
+| `llm_timeout_s`, `max_llm_calls`, `max_llm_cost_usd`, `llm_anonymize` | 300, None, None, False | Timeout; hard call cap; hard spend cap; anonymised prompts |
 | `agentic.approval` | `auto` | `auto`, `queued` or `deny` gateway |
 | `agentic.llm_planner`, `llm_critic`, `llm_reporter` | False, True, True | Which governance steps may use the model |
 | `agentic.use_alpha_tool`, `critic_divergence`, `tool_timeout_s` | True, 0.6, 30 | Canonical plan and executor settings |
-| `agentic.symbol_universe`, `deny_tools`, `api_keys` | None, [], dev keys | Policy inputs and API roles |
+| `agentic.symbol_universe`, `deny_tools`, `api_keys`, `task_db` | None, [], dev keys, None | Policy inputs, API roles (an override replaces the dev keys) and the persistent task store |
+| `costs.impact_coeff`, `costs.fx_adv_notional`, `initial_capital` | 0, None, 100k | Square-root market impact in backtests and the account size trade sizes scale with |
+| `fred_vintages`, `fred_vintage_step_days`, `fred_cache_dir` | False, 31, None | ALFRED vintages for revised series |
 | `analysts` | asset-class default | Add `"alpha"` for the alpha analyst |
 | `risk.neutral_weight`, `rebalance_band`, `max_position`, `max_var_95`, `min_trade_weight` | equity 1.0 / fx 0.0, 0.10, 1.0, 0.02, 0.05 | Strategic weight, band, firm limits |
 | `risk.stop_atr_mult`, `take_profit_atr_mult` | 2.0, 3.0 | Protective levels |
@@ -198,5 +202,6 @@ See `config.py` for the full dictionary.
 | A weighting scheme | A function over a covariance in `portfolio.py`, added to `METHODS` and `construct` |
 | An execution algorithm | A schedule function in `algo.py` and a branch in `ExecutionPlan.schedule` |
 | A data source | Subclass `MarketDataProvider`, pass prices through `clean_ohlcv`, return only data available at `as_of` |
-| A rule change | Behind a `config["rules"]` switch; choose on the design period with `evaluate`; judge once on the holdout |
-| A quant routine | C++ plus `pycore.py` mirror, bound in `module.cpp`, exported in `quant/__init__.py`, cross-checked in tests |
+| A rule change | Behind a `config["rules"]` switch; choose on the core universe's design period with `evaluate --universe core`; judge on the extended universe and the reserve period, which no choice has touched |
+| A quant routine | C++ plus `pycore.py` mirror, bound in `module.cpp`, exported in `quant/__init__.py`, cross-checked in tests and added to `tests/test_fuzz.py` |
+| A cross-sectional alpha | It is the same `AlphaInputs -> ndarray` function: `xalpha.signal_panels` standardises every library alpha across the universe |
