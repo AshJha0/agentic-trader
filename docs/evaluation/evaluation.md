@@ -5,18 +5,23 @@ numbers do and do not show. Every figure comes from a recorded run, and the tabl
 generated from the saved result files rather than typed. To reproduce them, see
 [Reproducing](#reproducing).
 
-> **Scope.** All results use the **rule-based agents** (offline mode, no LLM) on **real
-> prices** from Yahoo Finance. The LLM mode has **not** been evaluated, so nothing here
-> describes Claude's trading performance. The core-universe measurements were taken on
-> 2026-09-25, the extended-universe, reserve-period and impact-sweep measurements on
-> 2026-09-26, all with the C++ backend and the frozen v0.3 rules.
+> **Scope.** Every table except [the LLM section](#the-llm-desk-v051-the-first-measured-result)
+> uses the **rule-based agents** (offline mode, no LLM) on **real prices** from Yahoo Finance.
+> The LLM desk was measured for the first time in v0.5.1, on one quarter and five stocks
+> (271 calls, $4); that section says exactly what it does and does not show. The
+> core-universe measurements were taken on 2026-09-25, the extended-universe, reserve-period,
+> impact-sweep and LLM measurements on 2026-09-26, all with the C++ backend.
 
 ## Summary
 
 - **Out of sample, the agents do not beat buy & hold on Sharpe instrument by instrument.**
-  Holdout mean Sharpe is 0.44 against 0.55 for buy & hold over the 15 core instruments, and
-  0.37 against 0.50 over the 45 extended instruments that no rule choice ever consulted
-  (v0.5). In core equities alone it is 0.63 against 0.68.
+  Holdout mean Sharpe is 0.46 against 0.55 for buy & hold over the 15 core instruments, and
+  0.42 against 0.50 over the 45 extended instruments that no rule choice ever consulted
+  (v0.5.1 rules; 0.44 and 0.37 under the v0.3 rules). In core equities alone it is 0.63
+  against 0.68.
+- **The FX carry-neutral rule (v0.5.1) is the protocol's first adopted change:** chosen on the
+  core FX pairs' design period, it improved every unseen slice (the 10 crosses' holdout
+  Sharpe +0.12 → +0.31) without making FX beat buy & hold.
 - **They consistently take about half the drawdown.** Holdout equity mean maximum drawdown is
   19.1% against 40.2% for buy & hold on the core universe, 17.7% against 27.2% on the
   extended one, and it is lower in every period and on 40 of the 45 extended names.
@@ -24,8 +29,8 @@ generated from the saved result files rather than typed. To reproduce them, see
   market impact on (v0.5), the desk's mean Sharpe on the core universe is unchanged at
   $100k, 0.01 lower at $10M and 0.09 lower at $1B; signal-flipping baselines lose far more.
 - **As a portfolio of all 15 instruments they beat plain buy & hold on Sharpe** in both
-  periods: 1.14 against 1.06 on the holdout, with a drawdown of 6.8% against 20.8%. They do
-  **not** beat buy & hold scaled to the same volatility target (1.24).
+  periods: 1.16 against 1.06 on the holdout (1.14 under the v0.3 rules), with a drawdown of
+  7.0% against 20.8%. They do **not** beat buy & hold scaled to the same volatility target (1.24).
 - **v0.3's rule changes were chosen on 2016–2021 data only.**
   - On that data, equity mean Sharpe rose from 0.76 to 0.99.
   - On the untouched 2022–2026 holdout, the gain shrank to 0.60 → 0.63. Mean return still
@@ -499,6 +504,142 @@ FX sleeves get no impact in these runs (no exchange volume; set `costs.fx_adv_no
 model it), so the FX rows are unchanged across the columns and the averages above are
 driven by the equities.
 
+## The FX carry-neutral rule (v0.5.1): the protocol's first use
+
+The extended-universe results above singled out FX crosses as the weak spot: with a
+strategic FX weight of 0, every FX return comes from directional calls, and on the crosses
+those calls lost money. The equity fix in v0.3 was to hold the equity premium unless
+convinced otherwise. The FX analogue is to hold the **carry premium**: the strategic FX weight
+becomes `clip(rate_diff% / scale, -cap, cap)`, where `rate_diff` is the point-in-time policy-rate
+differential the macro analyst already reads (publication-lagged FRED), so the desk holds the
+higher-yielding currency at a size that grows with the differential and is capped.
+
+**Step 1 — choose on the core FX pairs' design period only** (5 pairs, 2016–2021; nothing
+else consulted):
+
+| variant | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean exposure % | mean trades | beats B&H | beats vol-target |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| control (FX strategic weight 0, v0.3 rules) | -0.03 | 0.12 | -0.79 | 11.58 | 51.7 | 154.6 | 4 / 5 | 4 / 5 |
+| carry / 4, cap 0.5 | 0.08 | 0.16 | 2.95 | 11.41 | 59.7 | 140.0 | 4 / 5 | 4 / 5 |
+| **carry / 2, cap 0.5** | **0.11** | 0.12 | 4.54 | 11.48 | 63.3 | 132.0 | 4 / 5 | 4 / 5 |
+| carry / 4, cap 1.0 | 0.08 | 0.15 | 2.88 | 11.46 | 59.6 | 138.2 | 4 / 5 | 4 / 5 |
+| carry / 8, cap 0.25 | 0.03 | 0.16 | 1.27 | 11.43 | 56.6 | 150.8 | 4 / 5 | 4 / 5 |
+
+Every setting helps and the effect is monotonic in the strength of the tilt up to
+`carry / 2`, which was chosen (a 1% differential holds 0.5; the cap binds from 1%).
+
+**Step 2 — judge on data no choice touched**, with that one setting:
+
+| data | period | n | control mean Sharpe | carry / 2 mean Sharpe | control CR % | carry / 2 CR % | control MDD % | carry / 2 MDD % | B&H mean Sharpe |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| extended crosses (unseen) | design | 10 | -0.24 | **-0.15** | -6.8 | -5.2 | 14.6 | 14.9 | 0.05 |
+| extended crosses (unseen) | holdout | 10 | 0.12 | **0.31** | 4.5 | 11.9 | 11.5 | 11.7 | 0.39 |
+| extended crosses (unseen) | reserve | 10 | -0.63 | **0.22** | -1.2 | -0.1 | 3.2 | 2.8 | -0.10 |
+| core pairs (seen) | holdout | 5 | 0.04 | 0.10 | 1.5 | 5.0 | 11.3 | 12.6 | 0.28 |
+| core pairs (seen) | reserve | 5 | -0.58 | -0.10 | -0.9 | -0.3 | 2.9 | 3.0 | -0.12 |
+
+**Decision: adopted as the default (`rules.fx_carry_neutral`, scale 2, cap 0.5).** The rule
+was chosen on five pairs over one period and then improved every one of the four slices it
+had never seen, in the same direction and by more than the noise floor on the largest of
+them (+0.19 on the 10-cross holdout), with a prior as strong as the equity premium's. Two
+things it does **not** do: it does not make the desk beat buy & hold on the crosses (2 of 10
+on the holdout, against 0.39 for buy & hold), and it does not change the equity sleeves at
+all. `RULES_V03` / `--rules v03` reproduces the rule set without it, and the headline tables
+above marked "v0.3 rules" are that record; the tables marked "v0.5.1 rules" below are the
+same runs with the new default.
+
+### The published tables under the v0.5.1 rules
+
+The same runs as above with the new default (equity rows are identical; every FX row and
+every mixed aggregate moves). Agent rows only; the baselines do not change.
+
+| slice | period | v0.3 rules mean Sharpe | **v0.5.1 rules** | v0.3 CR % | v0.5.1 CR % | v0.3 MDD % | v0.5.1 MDD % | v0.5.1 beats B&H | beats vol-target | B&H mean Sharpe | vol-target mean Sharpe |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| core, all 15 | design | 0.65 | **0.70** | 105.2 | 107.0 | 15.7 | 15.7 | 10 / 15 | 6 / 15 | 0.63 | 0.67 |
+| core, all 15 | holdout | 0.44 | **0.46** | 32.1 | 33.3 | 16.5 | 16.9 | 5 / 15 | 4 / 15 | 0.55 | 0.56 |
+| core, all 15 | q1_2024 | 1.50 | **2.02** | 7.9 | 8.5 | 3.6 | 3.5 | 5 / 15 | 3 / 15 | 1.89 | 1.94 |
+| core, all 15 | reserve | 0.72 | **0.88** | 3.1 | 3.3 | 4.6 | 4.7 | 3 / 15 | 5 / 15 | 1.01 | 1.01 |
+| core FX (5) | design | -0.03 | **0.11** | -0.8 | 4.5 | 11.6 | 11.5 | 4 / 5 | 4 / 5 | -0.05 | -0.06 |
+| core FX (5) | holdout | 0.04 | **0.10** | 1.5 | 5.0 | 11.3 | 12.6 | 2 / 5 | 2 / 5 | 0.28 | 0.26 |
+| core FX (5) | q1_2024 | -0.44 | **1.12** | -0.1 | 1.8 | 2.2 | 2.0 | 2 / 5 | 2 / 5 | 0.34 | 0.34 |
+| core FX (5) | reserve | -0.58 | **-0.10** | -0.9 | -0.3 | 2.9 | 3.0 | 1 / 5 | 1 / 5 | -0.12 | -0.12 |
+| extended, all 45 | design | 0.49 | **0.51** | 47.4 | 47.8 | 18.9 | 19.0 | 18 / 45 | 10 / 45 | 0.56 | 0.61 |
+| extended, all 45 | holdout | 0.37 | **0.42** | 25.1 | 26.7 | 17.7 | 17.7 | 15 / 45 | 14 / 45 | 0.50 | 0.47 |
+| extended, all 45 | q1_2024 | 1.64 | **1.79** | 4.6 | 4.8 | 3.6 | 3.6 | 9 / 45 | 13 / 45 | 2.11 | 2.11 |
+| extended, all 45 | reserve | -0.07 | **0.11** | 0.8 | 1.1 | 4.7 | 4.7 | 16 / 45 | 16 / 45 | 0.01 | 0.02 |
+| extended FX crosses (10) | design | -0.24 | **-0.15** | -6.8 | -5.2 | 14.6 | 14.9 | 3 / 10 | 3 / 10 | 0.05 | 0.05 |
+| extended FX crosses (10) | holdout | 0.12 | **0.31** | 4.5 | 11.9 | 11.5 | 11.7 | 2 / 10 | 2 / 10 | 0.39 | 0.39 |
+| extended FX crosses (10) | q1_2024 | 0.77 | **1.45** | 1.2 | 2.4 | 1.7 | 1.8 | 1 / 10 | 1 / 10 | 2.21 | 2.21 |
+| extended FX crosses (10) | reserve | -0.63 | **0.22** | -1.2 | -0.1 | 3.2 | 2.8 | 2 / 10 | 2 / 10 | -0.10 | -0.10 |
+
+The 15-sleeve portfolio under the v0.5.1 rules: design Sharpe **1.54** (t 3.79, CR 81.3%,
+MDD 8.3%) against 1.50 before; holdout **1.16** (t 2.46, CR 32.8%, MDD 7.0%) against 1.14,
+still between plain buy & hold (1.06) and the vol-targeted control (1.24). The impact sweep
+moves with it: core design Sharpe 0.70 → 0.70 / 0.69 / 0.60 at $100k / $10M / $1B, holdout
+0.46 → 0.46 / 0.45 / 0.37; the impact paid is identical (FX sleeves get no impact).
+
+## The LLM desk (v0.5.1): the first measured result
+
+Everything above is the rule-based desk. This is the first run of the same desk with Claude
+in every reasoning role, on the same bars, cadence, costs and baselines as a rule-based
+control run alongside it. It is deliberately small — a lean run to establish the cost and
+the method before anything larger — and a single quarter on five stocks is a weak test: it
+can show what the model *does*, not whether it has an edge.
+
+**Setup.** AAPL, NVDA, MSFT, META, GOOGL; Q1 2024 (2024-01-02 → 2024-03-28); a decision every
+10 bars (6 per stock, 30 in all); one debate round; `claude-opus-5` at medium effort for the
+reasoning roles and `claude-haiku-4-5` for the analysts; prompts **anonymised** (no ticker,
+no dates, no price level, so the model cannot recall the quarter); hard cap 400 calls;
+three backtests in parallel sharing one budget. The rule-based control is the identical
+command without `--llm anthropic`. News, fundamentals and social analysts abstained on
+both (no point-in-time data), so the technical analyst was the only model-read analyst.
+
+**Usage.** 271 calls (240 Opus, 31 Haiku), 0 errors, 0 refusals, 0 budget refusals; every
+one of the 211 agent outputs came from the model (no rule fallback was needed). 366k input
+and 103k output tokens; **$4.12** at list prices (Opus $4.05, Haiku $0.07); 639 s wall clock.
+
+| symbol | LLM Sharpe | rules Sharpe | B&H Sharpe | vol-target B&H | LLM CR % | rules CR % | B&H CR % | LLM MDD % | rules MDD % | B&H MDD % | LLM exposure % | rules exposure % | LLM trades | rules trades |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| AAPL | -1.55 | -1.98 | -1.55 | -1.58 | -0.89 | -3.83 | -7.53 | 1.68 | 6.81 | 13.30 | 12.0 | 40.7 | 1 | 4 |
+| NVDA | 5.46 | 5.51 | 5.46 | 5.78 | 12.52 | 41.29 | 87.56 | 1.60 | 5.08 | 8.70 | 18.0 | 51.5 | 1 | 2 |
+| MSFT | 3.09 | 3.06 | 2.90 | 3.08 | 3.44 | 11.35 | 13.63 | 1.06 | 3.37 | 4.21 | 23.3 | 78.7 | 2 | 2 |
+| META | 2.81 | 3.13 | 3.10 | 3.04 | 17.37 | 23.88 | 40.34 | 2.36 | 2.74 | 5.58 | 37.0 | 53.6 | 6 | 3 |
+| GOOGL | 1.14 | 1.21 | 1.46 | 1.35 | 2.01 | 5.01 | 9.21 | 4.15 | 10.06 | 14.40 | 23.7 | 59.5 | 2 | 3 |
+
+| strategy (means over the 5 stocks) | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean exposure % | mean trades |
+|:--|--:|--:|--:|--:|--:|--:|
+| **LLM desk** (Opus medium, 1 round, anonymised) | **2.19** | 2.81 | 6.89 | **2.17** | 22.8 | 2.4 |
+| rule-based desk (same cadence) | 2.19 | 3.06 | 15.54 | 5.61 | 56.8 | 2.8 |
+| Buy & hold | 2.27 | 2.90 | 28.64 | 9.24 | 100.0 | 1.0 |
+| B&H vol-target | 2.33 | 3.04 | 13.31 | 6.60 | 62.4 | 54.8 |
+
+**What it shows.**
+
+- **No Sharpe edge over the rules: 2.19 against 2.19.** The model beat the rule-based desk on
+  2 of 5 names and buy & hold on 1 of 5, all by margins that a single quarter cannot
+  distinguish from zero.
+- **The model is more conservative than the rules, consistently.** It held 23% average
+  exposure against the rules' 57%, so its returns were less than half (6.9% against 15.5%)
+  and its drawdowns less than half (2.2% against 5.6%) — on every one of the five names.
+  Reading the transcripts, the portfolio manager repeatedly sized *down* from the trader's
+  proposal citing the abstaining analysts ("the only live signal is a weak technical
+  read"); that is the correct reading of the evidence it was given, and it is why the
+  positions are small.
+- **The governance layer is not the bottleneck.** Zero refusals, zero fallbacks, zero budget
+  hits, zero errors: the anonymised prompts, the JSON contracts and the limits all worked
+  end to end at $0.14 per decision.
+
+**What it does not show.** Whether Claude adds value over the rules. That needs the design
+and holdout periods (roughly 1,500 decisions per stock at this cadence, so tens of dollars
+per name), the full analyst team with point-in-time news and fundamentals rather than a
+technical-only desk, and more than one run per date to measure the model's own variance.
+The harness for that exists (`--workers`, the dollar budget, anonymisation); the run is a
+matter of spend, and the protocol above applies to it as to any other change.
+
+Reproduce: `agentic-trader evaluate AAPL,NVDA,MSFT,META,GOOGL --data yahoo --periods q1_2024
+--every 10 --rounds 1 --llm anthropic --deep-effort medium --max-llm-calls 400 --anonymize
+--workers 3` and the same command without `--llm anthropic` for the control.
+
 ## The next rule change: what counts as unseen
 
 By v0.4 the 2022–2026 holdout had been run, reported and compared against, so any rule
@@ -606,13 +747,14 @@ above remains the reference.
 | Real-data backtest speed-up in v0.3 | ≈8× (2.0 s → 0.24 s per quarter): Yahoo news is no longer requested for dates it cannot serve |
 | LLM calls per decision at default rounds | 14 = 4 quick-tier + 10 deep-tier. An analyst with no data makes no call, so it is 13 when news is missing |
 | Full v0.5 evaluation: 60 instruments × 4 periods, real prices, impact off | 115 s (after the first data download); each 15-instrument impact run ≈ 14 s |
-| Tests | 240 pytest tests (fuzz 21 property tests, v0.5 features 18, agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 19, LLM evaluation 11, plus the v0.3 suites) + 14 C++ test groups (42 checks) |
+| Tests | 241 pytest tests (fuzz 21 property tests, v0.5 features 18, agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 19, LLM evaluation 11, plus the v0.3 suites) + 14 C++ test groups (42 checks) |
 
 ## Limitations
 
-- **No LLM results.** The whole point of the framework, whether LLM reasoning adds value
-  over the rule-based firm, is unmeasured. The harness for it (usage and cost accounting,
-  anonymised prompts, parallel workers, the Q1 2024 window) is in place.
+- **One small LLM result.** The LLM desk has been measured once, on five stocks and one
+  quarter (no Sharpe edge over the rules; smaller positions, lower returns and drawdowns).
+  Whether the model adds value over the rule-based desk on the multi-year periods, with the
+  full analyst team, remains unmeasured; it is a matter of spend, not of tooling.
 - **Half the analyst team is idle historically.** Without point-in-time news, social or
   fundamentals data, the historical results test the technical, sentiment-proxy and macro
   analysts only.

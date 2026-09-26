@@ -515,8 +515,9 @@ Comparing many variants on the same window you report is how backtests overfit.
 
 With no directional view the trader holds `risk.neutral_weight` for the asset class, and
 conviction tilts around it. The defaults are equities 1.0 (fully invested, collecting the
-equity premium) and FX 0.0 (flat). Use 0 for an absolute-return mandate that should sit in
-cash without a view.
+equity premium) and, for FX, the carry weight `clip(rate_diff% / 2, ±0.5)` from the
+point-in-time rate differential (`rules.fx_carry_neutral`, v0.5.1; `RULES_V03` turns it off,
+leaving FX flat). Use 0 for an absolute-return mandate that should sit in cash without a view.
 
 ```python
 from agentic_trader import TradingGraph, make_config

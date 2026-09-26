@@ -52,7 +52,7 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
             else None
         harness = AgentHarness(graph, gateway=gateway or QueuedApprovalGateway())
     keys = {k: Role(v) for k, v in (api_keys or harness.config.get("agentic", {}).get("api_keys", {})).items()}
-    app = FastAPI(title="agentic-trader", version="0.5.0",
+    app = FastAPI(title="agentic-trader", version="0.5.1",
                   description="Policy-gated, evidence-backed trading decisions for equities and FX.")
     app.state.harness = harness
     workers: dict[str, threading.Thread] = {}

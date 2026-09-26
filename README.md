@@ -33,18 +33,24 @@ ones every rule choice was made on (10 equities, 5 FX pairs; rules chosen on 201
 judged once on a 2022–2026 holdout) and 45 *extended* ones (sector equities, rates / credit /
 commodity ETFs, FX crosses) that no choice ever consulted.
 
-- **Per instrument:** it does **not** beat buy & hold on Sharpe out of sample — core 0.44 vs
-  0.55; extended 0.37 vs 0.50, beating buy & hold on 14 of 45 names.
+- **Per instrument:** it does **not** beat buy & hold on Sharpe out of sample — core 0.46 vs
+  0.55; extended 0.42 vs 0.50, beating buy & hold on 15 of 45 names.
 - **Drawdown:** **about half of buy & hold's** in every period and on both universes (lower
   on 40 of the 45 extended names).
-- **As a 15-sleeve portfolio:** it beats plain buy & hold on Sharpe (1.14 vs 1.06, with a
-  6.8% vs 20.8% drawdown), but not buy & hold scaled to the same volatility (1.24).
+- **As a 15-sleeve portfolio:** it beats plain buy & hold on Sharpe (1.16 vs 1.06, with a
+  7.0% vs 20.8% drawdown), but not buy & hold scaled to the same volatility (1.24).
+- **FX carry weight (v0.5.1):** the protocol's first adopted rule change — chosen on the
+  core pairs' design period, it improved every unseen slice (the 10 crosses' holdout Sharpe
+  0.12 → 0.31) without making FX beat buy & hold.
 - **Execution costs:** with square-root market impact on, the desk keeps its Sharpe at $100k
   and $10M and loses 0.09 at $1B (0.65 → 0.56 on the design period); signal-flipping
   baselines lose far more.
 - **Alpha analyst:** measured three times on the design period (0.60, 0.58, 0.65 vs the 0.65
   default after two bug fixes): noise, so it stays off by default.
-- **LLM mode:** not evaluated; no claims are made about it.
+- **LLM desk (v0.5.1, first measurement):** five stocks, Q1 2024, Claude Opus in every
+  reasoning role with anonymised prompts, 271 calls, $4. Same Sharpe as the rule-based desk
+  (2.19 vs 2.19), less than half the exposure, return and drawdown. A single quarter cannot
+  show an edge either way; the multi-year run is a matter of spend.
 
 Details: [docs/evaluation](docs/evaluation/evaluation.md).
 
@@ -92,7 +98,8 @@ Details: [docs/evaluation](docs/evaluation/evaluation.md).
   `<untrusted_data>` blocks that cannot be escaped. `max_llm_calls` caps spend. The firm
   limits run after any model output.
 * **A benchmark, then tilts.** With no view the desk holds a strategic weight (equities
-  fully invested, FX flat), and conviction tilts around it.
+  fully invested; FX the higher-yielding side, sized by the point-in-time carry and capped
+  at ±0.5), and conviction tilts around it.
 * **Point-in-time data.** Prices are clipped twice. FX macro comes from FRED as known on
   each date. Stale feeds are refused. Memory outcomes become visible only after their horizon.
 
@@ -103,7 +110,7 @@ Details: [docs/evaluation](docs/evaluation/evaluation.md).
 | Value analyst | Fundamentals: P/E vs sector, growth, margins, leverage, FCF, EPS surprise, insiders | Macro: point-in-time policy-rate differential (carry), inflation (PPP), distance from the 200-day average |
 | Alpha library | 8 signals (momentum, reversal, breakout, MACD, RSI, low-vol, 52-week high) | The same plus carry |
 | News scoring | Headline tone | Tone oriented to base vs quote ("JPY weakens" is bullish for USD/JPY) |
-| Strategic weight | 1.0 | 0.0 |
+| Strategic weight | 1.0 (the equity premium) | carry / 2, capped at ±0.5 (the carry premium; v0.5.1) |
 | Shorting | Off by default | On |
 | Execution | VWAP by default; POV above 10% of ADV; 78 five-minute slices | TWAP; 288 slices; spread in pips |
 | Costs | Commission + slippage bps, borrow fee on shorts | Half-spread in pips converted to bps, plus per-bar carry |
@@ -141,7 +148,7 @@ agentic_trader/
   backtest.py              walk-forward agent backtest vs 6 baselines with optional market impact; portfolio backtest
   evaluation.py            design / holdout / Q1-2024 / reserve evaluation over the core and extended universes
   memory.py · llm.py (call and dollar budgets) · anonymize.py · cli.py
-tests/                     240 pytest tests (fuzz 21, v0.5 features 18, agentic 30, adversarial 15, services 7, ...)
+tests/                     241 pytest tests (fuzz 21, v0.5 features 18, agentic 30, adversarial 15, services 7, ...)
 examples/                  equity, FX, baseline comparison
 ```
 
@@ -261,7 +268,7 @@ print(port.table())
 ## Tests
 
 ```bash
-pytest -q                                   # 240 tests incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing
+pytest -q                                   # 241 tests incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback
 ctest --test-dir build -C Release           # 14 C++ test groups
 ```

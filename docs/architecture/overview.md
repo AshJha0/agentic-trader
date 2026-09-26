@@ -102,7 +102,8 @@ The desk's own logic is unchanged by the harness. In brief (details in the v0.3 
 - **Analysts** produce a signal in [-1, 1] and a confidence, or abstain.
 - **Facilitator** computes `Σ wᵢ·confᵢ·signalᵢ / Σ wᵢ·confᵢ` and names the winner above a 0.10
   threshold.
-- **Trader** sets `neutral + 2·score` (equities 1.0, FX 0.0 when neutral), ATR-based stop and
+- **Trader** sets `neutral + 2·score` (equities 1.0; FX the capped point-in-time carry weight
+  `clip(rate_diff% / 2, ±0.5)` since v0.5.1), ATR-based stop and
   target, and reads retrieved policy passages.
 - **Risk team** sizes by volatility targeting (neutral), 1.25× or vol-target (aggressive),
   half and VaR-capped (conservative).
@@ -185,7 +186,8 @@ See `config.py` for the full dictionary.
 | `costs.impact_coeff`, `costs.fx_adv_notional`, `initial_capital` | 0, None, 100k | Square-root market impact in backtests and the account size trade sizes scale with |
 | `fred_vintages`, `fred_vintage_step_days`, `fred_cache_dir` | False, 31, None | ALFRED vintages for revised series |
 | `analysts` | asset-class default | Add `"alpha"` for the alpha analyst |
-| `risk.neutral_weight`, `rebalance_band`, `max_position`, `max_var_95`, `min_trade_weight` | equity 1.0 / fx 0.0, 0.10, 1.0, 0.02, 0.05 | Strategic weight, band, firm limits |
+| `risk.neutral_weight`, `rebalance_band`, `max_position`, `max_var_95`, `min_trade_weight` | equity 1.0 / fx 0.0 (overridden by the carry rule below), 0.10, 1.0, 0.02, 0.05 | Strategic weight, band, firm limits |
+| `rules.fx_carry_neutral`, `risk.fx_carry_neutral_scale`, `fx_carry_neutral_cap` | True, 2.0, 0.5 | FX strategic weight = clip(carry% / scale, ±cap) from the point-in-time rate differential (v0.5.1); `RULES_V03` turns it off |
 | `risk.stop_atr_mult`, `take_profit_atr_mult` | 2.0, 3.0 | Protective levels |
 | `backtest.use_stops`, `costs.*`, `fx_macro_source`, `max_data_staleness_days` | False, bps and pips, `auto`, 7 | Backtest and data behaviour |
 

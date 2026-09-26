@@ -41,6 +41,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tsmom": False,                    # 12-1 month time-series momentum in the technical view
         "trend_filtered_reversal": False,  # RSI/Bollinger fades only when not fighting the 200d trend
         "abstain_without_data": False,     # analysts with no data do not vote in the consensus
+        # v0.5.1: the FX analogue of the equity strategic weight. Chosen on the core FX pairs'
+        # design period (mean Sharpe -0.03 -> +0.11) and then judged on data no choice had
+        # touched, where it improved every slice (extended crosses design -0.24 -> -0.15,
+        # holdout +0.12 -> +0.31, reserve -0.63 -> +0.22). RULES_V03 turns it off.
+        "fx_carry_neutral": True,          # FX strategic weight = point-in-time carry / scale, capped
     },
 
     # ---- Data ----------------------------------------------------------------
@@ -63,6 +68,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # directional view; conviction tilts around it. Equities default to fully
         # invested (they carry a risk premium); FX to flat. v0.2 used 0 for both.
         "neutral_weight": {"equity": 1.0, "fx": 0.0},
+        # With rules.fx_carry_neutral: FX strategic weight = clip(rate_diff% / scale, -cap, cap),
+        # so a 1% carry holds 0.5 and the cap binds from 1% (chosen among scale 2/4/8, cap 0.25/0.5/1).
+        "fx_carry_neutral_scale": 2.0,
+        "fx_carry_neutral_cap": 0.5,
         "allow_short_equity": False,
         "allow_short_fx": True,
         "stop_atr_mult": 2.0,
@@ -158,9 +167,16 @@ def _merge(base: dict, over: dict) -> dict:
 
 # Settings that reproduce v0.2 rule behaviour, for before/after comparisons.
 RULES_V02: dict[str, Any] = {
-    "rules": {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False},
+    "rules": {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False,
+              "fx_carry_neutral": False},
     "risk": {"rebalance_band": 0.0, "neutral_weight": {"equity": 0.0, "fx": 0.0}},
     "backtest": {"use_stops": False},
+}
+
+# Settings that reproduce the v0.3 / v0.4 / v0.5.0 rules (FX strategic weight 0), for
+# before/after comparisons of the v0.5.1 FX carry-neutral rule.
+RULES_V03: dict[str, Any] = {
+    "rules": {"fx_carry_neutral": False},
 }
 
 

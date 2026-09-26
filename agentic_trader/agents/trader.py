@@ -78,6 +78,17 @@ class Trader(Agent):
         # Strategic weight + tactical tilt: with no view hold the benchmark weight
         # (0 = flat); conviction moves the position above or below it.
         neutral = risk.get("neutral_weight", {}).get(state.instrument.asset_class, 0.0)
+        if state.instrument.is_fx and cfg.get("rules", {}).get("fx_carry_neutral"):
+            # Research switch: the FX analogue of the equity strategic weight. Equities hold
+            # the equity premium unless convinced otherwise; here FX holds the carry premium:
+            # the point-in-time rate differential (from the macro analyst's facts, so it is
+            # exactly what the desk was allowed to know) sets the strategic weight, capped.
+            macro = state.reports.get("macro")
+            rd = macro.facts.get("rate_diff") if macro is not None else None
+            if rd is not None:
+                scale = float(risk.get("fx_carry_neutral_scale", 4.0))   # % p.a. per unit of weight
+                cap = float(risk.get("fx_carry_neutral_cap", 0.5))
+                neutral = clip(float(rd) / scale, -cap, cap)
         w = clip(neutral + 2.0 * score, -1, 1) if abs(score) > thr else neutral
         if not shorts:
             w = max(w, 0.0)

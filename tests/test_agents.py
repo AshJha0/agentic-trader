@@ -61,6 +61,23 @@ def test_alpha_analyst_agrees_with_itself_direct_vs_harness_populated():
     assert direct.abstained == via_harness.abstained
 
 
+# ------------------------------------------------------------ FX carry neutral
+def test_fx_carry_neutral_rule_sets_the_strategic_weight_from_point_in_time_carry():
+    from agentic_trader.config import RULES_V03
+    off = graph(make_config(CFG, **RULES_V03)).propagate("USDJPY", "2024-03-01")[0]
+    on = graph()                                                   # the rule is on by default since v0.5.1
+    st = on.propagate("USDJPY", "2024-03-01")[0]
+    assert off.proposal.rationale and "strategic weight" not in off.proposal.rationale   # v0.3: FX neutral 0
+    rd = st.reports["macro"].facts["rate_diff"]                    # USD 4.25 - JPY 0.50 on synthetic data
+    assert rd / 2.0 > 0.5 and "strategic weight +0.50 plus tilt" in st.proposal.rationale   # capped
+    # Equities are untouched, and the rule needs the macro analyst's carry to act.
+    eq = on.propagate("AAPL", "2024-03-01")[0]
+    assert "strategic weight +1.00 plus tilt" in eq.proposal.rationale
+    scaled = graph(make_config(CFG, rules={"fx_carry_neutral": True},
+                               risk={"fx_carry_neutral_scale": 10.0, "fx_carry_neutral_cap": 1.0}))
+    assert f"strategic weight {rd / 10.0:+.2f} plus tilt" in scaled.propagate("USDJPY", "2024-03-01")[0].proposal.rationale
+
+
 # ---------------------------------------------------------- technical rules
 def test_technical_short_history_has_low_confidence_and_no_200d_terms():
     st = _state(100 + np.arange(80.0))
@@ -196,11 +213,14 @@ def test_current_weight_must_be_finite():
 
 # ----------------------------------------------------- strategic weight
 def test_neutral_weight_holds_benchmark_when_no_view():
+    from agentic_trader.config import RULES_V03
     cfg = make_config(CFG, decision_threshold=5.0)   # no score can clear it -> no view
     _, d = graph(cfg).propagate("AAPL", "2024-03-01")
     _, d_fx = graph(cfg).propagate("EURUSD", "2024-03-01")
     assert d.target_weight > 0          # equities: strategic long (after risk sizing)
-    assert d_fx.target_weight == 0.0    # FX: flat
+    assert d_fx.target_weight < 0       # FX (v0.5.1): the carry side, here short EUR (USD yields more)
+    _, flat = graph(make_config(cfg, **RULES_V03)).propagate("EURUSD", "2024-03-01")
+    assert flat.target_weight == 0.0    # v0.3 rules: FX flat without a view
 
 
 def test_v02_rules_reproduce_published_decision():
