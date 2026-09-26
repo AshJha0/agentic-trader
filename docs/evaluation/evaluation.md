@@ -227,16 +227,37 @@ it was measured the same way as every other rule change, on the design period on
 | variant | mean Sharpe | median Sharpe | equity median SR | FX median SR | mean CR% | mean MDD% | mean Exp% | mean trades | beats B&H | beats vol-target B&H |
 |:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
 | v0.3 default (technical, sentiment, macro/fundamentals, news) | 0.65 | 0.55 | 1.05 | 0.12 | 105.22 | 15.72 | 56.69 | 106.47 | 10 | 6 |
-| + alpha analyst | 0.60 | 0.60 | 1.04 | -0.12 | 107.56 | 16.73 | 55.90 | 110.87 | 9 | 5 |
-| alpha analyst replaces the technical analyst | 0.63 | 0.68 | 1.00 | 0.17 | 97.19 | 17.27 | 52.81 | 141.80 | 8 | 3 |
+| + alpha analyst (IC-weighted, all signals) | 0.60 | 0.60 | 1.04 | -0.12 | 107.56 | 16.73 | 55.90 | 110.87 | 9 | 5 |
+| alpha analyst replaces the technical analyst (IC-weighted, all signals) | 0.63 | 0.68 | 1.00 | 0.17 | 97.19 | 17.27 | 52.81 | 141.80 | 8 | 3 |
 
-**Decision: off by default.** Mean Sharpe fell by 0.05 and the median rose by 0.05, with
-one fewer instrument beating each baseline: noise on 15 instruments, and the equity median
-did not move. The signals it reads are the same trend, reversal and volatility facts the
-technical analyst already uses, so a second vote on them adds churn rather than information.
-It remains available (`config["analysts"] = [..., "alpha"]`, or `--analysts`) and the
-`quant.alpha` tool still runs in every harness task, so the signals and their information
-coefficients are in the evidence for anyone who wants to read them.
+**First attempt (v0.4.0): off by default.** Mean Sharpe fell by 0.05 and the median rose by
+0.05, with one fewer instrument beating each baseline: noise on 15 instruments. Weighting
+every alpha by `max(0, IC)` let many near-zero, statistically insignificant signals add
+turnover without predictive value.
+
+**Second attempt: restrict the combination to significant alphas only.** `AlphaAnalyst` was
+changed to weight only alphas whose IC clears `|t(IC)| >= 2` with at least 30 observations,
+and to abstain when none qualify (previously it always produced a view). Measured the same
+way:
+
+| variant | mean Sharpe | median Sharpe | equity median SR | FX median SR | mean CR% | mean MDD% | mean Exp% | mean trades | beats B&H | beats vol-target B&H |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| v0.3 default | 0.65 | 0.55 | 1.05 | 0.12 | 105.22 | 15.72 | 56.69 | 106.47 | 10 | 6 |
+| + alpha analyst (significance-gated) | 0.58 | 0.57 | 0.96 | -0.09 | 98.96 | 17.04 | 56.44 | 124.40 | 7 | 4 |
+| alpha analyst replaces the technical analyst (significance-gated) | 0.61 | **0.70** | 0.94 | -0.07 | 103.12 | 17.94 | 53.52 | **90.73** | **10** | **6** |
+
+**Decision: still off by default.** The stricter version is not a clean fix either. "+ alpha
+analyst" got *worse* (mean Sharpe and beat-counts both fell, and trades rose rather than
+fell — abstaining on insignificant signals still leaves a choppier combined view than not
+running the analyst at all). "Alpha replaces technical" ties the default's head-to-head win
+counts with 15% fewer trades and a higher median Sharpe, but its mean Sharpe is still below
+default; with 15 instruments that spread is noise, not a demonstrated edge. The significance
+gate is kept as the more defensible design (only alphas with real measured predictive power
+move the signal, and the analyst abstains rather than guess), but it is reported here as an
+attempted fix that did not clear the bar, not as a solved problem. The analyst remains
+available (`config["analysts"] = [..., "alpha"]`, or `--analysts`) and the `quant.alpha` tool
+still runs in every harness task, so the signals and their information coefficients are in
+the evidence for anyone who wants to read them.
 
 ## Selection statistics for the chosen rules
 

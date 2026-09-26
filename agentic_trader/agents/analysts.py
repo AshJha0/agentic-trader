@@ -401,18 +401,27 @@ class SentimentAnalyst(Analyst):
 
 # --------------------------------------------------------------------------
 class AlphaAnalyst(Analyst):
-    """Quant analyst: the alpha library's combined signal, weighted by measured IC.
+    """Quant analyst: the alpha library's combined signal, weighted by *significant* IC only.
 
     Uses the ``quant.alpha`` tool output when the agentic harness ran it (so the
     IC table is evidence); otherwise computes the snapshot from the state's
-    history. Alphas whose IC over the lookback is negative get zero weight.
+    history. Only alphas whose IC t-statistic clears the significance bar
+    (``|t(IC)| >= 2`` and at least 30 observations) get non-zero weight in the
+    combination; every other alpha is measured (and reported) but does not move
+    the signal. This is stricter than a plain IC-weighted average: on the
+    design-period check, weighting by ``max(0, IC)`` let many near-zero,
+    statistically insignificant alphas add turnover without predictive value
+    (mean Sharpe 0.65 -> 0.60); restricting the combination to significant
+    alphas only removes that noise (see docs/evaluation/evaluation.md).
     """
     name = "alpha"
     role = ("Quantitative Alpha Analyst. You read a library of systematic signals (momentum, "
             "reversal, breakout, volatility, carry) and their measured predictive power, and "
             "give a direction for the next one to four weeks.")
-    instructions = ("Weight signals by their information coefficient; distrust a signal whose IC "
-                    "t-statistic is below 2. Report the combined view and the strongest components.")
+    instructions = ("Only trust a signal whose IC t-statistic is at least 2 in magnitude; report "
+                    "its combined view and the strongest components, and abstain when none qualify.")
+    min_ic_tstat = 2.0
+    min_ic_n = 30
 
     def gather(self, state, provider):
         from ..alpha import alpha_snapshot, compute_alphas, combine, forward_returns, information_coefficient
@@ -429,29 +438,35 @@ class AlphaAnalyst(Analyst):
             for name in sig.columns:
                 v, t, n = information_coefficient(sig[name].to_numpy(), fwd)
                 ic[name] = {"IC": v, "t(IC)": t, "n": n}
-            latest["combined"] = combine(sig, {k: max(0.0, v["IC"]) if v["IC"] == v["IC"] else 0.0
-                                               for k, v in ic.items()}).iloc[-1]
+            weights = {k: (v["IC"] if v["IC"] == v["IC"] and abs(v.get("t(IC)") or 0) >= self.min_ic_tstat
+                          and (v.get("n") or 0) >= self.min_ic_n else 0.0)
+                      for k, v in ic.items()}
+            latest["combined"] = combine(sig, weights).iloc[-1] if any(weights.values()) else float("nan")
             latest["combined"] = None if latest["combined"] != latest["combined"] else float(latest["combined"])
         return {"horizon": 10, "latest": latest, "ic": ic}
 
     def rules(self, f, state):
         latest, ic = f.get("latest") or {}, f.get("ic") or {}
         comb = latest.get("combined")
-        if comb is None:
-            return self.abstain("Not enough history for the alpha library.", f)
+        ranked_all = sorted(((k, v) for k, v in ic.items() if v.get("IC") is not None and k != "combined"),
+                            key=lambda kv: -abs(kv[1]["IC"]))
+        strong = [(k, v) for k, v in ranked_all if abs(v.get("t(IC)") or 0) >= self.min_ic_tstat
+                 and (v.get("n") or 0) >= self.min_ic_n]
+        if comb is None or not strong:
+            return self.abstain(
+                "No alpha signal clears the significance bar (|t(IC)| >= 2, n >= 30) over the "
+                "lookback." if ic else "Not enough history for the alpha library.", f)
         pts = []
-        ranked = sorted(((k, v) for k, v in ic.items() if v.get("IC") is not None and k != "combined"),
-                        key=lambda kv: -abs(kv[1]["IC"]))
-        for name, v in ranked[:3]:
+        for name, v in sorted(strong, key=lambda kv: -abs(kv[1]["IC"]))[:3]:
             val = latest.get(name)
             pts.append(f"{name}: value {val:+.2f}, IC {v['IC']:+.3f} (t {v['t(IC)']:.1f})"
                        if val is not None else f"{name}: IC {v['IC']:+.3f}")
-        strong = sum(1 for _, v in ranked if abs(v.get("t(IC)") or 0) >= 2)
         sig = clip(comb, -1, 1)
-        conf = clip(0.3 + 0.3 * abs(sig) + 0.05 * strong, 0, 0.8)
+        conf = clip(0.3 + 0.3 * abs(sig) + 0.05 * len(strong), 0, 0.8)
         return AnalystReport(self.name, sig, conf,
-                             f"IC-weighted alpha composite {sig:+.2f}; {strong} of {len(ranked)} signals "
-                             f"have |t(IC)| >= 2 over the lookback.", pts, f)
+                             f"IC-weighted alpha composite {sig:+.2f} from {len(strong)} of "
+                             f"{len(ranked_all)} signals with |t(IC)| >= {self.min_ic_tstat:.0f} "
+                             "over the lookback.", pts, f)
 
 
 ANALYSTS = {
