@@ -5,10 +5,20 @@
 ### Fixed
 - `AlphaAnalyst` now weights only alphas whose IC clears significance (`|t(IC)| >= 2`,
   n >= 30) and abstains when none qualify, instead of weighting every alpha by `max(0, IC)`.
-  This is more statistically defensible, but re-measuring on the design period shows it is
-  **not a clean fix**: "+ alpha analyst" got worse (mean Sharpe 0.60 → 0.58, more trades, not
-  fewer), and "alpha replaces technical" ties the default's head-to-head win counts with
-  fewer trades but a lower mean Sharpe. The alpha analyst stays off by default. See
+- Fixed a real inconsistency: under the agentic harness, `AlphaAnalyst` silently reused the
+  `quant.alpha` tool's raw (equal-weighted, ungated) "combined" value instead of applying its
+  own significance gate. Both invocation paths now share one function,
+  `alpha.significant_alpha_signal`, so the analyst can no longer disagree with itself
+  depending on how it is called.
+- Fixed a window mismatch: the analyst reused the desk's general ~400-day lookback, too
+  short for a 273-day signal like `tsmom_12_1` to ever gather enough points to be judged
+  significant. It now fetches its own 900-day window, matching the `quant.alpha` tool.
+- Net effect, re-measured on the design period: "+ alpha analyst" moved from mean Sharpe 0.60
+  (v0.4.0) to 0.65 (essentially tied with the 0.65 default) with a higher median Sharpe (0.62
+  vs 0.55) and a better FX median, at the cost of two fewer instruments beating buy & hold
+  and ~8% more trades. Given this is the third combination-logic variant measured on the same
+  data, a closer-to-parity result is treated as noise, not a green light: the alpha analyst
+  **stays off by default**. See
   [docs/evaluation/evaluation.md](docs/evaluation/evaluation.md#the-v04-alpha-analyst-design-period-check).
 
 ## v0.4.0 — 2026-09-26

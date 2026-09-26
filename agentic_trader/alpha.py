@@ -233,3 +233,41 @@ def alpha_snapshot(df: pd.DataFrame, instrument: Instrument, carry_series: np.nd
     comb = combine(sig, weights).iloc[-1]
     out["combined"] = None if pd.isna(comb) else float(comb)
     return out
+
+
+def significant_alpha_signal(latest: dict[str, float | None], ic: dict[str, dict],
+                             min_tstat: float = 2.0, min_n: int = 30
+                             ) -> tuple[float | None, list[str]]:
+    """Recombine an alpha snapshot using only alphas whose measured IC is significant.
+
+    ``latest`` is a name -> value snapshot (as returned by ``alpha_snapshot``); ``ic`` is a
+    name -> {"IC", "t(IC)", "n"} table (as returned by ``alpha_report`` or computed inline).
+    Both ``AlphaAnalyst`` and the ``quant.alpha`` tool produce this shape, so this one
+    function is the single source of truth for what "the alpha analyst's view" means: it is
+    used whether the analyst computes its own snapshot or reuses one already fetched as a
+    harness tool call, so the two paths cannot silently disagree on the significance gate.
+
+    Returns ``(None, [])`` when no alpha clears the significance bar. Otherwise returns the
+    IC-magnitude-weighted mean of the significant alphas' latest values, clipped to
+    [-1, 1], and their names ordered by |IC| descending.
+    """
+    weights: dict[str, float] = {}
+    for name, v in (ic or {}).items():
+        if name == "combined" or not isinstance(v, dict):
+            continue
+        icv, t, n = v.get("IC"), v.get("t(IC)"), v.get("n")
+        if icv is not None and icv == icv and abs(t or 0.0) >= min_tstat and (n or 0) >= min_n:
+            weights[name] = float(icv)
+    if not weights:
+        return None, []
+    num = den = 0.0
+    for name, w in weights.items():
+        val = (latest or {}).get(name)
+        if val is None:
+            continue
+        num += w * val
+        den += abs(w)
+    if den <= 0:
+        return None, []
+    names = sorted(weights, key=lambda k: -abs(weights[k]))
+    return max(-1.0, min(1.0, num / den)), names

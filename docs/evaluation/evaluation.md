@@ -246,18 +246,50 @@ way:
 | + alpha analyst (significance-gated) | 0.58 | 0.57 | 0.96 | -0.09 | 98.96 | 17.04 | 56.44 | 124.40 | 7 | 4 |
 | alpha analyst replaces the technical analyst (significance-gated) | 0.61 | **0.70** | 0.94 | -0.07 | 103.12 | 17.94 | 53.52 | **90.73** | **10** | **6** |
 
-**Decision: still off by default.** The stricter version is not a clean fix either. "+ alpha
-analyst" got *worse* (mean Sharpe and beat-counts both fell, and trades rose rather than
-fell — abstaining on insignificant signals still leaves a choppier combined view than not
-running the analyst at all). "Alpha replaces technical" ties the default's head-to-head win
-counts with 15% fewer trades and a higher median Sharpe, but its mean Sharpe is still below
-default; with 15 instruments that spread is noise, not a demonstrated edge. The significance
-gate is kept as the more defensible design (only alphas with real measured predictive power
-move the signal, and the analyst abstains rather than guess), but it is reported here as an
-attempted fix that did not clear the bar, not as a solved problem. The analyst remains
-available (`config["analysts"] = [..., "alpha"]`, or `--analysts`) and the `quant.alpha` tool
-still runs in every harness task, so the signals and their information coefficients are in
-the evidence for anyone who wants to read them.
+The significance-gated version was still not a clean fix on its own: "+ alpha analyst" got
+*worse* (mean Sharpe and beat-counts both fell, and trades rose rather than fell). "Alpha
+replaces technical" tied the default's head-to-head win counts with fewer trades and a
+higher median Sharpe, but its mean Sharpe was still below default.
+
+**Third attempt: two real bugs found on review, independent of the Sharpe question.**
+
+1. *Harness/direct inconsistency.* `AlphaAnalyst` computed its own significance-gated
+   combination when invoked directly, but under the agentic harness (where the canonical
+   plan runs `quant.alpha` before the analyst) it returned that tool's raw output, which
+   combines *every* alpha equally weighted -- silently bypassing the significance gate on
+   that path. Both paths now go through one shared function, `alpha.significant_alpha_signal`.
+2. *Window mismatch.* The direct path reused `state.history`, the desk's general ~400-day
+   window sized for the other analysts. A 273-day signal like `tsmom_12_1` barely produces
+   its first non-NaN value in that window, so it (and other longer-horizon alphas) almost
+   never had enough points to clear the significance bar there, while the harness path's
+   `quant.alpha` tool call used a 900-day default -- a second silent inconsistency, and a
+   window too short for reliable IC estimation either way. The analyst now always fetches
+   its own 900-day window.
+
+Both are correctness fixes on their own merits (the same analyst should not behave
+differently depending on how it is invoked). Re-measured on the design period with both
+fixed:
+
+| variant | mean Sharpe | median Sharpe | equity median SR | FX median SR | mean CR% | mean MDD% | mean Exp% | mean trades | beats B&H | beats vol-target B&H |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| v0.3 default | 0.65 | 0.55 | 1.05 | 0.12 | 105.22 | 15.72 | 56.85 | 106.87 | 10 | 6 |
+| + alpha analyst (significance-gated, 900-day window) | 0.65 | **0.62** | 1.00 | **0.17** | 101.38 | 16.84 | 52.29 | 115.67 | 8 | 6 |
+| alpha analyst replaces the technical analyst (900-day window) | 0.57 | 0.59 | 0.82 | -0.03 | 59.47 | 16.12 | 39.42 | 147.73 | 5 | 5 |
+
+**Decision: still off by default, but the picture changed.** With both bugs fixed, "+ alpha
+analyst" is close to Sharpe-neutral (0.647 vs 0.654, a 0.007 gap that is pure noise on 15
+instruments), with a *higher* median Sharpe and a *better* FX median than the default, at the
+cost of two fewer instruments beating buy & hold and about 8% more trades. "Alpha replaces
+technical" is now clearly worse than before (mean Sharpe 0.57, down from 0.63 with the old
+window) -- dropping the desk's tuned technical analyst entirely is a bad trade regardless of
+window length. Even though "+ alpha analyst" now looks closer to acceptable than either
+earlier attempt, this is the **third** combination-logic variant measured on the same design
+period; treating a closer-to-parity result as a green light after repeated tuning attempts
+would be exactly the kind of selection bias this evaluation's own methodology warns against
+(see [selection statistics](#selection-statistics-for-the-chosen-rules)). The analyst stays
+off by default. It remains available (`config["analysts"] = [..., "alpha"]`, or `--analysts`)
+and the `quant.alpha` tool still runs in every harness task, so the signals and their
+information coefficients are in the evidence for anyone who wants to read them.
 
 ## Selection statistics for the chosen rules
 

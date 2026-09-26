@@ -403,16 +403,18 @@ class SentimentAnalyst(Analyst):
 class AlphaAnalyst(Analyst):
     """Quant analyst: the alpha library's combined signal, weighted by *significant* IC only.
 
-    Uses the ``quant.alpha`` tool output when the agentic harness ran it (so the
-    IC table is evidence); otherwise computes the snapshot from the state's
-    history. Only alphas whose IC t-statistic clears the significance bar
-    (``|t(IC)| >= 2`` and at least 30 observations) get non-zero weight in the
-    combination; every other alpha is measured (and reported) but does not move
-    the signal. This is stricter than a plain IC-weighted average: on the
-    design-period check, weighting by ``max(0, IC)`` let many near-zero,
-    statistically insignificant alphas add turnover without predictive value
-    (mean Sharpe 0.65 -> 0.60); restricting the combination to significant
-    alphas only removes that noise (see docs/evaluation/evaluation.md).
+    Uses the ``quant.alpha`` tool output when the agentic harness ran it (so the IC table is
+    evidence); otherwise computes the snapshot from the state's history. Either way, the
+    *decision* always goes through ``alpha.significant_alpha_signal``: only alphas whose IC
+    t-statistic clears the significance bar (``|t(IC)| >= 2`` and at least 30 observations)
+    get non-zero weight in the combination, and the analyst abstains when none qualify. This
+    is stricter than a plain IC-weighted average -- weighting by ``max(0, IC)`` let many
+    near-zero, statistically insignificant alphas add turnover without predictive value (see
+    docs/evaluation/evaluation.md). Using one shared function for both invocation paths also
+    fixes a real inconsistency: the ``quant.alpha`` tool's own "combined" field is an
+    equal-weighted composite over *every* alpha (useful as a general-purpose diagnostic), and
+    naively trusting it under the harness would have silently bypassed the significance gate
+    that applies when the analyst computes its own snapshot directly.
     """
     name = "alpha"
     role = ("Quantitative Alpha Analyst. You read a library of systematic signals (momentum, "
@@ -422,13 +424,26 @@ class AlphaAnalyst(Analyst):
                     "its combined view and the strongest components, and abstain when none qualify.")
     min_ic_tstat = 2.0
     min_ic_n = 30
+    # The desk's general lookback (config["lookback_days"], 400 by default) is sized for
+    # the other analysts. A 273-day signal like tsmom_12_1 barely produces its first
+    # non-NaN value in that window, leaving too few points to ever clear the significance
+    # bar. The alpha analyst needs a much longer history to estimate IC at all reliably,
+    # so it fetches its own window (matching the ``quant.alpha`` tool's own default)
+    # instead of reusing ``state.history`` -- this also keeps the harness path (which
+    # calls that tool with its own lookback) and the direct path consistent.
+    lookback_days = 900
 
     def gather(self, state, provider):
-        from ..alpha import alpha_snapshot, compute_alphas, combine, forward_returns, information_coefficient
+        from datetime import timedelta
+
+        import pandas as pd
+
+        from ..alpha import alpha_snapshot, compute_alphas, forward_returns, information_coefficient
         if state.alpha:
-            return dict(state.alpha)
-        df = state.history
+            return {"latest": dict(state.alpha.get("latest") or {}), "ic": dict(state.alpha.get("ic") or {})}
         ins = state.instrument
+        df = provider.history(ins, state.as_of - timedelta(days=self.lookback_days), state.as_of)
+        df = df[df.index <= pd.Timestamp(state.as_of)]
         carry = provider.carry_series(ins, df.index) if ins.is_fx else None
         latest = alpha_snapshot(df, ins, carry)
         ic = {}
@@ -438,35 +453,29 @@ class AlphaAnalyst(Analyst):
             for name in sig.columns:
                 v, t, n = information_coefficient(sig[name].to_numpy(), fwd)
                 ic[name] = {"IC": v, "t(IC)": t, "n": n}
-            weights = {k: (v["IC"] if v["IC"] == v["IC"] and abs(v.get("t(IC)") or 0) >= self.min_ic_tstat
-                          and (v.get("n") or 0) >= self.min_ic_n else 0.0)
-                      for k, v in ic.items()}
-            latest["combined"] = combine(sig, weights).iloc[-1] if any(weights.values()) else float("nan")
-            latest["combined"] = None if latest["combined"] != latest["combined"] else float(latest["combined"])
-        return {"horizon": 10, "latest": latest, "ic": ic}
+        return {"latest": latest, "ic": ic}
 
     def rules(self, f, state):
+        from ..alpha import significant_alpha_signal
         latest, ic = f.get("latest") or {}, f.get("ic") or {}
-        comb = latest.get("combined")
-        ranked_all = sorted(((k, v) for k, v in ic.items() if v.get("IC") is not None and k != "combined"),
-                            key=lambda kv: -abs(kv[1]["IC"]))
-        strong = [(k, v) for k, v in ranked_all if abs(v.get("t(IC)") or 0) >= self.min_ic_tstat
-                 and (v.get("n") or 0) >= self.min_ic_n]
-        if comb is None or not strong:
+        comb, strong_names = significant_alpha_signal(latest, ic, self.min_ic_tstat, self.min_ic_n)
+        if comb is None:
             return self.abstain(
                 "No alpha signal clears the significance bar (|t(IC)| >= 2, n >= 30) over the "
                 "lookback." if ic else "Not enough history for the alpha library.", f)
         pts = []
-        for name, v in sorted(strong, key=lambda kv: -abs(kv[1]["IC"]))[:3]:
+        for name in strong_names[:3]:
+            v = ic[name]
             val = latest.get(name)
             pts.append(f"{name}: value {val:+.2f}, IC {v['IC']:+.3f} (t {v['t(IC)']:.1f})"
                        if val is not None else f"{name}: IC {v['IC']:+.3f}")
         sig = clip(comb, -1, 1)
-        conf = clip(0.3 + 0.3 * abs(sig) + 0.05 * len(strong), 0, 0.8)
+        conf = clip(0.3 + 0.3 * abs(sig) + 0.05 * len(strong_names), 0, 0.8)
+        total = sum(1 for v in ic.values() if v.get("IC") is not None)
         return AnalystReport(self.name, sig, conf,
-                             f"IC-weighted alpha composite {sig:+.2f} from {len(strong)} of "
-                             f"{len(ranked_all)} signals with |t(IC)| >= {self.min_ic_tstat:.0f} "
-                             "over the lookback.", pts, f)
+                             f"IC-weighted alpha composite {sig:+.2f} from {len(strong_names)} of "
+                             f"{total} signals with |t(IC)| >= {self.min_ic_tstat:.0f} over the "
+                             "lookback.", pts, f)
 
 
 ANALYSTS = {
