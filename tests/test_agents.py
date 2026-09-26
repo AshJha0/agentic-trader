@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from agentic_trader import Instrument, TradingGraph, make_config
-from agentic_trader.agents.analysts import SentimentAnalyst, TechnicalAnalyst
+from agentic_trader.agents.analysts import AlphaAnalyst, SentimentAnalyst, TechnicalAnalyst
 from agentic_trader.agents.base import untrusted_block
 from agentic_trader.agents.researchers import consensus_score
 from agentic_trader.agents.risk import PortfolioManager
@@ -34,6 +34,31 @@ def _state(prices, symbol="AAPL"):
     h = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c,
                       "Volume": np.full(len(c), 1e6)}, index=idx)
     return TradingState(Instrument.parse(symbol), idx[-1].date(), h)
+
+
+# -------------------------------------------------------------- alpha analyst
+def test_alpha_analyst_agrees_with_itself_direct_vs_harness_populated():
+    """AlphaAnalyst must reach the same view whether it computes its own snapshot
+    (direct propagate()) or reuses one already fetched as a harness tool call
+    (state.alpha populated by ``quant.alpha``) -- a real inconsistency once let
+    the harness path silently skip the significance gate."""
+    from agentic_trader.agentic.servers import DeskTools
+
+    provider = SyntheticProvider(make_config(synthetic_seed=7))
+    ins = Instrument.parse("AAPL")
+    as_of = date(2020, 6, 1)
+    df = provider.history(ins, date(2016, 1, 1), as_of)
+    state = TradingState(ins, as_of, df[df.index <= pd.Timestamp(as_of)])
+    analyst = AlphaAnalyst(None, CFG)
+
+    direct = analyst.rules(analyst.gather(state, provider), state)
+
+    state.alpha = DeskTools(provider, CFG).alpha("AAPL", as_of, horizon=10, lookback_days=900)
+    via_harness = analyst.rules(analyst.gather(state, provider), state)
+
+    assert direct.signal == pytest.approx(via_harness.signal)
+    assert direct.confidence == pytest.approx(via_harness.confidence)
+    assert direct.abstained == via_harness.abstained
 
 
 # ---------------------------------------------------------- technical rules

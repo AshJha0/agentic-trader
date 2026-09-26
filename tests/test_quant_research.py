@@ -10,7 +10,7 @@ import pytest
 
 from agentic_trader import Instrument, make_config, quant, run_portfolio_backtest
 from agentic_trader.alpha import (ALPHAS, alpha_report, alpha_snapshot, combine, compute_alphas,
-                                  forward_returns, information_coefficient)
+                                  forward_returns, information_coefficient, significant_alpha_signal)
 from agentic_trader.algo import (almgren_chriss_schedule, plan_execution, pov_schedule, simulate_execution,
                                  synthetic_intraday_bars, twap_schedule, volume_profile, vwap_schedule)
 from agentic_trader.data import SyntheticProvider
@@ -164,6 +164,24 @@ def test_alpha_report_structure(frames):
     assert "combined" in snap and all(v is None or -1 <= v <= 1 for v in snap.values())
     with pytest.raises(ValueError):
         alpha_report(df, ins, 0)
+
+
+def test_significant_alpha_signal_gates_on_tstat_and_n():
+    latest = {"a": 0.6, "b": -0.4, "c": 0.2}
+    # "a" is significant and positive-IC; "b" is significant but fails the n floor;
+    # "c" has a below-threshold t-stat. Only "a" should end up in the combination.
+    ic = {"a": {"IC": 0.15, "t(IC)": 2.5, "n": 50},
+         "b": {"IC": -0.20, "t(IC)": 2.1, "n": 10},
+         "c": {"IC": 0.05, "t(IC)": 1.0, "n": 200},
+         "combined": {"IC": 0.10, "t(IC)": 5.0, "n": 200}}  # must be ignored by name
+    comb, names = significant_alpha_signal(latest, ic, min_tstat=2.0, min_n=30)
+    assert names == ["a"]
+    assert comb == pytest.approx(0.6)
+
+    # No alpha clears the bar -> abstain (None, []), not zero.
+    comb2, names2 = significant_alpha_signal(latest, {"a": {"IC": 0.15, "t(IC)": 1.0, "n": 50}})
+    assert comb2 is None and names2 == []
+    assert significant_alpha_signal({}, {}) == (None, [])
 
 
 # ------------------------------------------------------------------ algo
