@@ -40,6 +40,7 @@ from .policy import (ApprovalGateway, AutoApprovalGateway, DenyApprovalGateway, 
 from .rag import KnowledgeBase
 from .reporter import Report, build_report
 from .servers import DeskTools, RecordingProvider, build_registry
+from .store import TaskStore
 from .tools import ExecutorConfig, ToolExecutor, ToolRegistry
 from .tracing import Tracer
 
@@ -113,7 +114,8 @@ def _gateway(kind: str) -> ApprovalGateway:
 class AgentHarness:
     def __init__(self, graph: TradingGraph, policy: PolicyEngine | None = None,
                  gateway: ApprovalGateway | None = None, knowledge: KnowledgeBase | None = None,
-                 positions: dict[str, float] | None = None, capital: float | None = None):
+                 positions: dict[str, float] | None = None, capital: float | None = None,
+                 store: TaskStore | None = None):
         self.graph = graph
         self.config = graph.config
         acfg = self.config.get("agentic", {})
@@ -126,12 +128,40 @@ class AgentHarness:
         self.critic = Critic(self.config, graph.llm)
         self.runs: dict[str, TaskRun] = {}
         self._lock = threading.Lock()
+        # Persistence: records of every run this process makes, plus an archive of
+        # the records a previous process left behind (read-only, not resumable).
+        if store is None and acfg.get("task_db"):
+            store = TaskStore(acfg["task_db"])
+        self.store = store
+        self.archive: dict[str, dict[str, Any]] = {}
+        if store is not None:
+            interrupted = store.mark_interrupted()
+            if interrupted:
+                log.warning("%d task(s) were in flight when the previous process stopped; marked FAILED",
+                            interrupted)
+            self.archive = {r["task_id"]: r for r in store.load_all()}
+
+    def record(self, task_id: str) -> dict[str, Any] | None:
+        """The JSON record of a live run or an archived one (``None`` if unknown)."""
+        run = self.runs.get(task_id)
+        if run is not None:
+            from .store import record_of
+            return record_of(run)
+        return self.archive.get(task_id)
+
+    def _persist(self, run: TaskRun) -> None:
+        if self.store is not None:
+            try:
+                self.store.save(run)
+            except Exception as e:  # persistence must never take a decision down with it
+                log.exception("could not persist task %s: %s", run.id, e)
 
     # ----------------------------------------------------------- control
     def submit(self, task: Task) -> TaskRun:
         run = TaskRun(task)
         with self._lock:
             self.runs[task.id] = run
+        self._persist(run)
         return run
 
     def cancel(self, task_id: str) -> TaskRun:
@@ -174,6 +204,7 @@ class AgentHarness:
                 self._transition(run, TaskState.FAILED, str(e)[:200])
         if run.done:
             run.finished_at = utc_now()
+        self._persist(run)
         return run
 
     def _transition(self, run: TaskRun, new: TaskState, note: str = "") -> None:
@@ -182,6 +213,8 @@ class AgentHarness:
         run.state = new
         run.history.append((new.value, utc_now().isoformat() + (f" {note}" if note else "")))
         run.tracer.metrics.inc("task_transitions_total", state=new.value)
+        if new in TERMINAL_STATES or new is TaskState.AWAITING_APPROVAL:
+            self._persist(run)
 
     # ------------------------------------------------------------ phases
     def _plan(self, run: TaskRun) -> None:

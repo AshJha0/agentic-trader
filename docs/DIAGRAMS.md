@@ -26,7 +26,7 @@ Mermaid 11 parser before release. The prose explanation is in
 15. [Critic and audits](#15-critic-and-audits)
 16. [MCP and API topology](#16-mcp-and-api-topology)
 
-**Data, backtesting and research**
+**Data, backtesting and research** (25–27 are new in v0.5)
 
 17. [Point-in-time FX macro from FRED](#17-point-in-time-fx-macro-from-fred)
 18. [Walk-forward backtest timing](#18-walk-forward-backtest-timing)
@@ -36,6 +36,9 @@ Mermaid 11 parser before release. The prose explanation is in
 22. [Portfolio construction](#22-portfolio-construction)
 23. [Evaluation protocol: design, freeze, holdout](#23-evaluation-protocol-design-freeze-holdout)
 24. [Package dependencies](#24-package-dependencies)
+25. [Execution-aware backtest: from the daily bar to an impact charge](#25-execution-aware-backtest-from-the-daily-bar-to-an-impact-charge)
+26. [Cross-sectional alpha pipeline](#26-cross-sectional-alpha-pipeline)
+27. [Hierarchical risk budgets across asset classes](#27-hierarchical-risk-budgets-across-asset-classes)
 
 ## 1. Decision pipeline
 
@@ -640,10 +643,17 @@ flowchart LR
         PICK --> DSR["selection report:<br/>bootstrap CI · PSR · deflated Sharpe<br/>for the 16 trials"]
     end
     PICK --> FREEZE["freeze defaults<br/>in config.py"]
-    FREEZE --> HO["holdout 2022 - 2026<br/>run once"]
+    FREEZE --> HO["holdout 2022 - 2026<br/>run once (core 15)"]
     FREEZE --> PW["Q1 2024 window"]
     HO --> REP["report whatever it shows<br/>vs B&H and vol-targeted B&H"]
     PW --> REP
+    REP -. "v0.4 reported the holdout:<br/>it is now seen" .-> FRESH
+    subgraph FRESH["v0.5: what 'unseen' means from here"]
+        EXT["extended universe (45 names)<br/>never consulted, every period"]
+        RES["reserve period<br/>2026-07-01 onwards, grows"]
+    end
+    NEXT["next rule change:<br/>choose on core design only"] --> EXT
+    NEXT --> RES
 ```
 
 ## 24. Package dependencies
@@ -679,6 +689,78 @@ flowchart TD
     GR --> DA[data] --> FR["data.fred"]
     GR --> ME[memory]
     STATS[stats]
+    XA[xalpha] --> ALPHA
+    XA --> Q
+    SRV --> XA
+    AGH --> STO["agentic.store (SQLite)"]
+    API --> STO
     Q --> PYC["quant.pycore (numpy)"]
     Q -. optional .-> ATC["quant._atcore (C++)"] --> CORE["cpp/ at_core"]
+```
+
+## 25. Execution-aware backtest: from the daily bar to an impact charge
+
+```mermaid
+flowchart LR
+    subgraph Known["known at the close of bar t"]
+        VOL["daily vol_t<br/>(trailing 20 bars)"]
+        ADV["ADV_t<br/>(trailing 20-bar volume)"]
+        PX["price_t"]
+        CAP["initial_capital"]
+    end
+    VOL --> K["K_t = coeff · vol_t · sqrt(capital / (price_t · ADV_t))"]
+    ADV --> K
+    PX --> K
+    CAP --> K
+    K --> ENG["run_backtest(..., impact=K)<br/>C++ / numpy twin"]
+    W["target weights<br/>(agent or any baseline)"] --> ENG
+    ENG --> T["trade |dw| at bar t<br/>cost = |dw|^1.5 · K_t"]
+    ENG --> X["stop / target exit at t+1<br/>cost = |w|^1.5 · K_t+1"]
+    T --> R["equity, returns,<br/>impact_paid"]
+    X --> R
+    R --> TAB["table(): Impact% per strategy"]
+    OFF["impact_coeff = 0 (default)"] -. "no K, results unchanged" .-> ENG
+```
+
+## 26. Cross-sectional alpha pipeline
+
+```mermaid
+flowchart TD
+    F["OHLCV per instrument<br/>(60-name universe)"] --> TS["time-series alphas per name<br/>compute_alphas: 9 signals in [-1, 1]"]
+    TS --> P["panels: alpha -> dates × symbols"]
+    P --> G{"group by<br/>asset class"}
+    G -->|equities| Z1["cs_zscore / cs_rank<br/>across equity names, each day"]
+    G -->|FX| Z2["cs_zscore / cs_rank<br/>across FX names, each day"]
+    Z1 --> C["combined score<br/>(reindexed onto the union of columns)"]
+    Z2 --> C
+    F --> FWD["forward_return_panel(h)"]
+    C --> IC["per-date Spearman IC<br/>mean · IR · t (n / h independent) · %>0"]
+    FWD --> IC
+    C --> QS["quantile spread:<br/>top 20% − bottom 20%, every h bars"]
+    FWD --> QS
+    C --> B["breadth: names scored per day"]
+    IC --> REP["XAlphaReport<br/>table · decay · correlations · best()"]
+    QS --> REP
+    B --> REP
+    C --> SNAP["xalpha_snapshot: today's ranking"] --> TOOL["quant.xalpha tool<br/>(evidence under the harness)"]
+```
+
+## 27. Hierarchical risk budgets across asset classes
+
+```mermaid
+flowchart LR
+    T["desk targets<br/>(signed, per sleeve)"] --> ACT["active sleeves"]
+    COV["trailing covariance<br/>(EWMA + Ledoit-Wolf, no look-ahead)"] --> W1
+    COV --> W2
+    ACT --> W1["within equity:<br/>chosen scheme (risk parity, min-var, ...)"]
+    ACT --> W2["within FX:<br/>the same scheme"]
+    W1 --> P["group portfolios P (n × G)"]
+    W2 --> P
+    P --> CG["group covariance<br/>C_G = Pᵀ Σ P"]
+    B["budgets<br/>{equity: 0.6, fx: 0.4}"] --> RP["risk parity across groups<br/>with the budgets"]
+    CG --> RP
+    RP --> A["allocation = P · b"]
+    A --> S["signed weights = allocation × sign(target)"]
+    S --> RC["risk_contributions:<br/>group_risk (budget vs realised share)"]
+    S --> BT["run_portfolio_backtest(class_budgets=)"]
 ```

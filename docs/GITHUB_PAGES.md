@@ -49,12 +49,15 @@ measured numbers. If you change the code, re-check them against these sources:
 | Tools and servers | `len(harness.registry)` and `harness.registry.servers` (or `agentic-trader tools`) |
 | Knowledge documents and chunks | `len(default_knowledge_base().documents)` and `len(default_knowledge_base().chunks)` |
 | LLM calls per decision | Cookbook recipe 17 (prints `14 4 10` at default rounds) |
-| Real-price evaluation (per instrument, design / holdout / Q1 2024) | `agentic-trader evaluate --data yahoo --periods design,holdout,q1_2024 --out results/eval_v03.json`; the same with `--rules v02` for the "before" column |
-| Ablation tables | The 16 config overrides listed in `docs/evaluation/evaluation.md`, plus the three alpha-analyst variants, each run with `evaluate(periods={"design": PERIODS["design"]})` |
+| Real-price evaluation (per instrument, design / holdout / Q1 2024), core universe | `agentic-trader evaluate --data yahoo --universe core --periods design,holdout,q1_2024 --out results/eval_v03.json`; the same with `--rules v02` for the "before" column |
+| Extended universe and reserve period | `agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve --out results/eval_v05_all.json`; tables from `rows[rows.universe != "core"]` |
+| Impact sweep | `agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital <1e5 / 1e7 / 1e9>` |
+| Ablation tables | The 16 config overrides listed in `docs/evaluation/evaluation.md`, plus the alpha-analyst variants, each run with `evaluate(periods={"design": PERIODS["design"]})` on the core universe |
 | Selection statistics | `stats.selection_report(portfolio design returns, the 16 variants' mean Sharpes)` |
 | Portfolio results | `agentic-trader portfolio <15 symbols> --data yahoo --start 2022-01-03 --end 2026-06-30` (and the design dates) |
 | Code size | Non-empty lines in `agentic_trader/**/*.py`, `tests/**/*.py` and `cpp/**/*.{cpp,hpp}` |
-| Cookbook | Run every ```python block in `COOKBOOK.md`; all must exit 0 (the network recipes are marked) |
+| Cookbook | Run every ```python block in `COOKBOOK.md` with `PYTHONUTF8=1`; all must exit 0 (the network recipes are marked) |
+| Fuzz findings | `pytest tests/test_fuzz.py`; the "found and fixed" list in the changelog is the record of what the first run caught |
 | Diagrams | Parse every ```mermaid block in `docs/DIAGRAMS.md` with Mermaid 11 |
 
 The evaluation tables are generated from the saved JSON with pandas (`to_markdown`), not

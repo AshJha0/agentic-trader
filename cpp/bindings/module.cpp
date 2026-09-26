@@ -113,7 +113,8 @@ PYBIND11_MODULE(_atcore, m) {
         .def_readonly("positions", &BacktestResult::positions)
         .def_readonly("trades", &BacktestResult::trades)
         .def_readonly("metrics", &BacktestResult::metrics)
-        .def_readonly("stop_exits", &BacktestResult::stop_exits);
+        .def_readonly("stop_exits", &BacktestResult::stop_exits)
+        .def_readonly("impact_paid", &BacktestResult::impact_paid);
 
     m.def("run_backtest", &run_backtest, py::arg("prices"), py::arg("target_weights"),
           py::arg("config"));
@@ -121,14 +122,14 @@ PYBIND11_MODULE(_atcore, m) {
         "run_backtest_ex",
         [](const Series& prices, const Series& weights, const BacktestConfig& cfg,
            const Series& carry, const Series& open, const Series& high, const Series& low,
-           const Series& stop, const Series& take, const Series& rebalance) {
-            BacktestInputs in{carry, open, high, low, stop, take, rebalance};
+           const Series& stop, const Series& take, const Series& rebalance, const Series& impact) {
+            BacktestInputs in{carry, open, high, low, stop, take, rebalance, impact};
             return run_backtest_ex(prices, weights, cfg, in);
         },
         py::arg("prices"), py::arg("target_weights"), py::arg("config"),
         py::arg("carry") = Series{}, py::arg("open") = Series{}, py::arg("high") = Series{},
         py::arg("low") = Series{}, py::arg("stop") = Series{}, py::arg("take") = Series{},
-        py::arg("rebalance") = Series{});
+        py::arg("rebalance") = Series{}, py::arg("impact") = Series{});
     m.def("compute_metrics", &compute_metrics, py::arg("equity"), py::arg("positions"),
           py::arg("periods_per_year"), py::arg("risk_free_annual") = 0.0);
     m.def("max_drawdown", &max_drawdown, py::arg("equity"));

@@ -64,8 +64,24 @@ def _config(args) -> dict:
         over["risk"] = risk
     if getattr(args, "stops", None) is not None:
         over["backtest"] = {"use_stops": args.stops == "on"}
+    if getattr(args, "impact", None) is not None:
+        if args.impact < 0:
+            raise ValueError("--impact must be >= 0")
+        over["costs"] = {"impact_coeff": args.impact}
+    if getattr(args, "capital", None) is not None and getattr(args, "cmd", "") != "execute":
+        if args.capital <= 0:
+            raise ValueError("--capital must be positive")
+        over["initial_capital"] = args.capital
     if getattr(args, "max_llm_calls", None) is not None:
         over["max_llm_calls"] = args.max_llm_calls
+    if getattr(args, "max_llm_cost", None) is not None:
+        if args.max_llm_cost < 0:
+            raise ValueError("--max-llm-cost must be >= 0")
+        over["max_llm_cost_usd"] = args.max_llm_cost
+    if getattr(args, "fred_vintages", False):
+        over["fred_vintages"] = True
+    if getattr(args, "fred_cache", None):
+        over["fred_cache_dir"] = args.fred_cache
     if getattr(args, "anonymize", False):
         over["llm_anonymize"] = True
     if getattr(args, "deep_effort", None):
@@ -216,9 +232,16 @@ def cmd_portfolio(args) -> int:
     cfg = _config(args)
     cfg["memory_path"] = None
     syms = _symbols(args.symbol)
-    _header(f"portfolio of {len(syms)} sleeves {args.start} -> {args.end} weighting={args.weighting}", cfg)
+    budgets = None
+    if args.class_budgets:
+        try:
+            budgets = {k.strip(): float(v) for k, v in (kv.split("=") for kv in args.class_budgets.split(","))}
+        except ValueError:
+            raise ValueError("--class-budgets must look like equity=0.6,fx=0.4") from None
+    _header(f"portfolio of {len(syms)} sleeves {args.start} -> {args.end} weighting={args.weighting}"
+            + (f" class budgets {budgets}" if budgets else ""), cfg)
     rep = run_portfolio_backtest(syms, args.start, args.end, cfg, rebalance_every=args.every,
-                                 weighting=args.weighting)
+                                 weighting=args.weighting, class_budgets=budgets)
     print(rep.table().to_string())
     if rep.allocations is not None:
         print("\nlatest capital allocation:")
@@ -230,15 +253,18 @@ def cmd_portfolio(args) -> int:
 
 
 def cmd_evaluate(args) -> int:
-    from .evaluation import DEFAULT_UNIVERSE, PERIODS, evaluate
+    from .evaluation import PERIODS, UNIVERSES, evaluate
     cfg = _config(args)
     cfg["memory_path"] = None
     periods = {p: PERIODS[p] for p in _symbols(args.periods)}
-    syms = _symbols(args.symbol) if args.symbol else DEFAULT_UNIVERSE["equity"] + DEFAULT_UNIVERSE["fx"]
+    syms = _symbols(args.symbol) if args.symbol else UNIVERSES[args.universe]
     _header(f"evaluate {len(syms)} symbols x {list(periods)}", cfg)
     res = evaluate(syms, periods, cfg, args.every, progress=lambda m: print("  " + m, flush=True),
                    workers=args.workers)
     print("\n" + res.summary().to_string())
+    if "universe" in res.rows and res.rows.universe.nunique() > 1:
+        for u in sorted(res.rows.universe.unique()):
+            print(f"\n[{u} universe]\n" + res.summary(universe=u).to_string())
     print("\n" + res.head_to_head().to_string(index=False))
     if res.meta["errors"]:
         print(f"\n{len(res.meta['errors'])} failures: {res.meta['errors']}")
@@ -246,6 +272,39 @@ def cmd_evaluate(args) -> int:
     if args.out:
         res.to_json(args.out)
         print(f"results written to {args.out}")
+    return 0
+
+
+def cmd_xalpha(args) -> int:
+    from .data import get_provider
+    from .instruments import Instrument
+    from .xalpha import xalpha_report
+    cfg = _config(args)
+    provider = get_provider(cfg)
+    syms = _symbols(args.symbol)
+    if len(syms) < 3:
+        raise ValueError("a cross-sectional report needs at least 3 symbols")
+    start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
+    frames, instruments, carry = {}, {}, {}
+    for s in syms:
+        ins = Instrument.parse(s, args.asset_class)
+        df = provider.history(ins, start, end)
+        if len(df) < 300:
+            raise ValueError(f"cross-sectional evaluation needs at least 300 bars; {ins.display} has {len(df)}")
+        frames[ins.symbol], instruments[ins.symbol] = df, ins
+        if ins.is_fx:
+            carry[ins.symbol] = provider.carry_series(ins, df.index)
+    _header(f"cross-sectional alpha report, {len(frames)} names {start} -> {end} horizon={args.horizon}", cfg)
+    rep = xalpha_report(frames, instruments, args.horizon, carry=carry or None, standardise=args.standardise)
+    print(rep.table.to_string())
+    print("\nmean IC by horizon:")
+    print(rep.decay.to_string())
+    print("\nscore correlations:")
+    print(rep.correlations.to_string())
+    print(f"\nbest by mean IC: {rep.best()}")
+    if args.out:
+        rep.signals["combined"].to_csv(args.out)
+        print(f"combined cross-sectional scores written to {args.out}")
     return 0
 
 
@@ -354,8 +413,13 @@ def cmd_tools(args) -> int:
 def cmd_serve(args) -> int:
     from .agentic.api import serve
     cfg = _config(args)
-    print(f"serving on http://{args.host}:{args.port}  (docs at /docs; approvals {cfg['agentic']['approval']})")
-    serve(args.host, args.port, cfg)
+    if args.task_db:
+        cfg["agentic"]["task_db"] = args.task_db
+    scheme = "https" if args.ssl_cert else "http"
+    print(f"serving on {scheme}://{args.host}:{args.port}  (docs at /docs; approvals "
+          f"{cfg['agentic']['approval']}; task store {args.task_db or 'in memory'})")
+    serve(args.host, args.port, cfg, ssl_certfile=args.ssl_cert, ssl_keyfile=args.ssl_key,
+          allow_dev_keys=args.allow_dev_keys)
     return 0
 
 
@@ -397,6 +461,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="no-trade band: keep the position if the new target is this close")
         sp.add_argument("--max-llm-calls", type=int, default=None,
                         help="hard cap on model calls; agents use rules beyond it")
+        sp.add_argument("--max-llm-cost", type=float, default=None,
+                        help="hard cap on estimated model spend in USD; agents use rules beyond it")
+        sp.add_argument("--fred-vintages", action="store_true",
+                        help="read revised FRED series (CPI) from the ALFRED vintage current at each date")
+        sp.add_argument("--fred-cache", default=None, help="directory for cached FRED/ALFRED downloads")
         sp.add_argument("--rules", choices=["default", "v02"], default="default",
                         help="v02 reproduces the v0.2 rule set for comparisons")
         sp.add_argument("--anonymize", action="store_true",
@@ -411,6 +480,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--every", type=int, default=5, help="rebalance every N bars")
         sp.add_argument("--stops", choices=["on", "off"], default=None,
                         help="enforce decision stop-loss / take-profit (default: config)")
+        sp.add_argument("--impact", type=float, default=None,
+                        help="square-root market-impact coefficient (0 = off, 1.0 = textbook)")
+        sp.add_argument("--capital", type=float, default=None,
+                        help="account size that trade sizes (and so impact) scale with")
         sp.add_argument("--out", default=None, help="CSV path for the curves / returns")
 
     a = sub.add_parser("analyze", help="run the desk for one date")
@@ -457,17 +530,31 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_opts(pf)
     pf.add_argument("--weighting", choices=["equal", "inverse_vol", "risk_parity", "min_variance",
                                             "mean_variance"], default="equal")
+    pf.add_argument("--class-budgets", default=None,
+                    help="risk budget per asset class, e.g. equity=0.6,fx=0.4 (risk parity across classes)")
     pf.set_defaults(func=cmd_portfolio)
 
-    ev = sub.add_parser("evaluate", help="design / holdout / Q1-2024 evaluation")
-    common(ev, "optional comma-separated symbols (default: the 15-instrument universe)",
-           symbol_required=False)
-    ev.add_argument("--periods", default="q1_2024", help="comma list of design,holdout,q1_2024")
+    ev = sub.add_parser("evaluate", help="design / holdout / Q1-2024 / reserve evaluation")
+    common(ev, "optional comma-separated symbols (default: --universe)", symbol_required=False)
+    ev.add_argument("--periods", default="q1_2024", help="comma list of design,holdout,q1_2024,reserve")
+    ev.add_argument("--universe", choices=["core", "extended", "all"], default="all",
+                    help="core = the 15 instruments rules were chosen on; extended = the 45 never used "
+                         "for a choice; all = both (default)")
     ev.add_argument("--every", type=int, default=5, help="rebalance every N bars")
     ev.add_argument("--workers", type=int, default=1,
                     help="backtests run in parallel (useful with --llm anthropic)")
     ev.add_argument("--out", default=None, help="JSON path for all rows")
     ev.set_defaults(func=cmd_evaluate)
+
+    xa = sub.add_parser("xalpha", help="cross-sectional alpha report over a universe: per-date IC, "
+                                       "quantile spreads, breadth")
+    common(xa, "comma-separated symbols, e.g. AAPL,MSFT,NVDA,JPM,XOM")
+    xa.add_argument("--start", required=True)
+    xa.add_argument("--end", required=True)
+    xa.add_argument("--horizon", type=int, default=10, help="forward-return horizon in bars")
+    xa.add_argument("--standardise", choices=["zscore", "rank"], default="zscore")
+    xa.add_argument("--out", default=None, help="CSV path for the combined cross-sectional scores")
+    xa.set_defaults(func=cmd_xalpha)
 
     al = sub.add_parser("alpha", help="alpha library report: IC, decay, hit rate, correlations")
     common(al)
@@ -508,6 +595,11 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
     sv.add_argument("--approval", choices=["auto", "queued", "deny"], default="queued")
+    sv.add_argument("--task-db", default=None, help="SQLite file for a persistent task store")
+    sv.add_argument("--ssl-cert", default=None, help="TLS certificate (PEM); needs --ssl-key")
+    sv.add_argument("--ssl-key", default=None, help="TLS private key (PEM)")
+    sv.add_argument("--allow-dev-keys", action="store_true",
+                    help="allow the shipped development API keys on a non-loopback host (tests only)")
     sv.set_defaults(func=cmd_serve)
 
     mc = sub.add_parser("mcp", help="MCP server over stdio (needs the [mcp] extra)")
@@ -519,10 +611,36 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def load_dotenv(path: str = ".env") -> list[str]:
+    """Load ``KEY=VALUE`` lines from a local ``.env`` into the environment.
+
+    Existing environment variables are never overridden, values are never printed, and
+    the file is optional. It exists because Windows user-level environment variables do
+    not reliably reach a process started before they were set; a project-local file does.
+    """
+    import os
+    loaded: list[str] = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key, value = key.strip(), value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+                    loaded.append(key)
+    except OSError:
+        pass
+    return loaded
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+    load_dotenv()
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if getattr(args, "verbose", False) else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")

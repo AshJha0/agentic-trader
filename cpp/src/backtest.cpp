@@ -119,12 +119,14 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
     check_len(in.stop, T, "stop");
     check_len(in.take, T, "take");
     check_len(in.rebalance, T, "rebalance");
+    check_len(in.impact, T, "impact");
     const bool has_levels = !in.stop.empty() || !in.take.empty();
     const bool has_ohlc = !in.open.empty() && !in.high.empty() && !in.low.empty();
     if (has_levels && !has_ohlc)
         throw std::invalid_argument("run_backtest: stop/take levels need open, high and low");
     for (double p : prices)
-        if (!(p > 0.0)) throw std::invalid_argument("run_backtest: prices must be positive");
+        if (!(p > 0.0) || std::isinf(p))
+            throw std::invalid_argument("run_backtest: prices must be positive and finite");
 
     BacktestResult res;
     res.equity.assign(T, cfg.initial_capital);
@@ -136,6 +138,10 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
     const double hi = cfg.max_leverage;
     const double unit_cost = (cfg.cost_bps + cfg.slippage_bps) / 1e4;
     const double nan = std::numeric_limits<double>::quiet_NaN();
+    auto impact_k = [&](std::size_t i) {
+        if (in.impact.empty() || std::isnan(in.impact[i])) return 0.0;
+        return in.impact[i];
+    };
 
     double prev = 0.0;         // weight held coming into bar t
     double prev_target = nan;  // last target seen (for re-arming without a rebalance mask)
@@ -168,9 +174,13 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         const double price_ret = px_end / prices[t] - 1.0;
         const double carry = w * carry_rate / cfg.periods_per_year;
         const double borrow = w < 0.0 ? -w * cfg.borrow_annual / cfg.periods_per_year : 0.0;
-        double ret = w * price_ret + carry - borrow - std::fabs(trade) * unit_cost;
+        const double impact_in = std::pow(std::fabs(trade), 1.5) * impact_k(t);
+        double ret = w * price_ret + carry - borrow - std::fabs(trade) * unit_cost - impact_in;
+        res.impact_paid += impact_in;
         if (exited) {
-            ret -= std::fabs(w) * unit_cost;  // cost of the exit fill
+            const double impact_out = std::pow(std::fabs(w), 1.5) * impact_k(t + 1);
+            ret -= std::fabs(w) * unit_cost + impact_out;  // cost of the exit fill
+            res.impact_paid += impact_out;
             res.trades.push_back({static_cast<int>(t + 1), w, 0.0, exit_px});
             ++res.stop_exits;
             stopped = true;

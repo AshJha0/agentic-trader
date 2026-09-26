@@ -7,11 +7,11 @@
 
 | Guide | For |
 |---|---|
-| [LEARN.md](LEARN.md) | 26 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 56 copy-pasteable recipes, including the agentic layer and quant research |
-| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 24 diagrams |
-| [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 32 threats mapped to controls and tests |
-| [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results with a design / holdout split; the Python, HTTP, MCP and C++ interfaces |
+| [LEARN.md](LEARN.md) | 30 concepts: how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 64 copy-pasteable recipes, including the agentic layer, quant research and operations |
+| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 27 diagrams |
+| [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 36 threats mapped to controls and tests |
+| [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
 
 AgenticTrader is an **agentic trading desk** for **equities and FX**. A team of specialised
 agents (analysts, bull and bear researchers, a trader, a risk team, a portfolio manager)
@@ -28,16 +28,22 @@ layer** for alphas, execution algorithms, portfolio construction and backtest st
 
 ## Results in one paragraph
 
-On **real prices**, the rule-based desk was evaluated over 15 instruments (10 equities, 5 FX
-pairs). Rules were chosen on 2016–2021 only and judged once on a 2022–2026 holdout.
+On **real prices**, the rule-based desk was evaluated over 60 instruments: the 15 *core*
+ones every rule choice was made on (10 equities, 5 FX pairs; rules chosen on 2016–2021 only,
+judged once on a 2022–2026 holdout) and 45 *extended* ones (sector equities, rates / credit /
+commodity ETFs, FX crosses) that no choice ever consulted.
 
-- **Per instrument:** it does **not** beat buy & hold on Sharpe out of sample (0.44 vs
-  0.55).
-- **Drawdown:** it has **about half the drawdown** in every period.
+- **Per instrument:** it does **not** beat buy & hold on Sharpe out of sample — core 0.44 vs
+  0.55; extended 0.37 vs 0.50, beating buy & hold on 14 of 45 names.
+- **Drawdown:** **about half of buy & hold's** in every period and on both universes (lower
+  on 40 of the 45 extended names).
 - **As a 15-sleeve portfolio:** it beats plain buy & hold on Sharpe (1.14 vs 1.06, with a
   6.8% vs 20.8% drawdown), but not buy & hold scaled to the same volatility (1.24).
-- **Alpha analyst (v0.4):** adding the alpha library as a fifth analyst moved design-period
-  mean Sharpe from 0.65 to 0.60 and the median from 0.55 to 0.60: noise, so it stays off by default.
+- **Execution costs:** with square-root market impact on, the desk keeps its Sharpe at $100k
+  and $10M and loses 0.09 at $1B (0.65 → 0.56 on the design period); signal-flipping
+  baselines lose far more.
+- **Alpha analyst:** measured three times on the design period (0.60, 0.58, 0.65 vs the 0.65
+  default after two bug fixes): noise, so it stays off by default.
 - **LLM mode:** not evaluated; no claims are made about it.
 
 Details: [docs/evaluation](docs/evaluation/evaluation.md).
@@ -121,19 +127,21 @@ agentic_trader/
     rag.py + knowledge/    hashed TF-IDF retrieval over 11 runbooks and policies
     tracing.py             spans, JSON-lines logs, Prometheus text metrics
     mcp_server.py          the catalogue as an MCP stdio server + client (remote tools into a registry)
-    api.py                 FastAPI gateway: tasks, reports, traces, evidence, approvals, tools, metrics
-  alpha.py                 alpha library, IC / decay / hit rate / turnover, combination, AlphaAnalyst inputs
+    api.py                 FastAPI gateway: tasks, reports, traces, evidence, approvals, tools, metrics; TLS guards
+    store.py               SQLite task store: records survive restarts, in-flight runs are failed on reload
+  alpha.py                 alpha library, IC / decay / hit rate / turnover, significance-gated combination
+  xalpha.py                cross-sectional alphas: per-day z-scores / ranks within asset class, per-date IC, spreads
   algo.py                  TWAP / VWAP / POV / Almgren-Chriss schedules, intraday simulator, decision -> plan
-  portfolio.py             EWMA + Ledoit-Wolf covariance, equal / inverse-vol / risk parity / min-var / mean-var, risk attribution
+  portfolio.py             EWMA + Ledoit-Wolf covariance, 5 weighting schemes, cross-asset risk budgets, attribution
   stats.py                 bootstrap Sharpe CI, probabilistic and deflated Sharpe, minimum track record
   quant/                   facade: C++ if built, otherwise pycore.py (numpy mirror)
-  data/                    synthetic | yahoo | csv providers, clean_ohlcv, fred.py (point-in-time macro)
+  data/                    synthetic | yahoo | csv providers, clean_ohlcv, fred.py (point-in-time macro, ALFRED vintages)
   agents/                  analysts (incl. alpha), researchers + facilitator, trader, risk team + PM
   graph.py                 TradingGraph stages, propagate() and scan()
-  backtest.py              walk-forward agent backtest vs 6 baselines; portfolio backtest with weighting schemes
-  evaluation.py            design / holdout / Q1-2024 evaluation harness
-  memory.py · llm.py · anonymize.py · cli.py
-tests/                     197 pytest tests (agentic 30, adversarial 15, services 7, quant research 18, ...)
+  backtest.py              walk-forward agent backtest vs 6 baselines with optional market impact; portfolio backtest
+  evaluation.py            design / holdout / Q1-2024 / reserve evaluation over the core and extended universes
+  memory.py · llm.py (call and dollar budgets) · anonymize.py · cli.py
+tests/                     240 pytest tests (fuzz 21, v0.5 features 18, agentic 30, adversarial 15, services 7, ...)
 examples/                  equity, FX, baseline comparison
 ```
 
@@ -172,14 +180,15 @@ agentic-trader task      AAPL --date 2024-03-01 --approval queued --json
 # the desk without the harness, a watchlist, and the services
 agentic-trader analyze   AAPL --date 2024-03-01 --position 0.4
 agentic-trader scan      AAPL,NVDA,EURUSD --date 2024-03-01 --positions '{"AAPL": 0.5}' --out orders.csv
-agentic-trader tools                                   # the 15-tool catalogue
-agentic-trader serve                                   # HTTP API at http://127.0.0.1:8000/docs
+agentic-trader tools                                   # the 16-tool catalogue
+agentic-trader serve --task-db results/tasks.sqlite    # HTTP API at http://127.0.0.1:8000/docs, records kept
 agentic-trader mcp                                     # the same tools as an MCP stdio server
 
 # research
-agentic-trader backtest  NVDA --start 2024-01-02 --end 2024-03-28 --stops on
-agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start 2023-01-02 --end 2023-12-29 --weighting risk_parity
+agentic-trader backtest  NVDA --start 2024-01-02 --end 2024-03-28 --stops on --impact 1.0 --capital 1e8
+agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start 2023-01-02 --end 2023-12-29 --weighting risk_parity --class-budgets equity=0.6,fx=0.4
 agentic-trader alpha     USDJPY --start 2021-01-04 --end 2024-03-28 --horizon 10
+agentic-trader xalpha    AAPL,MSFT,NVDA,JPM,XOM --start 2021-01-04 --end 2024-03-28
 agentic-trader execute   AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 5000000
 agentic-trader stats     returns.csv --trials 16
 agentic-trader evaluate  AAPL,EURUSD --periods q1_2024
@@ -188,10 +197,16 @@ agentic-trader evaluate  AAPL,EURUSD --periods q1_2024
 With real prices (network) and Claude (API key):
 
 ```bash
-agentic-trader evaluate --data yahoo --periods design,holdout,q1_2024      # the published protocol
+agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve   # the published protocol
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital 1e9
+agentic-trader evaluate --data yahoo --fred-vintages --fred-cache results/fred_cache          # CPI as first published
 set ANTHROPIC_API_KEY=...                                                  # or `ant auth login`
-agentic-trader task MSFT --llm anthropic --data yahoo --max-llm-calls 50 --llm-planner
+agentic-trader task MSFT --llm anthropic --data yahoo --max-llm-calls 50 --max-llm-cost 5 --llm-planner
 ```
+
+The CLI also reads a project-local `.env` (`ANTHROPIC_API_KEY=...`, git-ignored, never
+overriding the environment). On Windows, `scripts\set_api_key.ps1` stores the key as a user
+environment variable with hidden input and reports only its length back.
 
 From Python:
 
@@ -215,14 +230,15 @@ print(port.table())
 | key | meaning |
 |---|---|
 | `llm_provider` · `deep_think_llm` · `quick_think_llm` · `deep_effort` | Model tiers and effort |
-| `llm_timeout_s` · `max_llm_calls` · `llm_anonymize` | Timeout; hard call cap; hide ticker, dates and price level from the model |
+| `llm_timeout_s` · `max_llm_calls` · `max_llm_cost_usd` · `llm_anonymize` | Timeout; hard call cap; hard spend cap (USD, list prices); hide ticker, dates and price level from the model |
 | `agentic.approval` | `auto`, `queued` or `deny` for tool calls that need approval |
 | `agentic.llm_planner` · `llm_critic` · `llm_reporter` | Which governance steps may use the model (all validated / audited either way) |
-| `agentic.symbol_universe` · `deny_tools` · `tool_timeout_s` | Policy inputs |
-| `agentic.api_keys` | API key → role map for `serve` (development values) |
+| `agentic.symbol_universe` · `deny_tools` · `tool_timeout_s` · `task_db` | Policy inputs; SQLite path for the persistent task store |
+| `agentic.api_keys` | API key → role map for `serve` (development values; an override *replaces* them) |
 | `analysts` | Analyst set; add `"alpha"` for the alpha library analyst |
 | `risk.neutral_weight` · `rebalance_band` · `max_position` · `max_var_95` | Strategic weight, no-trade band, firm limits |
-| `backtest.use_stops` · `costs.*` · `fx_macro_source` · `max_data_staleness_days` | Backtest and data behaviour |
+| `costs.impact_coeff` · `costs.fx_adv_notional` · `initial_capital` | Square-root market impact in backtests (0 = off) and the account size trades scale with |
+| `backtest.use_stops` · `costs.*` · `fx_macro_source` · `fred_vintages` · `max_data_staleness_days` | Backtest and data behaviour; ALFRED vintages for revised series |
 
 `make_config(RULES_V02)` reproduces the v0.2 rules for before/after comparisons.
 
@@ -236,15 +252,16 @@ print(port.table())
 * **New analyst:** subclass `Analyst` with `gather()` and `rules()`, list free-text keys in
   `untrusted_keys`, return `self.abstain(...)` without data, then register it in `ANALYSTS`.
 * **New alpha:** a function `AlphaInputs -> ndarray in [-1, 1]` added to `ALPHAS`.
-* **New rule change:** put it behind a `config["rules"]` switch, choose it on the design
-  period with `evaluate`, then judge it once on the holdout.
-* **New quant routine:** add it to `cpp/`, bind it in `module.cpp`, mirror it in `pycore.py`
-  and add a cross-check test.
+* **New rule change:** put it behind a `config["rules"]` switch, choose it on the *core*
+  design period with `evaluate --universe core --periods design`, then judge it on the
+  extended universe and the reserve period (`--universe extended --periods design,holdout,reserve`).
+* **New quant routine:** add it to `cpp/`, bind it in `module.cpp`, mirror it in `pycore.py`,
+  add a cross-check test, and add it to `tests/test_fuzz.py` so hypothesis fuzzes it.
 
 ## Tests
 
 ```bash
-pytest -q                                   # 197 tests incl. adversarial, API and a real MCP stdio round trip
+pytest -q                                   # 240 tests incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback
-ctest --test-dir build -C Release           # 13 C++ test groups
+ctest --test-dir build -C Release           # 14 C++ test groups
 ```

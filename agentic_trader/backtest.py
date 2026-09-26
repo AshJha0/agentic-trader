@@ -55,6 +55,7 @@ class ComparisonReport:
                 "Sortino": m.sortino, "MDD%": 100 * m.max_drawdown, "Calmar": m.calmar,
                 "Win%": 100 * m.win_rate, "Exp%": 100 * m.avg_exposure,
                 "Trades": m.num_trades, "Stops": r.stop_exits,
+                "Impact%": 100 * r.impact_paid,
             }
         return pd.DataFrame(rows).T.round(2)
 
@@ -90,6 +91,40 @@ def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
         cfg.borrow_annual = costs["equity_borrow_annual"]
         cfg.allow_short = risk["allow_short_equity"]
     return cfg
+
+
+def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
+                        periods_per_year: float | None = None) -> np.ndarray | None:
+    """Per-bar square-root impact coefficient ``K_t`` for the backtester, or ``None`` when off.
+
+    The execution simulator (``algo.simulate_execution``) prices a slice of ``q`` units at
+    ``impact_coeff * daily_vol * sqrt(q / ADV)``. For a weight change ``dw`` on an account
+    of ``capital``, ``q = |dw| * capital / price``, so the cost as a fraction of equity is
+    ``|dw|^1.5 * K_t`` with ``K_t = coeff * daily_vol_t * sqrt(capital / (price_t * ADV_t))``.
+    Everything in ``K_t`` is known at the close of bar ``t``: trailing 20-day volatility
+    and trailing 20-day average volume. Bars without volume get no impact (equities with
+    missing volume, and FX unless ``costs.fx_adv_notional`` is set).
+    """
+    costs = config["costs"]
+    coeff = float(costs.get("impact_coeff") or 0.0)
+    if coeff <= 0:
+        return None
+    ppy = periods_per_year or ins.periods_per_year
+    close = full["Close"].to_numpy(float)
+    vol = quant.realized_vol(close, 20, ppy) / np.sqrt(ppy)  # daily, ex ante
+    capital = float(config["initial_capital"])
+    if ins.is_fx:
+        adv_notional = costs.get("fx_adv_notional")
+        if not adv_notional:
+            return None
+        ratio = np.full(len(close), capital / float(adv_notional))   # q / ADV in notional terms
+    else:
+        volume = full["Volume"].to_numpy(float) if "Volume" in full else np.zeros(len(close))
+        adv = pd.Series(volume).rolling(20).mean().to_numpy()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.where(adv > 0, capital / (close * adv), np.nan)
+    k = coeff * vol * np.sqrt(ratio)
+    return np.where(np.isfinite(k), k, np.nan)
 
 
 def baseline_weights(full: pd.DataFrame, allow_short: bool, target_vol: float = 0.15,
@@ -136,6 +171,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     carry = provider.carry_series(ins, window.index) if ins.is_fx else None
     ohlc = dict(open=window["Open"].to_numpy(), high=window["High"].to_numpy(),
                 low=window["Low"].to_numpy())
+    k_full = impact_coefficients(full, ins, cfg)
+    impact = None if k_full is None else k_full[np.asarray(mask, dtype=bool)]
 
     results: dict[str, quant.BacktestResult] = {}
     decisions: list[FinalDecision] = []
@@ -167,7 +204,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
         first = np.flatnonzero(reb)
         stop = np.where(seg > 0, stop[first[np.maximum(seg.astype(int) - 1, 0)]], np.nan)
         take = np.where(seg > 0, take[first[np.maximum(seg.astype(int) - 1, 0)]], np.nan)
-        extras = dict(carry=carry, rebalance=reb)
+        extras = dict(carry=carry, rebalance=reb, impact=impact)
         if cfg.get("backtest", {}).get("use_stops"):
             extras.update(ohlc, stop=stop, take=take)
         results[AGENT] = quant.run_backtest(prices, w, bt, **extras)
@@ -175,7 +212,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     for name, weights in baseline_weights(full, bt.allow_short, cfg["risk"]["target_vol"],
                                           cfg["risk"]["max_position"],
                                           ins.periods_per_year).items():
-        results[name] = quant.run_backtest(prices, weights[mask], bt, carry=carry)
+        results[name] = quant.run_backtest(prices, weights[mask], bt, carry=carry, impact=impact)
     return ComparisonReport(ins, window.index, results, decisions, bt, carry,
                             sources if include_agent else {}, prices)
 
@@ -216,7 +253,8 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
                            config: dict | None = None, rebalance_every: int = 5,
                            provider: MarketDataProvider | None = None, llm: LLM | None = None,
                            on_decision: Callable[[FinalDecision], None] | None = None,
-                           weighting: str = "equal", cov_window: int = 120) -> PortfolioReport:
+                           weighting: str = "equal", cov_window: int = 120,
+                           class_budgets: dict[str, float] | None = None) -> PortfolioReport:
     """Run every symbol as its own sleeve and combine the sleeves.
 
     Each sleeve is a full walk-forward backtest (costs, carry, stops) of the agent
@@ -230,6 +268,12 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
       days of instrument returns (no look-ahead) and held until the next
       rebalance. The scheme applies to every strategy, so a baseline is combined
       the same way as the agent.
+    * ``class_budgets`` (e.g. ``{"equity": 0.6, "fx": 0.4}``): cross-asset risk
+      budgeting. The scheme allocates within each asset class and risk parity with
+      these budgets allocates across classes from the full covariance
+      (``portfolio.construct(groups=..., group_budgets=...)``). With
+      ``weighting="equal"`` the budgets are applied to capital instead:
+      ``budget / n`` per sleeve of the class.
 
     Equity and FX calendars differ, so a sleeve with no bar on a date contributes
     0 that day.
@@ -239,6 +283,8 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
     from .portfolio import METHODS, construct
     if weighting not in METHODS:
         raise ValueError(f"weighting must be one of {METHODS}")
+    if class_budgets is not None and (any(v < 0 for v in class_budgets.values()) or sum(class_budgets.values()) <= 0):
+        raise ValueError("class_budgets must be non-negative and not all zero")
     cfg = make_config(config)
     provider = provider or get_provider(cfg)
     sleeves = {s: run_agent_backtest(s, start, end, cfg, rebalance_every, provider, llm,
@@ -256,8 +302,20 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
         for s, r in sleeves.items()}).dropna(how="all")
 
     alloc_hist = None
+    groups = {s: r.instrument.asset_class for s, r in sleeves.items()}
+    if class_budgets is not None:
+        unknown = sorted(set(groups.values()) - set(class_budgets))
+        if unknown:
+            raise ValueError(f"class_budgets has no entry for {unknown}")
     if weighting == "equal":
-        alloc = pd.DataFrame(1.0 / len(keys), index=idx, columns=keys)
+        if class_budgets is None:
+            start_alloc = np.full(len(keys), 1.0 / len(keys))
+        else:
+            live = {g: sum(1 for s in keys if groups[s] == g) for g in class_budgets}
+            total = sum(b for g, b in class_budgets.items() if live[g] > 0)
+            start_alloc = np.array([class_budgets[groups[s]] / total / live[groups[s]] for s in keys])
+        alloc = pd.DataFrame([start_alloc] * len(idx), index=idx, columns=keys)
+        alloc_hist = alloc if class_budgets is not None else None
     else:
         rows = {}
         current = np.full(len(keys), 1.0 / len(keys))
@@ -267,7 +325,8 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
                 if len(hist) >= 20:
                     try:
                         pw = construct({s: 1.0 for s in keys}, hist, weighting,  # type: ignore[arg-type]
-                                       periods_per_year=ppy, max_weight=1.0, gross_cap=1.0, target_vol=None)
+                                       periods_per_year=ppy, max_weight=1.0, gross_cap=1.0, target_vol=None,
+                                       groups=groups if class_budgets else None, group_budgets=class_budgets)
                         current = np.array([pw.allocation[pw.symbols.index(s)] for s in keys])
                     except ValueError:
                         pass  # keep the previous allocation on a degenerate window

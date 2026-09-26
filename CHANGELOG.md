@@ -1,6 +1,77 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 — 2026-09-26
+
+A wider, fresher evaluation; execution-aware backtests; cross-sectional alphas; cross-asset
+risk budgets; ALFRED vintages; a persistent task store; a dollar LLM budget; TLS and
+deployment guards; property-based fuzzing of the C++ boundary; and the alpha-analyst fixes.
+
+### Evaluation
+- **Universe widened from 15 to 60 instruments.** The 15 *core* instruments (every rule
+  choice through v0.4 was made on them) are joined by 45 *extended* ones that no choice ever
+  consulted: 26 equities across sectors and styles (UNH, V, MA, PG, HD, COST, WMT, KO, PEP,
+  CVX, LLY, ABBV, MRK, BAC, GS, CAT, BA, BRK-B, QQQ, IWM, XLF, XLE, XLV, XLU, EEM, EFA), 9
+  rates / credit / commodity / real-estate ETFs (TLT, IEF, LQD, HYG, GLD, SLV, USO, DBC, VNQ)
+  and 10 FX crosses whose both legs have FRED policy-rate series (NZDUSD, USDCHF, EURGBP,
+  EURJPY, GBPJPY, AUDJPY, EURCHF, AUDNZD, CADJPY, EURAUD). `UNIVERSES`, `universe_group()`,
+  a `universe` column in every result row, `summary(universe=)`, `head_to_head(universe=)`
+  and `evaluate --universe core|extended|all`.
+- **A fresh holdout for the next rule change.** The 2022–2026 holdout has been seen, so
+  v0.5 defines what "unseen" means from here: the extended universe over *every* period,
+  plus a `reserve` period (2026-07-01 → 2026-09-25) that no number in the documentation
+  consults. The protocol is written down in the evaluation.
+- **Execution-aware backtests.** `costs.impact_coeff` (default 0) charges square-root market
+  impact in the backtester — the execution simulator's model, applied per trade to the agent
+  *and* every baseline: a trade of `|dw|` costs `|dw|^1.5 · K_t` of equity with
+  `K_t = coeff · daily_vol · sqrt(capital / (price · ADV))`. `Impact%` is reported per
+  strategy; `--impact` and `--capital` on the backtest, portfolio and evaluation commands.
+  The published tables include the core universe at three account sizes.
+- **Alpha analyst.** Two bugs fixed (see below); measured a third time and still off by default.
+
+### Research
+- **Cross-sectional alphas** (`xalpha.py`): the same signals standardised across the names of
+  a group every day (z-score or rank, equities and FX separately), evaluated with per-date
+  Spearman IC, an IC information ratio, a t-statistic that accounts for overlapping horizons,
+  the share of positive days, top-minus-bottom quantile spreads and breadth. `xalpha_report`,
+  `xalpha_snapshot`, the `quant.xalpha` tool (16 tools now) and `agentic-trader xalpha`.
+- **Cross-asset risk budgets** (`portfolio.construct(groups=, group_budgets=)`): the chosen
+  scheme allocates within each asset class, then risk parity with the budgets allocates
+  across classes from the full covariance; `group_risk` reports budget vs realised risk
+  share. `run_portfolio_backtest(class_budgets=)` and `portfolio --class-budgets equity=0.6,fx=0.4`.
+- **ALFRED vintages** (`fred_vintages`, `--fred-vintages`): revised series (CPI) are read from
+  the ALFRED vintage current at each date, so inflation enters the backtest as first
+  published. Monthly vintage sampling (one download per series per month, cached in memory
+  and optionally on disk with `fred_cache_dir`). Off by default; policy rates are never
+  revised and are unaffected.
+
+### Agentic layer and services
+- **Persistent task store** (`agentic/store.py`, `agentic.task_db`, `serve --task-db`): every
+  run is written to SQLite at each state transition; a new process serves old records
+  through the same API routes (`GET /tasks`, `/tasks/{id}`, `/report`, `/trace`,
+  `/evidence`); records left mid-flight by a crash are marked FAILED "process restarted",
+  never silently resumed.
+- **Dollar LLM budget** (`max_llm_cost_usd`, `--max-llm-cost`): `BudgetedLLM` now caps
+  estimated spend as well as calls (list prices, cache-aware); the overshoot is at most one call.
+- **TLS and deployment guards** (`serve --ssl-cert/--ssl-key`, `serve_options`): binding a
+  non-loopback interface with the shipped development API keys is refused unless
+  `--allow-dev-keys`; plain HTTP off loopback logs a warning. `make_config` now *replaces*
+  `agentic.api_keys` instead of merging into the dev keys (a real footgun: adding a real key
+  used to leave every dev key live).
+- **`.env` loading.** The CLI reads a project-local `.env` (`KEY=VALUE`, git-ignored) without
+  overriding the environment; `scripts/set_api_key.ps1` stores the key as a Windows user
+  variable with hidden input.
+
+### Quant core
+- `BacktestInputs.impact` / `BacktestResult.impact_paid` in C++, the numpy twin and the
+  bindings; `run_backtest(impact=)`.
+- **Property-based fuzzing of the Python ↔ C++ boundary** (`tests/test_fuzz.py`, hypothesis):
+  every quant entry point on NaN / ±inf / empty / huge inputs must either return a
+  well-formed result or raise `ValueError`, and the two backends must agree on sane inputs.
+  It found and fixed five divergences: `quantile(x, NaN)`, `max_drawdown` with NaN (numpy
+  did not skip it), `kdj` and `atr` windows containing NaN (`std::max` silently skips NaN,
+  numpy propagates it — both now treat a missing bar as a missing range), `zscore` on a
+  flat window (cancellation noise gave ±1; both now floor the spread), and a
+  `compute_metrics` overflow on the numpy side. Non-finite prices are now rejected by both.
 
 ### Fixed
 - `AlphaAnalyst` now weights only alphas whose IC clears significance (`|t(IC)| >= 2`,
@@ -20,6 +91,13 @@
   data, a closer-to-parity result is treated as noise, not a green light: the alpha analyst
   **stays off by default**. See
   [docs/evaluation/evaluation.md](docs/evaluation/evaluation.md#the-v04-alpha-analyst-design-period-check).
+
+### Tests and docs
+- **Tests:** 199 → **240** pytest tests (v0.5 features 18, fuzz 21 property tests, impact 3)
+  + 14 C++ test groups; hypothesis added to the `dev` and `all` extras.
+- **Docs:** LEARN (30 concepts), COOKBOOK (64 recipes), DIAGRAMS (27), architecture,
+  specification, threat model (36 threats), API, evaluation (60-instrument tables, impact
+  sweep, the fresh-holdout protocol) and the landing page updated.
 
 ## v0.4.0 — 2026-09-26
 

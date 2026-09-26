@@ -1,6 +1,7 @@
 // Dependency-free unit tests for the C++ core. Run via `ctest` or directly.
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -169,6 +170,38 @@ void test_carry_series_and_validation() {
     check(threw, "stop levels without OHLC rejected");
 }
 
+void test_impact_cost() {
+    // Flat prices, one entry of |dw| = 1 at t = 0 with K = 0.01: cost is 1^1.5 * 0.01.
+    const at::Series p(4, 100.0);
+    at::BacktestInputs in;
+    in.impact = {0.01, 0.01, 0.01, 0.01};
+    auto r = at::run_backtest_ex(p, at::Series(4, 1.0), no_cost(), in);
+    check(near(r.equity[1], 100000 * (1 - 0.01)), "entry impact = |dw|^1.5 * K");
+    check(near(r.equity.back(), r.equity[1]), "no impact without a trade");
+    check(near(r.impact_paid, 0.01), "impact_paid accumulates");
+    // A half-size trade costs 0.5^1.5 * K: the square-root law, not linear.
+    r = at::run_backtest_ex(p, at::Series(4, 0.5), no_cost(), in);
+    check(near(r.equity[1], 100000 * (1 - std::pow(0.5, 1.5) * 0.01)), "square-root scaling");
+    // A stop exit at t+1 pays impact at the exit bar's coefficient.
+    at::BacktestInputs ex;
+    ex.open = {100, 100, 100, 100}; ex.high = {100, 100, 100, 100}; ex.low = {100, 90, 100, 100};
+    ex.stop = {95, 95, 95, 95};
+    ex.impact = {0.0, 0.02, 0.0, 0.0};
+    r = at::run_backtest_ex(p, at::Series(4, 1.0), no_cost(), ex);
+    check(r.stop_exits == 1 && near(r.impact_paid, 0.02), "exit impact uses K at the exit bar");
+    // NaN means no impact; length mismatch is rejected.
+    at::BacktestInputs nan_in;
+    nan_in.impact = at::Series(4, std::numeric_limits<double>::quiet_NaN());
+    r = at::run_backtest_ex(p, at::Series(4, 1.0), no_cost(), nan_in);
+    check(near(r.impact_paid, 0.0) && near(r.equity.back(), 100000.0), "NaN impact = none");
+    bool threw = false;
+    at::BacktestInputs bad;
+    bad.impact = {0.01, 0.01};
+    try { at::run_backtest_ex(p, at::Series(4, 1.0), no_cost(), bad); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check(threw, "impact length mismatch rejected");
+}
+
 void test_exposure_and_tstat() {
     const at::Series p = {100, 101, 100, 102, 101};
     const auto r = at::run_backtest(p, at::Series{0.5, 0.5, 0.0, 0.0, 0.0}, no_cost());
@@ -202,6 +235,7 @@ int main() {
     test_stop_before_target_same_bar();
     test_rearm_on_rebalance();
     test_carry_series_and_validation();
+    test_impact_cost();
     test_exposure_and_tstat();
     test_risk();
     if (failures == 0) std::printf("all C++ core tests passed\n");

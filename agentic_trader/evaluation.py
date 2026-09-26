@@ -33,19 +33,64 @@ from .data import MarketDataProvider, get_provider
 from .instruments import Instrument
 from .llm import LLM, get_llm, llm_usage
 
-DEFAULT_UNIVERSE: dict[str, list[str]] = {
+# The core universe: the 15 instruments every rule choice through v0.4 was made on.
+CORE_UNIVERSE: dict[str, list[str]] = {
     # Large-cap technology names plus other sectors (financials, energy, healthcare) and the index.
     "equity": ["AAPL", "NVDA", "MSFT", "META", "GOOGL", "AMZN", "JPM", "XOM", "JNJ", "SPY"],
     "fx": ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD"],
 }
 
+# The extended universe (v0.5): 42 instruments that no rule choice has ever consulted, so
+# they are an out-of-sample test set across *every* period, including the design period.
+# Equities span sectors and styles; the "macro ETF" group adds rates, credit, commodities
+# and real estate exposure through exchange-traded funds (priced and traded as equities);
+# the FX pairs are crosses and dollar pairs whose both legs have FRED policy-rate series.
+EXTENDED_UNIVERSE: dict[str, list[str]] = {
+    "equity": ["UNH", "V", "MA", "PG", "HD", "COST", "WMT", "KO", "PEP", "CVX", "LLY", "ABBV", "MRK",
+               "BAC", "GS", "CAT", "BA", "BRK-B", "QQQ", "IWM", "XLF", "XLE", "XLV", "XLU", "EEM", "EFA"],
+    "macro_etf": ["TLT", "IEF", "LQD", "HYG", "GLD", "SLV", "USO", "DBC", "VNQ"],
+    "fx": ["NZDUSD", "USDCHF", "EURGBP", "EURJPY", "GBPJPY", "AUDJPY", "EURCHF", "AUDNZD", "CADJPY",
+           "EURAUD"],
+}
+
+# Backwards-compatible view: asset class -> every symbol (macro ETFs are equities to the desk).
+DEFAULT_UNIVERSE: dict[str, list[str]] = {
+    "equity": CORE_UNIVERSE["equity"] + EXTENDED_UNIVERSE["equity"] + EXTENDED_UNIVERSE["macro_etf"],
+    "fx": CORE_UNIVERSE["fx"] + EXTENDED_UNIVERSE["fx"],
+}
+
+UNIVERSES: dict[str, list[str]] = {
+    "core": CORE_UNIVERSE["equity"] + CORE_UNIVERSE["fx"],
+    "extended": EXTENDED_UNIVERSE["equity"] + EXTENDED_UNIVERSE["macro_etf"] + EXTENDED_UNIVERSE["fx"],
+}
+UNIVERSES["all"] = UNIVERSES["core"] + UNIVERSES["extended"]
+
+
+def universe_group(symbol: str) -> str:
+    """``core`` / ``extended`` / ``extended-macro`` membership of a symbol (``other`` if not listed)."""
+    s = symbol.upper().replace("/", "").replace("=X", "")
+    if s in UNIVERSES["core"]:
+        return "core"
+    if s in EXTENDED_UNIVERSE["macro_etf"]:
+        return "extended-macro"
+    if s in UNIVERSES["extended"]:
+        return "extended"
+    return "other"
+
+
 PERIODS: dict[str, tuple[str, str]] = {
     "design": ("2016-01-04", "2021-12-31"),
     "holdout": ("2022-01-03", "2026-06-30"),
     "q1_2024": ("2024-01-02", "2024-03-28"),
+    # Untouched by every choice and every published number through v0.5. It grows with
+    # time; together with the extended universe it is the fresh holdout for the next rule change.
+    "reserve": ("2026-07-01", "2026-09-25"),
 }
+# The periods a plain `evaluate()` runs; `reserve` is opt-in because three months is a weak test.
+DEFAULT_PERIODS: tuple[str, ...] = ("design", "holdout", "q1_2024")
 
-METRIC_COLS = ["CR%", "AR%", "Vol%", "Sharpe", "t(SR)", "MDD%", "Calmar", "Exp%", "Trades", "Stops"]
+METRIC_COLS = ["CR%", "AR%", "Vol%", "Sharpe", "t(SR)", "MDD%", "Calmar", "Exp%", "Trades", "Stops",
+               "Impact%"]
 
 
 @dataclass
@@ -53,8 +98,14 @@ class EvaluationResult:
     rows: pd.DataFrame  # period, symbol, asset_class, strategy + METRIC_COLS
     meta: dict = field(default_factory=dict)
 
-    def summary(self, period: str | None = None) -> pd.DataFrame:
+    def summary(self, period: str | None = None, universe: str | None = None) -> pd.DataFrame:
+        """Per (period, strategy): n, median Sharpe and mean CR / MDD / Vol / exposure.
+
+        ``universe`` restricts to ``core``, ``extended`` or ``extended-macro`` symbols.
+        """
         df = self.rows if period is None else self.rows[self.rows.period == period]
+        if universe is not None and "universe" in df:
+            df = df[df.universe == universe]
         g = df.groupby(["period", "strategy"])
         out = pd.DataFrame({
             "n": g.size(),
@@ -66,10 +117,13 @@ class EvaluationResult:
         })
         return out.round(2)
 
-    def head_to_head(self) -> pd.DataFrame:
+    def head_to_head(self, universe: str | None = None) -> pd.DataFrame:
         """Per period: on how many instruments the agent's Sharpe beats each baseline."""
         out = []
-        for period, df in self.rows.groupby("period"):
+        rows = self.rows
+        if universe is not None and "universe" in rows:
+            rows = rows[rows.universe == universe]
+        for period, df in rows.groupby("period"):
             piv = df.pivot_table(index="symbol", columns="strategy", values="Sharpe")
             if AGENT not in piv:
                 continue
@@ -106,8 +160,8 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     one call budget.
     """
     cfg = make_config(config)
-    symbols = symbols or DEFAULT_UNIVERSE["equity"] + DEFAULT_UNIVERSE["fx"]
-    periods = periods or PERIODS
+    symbols = symbols or UNIVERSES["all"]
+    periods = periods or {p: PERIODS[p] for p in DEFAULT_PERIODS}
     provider = provider or get_provider(cfg)
     llm = llm if llm is not None else get_llm(cfg)
     if workers < 1:
@@ -159,10 +213,13 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             sources[k] = sources.get(k, 0) + v
         for strat, r in rep.table().iterrows():
             rows.append({"period": pname, "symbol": rep.instrument.symbol,
-                         "asset_class": rep.instrument.asset_class, "strategy": strat,
+                         "asset_class": rep.instrument.asset_class,
+                         "universe": universe_group(rep.instrument.symbol), "strategy": strat,
                          **{c: float(r[c]) for c in METRIC_COLS}})
     meta = {"periods": periods, "symbols": symbols, "rebalance_every": rebalance_every,
             "data_provider": cfg["data_provider"], "llm_provider": cfg["llm_provider"],
+            "impact_coeff": cfg["costs"].get("impact_coeff", 0.0), "initial_capital": cfg["initial_capital"],
+            "fred_vintages": bool(cfg.get("fred_vintages")),
             "rules": cfg.get("rules"), "rebalance_band": cfg["risk"].get("rebalance_band"),
             "neutral_weight": cfg["risk"].get("neutral_weight"),
             "use_stops": cfg.get("backtest", {}).get("use_stops"),
@@ -172,6 +229,7 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
         meta.update(models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
                     effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},
                     debate_rounds=cfg["max_debate_rounds"], anonymized=bool(cfg.get("llm_anonymize")),
-                    max_llm_calls=cfg.get("max_llm_calls"), usage=llm_usage(llm),
+                    max_llm_calls=cfg.get("max_llm_calls"), max_llm_cost_usd=cfg.get("max_llm_cost_usd"),
+                    usage=llm_usage(llm),
                     budget_refused=getattr(llm, "refused", 0))
     return EvaluationResult(pd.DataFrame(rows), meta)

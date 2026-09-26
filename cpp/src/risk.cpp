@@ -7,6 +7,7 @@
 namespace at {
 
 double quantile(const Series& x, double q) {
+    if (std::isnan(q)) return std::numeric_limits<double>::quiet_NaN();
     Series v;
     v.reserve(x.size());
     for (double e : x)

@@ -11,7 +11,7 @@ from .graph import TradingGraph
 from .instruments import Instrument
 from .state import Action, FinalDecision, TradingState
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = ["TradingGraph", "run_agent_backtest", "run_portfolio_backtest", "ComparisonReport",
            "PortfolioReport", "evaluate", "EvaluationResult", "DEFAULT_CONFIG", "RULES_V02",

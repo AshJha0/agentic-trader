@@ -68,6 +68,15 @@ on synthetic data and is executed as-is when the docs are checked.
   54. [Compare execution algorithms on the same day](#54-compare-execution-algorithms-on-the-same-day)
   55. [Construct a portfolio and read its risk](#55-construct-a-portfolio-and-read-its-risk)
   56. [Deflate a Sharpe ratio after a search](#56-deflate-a-sharpe-ratio-after-a-search)
+- [v0.5: execution-aware evaluation, cross-sectional research, operations](#v05-execution-aware-evaluation-cross-sectional-research-operations)
+  57. [Backtest with market impact at three account sizes](#57-backtest-with-market-impact-at-three-account-sizes)
+  58. [Cross-sectional alpha report over a universe](#58-cross-sectional-alpha-report-over-a-universe)
+  59. [Risk budgets across asset classes](#59-risk-budgets-across-asset-classes)
+  60. [Read inflation as first published (ALFRED vintages)](#60-read-inflation-as-first-published-alfred-vintages)
+  61. [Cap the LLM bill in dollars](#61-cap-the-llm-bill-in-dollars)
+  62. [Keep tasks across restarts](#62-keep-tasks-across-restarts)
+  63. [Serve with TLS and real API keys](#63-serve-with-tls-and-real-api-keys)
+  64. [Evaluate the extended universe and the reserve period](#64-evaluate-the-extended-universe-and-the-reserve-period)
 
 ## Decisions
 
@@ -1097,3 +1106,221 @@ print(selection_report(chosen, tried))
 
 `agentic-trader stats returns.csv --trials 8 --trial-sharpes 0.4,0.9,1.1,0.7,0.2,0.95,0.85,0.6`
 does the same from a CSV. The evaluation applies this to the desk's own 16-variant rule search.
+
+## v0.5: execution-aware evaluation, cross-sectional research, operations
+
+### 57. Backtest with market impact at three account sizes
+
+Backtests assume costless closes-to-close fills unless you say otherwise. `costs.impact_coeff`
+charges the execution simulator's square-root impact per trade, to the agent and to every
+baseline, and trade sizes scale with `initial_capital`, so the same strategy gets cheaper or
+dearer with the account. `Impact%` is the cumulative cost paid.
+
+```python
+from agentic_trader import make_config, run_agent_backtest
+
+for capital in (1e5, 1e7, 1e9):
+    cfg = make_config(costs={"impact_coeff": 1.0}, initial_capital=capital)
+    rep = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", cfg, rebalance_every=5)
+    t = rep.table()
+    print(f"{capital:>10.0e}  agent CR {t.loc['AgenticTrader', 'CR%']:+.2f}%  impact {t.loc['AgenticTrader', 'Impact%']:.3f}%"
+          f"  | B&H vol-target impact {t.loc['B&H vol-target', 'Impact%']:.3f}%")
+```
+
+`agentic-trader backtest AAPL --start 2024-01-02 --end 2024-03-28 --impact 1.0 --capital 1e9`
+does the same. FX has no exchange volume, so it gets no impact unless `costs.fx_adv_notional`
+is set. The evaluation reports the core universe at $100k, $10M and $1B.
+
+### 58. Cross-sectional alpha report over a universe
+
+A time-series alpha asks "will this name go up?"; a cross-sectional one asks "which names
+will do better than the others?". The same signals are z-scored across the group every day
+(equities with equities, FX with FX) and scored by per-date IC, quantile spreads and breadth.
+
+```python
+from datetime import date
+from agentic_trader import Instrument, make_config
+from agentic_trader.data import get_provider
+from agentic_trader.xalpha import xalpha_report
+
+p = get_provider(make_config())
+names = ["AAPL", "MSFT", "NVDA", "JPM", "XOM", "JNJ", "EURUSD", "USDJPY", "GBPUSD"]
+frames = {s: p.history(Instrument.parse(s), date(2021, 1, 4), date(2024, 3, 28)) for s in names}
+instruments = {s: Instrument.parse(s) for s in names}
+carry = {s: p.carry_series(instruments[s], frames[s].index) for s in names if instruments[s].is_fx}
+
+rep = xalpha_report(frames, instruments, horizon=10, carry=carry)
+print(rep.table[["mean IC", "IC IR", "t(IC)", "IC>0%", "spread%/period", "breadth"]])
+print("best:", rep.best(3))
+print(rep.signals["combined"].tail(2).round(2))   # today's relative ranking, in [-1, 1]
+```
+
+`agentic-trader xalpha AAPL,MSFT,NVDA,JPM,XOM --start 2021-01-04 --end 2024-03-28` prints the
+same; `--standardise rank` uses ranks instead of z-scores. Under the harness the `quant.xalpha`
+tool returns the snapshot and IC table for a list of symbols as evidence.
+
+### 59. Risk budgets across asset classes
+
+Plain risk parity gives the calmest sleeves the most capital, so a mixed book drifts towards
+FX. Group budgets fix the *share of risk* per class: the scheme allocates within each class,
+then risk parity with the budgets allocates across classes from the full covariance.
+
+```python
+from datetime import date
+import pandas as pd
+from agentic_trader import Instrument, make_config, run_portfolio_backtest
+from agentic_trader.data import get_provider
+from agentic_trader.portfolio import construct
+
+p = get_provider(make_config())
+names = ["AAPL", "JPM", "XOM", "EURUSD", "USDJPY"]
+returns = pd.DataFrame({s: p.history(Instrument.parse(s), date(2023, 1, 2), date(2023, 12, 29))["Close"].pct_change()
+                        for s in names}).dropna()
+groups = {s: Instrument.parse(s).asset_class for s in names}
+
+pw = construct({s: 1.0 for s in names}, returns, "risk_parity", groups=groups,
+               group_budgets={"equity": 0.6, "fx": 0.4}, max_weight=1.0, target_vol=None)
+print(pw.group_risk)                                   # budget vs realised risk share
+print(pw.contributions[["allocation", "pct_of_risk"]])
+
+rep = run_portfolio_backtest(names, "2023-07-03", "2023-12-29", make_config(), rebalance_every=10,
+                             weighting="risk_parity", class_budgets={"equity": 0.6, "fx": 0.4})
+print(rep.table().loc[["AgenticTrader", "Buy&Hold"]])
+```
+
+`agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start 2023-07-03 --end 2023-12-29
+--weighting risk_parity --class-budgets equity=0.6,fx=0.4`.
+
+### 60. Read inflation as first published (ALFRED vintages)
+
+FRED serves the latest revision of a series, so a backtest in 2019 sees the CPI number as
+revised in 2020. ALFRED keeps every vintage. With `fred_vintages` on, a revised series is
+read from the vintage that was current at the as-of date (sampled monthly, cached).
+
+```python
+from datetime import date
+import pandas as pd
+from agentic_trader.data.fred import FredClient, FredSeries
+
+# Offline stand-in for the two web services: the 2019-11 CPI print was first published
+# as 100 and revised to 101 a month later. A real client just omits `fetch=`.
+obs = pd.to_datetime(["2018-11-01", "2019-11-01", "2019-12-01"])
+def fetch(url):
+    if "vintage_date=" in url and url.split("vintage_date=")[1] < "2020-02-01":
+        return pd.DataFrame({"CPIAUCSL": [95.0, 100.0]}, index=obs[:2])   # what ALFRED knew in Jan 2020
+    return pd.DataFrame({"CPIAUCSL": [95.0, 101.0, 102.0]}, index=obs)   # the latest vintage
+
+spec = FredSeries("CPIAUCSL", lag_days=45, max_age_days=120, revised=True)
+latest = FredClient(fetch=fetch)
+vintages = FredClient(vintages=True, fetch=fetch)
+print("FRED (latest):", latest.value_asof(spec, date(2020, 1, 10)))     # 101.0: the revision leaked back
+print("ALFRED vintage:", vintages.value_asof(spec, date(2020, 1, 10)))  # 100.0: as first published
+```
+
+For the real thing: `make_config(fred_vintages=True, fred_cache_dir="results/fred_cache")`, or
+`agentic-trader evaluate --data yahoo --fred-vintages --fred-cache results/fred_cache`
+*(network)*. Policy rates are never revised, so only the inflation inputs change.
+
+### 61. Cap the LLM bill in dollars
+
+`max_llm_calls` caps calls; an Opus call costs about fifteen Haiku calls, so a call count
+does not bound the bill. `max_llm_cost_usd` caps the estimated spend (list prices,
+cache-aware) and is checked before every call, so the overshoot is at most one call.
+
+```python
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.llm import BudgetedLLM, ModelUsage, UsageTracker
+
+class Priced:                                   # stands in for AnthropicLLM: 16k output tokens per call
+    def __init__(self):
+        self.usage = UsageTracker()
+    def complete(self, system, prompt, *, deep):
+        u = self.usage.by_model.setdefault("claude-opus-5", ModelUsage())
+        u.calls += 1
+        u.output_tokens += 16_000
+        return '{"signal": 0.4, "confidence": 0.5, "summary": "ok"}'
+
+llm = BudgetedLLM(Priced(), max_cost_usd=1.0)
+for _ in range(6):
+    llm.complete("system", "prompt", deep=True)
+print(f"calls {llm.calls}, refused {llm.refused}, spent ${llm.spent_usd:.2f}, exhausted {llm.exhausted}")
+
+g = TradingGraph(make_config(max_llm_cost_usd=0.0), llm=Priced())   # a zero budget: rules only
+print(g.propagate("AAPL", "2024-03-01")[1].source)
+```
+
+`agentic-trader evaluate --llm anthropic --max-llm-cost 25 --max-llm-calls 2000` *(API key)*
+stops at whichever cap comes first.
+
+### 62. Keep tasks across restarts
+
+Without a store the harness forgets every task when the process ends. `agentic.task_db`
+writes each run to SQLite at every state transition; a new process serves the old records
+through the same API, and anything left mid-flight is failed, not resumed.
+
+```python
+import os
+import tempfile
+from datetime import date
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.agentic import AgentHarness, Role, Task
+from agentic_trader.agentic.store import TaskStore
+
+db = os.path.join(tempfile.mkdtemp(), "tasks.sqlite")
+first = AgentHarness(TradingGraph(make_config(memory_path=None)), store=TaskStore(db))
+run = first.run(Task("EURUSD", date(2024, 3, 1), Role.TRADER, 0.2))
+first.store.close()
+
+second = AgentHarness(TradingGraph(make_config(memory_path=None)), store=TaskStore(db))   # "after a restart"
+rec = second.record(run.id)
+print(rec["state"], rec["decision"]["target_weight"], len(rec["evidence_rows"]), "evidence rows")
+print(second.store.summaries())
+```
+
+`agentic-trader serve --task-db results/tasks.sqlite` does this for the API; `GET /tasks` lists
+archived and live tasks and `GET /health` reports both counts.
+
+### 63. Serve with TLS and real API keys
+
+`serve` refuses to bind a non-loopback interface with the shipped development keys, and
+warns about plain HTTP off loopback. Pass a certificate and key for TLS, and real keys in
+the config (`api_keys` is replaced, not merged, so no dev key survives).
+
+```python
+from agentic_trader import make_config
+from agentic_trader.agentic.api import serve_options, uses_dev_keys
+
+dev = make_config()
+print(uses_dev_keys(dev["agentic"]["api_keys"]))                        # True
+real = make_config(agentic={"api_keys": {"k1-long-random-value": "trader", "k2-long-random-value": "risk"}})
+print(uses_dev_keys(real["agentic"]["api_keys"]))                       # False: dev keys are gone
+print(serve_options("127.0.0.1", dev))                                  # {} : loopback is fine
+try:
+    serve_options("0.0.0.0", dev)
+except ValueError as e:
+    print("refused:", str(e)[:60], "...")
+```
+
+```bash
+agentic-trader serve --host 0.0.0.0 --ssl-cert cert.pem --ssl-key key.pem --task-db results/tasks.sqlite
+```
+
+### 64. Evaluate the extended universe and the reserve period
+
+Every rule choice through v0.4 was made on the 15 *core* instruments. The 45 *extended* ones
+(sector equities, rates / credit / commodity ETFs, FX crosses) were never consulted, so they
+are out of sample on every period, and the `reserve` period is untouched by every published
+number. Rows carry a `universe` tag so the two can be read separately.
+
+```python
+from agentic_trader import make_config
+from agentic_trader.evaluation import PERIODS, UNIVERSES, evaluate, universe_group
+
+print(len(UNIVERSES["core"]), len(UNIVERSES["extended"]), universe_group("GLD"), PERIODS["reserve"])
+res = evaluate(["AAPL", "GLD", "EURGBP"], {"q": ("2024-01-02", "2024-02-29")}, make_config(), rebalance_every=10)
+print(res.rows[["symbol", "universe", "strategy", "Sharpe", "Impact%"]].head(6))
+print(res.summary(universe="extended"))
+```
+
+The published run is `agentic-trader evaluate --data yahoo --universe all --periods
+design,holdout,q1_2024,reserve` *(network)*; `--universe core` reproduces the v0.3/v0.4 tables.

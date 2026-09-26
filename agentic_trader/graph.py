@@ -25,7 +25,7 @@ from .anonymize import Anonymizer
 from .config import make_config
 from .data import MarketDataProvider, get_provider
 from .instruments import Instrument
-from .llm import LLM, BudgetedLLM, get_llm
+from .llm import LLM, budget_llm, get_llm
 from .memory import DecisionMemory
 from .state import AnalystReport, DebateOutcome, FinalDecision, TradeProposal, TradingState
 
@@ -46,9 +46,8 @@ class TradingGraph:
         self.config = make_config(config)
         self.provider = provider or get_provider(self.config)
         self.llm = llm if llm is not None else get_llm(self.config)
-        cap = self.config.get("max_llm_calls")
-        if self.llm is not None and cap is not None and not isinstance(self.llm, BudgetedLLM):
-            self.llm = BudgetedLLM(self.llm, int(cap))
+        if self.llm is not None:
+            self.llm = budget_llm(self.llm, self.config)
         self.memory = memory if memory is not None else DecisionMemory(self.config.get("memory_path"))
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
 

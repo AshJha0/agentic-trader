@@ -125,7 +125,7 @@ def compute_metrics(equity, positions, periods_per_year: float,
 
 def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *,
                  carry=None, open=None, high=None, low=None, stop=None, take=None,
-                 rebalance=None) -> BacktestResult:
+                 rebalance=None, impact=None) -> BacktestResult:
     """Backtest a target-weight path.
 
     Optional per-bar arrays (same length as ``prices``):
@@ -133,10 +133,12 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
       open/high/low  bar ranges, required when stop or take levels are given
       stop/take  absolute protective levels for the position held over (t, t+1]; NaN = none
       rebalance  non-zero where a new decision was made (re-arms after a stop exit)
+      impact     square-root market-impact coefficient K_t: a trade of |dw| at bar t costs
+                 |dw|^1.5 * K_t of equity (see ``backtest.impact_coefficients``); NaN = none
     """
     config = config or BacktestConfig()
     extras = dict(carry=carry, open=open, high=high, low=low, stop=stop, take=take,
-                  rebalance=rebalance)
+                  rebalance=rebalance, impact=impact)
     if _cpp is None:
         return pycore.run_backtest_ex(prices, target_weights, config, **extras)
     c = _cpp.BacktestConfig()
@@ -146,4 +148,4 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
     r = _cpp.run_backtest_ex(_l(prices), _l(target_weights), c, **kw)
     trades = [Trade(t.index, t.from_weight, t.to_weight, t.price) for t in r.trades]
     return BacktestResult(_a(r.equity), _a(r.returns), _a(r.positions), trades,
-                          _metrics_from_cpp(r.metrics), int(r.stop_exits))
+                          _metrics_from_cpp(r.metrics), int(r.stop_exits), float(r.impact_paid))
