@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `AlphaAnalyst` now weights only alphas whose IC clears significance (`|t(IC)| >= 2`,
+  n >= 30) and abstains when none qualify, instead of weighting every alpha by `max(0, IC)`.
+  This is more statistically defensible, but re-measuring on the design period shows it is
+  **not a clean fix**: "+ alpha analyst" got worse (mean Sharpe 0.60 → 0.58, more trades, not
+  fewer), and "alpha replaces technical" ties the default's head-to-head win counts with
+  fewer trades but a lower mean Sharpe. The alpha analyst stays off by default. See
+  [docs/evaluation/evaluation.md](docs/evaluation/evaluation.md#the-v04-alpha-analyst-design-period-check).
+
 ## v0.4.0 — 2026-09-26
 
 The agentic layer, the quant research layer, and a rewrite of the documentation.
