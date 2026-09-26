@@ -89,13 +89,13 @@ class Trader(Agent):
         rationale = (f"Debate verdict {debate.winner} (score {score:+.2f}, conviction "
                      f"{debate.conviction:.2f}) -> target weight {w:+.2f}"
                      + (f" (strategic weight {neutral:+.2f} plus tilt)" if neutral else "")
-                     + f". Stops at {risk['stop_atr_mult']}x ATR ({atr:.5g}).")
+                     + f". Stops at {risk['stop_atr_mult']}x ATR (ATR = {atr / price:.2%} of price).")
         if hit is not None:
             rationale += f" Track record hit rate {hit:.0%} over {int(state.track_record['n'])} calls."
         proposal = TradeProposal(action_for(w, score, thr), w, debate.conviction, price, stop, tp,
                                  10, rationale)
 
-        facts = {"last_close": price, "atr14": atr, "short_selling_allowed": shorts,
+        facts = {"last_close": state.px(price), "atr14": state.px(atr), "short_selling_allowed": shorts,
                  "max_position": risk["max_position"], "debate_winner": debate.winner,
                  "debate_score": score, "debate_conviction": debate.conviction,
                  "current_position": state.current_weight,
@@ -107,19 +107,21 @@ class Trader(Agent):
             f"Debate verdict: {debate.summary}\n\nTrading facts:\n{fmt_facts(facts)}\n"
             + ("\nLessons from past decisions:\n" + "\n".join(state.lessons) + "\n"
                if state.lessons else "")
+            + policy_passages(state)
             + '\nJSON keys: "action" ("BUY", "SELL" or "HOLD"), "target_weight" (signed '
               'fraction of capital in [-1, 1]; negative = short), "confidence" ([0, 1]), '
               '"stop_loss" (price or null), "take_profit" (price or null), "horizon_days" '
               '(int), "rationale" (2-4 sentences).'
         )
-        data = self.ask_json(prompt, ("action", "target_weight", "rationale"))
+        data = self.ask_json(prompt, ("action", "target_weight", "rationale"), state=state)
         if data:
             w = clip(data["target_weight"], -1, 1)
             if not shorts:
                 w = max(w, 0.0)
             d = float(np.sign(w))
-            stop, tp = sane_levels(d, price, _price_or_none(data.get("stop_loss")),
-                                   _price_or_none(data.get("take_profit")),
+            # The model saw (possibly rebased) prices: map its levels back to real ones.
+            stop, tp = sane_levels(d, price, state.unpx(_price_or_none(data.get("stop_loss"))),
+                                   state.unpx(_price_or_none(data.get("take_profit"))),
                                    protective_levels(d, price, atr, risk))
             act = str(data["action"]).upper()
             proposal = TradeProposal(
@@ -129,6 +131,15 @@ class Trader(Agent):
                 source="llm")
         state.proposal = proposal
         return proposal
+
+
+def policy_passages(state: TradingState) -> str:
+    """Firm policy passages retrieved by the agentic harness (knowledge.search), if any."""
+    if not state.knowledge:
+        return ""
+    lines = [f"- {k.get('title', '')} / {k.get('heading', '')}: {str(k.get('text', ''))[:400]}"
+             for k in state.knowledge[:3]]
+    return "\nFirm policy (retrieved passages, follow them):\n" + "\n".join(lines) + "\n"
 
 
 def _price_or_none(x) -> float | None:

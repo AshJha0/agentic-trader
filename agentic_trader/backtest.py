@@ -5,8 +5,8 @@ close and the current position; the resulting target weight (and its stop /
 take-profit levels) is held until the next rebalance. Returns and metrics come
 from the C++ backtester.
 
-Baselines are the paper's five (Buy & Hold, SMA, MACD, KDJ+RSI, ZMR) plus
-``B&H vol-target``: buy & hold scaled every day to the same volatility target the
+Baselines are five classic rule-based strategies (Buy & Hold, SMA, MACD, KDJ+RSI,
+ZMR) plus ``B&H vol-target``: buy & hold scaled every day to the same volatility target the
 risk team uses, from trailing (ex-ante) volatility. It is the fair control for a
 risk-managed strategy: beating plain buy & hold on drawdown is automatic when you
 hold less; beating the vol-targeted version requires good directional calls.
@@ -40,6 +40,10 @@ class ComparisonReport:
     decisions: list[FinalDecision] = field(default_factory=list)
     backtest_config: quant.BacktestConfig | None = None
     carry: np.ndarray | None = None  # annual carry per bar actually applied (FX)
+    # How many agent outputs came from the model vs the rule-based fallback
+    # (analyst reports, debate verdict, proposal, risk views, final decision).
+    agent_sources: dict[str, int] = field(default_factory=dict)
+    prices: np.ndarray | None = None  # closes over the window (for portfolio covariance)
 
     def table(self) -> pd.DataFrame:
         rows = {}
@@ -144,8 +148,11 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
         stop, take = np.full(n, np.nan), np.full(n, np.nan)
         reb = np.zeros(n)
         held = 0.0
+        sources: dict[str, int] = {}
         for i in range(0, n - 1, max(1, rebalance_every)):
-            _, dec = graph.propagate(ins, window.index[i].date(), current_weight=held)
+            st, dec = graph.propagate(ins, window.index[i].date(), current_weight=held)
+            for s in _sources(st):
+                sources[s] = sources.get(s, 0) + 1
             w[i] = dec.target_weight
             stop[i] = np.nan if dec.stop_loss is None else dec.stop_loss
             take[i] = np.nan if dec.take_profit is None else dec.take_profit
@@ -169,18 +176,31 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                                           cfg["risk"]["max_position"],
                                           ins.periods_per_year).items():
         results[name] = quant.run_backtest(prices, weights[mask], bt, carry=carry)
-    return ComparisonReport(ins, window.index, results, decisions, bt, carry)
+    return ComparisonReport(ins, window.index, results, decisions, bt, carry,
+                            sources if include_agent else {}, prices)
+
+
+def _sources(state) -> list[str]:
+    """``source`` of every agent output in a state (abstaining analysts excluded)."""
+    out = [r.source for r in state.reports.values() if not r.abstained]
+    for doc in (state.debate, state.proposal, state.decision):
+        if doc is not None:
+            out.append(doc.source)
+    out.extend(v.source for v in state.risk_views)
+    return out
 
 
 # ------------------------------------------------------------------ portfolio
 @dataclass
 class PortfolioReport:
-    """Equal-capital sleeves, one per instrument, combined daily."""
+    """Sleeves, one per instrument, combined daily with a weighting scheme."""
     symbols: list[str]
     dates: pd.DatetimeIndex
     returns: pd.DataFrame            # strategy -> portfolio daily returns
     metrics: dict[str, quant.Metrics]
     sleeves: dict[str, ComparisonReport]
+    weighting: str = "equal"
+    allocations: pd.DataFrame | None = None   # capital share per sleeve over time (agent strategy)
 
     def table(self) -> pd.DataFrame:
         rows = {}
@@ -196,33 +216,75 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
                            config: dict | None = None, rebalance_every: int = 5,
                            provider: MarketDataProvider | None = None, llm: LLM | None = None,
                            on_decision: Callable[[FinalDecision], None] | None = None,
-                           ) -> PortfolioReport:
-    """Run every symbol as its own sleeve with 1/N of the capital and combine them.
+                           weighting: str = "equal", cov_window: int = 120) -> PortfolioReport:
+    """Run every symbol as its own sleeve and combine the sleeves.
 
     Each sleeve is a full walk-forward backtest (costs, carry, stops) of the agent
-    and of every baseline. The portfolio return on a day is the average of the
-    sleeves' returns (equal capital, rebalanced daily). Equity and FX calendars
-    differ, so a sleeve with no bar on a date contributes 0 that day.
+    and of every baseline. Sleeve returns are combined daily:
+
+    * ``weighting="equal"``: 1/N of the capital per sleeve, the same for every
+      strategy, so the comparison between the agent and the baselines is fair;
+    * any other scheme from ``agentic_trader.portfolio`` (``inverse_vol``,
+      ``risk_parity``, ``min_variance``, ``mean_variance``): capital shares are
+      re-estimated every ``rebalance_every`` bars from the trailing ``cov_window``
+      days of instrument returns (no look-ahead) and held until the next
+      rebalance. The scheme applies to every strategy, so a baseline is combined
+      the same way as the agent.
+
+    Equity and FX calendars differ, so a sleeve with no bar on a date contributes
+    0 that day.
     """
     if not symbols:
         raise ValueError("run_portfolio_backtest needs at least one symbol")
+    from .portfolio import METHODS, construct
+    if weighting not in METHODS:
+        raise ValueError(f"weighting must be one of {METHODS}")
     cfg = make_config(config)
     provider = provider or get_provider(cfg)
     sleeves = {s: run_agent_backtest(s, start, end, cfg, rebalance_every, provider, llm,
                                      on_decision=on_decision) for s in symbols}
+    keys = list(sleeves)
     dates = sorted(set().union(*(r.dates for r in sleeves.values())))
     idx = pd.DatetimeIndex(dates)
     strategies = list(next(iter(sleeves.values())).results)
+    ppy = max(r.instrument.periods_per_year for r in sleeves.values())
+
+    # Trailing instrument returns (for covariance) including the warm-up before `start`.
+    lookback_start = _parse(start) - timedelta(days=cfg["lookback_days"])
+    inst_returns = pd.DataFrame({
+        s: provider.history(r.instrument, lookback_start, _parse(end))["Close"].pct_change()
+        for s, r in sleeves.items()}).dropna(how="all")
+
+    alloc_hist = None
+    if weighting == "equal":
+        alloc = pd.DataFrame(1.0 / len(keys), index=idx, columns=keys)
+    else:
+        rows = {}
+        current = np.full(len(keys), 1.0 / len(keys))
+        for i, d in enumerate(idx):
+            if i % max(1, rebalance_every) == 0:
+                hist = inst_returns[inst_returns.index < d].tail(cov_window)
+                if len(hist) >= 20:
+                    try:
+                        pw = construct({s: 1.0 for s in keys}, hist, weighting,  # type: ignore[arg-type]
+                                       periods_per_year=ppy, max_weight=1.0, gross_cap=1.0, target_vol=None)
+                        current = np.array([pw.allocation[pw.symbols.index(s)] for s in keys])
+                    except ValueError:
+                        pass  # keep the previous allocation on a degenerate window
+            rows[d] = current
+        alloc = pd.DataFrame.from_dict(rows, orient="index", columns=keys).reindex(idx)
+        alloc_hist = alloc
+
     rets, metrics = {}, {}
     for name in strategies:
         per = pd.DataFrame({s: pd.Series(r.results[name].returns, index=r.dates)
                             for s, r in sleeves.items()}).reindex(idx).fillna(0.0)
         pos = pd.DataFrame({s: pd.Series(np.abs(r.results[name].positions), index=r.dates)
                             for s, r in sleeves.items()}).reindex(idx).fillna(0.0)
-        port = per.mean(axis=1)
+        port = (per * alloc).sum(axis=1)
         rets[name] = port
         equity = cfg["initial_capital"] * np.cumprod(1.0 + port.to_numpy())
-        ppy = max(r.instrument.periods_per_year for r in sleeves.values())
-        metrics[name] = quant.compute_metrics(equity, pos.mean(axis=1).to_numpy(), ppy,
+        metrics[name] = quant.compute_metrics(equity, (pos * alloc).sum(axis=1).to_numpy(), ppy,
                                               cfg["risk_free_annual"])
-    return PortfolioReport(list(symbols), idx, pd.DataFrame(rets, index=idx), metrics, sleeves)
+    return PortfolioReport(list(symbols), idx, pd.DataFrame(rets, index=idx), metrics, sleeves,
+                           weighting, alloc_hist)

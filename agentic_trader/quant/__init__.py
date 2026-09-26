@@ -29,7 +29,8 @@ except ImportError:  # pragma: no cover
 __all__ = [
     "BACKEND", "BacktestConfig", "BacktestResult", "Metrics", "Trade",
     "sma", "ema", "rolling_std", "zscore", "rsi", "macd", "bollinger", "atr", "kdj",
-    "pct_change", "realized_vol", "quantile", "historical_var", "historical_cvar",
+    "pct_change", "realized_vol", "rolling_max", "rolling_min", "spearman", "almgren_chriss",
+    "quantile", "historical_var", "historical_cvar",
     "kelly_fraction", "vol_target_weight", "position_units", "strat_buy_hold",
     "strat_sma_cross", "strat_macd", "strat_kdj_rsi", "strat_zmr", "run_backtest",
     "compute_metrics", "max_drawdown",
@@ -85,13 +86,23 @@ atr = _dispatch_series("atr")
 kdj = _dispatch_series("kdj")
 pct_change = _dispatch_series("pct_change")
 realized_vol = _dispatch_series("realized_vol")
+rolling_max = _dispatch_series("rolling_max")
+rolling_min = _dispatch_series("rolling_min")
 strat_buy_hold = _dispatch_series("strat_buy_hold")
 strat_sma_cross = _dispatch_series("strat_sma_cross")
 strat_macd = _dispatch_series("strat_macd")
 strat_kdj_rsi = _dispatch_series("strat_kdj_rsi")
 strat_zmr = _dispatch_series("strat_zmr")
 
+spearman = _dispatch_scalar("spearman", 2)
 quantile = _dispatch_scalar("quantile", 1)
+
+
+def almgren_chriss(total: float, n: int, kappa: float) -> np.ndarray:
+    """Almgren-Chriss slice quantities (see cpp/include/at/indicators.hpp)."""
+    if _cpp is None:
+        return pycore.almgren_chriss(total, n, kappa)
+    return _a(_cpp.almgren_chriss(float(total), int(n), float(kappa)))
 historical_var = _dispatch_scalar("historical_var", 1)
 historical_cvar = _dispatch_scalar("historical_cvar", 1)
 max_drawdown = _dispatch_scalar("max_drawdown", 1)

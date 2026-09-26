@@ -13,7 +13,7 @@ on synthetic data and is executed as-is when the docs are checked.
   7. [Allow shorting equities](#7-allow-shorting-equities)
   8. [Save a Markdown report](#8-save-a-markdown-report)
 - [Backtests](#backtests)
-  9. [Backtest against the paper's baselines](#9-backtest-against-the-papers-baselines)
+  9. [Backtest against the classic baselines](#9-backtest-against-the-classic-baselines)
   10. [Baselines only](#10-baselines-only)
   11. [Export and compare equity curves](#11-export-and-compare-equity-curves)
   12. [Backtest your own weights with the C++ engine](#12-backtest-your-own-weights-with-the-c-engine)
@@ -48,6 +48,26 @@ on synthetic data and is executed as-is when the docs are checked.
   36. [Cap LLM spend](#36-cap-llm-spend)
   37. [Clean messy price files](#37-clean-messy-price-files)
   38. [Fail safely on bad input](#38-fail-safely-on-bad-input)
+- [The agentic layer](#the-agentic-layer)
+  39. [Run a task through the harness](#39-run-a-task-through-the-harness)
+  40. [Read the evidence behind a decision](#40-read-the-evidence-behind-a-decision)
+  41. [Call a tool directly, under policy](#41-call-a-tool-directly-under-policy)
+  42. [Queue an order for human approval](#42-queue-an-order-for-human-approval)
+  43. [Write a policy rule](#43-write-a-policy-rule)
+  44. [Validate a model-proposed plan](#44-validate-a-model-proposed-plan)
+  45. [Add a tool to the catalogue](#45-add-a-tool-to-the-catalogue)
+  46. [Search the desk's knowledge base](#46-search-the-desks-knowledge-base)
+  47. [Audit a narrative](#47-audit-a-narrative)
+  48. [Serve the HTTP API and drive it](#48-serve-the-http-api-and-drive-it)
+  49. [Expose the tools over MCP and consume them](#49-expose-the-tools-over-mcp-and-consume-them)
+  50. [Trace a run and export metrics](#50-trace-a-run-and-export-metrics)
+- [Quant research](#quant-research)
+  51. [Evaluate the alpha library](#51-evaluate-the-alpha-library)
+  52. [Add an alpha and use the alpha analyst](#52-add-an-alpha-and-use-the-alpha-analyst)
+  53. [Plan and simulate an execution](#53-plan-and-simulate-an-execution)
+  54. [Compare execution algorithms on the same day](#54-compare-execution-algorithms-on-the-same-day)
+  55. [Construct a portfolio and read its risk](#55-construct-a-portfolio-and-read-its-risk)
+  56. [Deflate a Sharpe ratio after a search](#56-deflate-a-sharpe-ratio-after-a-search)
 
 ## Decisions
 
@@ -150,7 +170,7 @@ agentic-trader analyze AAPL --date 2024-03-01 --save --no-memory
 
 ## Backtests
 
-### 9. Backtest against the paper's baselines
+### 9. Backtest against the classic baselines
 
 ```python
 from agentic_trader import run_agent_backtest, make_config
@@ -547,7 +567,7 @@ res.to_json("my_eval.json")
 ```
 
 The real-data protocol used in [docs/evaluation](docs/evaluation/evaluation.md) is
-`agentic-trader evaluate --data yahoo --periods design,holdout,paper` *(network)*.
+`agentic-trader evaluate --data yahoo --periods design,holdout,q1_2024` *(network)*.
 
 ### 33. Judge a result: t-stat and the vol-targeted control
 
@@ -667,3 +687,413 @@ for attempt in (lambda: Instrument.parse("EUR/XYZ"),                      # mist
 A feed that has stopped updating is refused too. If the latest bar is more than
 `max_data_staleness_days` (7) before the decision date, `propagate` raises instead of
 trading on an old price.
+
+## The agentic layer
+
+### 39. Run a task through the harness
+
+The harness plans, runs policy-gated tools, runs the desk's stages, then the critic, evidence
+validation and the audited report. It ends in a terminal state with everything attached.
+
+```python
+from datetime import date
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.agentic import AgentHarness, Role, Task
+from agentic_trader.memory import DecisionMemory
+
+graph = TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None)
+harness = AgentHarness(graph)
+run = harness.run(Task("EURUSD", date(2024, 3, 1), Role.TRADER, current_weight=0.2))
+print(run.state.value, [s.name for s in run.plan.steps])
+print(run.decision.action.value, run.decision.target_weight, "confidence", run.decision.confidence)
+print("evidence", len(run.evidence), "findings", len(run.findings), "audit warnings", run.report.warnings)
+print(run.report.to_markdown()[:600])
+```
+
+The same from the command line: `agentic-trader task EURUSD --date 2024-03-01 --position 0.2`.
+
+### 40. Read the evidence behind a decision
+
+Every document cites the evidence it was built from, and every id resolves to a record with a
+digest.
+
+```python
+from datetime import date
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.agentic import AgentHarness, Task
+from agentic_trader.memory import DecisionMemory
+
+run = AgentHarness(TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None)).run(Task("AAPL", date(2024, 3, 1)))
+for f in run.findings:
+    print(f"{f.agent:<18} {f.confidence:.2f}  cites {len(f.evidence_ids)} records")
+for ev_id in run.decision.evidence_ids[:5]:
+    ev = run.evidence.get(ev_id)
+    print(ev.id, ev.type.value, ev.source, ev.digest[:12], "resolves:", run.evidence.resolve(ev.id))
+by_type = {}
+for ev in run.evidence:
+    by_type[ev.type.value] = by_type.get(ev.type.value, 0) + 1
+print(by_type)
+```
+
+### 41. Call a tool directly, under policy
+
+The executor is usable on its own. A call is checked, coerced, timed, traced and evidenced.
+
+```python
+from agentic_trader import make_config
+from agentic_trader.agentic import DeskTools, EvidenceStore, PolicyEngine, Role, ToolExecutor, build_registry
+from agentic_trader.data import SyntheticProvider
+
+cfg = make_config()
+reg = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
+ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0, "symbol_universe": ["AAPL", "EURUSD"]}), EvidenceStore(), Role.ANALYST)
+ok = ex.call("quant.technical", symbol="AAPL", as_of="2024-03-01")
+print(ok.ok, round(ok.payload["rsi14"], 1), f"{ok.elapsed_ms:.1f} ms")
+denied = ex.call("market_data.news", symbol="MSFT", as_of="2024-03-01", lookback_days=7)
+print(denied.ok, denied.error)
+bad = ex.call("market_data.news", symbol="AAPL", as_of="2024-03-01", lookback_days=7.5)
+print(bad.ok, bad.error)
+print(len(ex.evidence), "evidence records, including the failures")
+```
+
+### 42. Queue an order for human approval
+
+`execution.submit_order` is state-changing and high risk, so it always needs approval. With
+the queued gateway the call parks until a person decides.
+
+```python
+from datetime import date
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.agentic import AgentHarness, QueuedApprovalGateway, Role, Task
+from agentic_trader.memory import DecisionMemory
+
+h = AgentHarness(TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None),
+                 gateway=QueuedApprovalGateway())
+run = h.submit(Task("AAPL", date(2024, 3, 1), Role.TRADER))
+ex = h._executor(run)
+first = ex.call("execution.submit_order", symbol="AAPL", side="buy", quantity=100)
+print(first.ok, first.error)
+pending = h.pending_approvals(run.id)
+print([(a.id, a.request.tool, a.reason) for a in pending])
+h.gateway.resolve(pending[0].id, approve=True, decided_by="risk", note="within limits")
+second = ex.call("execution.submit_order", symbol="AAPL", side="buy", quantity=100)
+print(second.ok, second.payload)          # the ticket; no broker is involved
+```
+
+### 43. Write a policy rule
+
+A rule is a callable that returns a decision or `None` to pass. Put it before `allow_rule`.
+
+```python
+from agentic_trader.agentic import PolicyEngine, PolicyOutcome, Role
+from agentic_trader.agentic.domain import PolicyDecision, ToolRequest
+from agentic_trader.agentic.policy import DEFAULT_RULES, allow_rule
+from agentic_trader.agentic import DeskTools, build_registry
+from agentic_trader import make_config
+from agentic_trader.data import SyntheticProvider
+
+def no_fx_after_hours(ctx):
+    """Deny FX order tickets outside the desk's hours (the hour comes from the arguments here)."""
+    if ctx.tool.name == "execution.submit_order" and ctx.request.arguments.get("note", "").startswith("after-hours"):
+        return PolicyDecision(PolicyOutcome.DENY, "desk_hours", "no order tickets after hours")
+    return None
+
+rules = tuple(r for r in DEFAULT_RULES if r is not allow_rule) + (no_fx_after_hours, allow_rule)
+engine = PolicyEngine({"max_position": 1.0}, rules=rules)
+cfg = make_config()
+tool = build_registry(DeskTools(SyntheticProvider(cfg), cfg)).get("execution.submit_order").descriptor
+d = engine.evaluate(ToolRequest("execution.submit_order", {"symbol": "EURUSD", "side": "buy", "quantity": 1, "note": "after-hours"}, "C"), tool, Role.TRADER)
+print(d.outcome.value, d.rule, d.reason)
+```
+
+### 44. Validate a model-proposed plan
+
+Whatever a model proposes is stripped, pinned and repaired before it runs.
+
+```python
+from datetime import date
+from agentic_trader import Instrument, make_config
+from agentic_trader.agentic import DeskTools, Task, build_registry, validate_plan
+from agentic_trader.data import SyntheticProvider
+
+cfg = make_config()
+reg = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
+proposed = [
+    {"type": "tool", "name": "market_data.news", "arguments": {"symbol": "NVDA", "as_of": "2025-01-01", "lookback_days": 5, "verbose": True}},
+    {"type": "tool", "name": "execution.submit_order", "arguments": {"symbol": "AAPL", "side": "buy", "quantity": 1e9}},
+    {"type": "agent", "name": "risk"},
+]
+plan = validate_plan(proposed, Task("AAPL", date(2024, 3, 1)), Instrument.parse("AAPL"), ["technical", "news"], reg)
+print(plan.source)
+for step in plan.steps:
+    print(f"  {step.type.value:<6} {step.name:<20} {step.arguments}")
+for note in plan.notes:
+    print("note:", note)
+```
+
+To let the model plan for real: `make_config(agentic={"llm_planner": True}, llm_provider="anthropic")`.
+
+### 45. Add a tool to the catalogue
+
+Register a function; its schema comes from the signature. Annotations decide the policy.
+
+```python
+from agentic_trader import make_config
+from agentic_trader.agentic import DeskTools, EvidenceStore, PolicyEngine, Role, ToolExecutor, build_registry
+from agentic_trader.agentic.domain import Capability, EvidenceType, RiskLevel, ToolAnnotations
+from agentic_trader.data import SyntheticProvider
+
+cfg = make_config()
+tools = DeskTools(SyntheticProvider(cfg), cfg)
+reg = build_registry(tools)
+
+def realized_range(symbol: str, as_of: str, days: int = 20) -> dict:
+    """High-low range of the last `days` bars as a fraction of the last close."""
+    h = tools.history(symbol, as_of, 60)
+    hi, lo, c = max(h["High"][-days:]), min(h["Low"][-days:]), h["Close"][-1]
+    return {"days": days, "range_pct": (hi - lo) / c}
+
+reg.register("quant", realized_range, annotations=ToolAnnotations(
+    True, RiskLevel.LOW, frozenset({Capability.RUN_ANALYTICS}), EvidenceType.CALCULATION))
+ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.ANALYST)
+print(reg.get("quant.realized_range").descriptor.input_schema["properties"])
+print(ex.call("quant.realized_range", symbol="AAPL", as_of="2024-03-01").payload)
+```
+
+### 46. Search the desk's knowledge base
+
+```python
+from agentic_trader.agentic import default_knowledge_base
+
+kb = default_knowledge_base()
+print(len(kb.documents), "documents,", len(kb), "chunks")
+for p in kb.search("how big can a position be and what is the VaR cap", k=3):
+    print(f"{p.score:.3f}  {p.chunk.doc_id} / {p.chunk.heading}: {p.chunk.text[:90]}...")
+```
+
+Inside a task the same search is the `knowledge.search` step; the passages are DOCUMENT
+evidence and appear in the trader's and PM's prompts.
+
+### 47. Audit a narrative
+
+The audits are plain functions you can run on any text against any facts.
+
+```python
+from agentic_trader.agentic import EvidenceStore, EvidenceType, evidence_audit, number_audit
+
+facts = {"target_weight": 0.5354, "last_close": 223.219, "n_bullish": 4.0, "confidence": 0.51}
+text = "BUY +0.54 (confidence 0.51), last close 223.22, 4 bullish analysts, 53.5% of capital, alpha 350 bps."
+print("untraceable numbers:", number_audit(text, facts))
+store = EvidenceStore()
+ev = store.record(EvidenceType.DATA, "market_data.news", "3 headlines", [{"h": "x"}], "CID")
+print("unresolved ids:", evidence_audit(f"see {ev.id} and DATA-deadbeef", [], store))
+```
+
+### 48. Serve the HTTP API and drive it
+
+*(needs the `api` extra)*
+
+```bash
+agentic-trader serve --port 8000          # docs at http://127.0.0.1:8000/docs, approvals queued
+```
+
+```python
+from fastapi.testclient import TestClient
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.agentic import AgentHarness, QueuedApprovalGateway
+from agentic_trader.agentic.api import create_app
+from agentic_trader.memory import DecisionMemory
+import time
+
+h = AgentHarness(TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None), gateway=QueuedApprovalGateway())
+c = TestClient(create_app(harness=h))                   # in-process; the same app uvicorn serves
+r = c.post("/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01", "current_weight": 0.1}, headers={"X-API-Key": "dev-trader-key"})
+tid = r.json()["task_id"]
+while c.get(f"/tasks/{tid}", headers={"X-API-Key": "dev-viewer-key"}).json()["state"] not in ("COMPLETED", "FAILED"):
+    time.sleep(0.05)
+print(c.get(f"/tasks/{tid}/report?format=markdown", headers={"X-API-Key": "dev-viewer-key"}).text[:200])
+print(c.get("/approvals", headers={"X-API-Key": "dev-risk-key"}).json())
+print(c.get("/tools", headers={"X-API-Key": "dev-viewer-key"}).json()[0]["name"])
+```
+
+### 49. Expose the tools over MCP and consume them
+
+*(needs the `mcp` extra; spawns a subprocess)*
+
+```bash
+agentic-trader mcp                        # stdio server for any MCP client
+```
+
+```python
+from agentic_trader.agentic import EvidenceStore, PolicyEngine, Role, ToolExecutor
+from agentic_trader.agentic.mcp_server import call, discover, registry_from_stdio
+
+tools = discover()
+print(len(tools), tools[1]["name"], tools[1]["read_only"])
+print(call("knowledge__list_documents", {}))
+reg = registry_from_stdio()                              # remote tools as a local registry
+ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER)
+r = ex.call("quant.technical", symbol="AAPL", as_of="2024-03-01")
+print(r.ok, round(r.payload["rsi14"], 1), "evidence:", len(ex.evidence))   # policy and evidence apply to remote tools
+```
+
+### 50. Trace a run and export metrics
+
+```python
+from datetime import date
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.agentic import AgentHarness, Task
+from agentic_trader.memory import DecisionMemory
+
+run = AgentHarness(TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None)).run(Task("AAPL", date(2024, 3, 1)))
+print(run.tracer.summary())
+for span in run.tracer.to_list()[:6]:
+    print(f"{span['name']:<24} {span['duration_ms']:>7.2f} ms  parent={span['parent_id']}")
+print(run.tracer.metrics.render().splitlines()[:4])       # Prometheus text format
+```
+
+`agentic_trader.agentic.tracing.configure_json_logging()` routes the package's loggers to
+JSON lines on stderr.
+
+## Quant research
+
+### 51. Evaluate the alpha library
+
+```python
+from datetime import date
+from agentic_trader import Instrument, make_config
+from agentic_trader.alpha import alpha_report
+from agentic_trader.data import SyntheticProvider
+
+p = SyntheticProvider(make_config())
+ins = Instrument.parse("USDJPY")
+df = p.history(ins, date(2020, 1, 1), date(2024, 3, 28))
+rep = alpha_report(df, ins, horizon=10, carry_series=p.carry_series(ins, df.index))
+print(rep.table[["IC", "t(IC)", "hit%", "autocorr"]])
+print(rep.decay)                                          # IC by horizon: pick the rebalance frequency
+print(rep.correlations.round(2))
+print("best by IC:", rep.best())
+```
+
+On real prices: `agentic-trader alpha USDJPY --data yahoo --start 2016-01-04 --end 2021-12-31`.
+
+### 52. Add an alpha and use the alpha analyst
+
+```python
+import numpy as np
+from datetime import date
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.alpha import ALPHAS, EQUITY_ALPHAS, AlphaInputs, compute_alphas
+from agentic_trader.memory import DecisionMemory
+
+def gap_fade(x: AlphaInputs) -> np.ndarray:
+    """Fade yesterday's close-to-close jump larger than 2 ATR-equivalents (toy)."""
+    r = np.full(len(x.close), np.nan)
+    r[1:] = x.close[1:] / x.close[:-1] - 1.0
+    return -np.tanh(r / 0.02)
+
+ALPHAS["gap_fade"] = gap_fade
+EQUITY_ALPHAS.append("gap_fade")
+g = TradingGraph(make_config(analysts=["technical", "alpha", "news", "sentiment"]),
+                 memory=DecisionMemory(None), on_event=lambda *_: None)
+state, d = g.propagate("AAPL", date(2024, 3, 1))
+print(state.reports["alpha"].summary)
+print(state.reports["alpha"].key_points)
+```
+
+The alpha analyst is off by default because it measured as noise on the design period
+(see the evaluation). Adding a new alpha changes the composite, so re-run `evaluate` on the
+design period before adopting it.
+
+### 53. Plan and simulate an execution
+
+```python
+from datetime import date
+from agentic_trader import Instrument, make_config
+from agentic_trader.algo import plan_execution, simulate_execution, synthetic_intraday_bars
+from agentic_trader.data import SyntheticProvider
+from agentic_trader.state import Action, FinalDecision
+
+p = SyntheticProvider(make_config())
+ins = Instrument.parse("AAPL")
+df = p.history(ins, date(2024, 1, 1), date(2024, 3, 1))
+last, adv = float(df["Close"].iloc[-1]), float(df["Volume"].tail(20).mean())
+decision = FinalDecision("AAPL", date(2024, 3, 1), Action.BUY, 0.6, 0.5, None, None, "")
+plan = plan_execution(decision, ins, current_weight=0.1, capital=50_000_000, last_price=last, adv=adv)
+print(plan.side, round(plan.quantity), plan.algo, plan.slices, plan.reason)
+bars = synthetic_intraday_bars(df.iloc[-1], plan.slices, "equity", seed=1)
+rep = simulate_execution(plan.schedule(bars), bars, plan.side, plan.algo, spread_bps=2.0, impact_coeff=1.0,
+                         daily_vol=float(df["Close"].pct_change().tail(20).std()), adv=adv)
+print(f"filled {rep.completion:.0%}; IS {rep.is_bps:+.1f} bps; vs VWAP {rep.vs_vwap_bps:+.1f} bps; "
+      f"spread {rep.spread_cost_bps:.1f} + impact {rep.impact_cost_bps:.1f} bps; max participation {rep.max_participation:.1%}")
+```
+
+CLI: `agentic-trader execute AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 50000000`.
+
+### 54. Compare execution algorithms on the same day
+
+```python
+from datetime import date
+import numpy as np
+from agentic_trader import Instrument, make_config
+from agentic_trader.algo import (almgren_chriss_schedule, pov_schedule, simulate_execution,
+                                 synthetic_intraday_bars, twap_schedule, vwap_schedule)
+from agentic_trader.data import SyntheticProvider
+
+p = SyntheticProvider(make_config())
+df = p.history(Instrument.parse("NVDA"), date(2024, 2, 1), date(2024, 3, 1))
+day = df.iloc[-1]
+adv = float(df["Volume"].tail(20).mean())
+qty = 0.02 * adv                                            # a 2%-of-ADV order
+for seed in (1, 2, 3):
+    bars = synthetic_intraday_bars(day, 78, "equity", seed)
+    vols = bars["Volume"].to_numpy()
+    sigma = float(bars["Close"].std())
+    for name, sched in (("TWAP", twap_schedule(qty, 78)), ("VWAP", vwap_schedule(qty, vols)),
+                        ("POV 10%", pov_schedule(qty, vols, 0.10)),
+                        ("AC", almgren_chriss_schedule(qty, 78, sigma, eta=sigma * 1e-6, risk_aversion=1e-5))):
+        r = simulate_execution(sched, bars, "buy", name, 2.0, 1.0, 0.02, adv)
+        print(f"seed {seed} {name:<8} filled {r.completion:5.0%}  IS {r.is_bps:+6.1f} bps  vs VWAP {r.vs_vwap_bps:+6.1f} bps")
+```
+
+### 55. Construct a portfolio and read its risk
+
+```python
+from datetime import date
+import pandas as pd
+from agentic_trader import Instrument, make_config
+from agentic_trader.data import SyntheticProvider
+from agentic_trader.portfolio import construct
+
+p = SyntheticProvider(make_config())
+syms = ["AAPL", "JPM", "XOM", "EURUSD", "USDJPY"]
+rets = pd.DataFrame({s: p.history(Instrument.parse(s), date(2023, 1, 1), date(2024, 3, 1))["Close"].pct_change() for s in syms}).dropna()
+targets = {"AAPL": 1.0, "JPM": 0.6, "XOM": 0.0, "EURUSD": -0.5, "USDJPY": 0.8}     # the desk's signed targets
+for method in ("equal", "inverse_vol", "risk_parity", "min_variance"):
+    pw = construct(targets, rets, method, max_weight=0.5, target_vol=0.12)
+    print(f"{method:<12} vol {pw.expected_vol:.3f}  DR {pw.diversification_ratio:.2f}  scale {pw.scale:.2f}  "
+          + " ".join(f"{s}={w:+.2f}" for s, w in zip(pw.symbols, pw.weights)))
+print(pw.contributions)                                   # allocation, weight, vol, marginal, component, pct_of_risk
+```
+
+In a backtest: `run_portfolio_backtest(syms, start, end, cfg, weighting="risk_parity")` or
+`agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start ... --end ... --weighting risk_parity`.
+
+### 56. Deflate a Sharpe ratio after a search
+
+You tried several variants and kept the best. The deflated Sharpe ratio asks whether the best
+would still look good against the expected maximum of that many null tries.
+
+```python
+import numpy as np
+from agentic_trader.stats import selection_report, sharpe_stats
+
+rng = np.random.default_rng(0)
+chosen = rng.normal(0.0006, 0.01, 1000)                  # daily returns of the variant you kept
+tried = [0.4, 0.9, 1.1, 0.7, 0.2, 0.95, 0.85, 0.6]        # annual Sharpes of everything you tried
+print(sharpe_stats(chosen).sharpe_annual)
+print(selection_report(chosen, tried))
+```
+
+`agentic-trader stats returns.csv --trials 8 --trial-sharpes 0.4,0.9,1.1,0.7,0.2,0.95,0.85,0.6`
+does the same from a CSV. The evaluation applies this to the desk's own 16-variant rule search.

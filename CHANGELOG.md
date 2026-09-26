@@ -1,5 +1,87 @@
 # Changelog
 
+## v0.4.0 — 2026-09-26
+
+The agentic layer, the quant research layer, and a rewrite of the documentation.
+
+### Agentic layer (`agentic_trader.agentic`)
+- **Domain model.** Frozen dataclasses for `Task`, `Plan`, `PlanStep`, `ToolDescriptor`,
+  `ToolRequest`/`ToolResult`, `Evidence` (six types, SHA-256 digests), `Finding`,
+  `PolicyDecision`, roles and capabilities, and the task state machine with its legal
+  transitions.
+- **Tools.** A `ToolRegistry` derives JSON schemas from Python signatures. The
+  `ToolExecutor` runs every call through the policy engine, with a per-call timeout,
+  bounded retry on transient errors, argument coercion, tracing and an evidence record for
+  every call, successful or not.
+- **Tool servers.** 15 tools on 5 servers: `market_data` (history, news, social,
+  fundamentals, macro), `quant` (technical, risk, alpha, baselines), `knowledge` (search,
+  list_documents), `portfolio` (position, construct) and `execution` (plan; `submit_order`,
+  which is state-changing and always needs approval). `RecordingProvider` routes the
+  analysts' data access through these tools.
+- **Policy engine.** Ordered rules (deny list, required capabilities, read-only, argument
+  guards, risk level) returning ALLOW / DENY / REQUIRE_APPROVAL with the rule that fired;
+  five roles; auto, queued and deny approval gateways.
+- **Planner.** A canonical plan per asset class and an optional model-proposed plan. The
+  validator strips unknown tools, stages and arguments, pins the symbol and date, repairs
+  stage order, refuses state-changing tools in plans, and appends the governance steps.
+- **Harness.** `AgentHarness` runs a plan through an explicit state machine with parallel
+  tool batches, AWAITING_APPROVAL pause and resume, cooperative cancellation, and the
+  governance steps (critic, evidence validation, audited report) that cannot be skipped.
+- **Critic.** Seven deterministic checks (evidence resolves, model-vs-rules divergence,
+  contradictions, firm limits, protective levels, direction vs verdict, single-evidence
+  cap) and an optional model critique that can only lower confidence.
+- **Audited reports.** A number audit (every figure in the narrative must trace to the
+  structured facts, tolerant of rounding and percentage forms) and an evidence-id audit;
+  discrepancies become warnings.
+- **Knowledge base.** 11 runbooks and policies (59 chunks) with a dependency-free hashed
+  TF-IDF embedder; retrieved passages are DOCUMENT evidence and are shown to the trader and PM.
+- **Observability.** Spans with parent ids, JSON-lines logging and Prometheus text metrics.
+- **MCP server.** The catalogue as a real MCP stdio server (official SDK 2.x), plus a client
+  that turns a remote server's tools into a local registry so policy and evidence apply unchanged.
+- **HTTP API.** FastAPI gateway with API-key roles: tasks (202 accepted, background run),
+  reports (JSON or markdown), traces, evidence, cancel, approvals, tools, health, metrics.
+- **CLI.** `task`, `tools`, `serve`, `mcp`.
+
+### Quant research layer
+- **Alpha library** (`alpha.py`): nine signals (12-1 momentum, vol-adjusted 20-day
+  momentum, 5-day reversal, 52-week high, Donchian, MACD, RSI, low-vol, FX carry) with IC,
+  IC t-stat, decay, hit rate, tercile spread, autocorrelation and correlations; combination;
+  an `AlphaAnalyst` agent (off by default, see the evaluation).
+- **Execution algorithms** (`algo.py`): TWAP, VWAP, POV and Almgren-Chriss schedules; an
+  intraday simulator (Brownian-bridge bars from a daily bar, half-spread and square-root
+  impact, implementation shortfall and slippage vs VWAP); decision → parent order planning.
+- **Portfolio construction** (`portfolio.py`): EWMA and Ledoit-Wolf covariance; equal,
+  inverse-vol, risk parity, minimum variance and mean-variance weights with caps; risk
+  contributions and diversification ratio; `run_portfolio_backtest(weighting=...)` with
+  trailing (no look-ahead) covariance.
+- **Statistics** (`stats.py`): block-bootstrap Sharpe CI, probabilistic and deflated Sharpe
+  ratios, minimum track record, and a selection report for a chosen variant.
+- **C++ core:** `rolling_max`, `rolling_min`, `spearman`, `almgren_chriss`; `sma` no longer
+  returns all-NaN after a leading NaN (a bug the alpha library exposed).
+- **CLI.** `alpha`, `execute`, `stats`, `portfolio --weighting`.
+
+### Evaluation
+- The evaluation period formerly labelled after an external publication is now `q1_2024`.
+- Adding the alpha analyst was measured on the design period (mean Sharpe 0.65 → 0.60,
+  median 0.55 → 0.60): noise, so it stays off by default.
+- Deflated Sharpe ratio reported for the v0.3 rule choice (16 variants).
+
+### Changed
+- References to an external research paper and repository were removed from the code and
+  documentation; the design is described on its own terms.
+- Approval identity is the tool and its arguments within a task, so a request re-submitted
+  after approval is recognised.
+- `TradingGraph` is split into stages (`prepare`, `run_analyst`, `run_debate`, `run_trader`,
+  `run_risk`, `record`) that the harness reuses; `propagate` is unchanged.
+- LLM usage and cost accounting (`UsageTracker`), anonymised prompts (`llm_anonymize`) and
+  parallel evaluation (`evaluate(workers=)`) from the pending LLM-evaluation work are included.
+
+### Tests and docs
+- **Tests:** 116 → **197** pytest tests (agentic 30, adversarial 15, services 7 incl. a real
+  MCP stdio round trip and the FastAPI client, quant research 18, LLM evaluation 11).
+- **Docs:** LEARN (26 concepts), COOKBOOK (56 recipes), DIAGRAMS (24), architecture,
+  specification, threat model (32 threats), API and evaluation rewritten; landing page updated.
+
 ## v0.3.0 — 2026-09-25
 
 Hardening, real-life workflows and an honest real-price evaluation.
@@ -9,7 +91,7 @@ Hardening, real-life workflows and an honest real-price evaluation.
   and there are three periods:
   - a 2016–2021 **design** period, the only data used for choices;
   - a 2022–2026 **holdout**, run once with frozen rules;
-  - the paper's Q1 2024 window.
+  - a Q1 2024 reference window.
 
   The protocol is available as `evaluate()` and `agentic-trader evaluate`.
 - **Volatility-targeted buy & hold baseline**, the fair control for a risk-managed strategy.
@@ -86,7 +168,7 @@ Hardening, real-life workflows and an honest real-price evaluation.
   numbers and questions.
 - `COOKBOOK.md`: 25 recipes; all 22 Python recipes are executed when the docs are checked.
 - `docs/architecture/overview.md`, `docs/DIAGRAMS.md` (10 Mermaid diagrams),
-  `docs/SPECIFICATION.md` (paper and project requirements with status),
+  `docs/SPECIFICATION.md` (requirements with status),
   `docs/threat-model/threat-model.md`, `docs/evaluation/evaluation.md`, `docs/api/api.md`,
   `docs/INDEX.md` and `docs/GITHUB_PAGES.md`.
 - An evaluation on **real Q1 2024 prices** (Yahoo) for AAPL, NVDA, MSFT, META, GOOGL, EURUSD,
@@ -110,7 +192,7 @@ First release.
   - a portfolio manager with hard limits.
 - **LLMs.** Claude through the Anthropic SDK with quick and deep tiers, an offline
   rule-based mode, and a rule-based fallback on any LLM failure.
-- **C++17 quant core.** Indicators, risk, the paper's baselines and a backtester, exposed via
+- **C++17 quant core.** Indicators, risk, rule-based baselines and a backtester, exposed via
   pybind11, with a numpy twin.
 - **Data.** Synthetic, Yahoo/FRED and CSV providers with point-in-time guards; decision
   memory with reflection.

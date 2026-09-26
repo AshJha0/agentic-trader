@@ -76,19 +76,27 @@ class Agent:
     def system_prompt(self) -> str:
         return f"{FIRM_CONTEXT}\n\nYour role: {self.role}"
 
-    def ask_text(self, prompt: str) -> str | None:
-        if self.llm is None:
-            return None
-        return self.llm.complete(self.system_prompt, prompt, deep=self.deep)
+    def _complete(self, prompt: str, state: Any) -> str | None:
+        """Send one prompt. With anonymisation on (``state.anon``) every prompt is
+        scrubbed of names and dates on the way out, and names are restored in the
+        reply on the way back, so no agent has to remember to do it."""
+        anon = getattr(state, "anon", None)
+        if anon is not None:
+            prompt = anon.scrub(prompt)
+        text = self.llm.complete(self.system_prompt, prompt, deep=self.deep)
+        return anon.restore(text) if anon is not None and text is not None else text
 
-    def ask_json(self, prompt: str, required: tuple[str, ...]) -> dict[str, Any] | None:
+    def ask_text(self, prompt: str, state: Any = None) -> str | None:
         if self.llm is None:
             return None
-        text = self.llm.complete(
-            self.system_prompt,
-            prompt + "\n\nRespond with a single JSON object only (no prose outside it).",
-            deep=self.deep,
-        )
+        return self._complete(prompt, state)
+
+    def ask_json(self, prompt: str, required: tuple[str, ...],
+                 state: Any = None) -> dict[str, Any] | None:
+        if self.llm is None:
+            return None
+        text = self._complete(
+            prompt + "\n\nRespond with a single JSON object only (no prose outside it).", state)
         data = extract_json(text)
         if data is None or any(k not in data for k in required):
             if text is not None:

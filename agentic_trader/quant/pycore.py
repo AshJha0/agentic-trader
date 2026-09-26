@@ -45,9 +45,16 @@ def sma(x, n: int) -> np.ndarray:
     _check(n)
     x = _arr(x)
     out = np.full(len(x), NaN)
-    if len(x) >= n:
-        c = np.cumsum(np.insert(x, 0, 0.0))
-        out[n - 1 :] = (c[n:] - c[:-n]) / n
+    if len(x) < n:
+        return out
+    # Cumulative sums over NaN-free stretches only: a NaN resets the window, so a
+    # derived series' leading NaNs do not poison every later value (mirrors C++).
+    nan = np.isnan(x)
+    c = np.cumsum(np.insert(np.where(nan, 0.0, x), 0, 0.0))
+    win = (c[n:] - c[:-n]) / n
+    bad = np.cumsum(np.insert(nan.astype(int), 0, 0))
+    has_nan = (bad[n:] - bad[:-n]) > 0
+    out[n - 1:] = np.where(has_nan, NaN, win)
     return out
 
 
@@ -157,6 +164,69 @@ def pct_change(x) -> np.ndarray:
         prev = x[:-1]
         out[1:] = np.where(prev != 0, x[1:] / np.where(prev != 0, prev, 1.0) - 1.0, NaN)
     return out
+
+
+def rolling_max(x, n: int) -> np.ndarray:
+    _check(n)
+    x = _arr(x)
+    out = np.full(len(x), NaN)
+    for i in range(n - 1, len(x)):
+        w = x[i - n + 1 : i + 1]
+        if not np.isnan(w).any():
+            out[i] = w.max()
+    return out
+
+
+def rolling_min(x, n: int) -> np.ndarray:
+    _check(n)
+    x = _arr(x)
+    out = np.full(len(x), NaN)
+    for i in range(n - 1, len(x)):
+        w = x[i - n + 1 : i + 1]
+        if not np.isnan(w).any():
+            out[i] = w.min()
+    return out
+
+
+def _average_ranks(v: np.ndarray) -> np.ndarray:
+    order = np.argsort(v, kind="stable")
+    ranks = np.empty(len(v))
+    i = 0
+    while i < len(v):
+        j = i
+        while j + 1 < len(v) and v[order[j + 1]] == v[order[i]]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    return ranks
+
+
+def spearman(x, y) -> float:
+    x, y = _arr(x), _arr(y)
+    if x.size != y.size:
+        raise ValueError("spearman: length mismatch")
+    ok = np.isfinite(x) & np.isfinite(y)
+    if ok.sum() < 3:
+        return NaN
+    ra, rb = _average_ranks(x[ok]), _average_ranks(y[ok])
+    ra, rb = ra - ra.mean(), rb - rb.mean()
+    saa, sbb = float(ra @ ra), float(rb @ rb)
+    if saa <= 0 or sbb <= 0:
+        return NaN
+    return float((ra @ rb) / np.sqrt(saa * sbb))
+
+
+def almgren_chriss(total: float, n: int, kappa: float) -> np.ndarray:
+    if n <= 0:
+        raise ValueError("almgren_chriss: n must be positive")
+    if not kappa >= 0:
+        raise ValueError("almgren_chriss: kappa must be >= 0")
+    if kappa < 1e-8:
+        return np.full(n, total / n)
+    t = np.arange(1, n + 1) / n
+    remaining = total * np.sinh(kappa * (1.0 - t)) / np.sinh(kappa)
+    prev = np.concatenate([[total], remaining[:-1]])
+    return prev - remaining
 
 
 def realized_vol(close, n: int, periods_per_year: float) -> np.ndarray:

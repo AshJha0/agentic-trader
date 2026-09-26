@@ -4,30 +4,38 @@ These Mermaid diagrams render natively on github.com; each one is also checked w
 Mermaid 11 parser before release. The prose explanation is in
 [architecture/overview.md](architecture/overview.md).
 
-**The firm**
+**The desk**
 
 1. [Decision pipeline](#1-decision-pipeline)
 2. [Agent pattern: tools, then rules, then LLM](#2-agent-pattern-tools-then-rules-then-llm)
-3. [Sequence of one `propagate()` call](#3-sequence-of-one-propagate-call)
-4. [Structured state](#4-structured-state)
-5. [Sizing chain: strategic weight to final position](#5-sizing-chain-strategic-weight-to-final-position)
-6. [Portfolio-manager guardrails and the no-trade band](#6-portfolio-manager-guardrails-and-the-no-trade-band)
-7. [Untrusted text containment](#7-untrusted-text-containment)
+3. [Structured state](#3-structured-state)
+4. [Sizing chain: strategic weight to final position](#4-sizing-chain-strategic-weight-to-final-position)
+5. [Portfolio-manager guardrails and the no-trade band](#5-portfolio-manager-guardrails-and-the-no-trade-band)
+6. [Untrusted text containment](#6-untrusted-text-containment)
 
-**Data and backtesting**
+**The agentic layer**
 
-8. [Point-in-time FX macro from FRED](#8-point-in-time-fx-macro-from-fred)
-9. [Walk-forward backtest timing](#9-walk-forward-backtest-timing)
-10. [Intraday stop and target fills](#10-intraday-stop-and-target-fills)
-11. [Portfolio sleeves and watchlist scans](#11-portfolio-sleeves-and-watchlist-scans)
-12. [Memory without look-ahead](#12-memory-without-look-ahead)
+7. [Agentic layer overview](#7-agentic-layer-overview)
+8. [Task state machine](#8-task-state-machine)
+9. [Sequence of one task](#9-sequence-of-one-task)
+10. [Tool-call path](#10-tool-call-path)
+11. [Policy decision flow](#11-policy-decision-flow)
+12. [Approval flow](#12-approval-flow)
+13. [Plan validation](#13-plan-validation)
+14. [Evidence model](#14-evidence-model)
+15. [Critic and audits](#15-critic-and-audits)
+16. [MCP and API topology](#16-mcp-and-api-topology)
 
-**Evaluation and engineering**
+**Data, backtesting and research**
 
-13. [Evaluation protocol: design, freeze, holdout](#13-evaluation-protocol-design-freeze-holdout)
-14. [Quant backend selection](#14-quant-backend-selection)
-15. [Package dependencies](#15-package-dependencies)
-16. [CI matrix](#16-ci-matrix)
+17. [Point-in-time FX macro from FRED](#17-point-in-time-fx-macro-from-fred)
+18. [Walk-forward backtest timing](#18-walk-forward-backtest-timing)
+19. [Intraday stop and target fills](#19-intraday-stop-and-target-fills)
+20. [Alpha research pipeline](#20-alpha-research-pipeline)
+21. [Execution: decision to fills](#21-execution-decision-to-fills)
+22. [Portfolio construction](#22-portfolio-construction)
+23. [Evaluation protocol: design, freeze, holdout](#23-evaluation-protocol-design-freeze-holdout)
+24. [Package dependencies](#24-package-dependencies)
 
 ## 1. Decision pipeline
 
@@ -36,24 +44,27 @@ flowchart TD
     D[("Market data<br/>point-in-time, up to the as-of close")] --> A
     P[/"current position<br/>(portfolio context)"/] -.-> TR
     P -.-> PM
+    K[("policy passages<br/>knowledge.search")] -.-> TR
+    K -.-> PM
     subgraph A["Analyst team (quick tier)"]
         T[Technical]
         F["Fundamentals (equity)<br/>or Macro / rates (FX)"]
         N[News]
         S[Sentiment]
+        AL["Alpha (optional)"]
     end
-    A -->|"4 AnalystReports<br/>(abstain if no data)"| R
+    A -->|"AnalystReports<br/>(abstain if no data)"| R
     subgraph R["Research team (deep tier)"]
         B[Bull researcher] <-->|n rounds| BR[Bear researcher]
         B --> FA[Facilitator]
         BR --> FA
     end
     FA -->|DebateOutcome| TR["Trader<br/>strategic weight + tilt,<br/>stop, target, horizon"]
-    TR -->|TradeProposal| K
-    subgraph K["Risk management team (deep tier)"]
+    TR -->|TradeProposal| KR
+    subgraph KR["Risk management team (deep tier)"]
         AG[Aggressive] <--> NE[Neutral] <--> CO[Conservative]
     end
-    K -->|3 RiskViews per round| PM[Portfolio manager]
+    KR -->|3 RiskViews per round| PM[Portfolio manager]
     PM --> G{{"Firm limits, then no-trade band<br/>short policy, max position,<br/>VaR95 cap, min trade"}}
     G --> DEC[/FinalDecision/]
     DEC --> M[(Decision memory)]
@@ -73,51 +84,13 @@ flowchart LR
     Q -- no --> OUT
     Q -- yes --> L["Claude<br/>facts + untrusted blocks → JSON"]
     L --> V{"valid JSON with<br/>required keys?"}
-    V -- yes --> CL["clip / coerce to valid ranges<br/>source = llm"]
+    V -- yes --> CL["clip / coerce to valid ranges<br/>source = llm, rule_signal kept"]
     V -- "no / error / refusal / timeout" --> OUT
     CL --> W[write into TradingState]
     OUT --> W
 ```
 
-## 3. Sequence of one `propagate()` call
-
-```mermaid
-sequenceDiagram
-    participant U as Caller
-    participant G as TradingGraph
-    participant P as Provider
-    participant Mem as Memory
-    participant An as Analysts
-    participant Rs as Bull/Bear + Facilitator
-    participant Tr as Trader
-    participant Rk as Risk team
-    participant PM as Portfolio manager
-    U->>G: propagate("EURUSD", 2024-03-01, current_weight=0.3)
-    G->>P: history(ins, as_of - lookback, as_of)
-    P-->>G: OHLCV (cleaned, clipped again to <= as_of)
-    G->>G: refuse if < 30 bars or last bar > 7 days old
-    G->>Mem: resolve(), lessons(), track_record()
-    loop 4 analysts
-        G->>An: run(state, provider)
-        An->>P: news / social / fundamentals / macro (as_of)
-        An-->>G: AnalystReport (or abstention)
-    end
-    loop max_debate_rounds
-        G->>Rs: bull.speak(), bear.speak()
-    end
-    Rs-->>G: DebateOutcome (facilitator)
-    G->>Tr: run(state)
-    Tr-->>G: TradeProposal
-    loop max_risk_discuss_rounds
-        G->>Rk: aggressive, neutral, conservative speak
-    end
-    G->>PM: run(state, risk facts)
-    PM-->>G: FinalDecision (after limits and band)
-    G->>Mem: record(decision)
-    G-->>U: (TradingState, FinalDecision)
-```
-
-## 4. Structured state
+## 3. Structured state
 
 ```mermaid
 classDiagram
@@ -132,7 +105,8 @@ classDiagram
         list~RiskView~ risk_views
         FinalDecision decision
         list~str~ lessons
-        dict track_record
+        list knowledge
+        dict alpha
         reports_digest()
         to_markdown()
     }
@@ -145,6 +119,8 @@ classDiagram
         dict facts
         str source
         bool abstained
+        float rule_signal
+        tuple evidence_ids
     }
     class DebateOutcome {
         str winner
@@ -152,6 +128,7 @@ classDiagram
         float conviction
         str summary
         list~DebateTurn~ turns
+        tuple evidence_ids
     }
     class TradeProposal {
         Action action
@@ -159,12 +136,14 @@ classDiagram
         float stop_loss
         float take_profit
         int horizon_days
+        tuple evidence_ids
     }
     class RiskView {
         str stance
         float recommended_weight
         str argument
         int round
+        tuple evidence_ids
     }
     class FinalDecision {
         Action action
@@ -174,15 +153,16 @@ classDiagram
         bool approved
         list adjustments
         str rationale
+        tuple evidence_ids
     }
-    TradingState "1" o-- "4" AnalystReport
+    TradingState "1" o-- "4..5" AnalystReport
     TradingState o-- DebateOutcome
     TradingState o-- TradeProposal
     TradingState "1" o-- "3..n" RiskView
     TradingState o-- FinalDecision
 ```
 
-## 5. Sizing chain: strategic weight to final position
+## 4. Sizing chain: strategic weight to final position
 
 ```mermaid
 flowchart TD
@@ -193,12 +173,13 @@ flowchart TD
     TL --> SH
     SH --> RV["risk team<br/>aggressive: max(1.25 abs(w), vol-target)<br/>neutral: w x 15% / realised vol<br/>conservative: half the smaller, VaR-capped"]
     RV --> BL["PM blend 25 / 50 / 25<br/>(or Claude's weight)"]
-    BL --> LIM["firm limits (diagram 6)"]
+    BL --> LIM["firm limits (diagram 5)"]
     LIM --> BD["no-trade band vs current position"]
     BD --> FIN[/"final weight + ATR stop / target<br/>rebuilt if the direction flipped"/]
+    FIN --> CR["critic multiplier applied<br/>to the confidence (diagram 15)"]
 ```
 
-## 6. Portfolio-manager guardrails and the no-trade band
+## 5. Portfolio-manager guardrails and the no-trade band
 
 ```mermaid
 flowchart TD
@@ -223,7 +204,7 @@ flowchart TD
     KEEP --> A
 ```
 
-## 7. Untrusted text containment
+## 6. Untrusted text containment
 
 ```mermaid
 flowchart LR
@@ -235,10 +216,304 @@ flowchart LR
     LLM --> J["JSON reply"]
     J --> CLIP["clip / coerce<br/>inf, nan, strings, wrong-side stops"]
     CLIP --> LIM["firm limits after the model<br/>(cannot be overridden)"]
-    LIM --> OK[bounded decision]
+    LIM --> CRIT["critic: model vs rules divergence<br/>lowers confidence"]
+    CRIT --> OK[bounded decision]
 ```
 
-## 8. Point-in-time FX macro from FRED
+## 7. Agentic layer overview
+
+```mermaid
+flowchart TB
+    REQ["request<br/>CLI · HTTP API · Python"] --> HAR
+    subgraph HAR["AgentHarness (control plane)"]
+        PL["Planner<br/>canonical or model-proposed"] --> VAL["Plan validator<br/>strip · pin · repair · append governance"]
+        VAL --> EXE["Executor loop<br/>tool batches in parallel · agent stages"]
+        EXE --> CRI["Critic"] --> VE["Validate evidence"] --> FIN["Finalise: audited report"]
+    end
+    EXE --> TEX["ToolExecutor<br/>policy · coerce · timeout · retry · trace"]
+    TEX --> POL{"PolicyEngine<br/>ALLOW / DENY / REQUIRE_APPROVAL"}
+    POL -->|approval needed| GW["Gateway<br/>auto · queued · deny"]
+    POL -->|allow| SRV
+    subgraph SRV["Tool servers (DeskTools)"]
+        MD[market_data] & QT[quant] & KN["knowledge (RAG)"] & PF[portfolio] & EXC[execution]
+    end
+    SRV --> EV[("EvidenceStore<br/>SHA-256 per call")]
+    EXE --> DESK["TradingGraph stages<br/>analysts → debate → trader → risk"]
+    DESK -->|via RecordingProvider| TEX
+    DESK --> EV
+    EV --> CRI
+    EV --> FIN
+    SRV -.->|same catalogue| MCP["MCP stdio server"]
+    HAR -.-> API["FastAPI gateway<br/>tasks · reports · approvals · metrics"]
+```
+
+## 8. Task state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED
+    CREATED --> PLANNING
+    PLANNING --> VALIDATING_PLAN
+    VALIDATING_PLAN --> EXECUTING
+    EXECUTING --> AWAITING_APPROVAL: a tool needs a person
+    AWAITING_APPROVAL --> EXECUTING: approved (resume from the same step)
+    EXECUTING --> CRITIQUING
+    CRITIQUING --> VALIDATING_EVIDENCE
+    VALIDATING_EVIDENCE --> FINALISING
+    FINALISING --> COMPLETED
+    COMPLETED --> [*]
+    PLANNING --> FAILED
+    VALIDATING_PLAN --> FAILED
+    EXECUTING --> FAILED
+    CRITIQUING --> FAILED
+    FINALISING --> FAILED
+    AWAITING_APPROVAL --> CANCELLED
+    EXECUTING --> CANCELLED
+    CREATED --> CANCELLED
+    FAILED --> [*]
+    CANCELLED --> [*]
+    note right of VALIDATING_PLAN
+        every tool step is pre-checked
+        against policy; a denial fails
+        the task before anything runs
+    end note
+```
+
+## 9. Sequence of one task
+
+```mermaid
+sequenceDiagram
+    participant U as Caller
+    participant H as AgentHarness
+    participant PL as Planner
+    participant EX as ToolExecutor
+    participant PE as PolicyEngine
+    participant EV as EvidenceStore
+    participant G as TradingGraph
+    participant C as Critic
+    participant R as Reporter
+    U->>H: run(Task EURUSD 2024-03-01, role trader)
+    H->>PL: make_plan(task, catalogue, stages)
+    PL-->>H: Plan (12 steps, governance last)
+    H->>PE: pre-check every tool step
+    H->>G: prepare() via RecordingProvider
+    G->>EX: market_data.history
+    EX->>PE: evaluate -> ALLOW (default_allow)
+    EX->>EV: DATA record (digest)
+    par parallel tool batch
+        H->>EX: knowledge.search
+        H->>EX: quant.alpha
+    end
+    EX->>EV: DOCUMENT + CALCULATION records
+    loop analysts
+        H->>G: run_analyst(name)
+        G->>EX: market_data.news / macro ...
+        H->>EV: CALCULATION (facts) + DECISION (report)
+    end
+    H->>G: run_debate, run_trader, run_risk
+    H->>EV: DECISION records, evidence ids on every document
+    H->>C: review(state, findings, evidence, risk facts)
+    C-->>H: checks + multiplier (<= 1)
+    H->>H: drop findings with unresolved evidence
+    H->>R: build_report (+ number and evidence audits)
+    H->>G: record() to memory
+    H-->>U: TaskRun COMPLETED
+```
+
+## 10. Tool-call path
+
+```mermaid
+flowchart TD
+    CALL["executor.call(name, **args)"] --> REG{"tool in registry?"}
+    REG -- no --> FAILU["ToolResult error<br/>+ FAILED evidence"]
+    REG -- yes --> POL["policy.evaluate(request, descriptor, role)"]
+    POL --> OUT{outcome}
+    OUT -- DENY --> FAILD["error: denied by policy (rule)<br/>+ FAILED evidence"]
+    OUT -- REQUIRE_APPROVAL --> GW{gateway.decide}
+    GW -- pending --> WAIT["error: awaiting approval<br/>executor.pending_approval = True"]
+    GW -- rejected --> FAILR["error: approval rejected"]
+    GW -- approved --> APPR["APPROVAL evidence"] --> CO
+    OUT -- ALLOW --> CO["coerce_arguments(schema)<br/>dates · ints · bounds · no extras"]
+    CO -- invalid --> FAILA["error: bad arguments"]
+    CO -- valid --> RUN["run in a worker thread<br/>timeout · retry transient errors"]
+    RUN -- error --> FAILX["error + FAILED evidence"]
+    RUN -- ok --> EVD["evidence record<br/>type from annotations, args, digest"]
+    EVD --> RES["ToolResult ok<br/>metrics + span"]
+```
+
+## 11. Policy decision flow
+
+```mermaid
+flowchart TD
+    R["request: tool, arguments, role"] --> D1{"tool on the deny list?"}
+    D1 -- yes --> DENY1[DENY deny_list]
+    D1 -- no --> D2{"role holds every<br/>required capability?"}
+    D2 -- no --> DENY2[DENY required_capabilities]
+    D2 -- yes --> D3{"tool read-only?"}
+    D3 -- no --> D3b{"role can propose trades?"}
+    D3b -- no --> DENY3[DENY read_only]
+    D3b -- yes --> REQ1[REQUIRE_APPROVAL read_only]
+    D3 -- yes --> D4{"arguments pass the guards?<br/>symbol valid and in universe · dates not in the future ·<br/>weights finite and within cap · lookback bounded"}
+    D4 -- no --> DENY4[DENY argument_guard]
+    D4 -- yes --> D5{"risk level HIGH?"}
+    D5 -- yes --> REQ2[REQUIRE_APPROVAL risk_level]
+    D5 -- no --> ALLOW[ALLOW default_allow]
+    NR["custom rule set with<br/>no terminal rule"] -.-> DENYN[DENY no_rule: fail closed]
+```
+
+## 12. Approval flow
+
+```mermaid
+sequenceDiagram
+    participant T as Task (EXECUTING)
+    participant EX as ToolExecutor
+    participant Q as QueuedApprovalGateway
+    participant API as HTTP API
+    participant P as Person (risk role)
+    T->>EX: execution.submit_order(...)
+    EX->>Q: decide(task, request)
+    Q-->>EX: pending (queued under tool + arguments)
+    EX-->>T: awaiting approval
+    T->>T: state = AWAITING_APPROVAL, pending_step recorded
+    P->>API: GET /approvals (X-API-Key: risk)
+    API-->>P: [{id, task_id, tool, arguments, reason}]
+    P->>API: POST /approvals/{id} {approve: true}
+    API->>Q: resolve(id, approved, by, note)
+    API->>T: harness.decide_approval -> APPROVAL evidence -> resume
+    T->>EX: execution.submit_order(...) again (same identity)
+    EX->>Q: decide -> approved
+    EX-->>T: ticket
+    T->>T: continue to CRITIQUING ... COMPLETED
+```
+
+## 13. Plan validation
+
+```mermaid
+flowchart TD
+    RAW["raw steps<br/>(model JSON or hand-built)"] --> EACH{"for each step"}
+    EACH --> TYPE{type}
+    TYPE -- tool --> KNOWN{"tool in catalogue?"}
+    KNOWN -- no --> DROP1[drop + note]
+    KNOWN -- yes --> ARGS["keep only schema arguments<br/>pin symbol and as_of to the task"]
+    ARGS --> RO{"read-only?"}
+    RO -- no --> DROP2["drop + note:<br/>a plan may not schedule state changes"]
+    RO -- yes --> KEEPT[keep tool step]
+    TYPE -- agent --> STAGE{"known stage and<br/>not a duplicate?"}
+    STAGE -- no --> DROP3[drop + note]
+    STAGE -- yes --> KEEPA[keep agent step]
+    TYPE -- "governance / other" --> DROP4["note: managed by the harness"]
+    KEEPT --> ORDER
+    KEEPA --> ORDER["order: tools → analysts → debate → trader → risk<br/>insert missing canonical stages"]
+    ORDER --> CAP["cap at 25 steps"]
+    CAP --> GOV["append critic → validate_evidence → finalise"]
+    GOV --> PLAN[/"Plan (source llm+repaired, notes)"/]
+```
+
+## 14. Evidence model
+
+```mermaid
+classDiagram
+    class Evidence {
+        str id
+        EvidenceType type
+        str source
+        str summary
+        str digest
+        str correlation_id
+        datetime created_at
+        dict arguments
+        payload
+    }
+    class EvidenceType {
+        <<enumeration>>
+        DATA
+        CALCULATION
+        DOCUMENT
+        MODEL_OUTPUT
+        DECISION
+        APPROVAL
+    }
+    class EvidenceStore {
+        add(ev)
+        record(type, source, summary, payload, cid)
+        resolve(id) bool
+        unresolved(ids) list
+        ids_since(n) list
+    }
+    class Finding {
+        str id
+        str agent
+        str claim
+        float confidence
+        tuple evidence_ids
+        dict numbers
+    }
+    class Report {
+        dict facts
+        str narrative
+        list warnings
+    }
+    EvidenceStore "1" o-- "*" Evidence
+    Evidence --> EvidenceType
+    Finding --> "1..*" Evidence : cites
+    Report --> Finding : lists
+    Report --> EvidenceStore : audited against
+```
+
+## 15. Critic and audits
+
+```mermaid
+flowchart TD
+    IN["state + findings + evidence + risk facts"] --> C1{"every cited evidence id resolves?"}
+    C1 -- no --> E1["ERROR · finding confidence = 0"]
+    C1 -- yes --> C2{"model signal within 0.6<br/>of its rule signal?"}
+    C2 -- no --> W2["warning · multiplier ≤ 0.7<br/>that analyst's findings halved"]
+    C2 -- yes --> C3{"strong bull vs strong bear<br/>without a balanced verdict?"}
+    C3 -- yes --> W3["warning · multiplier ≤ 0.8"]
+    C3 -- no --> C4{"size, shorting, VaR<br/>within firm limits?"}
+    C4 -- no --> E4[ERROR]
+    C4 -- yes --> C5{"stop and target on the<br/>correct side of entry?"}
+    C5 -- no --> E5[ERROR]
+    C5 -- yes --> C6{"trader tilt agrees with verdict<br/>and PM kept the direction?"}
+    C6 -- no --> W6["warning · multiplier ≤ 0.8"]
+    C6 -- yes --> C7["single-evidence findings capped at 0.6"]
+    W2 --> C3
+    W3 --> C4
+    W6 --> C7
+    C7 --> LLM{"model critique enabled?"}
+    LLM -- yes --> M["concerns + multiplier<br/>clipped to ≤ 1: can only lower"]
+    LLM -- no --> OUT
+    M --> OUT["CriticReport: checks, multiplier"]
+    OUT --> VAL["validate_evidence:<br/>drop findings with unresolved ids"]
+    VAL --> REP["report: narrative from facts"]
+    REP --> NA["number audit:<br/>every figure ≈ a fact at displayed precision<br/>(percent forms, counts included)"]
+    REP --> EA["evidence audit:<br/>every id resolves"]
+    NA --> WARN["warnings attached, never silently accepted"]
+    EA --> WARN
+```
+
+## 16. MCP and API topology
+
+```mermaid
+flowchart LR
+    subgraph Proc["agentic-trader process"]
+        REG["ToolRegistry<br/>15 descriptors"]
+        DT["DeskTools<br/>provider · quant · knowledge · positions"]
+        REG --- DT
+        HAR["AgentHarness"] --> REG
+        API["FastAPI app<br/>X-API-Key → role"] --> HAR
+    end
+    subgraph MCPProc["MCP server process (stdio)"]
+        MS["MCPServer<br/>market_data__news, quant__technical, ...<br/>read-only / risk / capability annotations"]
+    end
+    REG -.->|"build_mcp_server()"| MS
+    CLIENT["any MCP client<br/>IDE · assistant · another agent"] <-->|JSON-RPC over stdio| MS
+    REMOTE["registry_from_stdio()<br/>remote tools as local descriptors"] <-->|stdio| MS
+    REMOTE --> HAR2["a second harness<br/>policy + evidence unchanged"]
+    OPS["operator / OMS"] -->|"POST /tasks · GET /report · /approvals · /metrics"| API
+```
+
+## 17. Point-in-time FX macro from FRED
 
 ```mermaid
 flowchart TD
@@ -255,7 +530,7 @@ flowchart TD
     USE --> CARRY["same series, vectorised:<br/>per-bar carry in the backtest"]
 ```
 
-## 9. Walk-forward backtest timing
+## 18. Walk-forward backtest timing
 
 ```mermaid
 flowchart LR
@@ -264,12 +539,12 @@ flowchart LR
     end
     DEC -->|"target weight w_t,<br/>stop / take levels"| H["held from close t<br/>to next rebalance"]
     H --> R["earns return t → t+1, …<br/>minus abs(Δw) × (cost + slippage)<br/>plus carry(t) / minus borrow"]
-    H -.->|"use_stops"| ST["intraday stop / target<br/>check on each bar (diagram 10)"]
+    H -.->|"use_stops"| ST["intraday stop / target<br/>check on each bar (diagram 19)"]
     R --> N["bar t+k: next rebalance"]
     ST --> N
 ```
 
-## 10. Intraday stop and target fills
+## 19. Intraday stop and target fills
 
 ```mermaid
 flowchart TD
@@ -290,100 +565,120 @@ flowchart TD
 
 Shorts mirror this: stop above the entry (open ≥ s or high ≥ s), target below it.
 
-## 11. Portfolio sleeves and watchlist scans
+## 20. Alpha research pipeline
 
 ```mermaid
 flowchart LR
-    subgraph Live["scan (live)"]
-        WL["watchlist + current positions"] --> LOOP["propagate each symbol"]
-        LOOP --> ROWS["one row per symbol<br/>action, weight, stop, target"]
-        LOOP -. "bad ticker / stale data" .-> ERR["ERROR row<br/>(scan continues)"]
-    end
-    subgraph Research["run_portfolio_backtest"]
-        SY["N symbols"] --> SL["N walk-forward sleeves<br/>own costs, carry, stops"]
-        SL --> AL["align equity and FX calendars<br/>(missing bar = 0 return)"]
-        AL --> AVG["portfolio return = mean of sleeves<br/>(equal capital, daily)"]
-        AVG --> MET["portfolio metrics vs the same<br/>construction for every baseline"]
-    end
+    OHLC["OHLCV + carry<br/>(point in time)"] --> SIG["9 signals in [-1, 1]<br/>tsmom_12_1 · mom_20_vol · reversal_5 · high_52w ·<br/>donchian_20 · macd_norm · rsi_contrarian · low_vol · carry"]
+    SIG --> FWD["forward returns<br/>horizons 1 · 5 · 10 · 21 · 42"]
+    SIG --> IC["Spearman IC + t-stat (C++)"]
+    FWD --> IC
+    IC --> DEC["IC decay by horizon"]
+    SIG --> HIT["hit rate · tercile spread ·<br/>autocorrelation (turnover) · coverage"]
+    SIG --> CORR["signal correlations"]
+    IC --> COMB["combine(): weights = max(IC, 0)"]
+    COMB --> SNAP["alpha snapshot<br/>quant.alpha tool → AlphaAnalyst"]
+    DEC --> REP[/AlphaReport/]
+    HIT --> REP
+    CORR --> REP
+    SNAP -.->|"measured on the design period:<br/>noise → off by default"| EVAL["evaluate()"]
 ```
 
-## 12. Memory without look-ahead
+## 21. Execution: decision to fills
 
 ```mermaid
-sequenceDiagram
-    participant G as TradingGraph @ as_of = d
-    participant M as DecisionMemory
-    G->>M: resolve(symbol, d, price_d)
-    Note over M: only entries with d - entry_date >= horizon_days<br/>get pnl = weight × (price_d / entry_price - 1)
-    G->>M: lessons(symbol, d)
-    Note over M: only lessons with resolved_on <= d
-    G->>M: record(decision_d)
-    Note over M: written to a temp file, then renamed (atomic)
+flowchart TD
+    D["FinalDecision target weight<br/>+ current weight + capital + last price + ADV"] --> PL["plan_execution()"]
+    PL --> Q["quantity = |Δw| × capital / price<br/>shares or base-currency units"]
+    Q --> ALG{"algorithm"}
+    ALG -- "FX" --> TWAP["TWAP · 288 slices"]
+    ALG -- "equity, order ≤ 10% ADV" --> VWAP["VWAP · 78 slices<br/>U-shaped volume profile"]
+    ALG -- "equity, order > 10% ADV" --> POV["POV · participation ≤ 20% per slice"]
+    ALG -- "on request" --> AC["Almgren-Chriss<br/>kappa = sqrt(λσ²/η) (C++)"]
+    TWAP --> SIM
+    VWAP --> SIM
+    POV --> SIM
+    AC --> SIM["simulate_execution()<br/>intraday bars: Brownian bridge inside [low, high]<br/>fill at bar VWAP + half spread + sqrt impact<br/>slice capped at bar volume"]
+    SIM --> OUT["ExecutionReport<br/>IS vs arrival · slippage vs VWAP ·<br/>spread and impact bps · completion · max participation"]
+    OUT -.->|"execution.plan tool<br/>(read-only simulation)"| EV[(evidence)]
+    D -.->|"execution.submit_order<br/>HIGH risk → approval"| TICKET["order ticket (no broker)"]
 ```
 
-## 13. Evaluation protocol: design, freeze, holdout
+## 22. Portfolio construction
+
+```mermaid
+flowchart TD
+    T["signed desk targets per sleeve"] --> ACT["active sleeves (target ≠ 0)"]
+    R["trailing instrument returns<br/>(no look-ahead)"] --> COV["EWMA covariance (60d half-life)<br/>shrunk to constant correlation<br/>(Ledoit-Wolf intensity)"]
+    COV --> SCH{"weighting scheme"}
+    ACT --> SCH
+    SCH -- equal --> A1["1/k"]
+    SCH -- inverse_vol --> A2["∝ 1/σ_i"]
+    SCH -- risk_parity --> A3["equal risk contributions<br/>(cyclical coordinate descent)"]
+    SCH -- min_variance --> A4["argmin w'Σw, w ≥ 0, w ≤ cap"]
+    SCH -- mean_variance --> A5["argmax μ'w − λ/2 w'Σw<br/>on the capped simplex"]
+    A1 --> CAP["cap per sleeve · gross ≤ 1"]
+    A2 --> CAP
+    A3 --> CAP
+    A4 --> CAP
+    A5 --> CAP
+    CAP --> SIGN["weights = allocation × sign(target) × min(|target|, 1)"]
+    SIGN --> VT{"expected vol < target?"}
+    VT -- yes --> SCALE["scale up, never above gross cap"]
+    VT -- no --> RISK
+    SCALE --> RISK["risk attribution<br/>marginal · component · pct · diversification ratio"]
+    RISK --> OUT[/PortfolioWeights/]
+```
+
+## 23. Evaluation protocol: design, freeze, holdout
 
 ```mermaid
 flowchart LR
     V02["v0.2 rules<br/>(RULES_V02 reproduces them)"] --> ABL
     subgraph Design["design period 2016 - 2021 (only data used for choices)"]
-        ABL["ablation: 16 variants<br/>each change alone + combined"] --> PICK["keep what helps:<br/>strategic weight 1.0 + band 0.10<br/>drop: momentum, filter, abstain, stops"]
+        ABL["v0.3: 16 rule variants<br/>v0.4: + alpha analyst (2 variants)"] --> PICK["keep what helps:<br/>strategic weight 1.0 + band 0.10<br/>drop: momentum, filter, abstain, stops, alpha analyst"]
+        PICK --> DSR["selection report:<br/>bootstrap CI · PSR · deflated Sharpe<br/>for the 16 trials"]
     end
     PICK --> FREEZE["freeze defaults<br/>in config.py"]
     FREEZE --> HO["holdout 2022 - 2026<br/>run once"]
-    FREEZE --> PW["paper window Q1 2024"]
+    FREEZE --> PW["Q1 2024 window"]
     HO --> REP["report whatever it shows<br/>vs B&H and vol-targeted B&H"]
     PW --> REP
 ```
 
-## 14. Quant backend selection
-
-```mermaid
-flowchart LR
-    I[import agentic_trader.quant] --> E{"AGENTIC_TRADER_BACKEND<br/>== python?"}
-    E -- yes --> PY[pycore.py numpy]
-    E -- no --> T{"_atcore extension<br/>importable?"}
-    T -- yes --> CPP["C++17 core via pybind11<br/>BACKEND = cpp"]
-    T -- no --> PY2["pycore.py numpy<br/>BACKEND = python"]
-    CPP --> API["same API, numpy arrays<br/>and dataclasses out"]
-    PY --> API
-    PY2 --> API
-```
-
-## 15. Package dependencies
+## 24. Package dependencies
 
 ```mermaid
 flowchart TD
     CLI[cli] --> GR[graph]
     CLI --> BT[backtest]
     CLI --> EV[evaluation]
-    EV --> BT
-    BT --> GR
-    BT --> Q[quant]
-    GR --> AG[agents]
-    GR --> DA[data]
-    GR --> ME[memory]
-    GR --> LL[llm]
-    AG --> Q
+    CLI --> AGH["agentic.harness"]
+    CLI --> API["agentic.api"]
+    CLI --> MCPS["agentic.mcp_server"]
+    API --> AGH
+    MCPS --> SRV["agentic.servers"]
+    AGH --> PLN["agentic.planner"] --> TLS["agentic.tools"]
+    AGH --> SRV --> TLS
+    AGH --> CRT["agentic.critic"]
+    AGH --> RPT["agentic.reporter"]
+    TLS --> POL["agentic.policy"] --> DOM["agentic.domain"]
+    TLS --> EVS["agentic.evidence"] --> DOM
+    TLS --> TRC["agentic.tracing"]
+    SRV --> RAG["agentic.rag + knowledge/"]
+    SRV --> ALPHA[alpha] --> Q[quant]
+    SRV --> PORT[portfolio]
+    SRV --> ALGO[algo] --> Q
+    AGH --> GR
+    EV --> BT --> GR
+    BT --> PORT
+    BT --> Q
+    GR --> AG[agents] --> Q
     AG --> ST[state]
-    AG --> SE[sentiment]
-    AG --> LL
-    DA --> FR["data.fred (FRED, point in time)"]
-    DA --> IN[instruments]
-    ST --> IN
+    AG --> LL[llm]
+    GR --> DA[data] --> FR["data.fred"]
+    GR --> ME[memory]
+    STATS[stats]
     Q --> PYC["quant.pycore (numpy)"]
-    Q -. optional .-> ATC["quant._atcore (C++)"]
-    ATC --> CORE["cpp/ at_core static lib"]
-```
-
-## 16. CI matrix
-
-```mermaid
-flowchart LR
-    P[push to main / pull request] --> PYJ["python job<br/>ubuntu, Python 3.10–3.14<br/>assert BACKEND == python<br/>pytest"]
-    P --> CJ["cpp job<br/>ubuntu (GCC) · windows (MSVC) · macOS (Clang)"]
-    CJ --> B[cmake configure + build]
-    B --> CT["ctest (13 groups)"]
-    CT --> AS[assert BACKEND == cpp]
-    AS --> PT["pytest incl. randomised<br/>C++ vs numpy cross-checks"]
+    Q -. optional .-> ATC["quant._atcore (C++)"] --> CORE["cpp/ at_core"]
 ```

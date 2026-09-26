@@ -1,10 +1,14 @@
 """Structured global state shared by all agents.
 
-Following the TradingAgents paper, agents communicate through concise structured
-documents (reports, proposals, decisions) held in one state object rather than a
-long free-text chat history. Natural-language dialogue is only used inside the
-two debates (bull/bear researchers and the risk team), and even those are stored
-as structured turns.
+Agents communicate through concise structured documents (reports, proposals,
+decisions) held in one state object rather than a long free-text chat history,
+which avoids the "telephone effect" of details degrading at every hop.
+Natural-language dialogue is only used inside the two debates (bull/bear
+researchers and the risk team), and even those are stored as structured turns.
+
+Every document carries ``evidence_ids``: the evidence records (tool outputs,
+calculations, documents) it was built from, filled in by the agentic harness so
+that findings and reports can be audited.
 """
 from __future__ import annotations
 
@@ -38,6 +42,10 @@ class AnalystReport:
     # consensus when rules.abstain_without_data is on: missing evidence is not
     # neutral evidence.
     abstained: bool = False
+    # The rule-based signal when a model reply replaced it (None otherwise). The
+    # critic flags a model view that diverges too far from the rules on the same facts.
+    rule_signal: float | None = None
+    evidence_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -55,6 +63,7 @@ class DebateOutcome:
     summary: str
     turns: list[DebateTurn] = field(default_factory=list)
     source: str = "rules"
+    evidence_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -68,6 +77,7 @@ class TradeProposal:
     horizon_days: int
     rationale: str
     source: str = "rules"
+    evidence_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -77,6 +87,7 @@ class RiskView:
     argument: str
     round: int = 1
     source: str = "rules"
+    evidence_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -92,11 +103,13 @@ class FinalDecision:
     approved: bool = True
     adjustments: list[str] = field(default_factory=list)
     source: str = "rules"
+    evidence_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["as_of"] = self.as_of.isoformat()
         d["action"] = self.action.value
+        d["evidence_ids"] = list(self.evidence_ids)
         return d
 
 
@@ -114,10 +127,28 @@ class TradingState:
     lessons: list[str] = field(default_factory=list)  # reflections from past decisions
     track_record: dict[str, float] = field(default_factory=dict)  # hit rate etc. from memory
     log: list[str] = field(default_factory=list)
+    anon: Any = None  # anonymize.Anonymizer when config["llm_anonymize"] is on
+    # Filled by the agentic harness: retrieved policy passages shown to the trader
+    # and PM, and the alpha snapshot when the quant.alpha tool ran.
+    knowledge: list[dict[str, Any]] = field(default_factory=list)
+    alpha: dict[str, Any] = field(default_factory=dict)
 
     @property
     def last_price(self) -> float:
         return float(self.history["Close"].iloc[-1])
+
+    # Price presentation for prompts: rebased to last close = 100 when anonymised.
+    def px(self, v: float | None) -> float | None:
+        return self.anon.px(v) if self.anon is not None and v is not None else v
+
+    def unpx(self, v: float | None) -> float | None:
+        return self.anon.unpx(v) if self.anon is not None and v is not None else v
+
+    def fmt_px(self, v: float | None) -> str:
+        return "n/a" if v is None else f"{self.px(v):.5g}"
+
+    def prompt_facts(self, facts: dict[str, Any]) -> dict[str, Any]:
+        return self.anon.facts(facts) if self.anon is not None else facts
 
     def reports_digest(self) -> str:
         """Compact text of all analyst reports, used in downstream prompts."""

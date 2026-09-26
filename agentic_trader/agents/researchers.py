@@ -71,14 +71,14 @@ class Researcher(Agent):
     def speak(self, state: TradingState, rnd: int, history: list[DebateTurn]) -> DebateTurn:
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}, last "
-            f"close {state.last_price:.6g}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
+            f"close {state.fmt_px(state.last_price)}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
             + ("Debate so far:\n" + "\n".join(f"{t.speaker}: {t.argument}" for t in history)
                if history else "You open the debate.")
             + (f"\n\nLessons from past decisions:\n" + "\n".join(state.lessons)
                if state.lessons else "")
             + f"\n\nRound {rnd}: give your {self.side} argument."
         )
-        text = self.ask_text(prompt) or self.rules_argument(state, rnd, history)
+        text = self.ask_text(prompt, state) or self.rules_argument(state, rnd, history)
         return DebateTurn(self.side, rnd, text.strip())
 
 
@@ -125,7 +125,7 @@ class DebateFacilitator(Agent):
               '[-1, 1]; the direction and strength of the prevailing view), "conviction" '
               '(number in [0, 1]), "summary" (2-4 sentences recording the decisive arguments).'
         )
-        data = self.ask_json(prompt, ("winner", "score", "summary"))
+        data = self.ask_json(prompt, ("winner", "score", "summary"), state=state)
         if data:
             w = str(data["winner"]).lower()
             outcome = DebateOutcome(
