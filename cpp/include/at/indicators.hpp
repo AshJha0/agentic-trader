@@ -48,5 +48,16 @@ KDJ kdj(const Series& high, const Series& low, const Series& close, int n = 9);
 Series pct_change(const Series& x);
 // Annualised rolling volatility of simple returns (population std).
 Series realized_vol(const Series& close, int n, double periods_per_year);
+// Rolling window extremes (NaN warm-up; NaN inputs propagate through their window).
+Series rolling_max(const Series& x, int n);
+Series rolling_min(const Series& x, int n);
+// Spearman rank correlation over pairs where both values are finite (average
+// ranks for ties). NaN with fewer than 3 pairs or zero variance.
+double spearman(const Series& x, const Series& y);
+// Almgren-Chriss optimal liquidation schedule: the quantity to trade in each of
+// n equal slices when kappa = sqrt(lambda * sigma^2 / eta) (risk aversion times
+// variance over temporary impact). kappa -> 0 gives TWAP; larger kappa
+// front-loads. Returns n non-negative quantities summing to `total`.
+Series almgren_chriss(double total, int n, double kappa);
 
 }  // namespace at

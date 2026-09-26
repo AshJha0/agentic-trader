@@ -6,10 +6,9 @@ generated from the saved result files rather than typed. To reproduce them, see
 [Reproducing](#reproducing).
 
 > **Scope.** All results use the **rule-based agents** (offline mode, no LLM) on **real
-> prices** from Yahoo Finance. The LLM mode, which the TradingAgents paper evaluates, has
-> **not** been evaluated, so nothing here describes Claude's trading performance, and none of
-> the paper's reported results are claimed. The measurements were taken on 2026-09-25 with
-> the C++ backend.
+> prices** from Yahoo Finance. The LLM mode has **not** been evaluated, so nothing here
+> describes Claude's trading performance. The trading measurements were taken on 2026-09-25
+> and the v0.4 engineering measurements on 2026-09-26, both with the C++ backend.
 
 ## Summary
 
@@ -28,23 +27,27 @@ generated from the saved result files rather than typed. To reproduce them, see
 - **Most literature-backed signal tweaks did nothing** measurable on the design period. The
   one change that worked, a strategic (benchmark) equity weight, works by collecting the
   equity premium, not by forecasting better.
-- **FX is roughly zero** before and after the change.
+- **The v0.4 alpha analyst did not help either** on the design period (mean Sharpe 0.65 →
+  0.60), so it is off by default.
+- **After correcting for the 16 variants tried, the chosen rule set still clears the bar on
+  the design period** (deflated Sharpe probability 1.00), with the caveats given below.
+- **FX is roughly zero** before and after the changes.
 
 ## Protocol
 
 ### Periods
 
-| Period | Dates | Use |
-|---|---|---|
-| **Design** | 2016-01-04 → 2021-12-31 | The **only** data used to choose rule changes and defaults |
-| **Holdout** | 2022-01-03 → 2026-06-30 | Run **once**, with frozen rules. Never used for a choice |
-| **Paper** | 2024-01-02 → 2024-03-28 | The TradingAgents paper's window (Q1 2024), inside the holdout |
+| Period | Key | Dates | Use |
+|---|---|---|---|
+| **Design** | `design` | 2016-01-04 → 2021-12-31 | The **only** data used to choose rule changes and defaults |
+| **Holdout** | `holdout` | 2022-01-03 → 2026-06-30 | Run **once**, with frozen rules. Never used for a choice |
+| **Q1 2024** | `q1_2024` | 2024-01-02 → 2024-03-28 | A short reference window inside the holdout, kept because a single quarter is what many published LLM-trading results are based on |
 
 ### Settings
 
 | Item | Setting |
 |---|---|
-| Universe | 10 equities: AAPL, NVDA, MSFT, META, GOOGL, AMZN, JPM, XOM, JNJ and SPY (the paper's names plus financials, energy, healthcare and the index). 5 FX pairs: EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD |
+| Universe | 10 equities: AAPL, NVDA, MSFT, META, GOOGL, AMZN, JPM, XOM, JNJ and SPY (large-cap technology plus financials, energy, healthcare and the index). 5 FX pairs: EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD |
 | Prices | Yahoo Finance daily, dividend- and split-adjusted (total return) |
 | News and fundamentals | None for historical dates. Yahoo serves only recent news and current-snapshot fundamentals, and the point-in-time guards refuse both, so the news and fundamentals analysts have no data |
 | FX macro | Point-in-time **FRED** policy rates. Values are publication-lagged (daily series by 1 day, monthly averages by about 40 days) and treated as unavailable when stale. Carry is accrued per bar from the same series |
@@ -61,7 +64,7 @@ generated from the saved result files rather than typed. To reproduce them, see
 |---|---|
 | Buy & Hold | The market |
 | **B&H vol-target** | Buy & hold scaled every day to the risk team's 15% volatility target, from trailing 20-day volatility (ex ante), capped at 1.0. **This is the fair control.** A risk-managed strategy beats plain buy & hold on drawdown just by holding less; beating this version requires good directional calls |
-| SMA(20/50), MACD(12,26,9), KDJ(9)+RSI(14), ZMR (20-day z-score) | The paper's rule-based baselines |
+| SMA(20/50), MACD(12,26,9), KDJ(9)+RSI(14), ZMR (20-day z-score) | Common rule-based trend and mean-reversion strategies |
 
 ### Metrics
 
@@ -128,7 +131,7 @@ counts instruments.
 - **FX stays near zero.** Buy & hold's positive FX mean comes mostly from USDJPY (+67%) and
   USDCAD, while the median pair lost money.
 
-### Paper window (Q1 2024, inside the holdout)
+### Q1 2024 window (inside the holdout)
 
 | class | strategy | n | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean Vol % | mean exposure % | mean trades |
 |:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
@@ -145,9 +148,9 @@ counts instruments.
 | all | Buy & hold | 15 | 1.89 | 2.90 | 13.95 | 5.33 | 18.61 | 100.00 | 1.00 |
 | all | B&H vol-target | 15 | 1.94 | 3.00 | 8.24 | 4.27 | 13.46 | 83.74 | 26.33 |
 
-One quarter of a strong rally is a weak test (the t-statistics are below 3 even at Sharpe
-5). The paper reports this window, so it is included here; the multi-year periods above are
-the evidence.
+One quarter of a strong rally is a weak test: the t-statistics are below 3 even at a Sharpe
+of 5, and almost every strategy looks good. It is kept as a short reference window; the
+multi-year periods above are the evidence.
 
 ## Head to head (per instrument, Sharpe)
 
@@ -168,12 +171,12 @@ median difference:
 | holdout | MACD | 10 | 11 | +0.29 |
 | holdout | KDJ+RSI | 7 | 6 | −0.15 |
 | holdout | ZMR | 9 | 10 | +0.21 |
-| paper | Buy & hold | 3 | 5 | −0.07 |
-| paper | B&H vol-target | 4 | 3 | −0.28 |
+| q1_2024 | Buy & hold | 3 | 5 | −0.07 |
+| q1_2024 | B&H vol-target | 4 | 3 | −0.28 |
 
-Out of sample the agent reliably beats the paper's trend and mean-reversion baselines
-(SMA, MACD, ZMR), loses to buy & hold on most instruments, and loses more often to
-volatility-targeted buy & hold.
+Out of sample the agent reliably beats the trend and mean-reversion baselines (SMA, MACD,
+ZMR), loses to buy & hold on most instruments, and loses more often to volatility-targeted
+buy & hold.
 
 ## How the v0.3 rules were chosen (design-period ablation)
 
@@ -215,6 +218,61 @@ the agent's Sharpe exceeds that baseline's.
   equities are held at the benchmark weight unless the firm is convinced otherwise, instead
   of sitting flat whenever the view is weak.
 
+## The v0.4 alpha analyst (design-period check)
+
+v0.4 adds an alpha library (nine point-in-time signals with IC diagnostics) and an
+`AlphaAnalyst` that reads the latest signals as one more analyst. Before making it a default
+it was measured the same way as every other rule change, on the design period only:
+
+| variant | mean Sharpe | median Sharpe | equity median SR | FX median SR | mean CR% | mean MDD% | mean Exp% | mean trades | beats B&H | beats vol-target B&H |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| v0.3 default (technical, sentiment, macro/fundamentals, news) | 0.65 | 0.55 | 1.05 | 0.12 | 105.22 | 15.72 | 56.69 | 106.47 | 10 | 6 |
+| + alpha analyst | 0.60 | 0.60 | 1.04 | -0.12 | 107.56 | 16.73 | 55.90 | 110.87 | 9 | 5 |
+| alpha analyst replaces the technical analyst | 0.63 | 0.68 | 1.00 | 0.17 | 97.19 | 17.27 | 52.81 | 141.80 | 8 | 3 |
+
+**Decision: off by default.** Mean Sharpe fell by 0.05 and the median rose by 0.05, with
+one fewer instrument beating each baseline: noise on 15 instruments, and the equity median
+did not move. The signals it reads are the same trend, reversal and volatility facts the
+technical analyst already uses, so a second vote on them adds churn rather than information.
+It remains available (`config["analysts"] = [..., "alpha"]`, or `--analysts`) and the
+`quant.alpha` tool still runs in every harness task, so the signals and their information
+coefficients are in the evidence for anyone who wants to read them.
+
+## Selection statistics for the chosen rules
+
+Choosing the best of 16 variants on the same data inflates the winner's Sharpe ratio. v0.4
+reports the standard corrections (`stats.selection_report`) for the frozen v0.3 rule set,
+using the 15-sleeve portfolio's daily returns on the design period and the 16 variants'
+mean Sharpe ratios as the trials:
+
+| Statistic | Value |
+|---|---|
+| Observations | 1,565 daily returns |
+| Annual Sharpe (t-stat) | 1.48 (3.69) |
+| Skew, kurtosis | −0.63, 7.2 |
+| Bootstrap 95% interval for the Sharpe (block 10) | [0.74, 2.27] |
+| Probabilistic Sharpe vs 0 | 1.00 |
+| Trials | 16 |
+| Expected maximum Sharpe of 16 null trials | 0.11 |
+| Deflated Sharpe probability | 1.00 |
+| Minimum track record to beat that benchmark at 95% | 389 days |
+
+**How to read it, and why it is not a triumph.**
+
+- The trials' dispersion is that of per-instrument *mean* Sharpes (0.47 to 0.66), which is
+  much narrower than the dispersion of the portfolio Sharpes would be, so the expected
+  maximum (0.11) understates the selection benchmark. The probabilities of 1.00 are
+  therefore an upper bound.
+- The returns are from the **design period**, on which the rules were chosen; the
+  correction accounts for the number of trials, not for the fact that the same data judged
+  them. The **holdout** is the real check, and there the portfolio Sharpe was 1.14 against
+  1.24 for volatility-targeted buy & hold.
+- The bootstrap interval is wide: six years of daily returns cannot separate a Sharpe of
+  1.5 from one of 0.8 with much confidence.
+
+The same report is available for any returns series with `agentic-trader stats returns.csv
+--trial-sharpes ...` (cookbook recipe 56).
+
 ## Holdout per instrument
 
 | symbol | v0.2 Sharpe | v0.3 Sharpe | B&H Sharpe | vol-target B&H Sharpe | v0.3 CR % | B&H CR % | v0.3 MDD % | B&H MDD % | v0.3 trades |
@@ -242,7 +300,7 @@ Highlights:
   a choppy market.
 - **Sharpe:** the agent beats buy & hold on META, NVDA, SPY, EURUSD and AUDUSD.
 
-## Paper window per instrument
+## Q1 2024 per instrument
 
 | symbol | v0.2 Sharpe | v0.3 Sharpe | B&H Sharpe | vol-target B&H Sharpe | v0.3 CR % | B&H CR % | v0.3 MDD % | B&H MDD % | v0.3 trades |
 |:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|
@@ -288,21 +346,28 @@ the holdout (1.14 vs 1.24).
 (1.14 vs 1.21) but **54% more return** (31.5% vs 20.5%). v0.2 was mostly flat, and its low
 volatility flattered its ratio. Which is preferable depends on the mandate.
 
+v0.4 adds `--weighting` (inverse-vol, risk parity, minimum variance, mean-variance, all from
+trailing returns) to the portfolio backtest. Those schemes are applied identically to every
+strategy, so they change the level of every row, not the ranking; the equal-weight table
+above remains the reference.
+
 ## Engineering measurements
 
 | Measurement | Value |
 |---|---|
-| One `propagate()`, offline, C++ backend | 3.8 ms (AAPL), 2.7 ms (EURUSD), mean of 20 runs after warm-up |
+| One `propagate()`, offline, C++ backend | ≈8 ms (AAPL), mean of 20 runs after warm-up |
+| One harness task (`AgentHarness.run`), offline | ≈31 ms: 12 plan steps, 2 parallel tool calls, 4 analysts, debate, trader, risk, critic (6 checks), validation, audited report; 21 evidence records, 7 findings, 18 spans |
 | Q1 walk-forward backtest (NVDA, synthetic): 63 bars, 13 agent decisions + 6 baselines | 0.07 s |
 | Full evaluation: 15 instruments × 3 periods, real prices, v0.3 | 27 s (after the first data download) |
 | Real-data backtest speed-up in v0.3 | ≈8× (2.0 s → 0.24 s per quarter): Yahoo news is no longer requested for dates it cannot serve |
 | LLM calls per decision at default rounds | 14 = 4 quick-tier + 10 deep-tier. An analyst with no data makes no call, so it is 13 when news is missing |
-| Tests | 116 pytest tests (including 8 randomised C++ vs numpy cross-checks of the extended backtester) + 13 C++ test groups (34 checks) |
+| Tests | 197 pytest tests (agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 18, LLM evaluation 11, plus the v0.3 suites) + 13 C++ test groups (34 checks) |
 
 ## Limitations
 
 - **No LLM results.** The whole point of the framework, whether LLM reasoning adds value
-  over the rule-based firm, is unmeasured.
+  over the rule-based firm, is unmeasured. The harness for it (usage and cost accounting,
+  anonymised prompts, parallel workers, the Q1 2024 window) is in place.
 - **Half the analyst team is idle historically.** Without point-in-time news, social or
   fundamentals data, the historical results test the technical, sentiment-proxy and macro
   analysts only.
@@ -311,27 +376,37 @@ volatility flattered its ratio. Which is preferable depends on the mandate.
 - **Survivorship.** The equity universe is today's large caps, so it is biased towards
   names that did well. Buy & hold benefits from this at least as much as the agent.
 - **15 instruments is a small sample.** Differences in mean Sharpe below about 0.1 between
-  variants should be read as noise.
+  variants should be read as noise; the alpha-analyst result is an example.
+- **The holdout has been seen.** Every v0.4 choice was made on the design period, but any
+  further tuning that consults the 2022–2026 numbers needs a new holdout.
 - **Execution model.** Close-to-close fills, with costs as a fixed bps per unit of turnover.
-  Stops fill at the level, or at the open on a gap. There is no market impact, which is
-  reasonable for these liquid names at modest size.
+  Stops fill at the level, or at the open on a gap. The backtests have no market impact; the
+  execution simulator (`agentic-trader execute`) models spread and square-root impact but is
+  not wired into the backtests.
 
 ## Reproducing
 
 ```bash
 pip install -e ".[all]"
 
-# the full protocol on real prices (design, holdout, paper), all 15 instruments
-agentic-trader evaluate --data yahoo --periods design,holdout,paper --out results/eval_v03.json
+# the full protocol on real prices (design, holdout, q1_2024), all 15 instruments
+agentic-trader evaluate --data yahoo --periods design,holdout,q1_2024 --out results/eval_v03.json
 
 # the same with the v0.2 rule set, for the before/after comparison
-agentic-trader evaluate --data yahoo --periods design,holdout,paper --rules v02 --out results/eval_v02.json
+agentic-trader evaluate --data yahoo --periods design,holdout,q1_2024 --rules v02 --out results/eval_v02.json
+
+# the alpha-analyst check (design period only)
+agentic-trader evaluate --data yahoo --periods design --analysts technical,sentiment,macro,fundamentals,news,alpha
 
 # the portfolio view
 agentic-trader portfolio AAPL,NVDA,MSFT,META,GOOGL,AMZN,JPM,XOM,JNJ,SPY,EURUSD,USDJPY,GBPUSD,AUDUSD,USDCAD \
-    --data yahoo --start 2022-01-03 --end 2026-06-30
+    --data yahoo --start 2022-01-03 --end 2026-06-30 --out results/portfolio_holdout.csv
+
+# selection statistics for a returns series against the variants tried
+agentic-trader stats results/portfolio_design.csv --column AgenticTrader \
+    --trial-sharpes 0.496,0.465,0.483,0.512,0.496,0.471,0.509,0.511,0.497,0.535,0.577,0.655,0.579,0.583,0.652,0.561
 ```
 
-The ablation variants are ordinary config overrides (see the table above). Cookbook recipe
-28 shows how to run one. Yahoo occasionally revises adjusted history, so re-runs can differ
-in the second decimal.
+The ablation variants are ordinary config overrides (see the tables above). Cookbook recipe
+28 shows how to run one and recipe 56 the selection report. Yahoo occasionally revises
+adjusted history, so re-runs can differ in the second decimal.

@@ -1,5 +1,5 @@
-// Rule-based baselines from the TradingAgents paper's evaluation (B&H, MACD,
-// KDJ+RSI, ZMR, SMA). Each returns a target-weight series in {-1, 0, 1}
+// Classic rule-based baseline strategies (B&H, MACD, KDJ+RSI, ZMR, SMA) used as
+// controls in the evaluation. Each returns a target-weight series in {-1, 0, 1}
 // (or {0, 1} when allow_short is false) suitable for run_backtest.
 #pragma once
 

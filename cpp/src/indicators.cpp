@@ -41,11 +41,20 @@ Series wilder(const Series& x, int n, std::size_t start) {
 Series sma(const Series& x, int n) {
     check_window(n);
     Series out(x.size(), NaN);
+    // Running sum over the current NaN-free stretch: a NaN resets it, so leading
+    // NaNs (a derived series' warm-up) do not poison every later window.
     double acc = 0.0;
+    int count = 0;
     for (std::size_t i = 0; i < x.size(); ++i) {
+        if (std::isnan(x[i])) {
+            acc = 0.0;
+            count = 0;
+            continue;
+        }
         acc += x[i];
-        if (i >= static_cast<std::size_t>(n)) acc -= x[i - n];
-        if (i + 1 >= static_cast<std::size_t>(n)) out[i] = acc / n;
+        if (count == n) acc -= x[i - n];
+        else ++count;
+        if (count == n) out[i] = acc / n;
     }
     return out;
 }
@@ -190,6 +199,102 @@ Series pct_change(const Series& x) {
     Series out(x.size(), NaN);
     for (std::size_t i = 1; i < x.size(); ++i)
         out[i] = x[i - 1] != 0.0 ? x[i] / x[i - 1] - 1.0 : NaN;
+    return out;
+}
+
+Series rolling_max(const Series& x, int n) {
+    check_window(n);
+    Series out(x.size(), NaN);
+    for (std::size_t i = static_cast<std::size_t>(n) - 1; i < x.size(); ++i) {
+        double m = -std::numeric_limits<double>::infinity();
+        bool bad = false;
+        for (std::size_t j = i + 1 - n; j <= i; ++j) {
+            if (std::isnan(x[j])) { bad = true; break; }
+            m = std::max(m, x[j]);
+        }
+        if (!bad) out[i] = m;
+    }
+    return out;
+}
+
+Series rolling_min(const Series& x, int n) {
+    check_window(n);
+    Series out(x.size(), NaN);
+    for (std::size_t i = static_cast<std::size_t>(n) - 1; i < x.size(); ++i) {
+        double m = std::numeric_limits<double>::infinity();
+        bool bad = false;
+        for (std::size_t j = i + 1 - n; j <= i; ++j) {
+            if (std::isnan(x[j])) { bad = true; break; }
+            m = std::min(m, x[j]);
+        }
+        if (!bad) out[i] = m;
+    }
+    return out;
+}
+
+namespace {
+
+// Average ranks (1-based) with ties sharing the mean rank.
+Series average_ranks(const Series& v) {
+    std::vector<std::size_t> idx(v.size());
+    for (std::size_t i = 0; i < v.size(); ++i) idx[i] = i;
+    std::stable_sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) { return v[a] < v[b]; });
+    Series r(v.size());
+    std::size_t i = 0;
+    while (i < idx.size()) {
+        std::size_t j = i;
+        while (j + 1 < idx.size() && v[idx[j + 1]] == v[idx[i]]) ++j;
+        const double avg = (static_cast<double>(i) + static_cast<double>(j)) / 2.0 + 1.0;
+        for (std::size_t k = i; k <= j; ++k) r[idx[k]] = avg;
+        i = j + 1;
+    }
+    return r;
+}
+
+}  // namespace
+
+double spearman(const Series& x, const Series& y) {
+    if (x.size() != y.size()) throw std::invalid_argument("spearman: length mismatch");
+    Series a, b;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        if (std::isfinite(x[i]) && std::isfinite(y[i])) {
+            a.push_back(x[i]);
+            b.push_back(y[i]);
+        }
+    }
+    if (a.size() < 3) return NaN;
+    const Series ra = average_ranks(a), rb = average_ranks(b);
+    const double n = static_cast<double>(a.size());
+    double ma = 0, mb = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) { ma += ra[i]; mb += rb[i]; }
+    ma /= n; mb /= n;
+    double sab = 0, saa = 0, sbb = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        sab += (ra[i] - ma) * (rb[i] - mb);
+        saa += (ra[i] - ma) * (ra[i] - ma);
+        sbb += (rb[i] - mb) * (rb[i] - mb);
+    }
+    if (saa <= 0.0 || sbb <= 0.0) return NaN;
+    return sab / std::sqrt(saa * sbb);
+}
+
+Series almgren_chriss(double total, int n, double kappa) {
+    if (n <= 0) throw std::invalid_argument("almgren_chriss: n must be positive");
+    if (!(kappa >= 0.0)) throw std::invalid_argument("almgren_chriss: kappa must be >= 0");
+    Series out(n, 0.0);
+    if (kappa < 1e-8) {  // risk-neutral limit: uniform (TWAP)
+        for (int k = 0; k < n; ++k) out[k] = total / n;
+        return out;
+    }
+    // Remaining inventory x(t) = X sinh(kappa (T - t)) / sinh(kappa T) with T = 1.
+    const double denom = std::sinh(kappa);
+    double prev = total;
+    for (int k = 1; k <= n; ++k) {
+        const double t = static_cast<double>(k) / n;
+        const double remaining = total * std::sinh(kappa * (1.0 - t)) / denom;
+        out[k - 1] = prev - remaining;
+        prev = remaining;
+    }
     return out;
 }
 

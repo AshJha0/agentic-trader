@@ -1,4 +1,4 @@
-"""Reproduce the paper's evaluation layout (Q1 2024) for equities and FX.
+"""The Q1 2024 reference window for equities and FX, agent vs baselines.
 
 The window (2024-01-02 -> 2024-03-28) matches docs/evaluation/evaluation.md.
 

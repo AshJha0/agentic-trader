@@ -1,193 +1,202 @@
 # Architecture overview
 
-agentic-trader models a trading firm as a fixed pipeline of specialised agents that share
-one structured state. This document covers the components, the flow of one decision, the
-backtesting and evaluation layers, the design decisions and the extension points. Diagrams
-are in [../DIAGRAMS.md](../DIAGRAMS.md).
+agentic-trader has three layers:
+
+1. **The desk** — specialised agents that turn point-in-time data into a sized, explained
+   decision (`agentic_trader.graph`, `agents`, `state`).
+2. **The agentic layer** — the control plane that runs the desk the way an enterprise system
+   would: catalogued tools, policy, evidence, planning, a state-machine harness, a critic,
+   audited reports, retrieval, an MCP server and an HTTP API (`agentic_trader.agentic`).
+3. **The quant research layer** — alphas, execution algorithms, portfolio construction and
+   backtest statistics, on top of the C++ core (`alpha`, `algo`, `portfolio`, `stats`, `quant`, `cpp/`).
+
+This document covers the components, the flow of one task, the design decisions and the
+extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 
 ## Components
 
-| Layer | Module | Responsibility |
-|---|---|---|
-| Orchestration | `graph.py` | `TradingGraph.propagate(symbol, as_of, current_weight=None)` runs one decision. `scan(symbols, as_of, positions)` runs a watchlist. Both load point-in-time data, refuse stale or short history, record memory, and optionally save the report |
-| Shared state | `state.py` | Typed documents: `AnalystReport` (with `abstained`), `DebateTurn`, `DebateOutcome`, `TradeProposal`, `RiskView`, `FinalDecision`, and the `TradingState` that holds them plus `current_weight` |
-| Agents | `agents/` | `analysts.py` (5 analysts), `researchers.py` (bull, bear, facilitator, consensus), `trader.py` (strategic weight and tilt, protective levels), `risk.py` (3 risk analysts, portfolio manager, limits, no-trade band), `base.py` (LLM plumbing, untrusted-text blocks) |
-| LLM | `llm.py` | `LLM` protocol; `AnthropicLLM` (quick and deep tiers, timeout, refusal fallback); `BudgetedLLM` (hard call cap); JSON extraction. `None` means offline |
-| Quant facade | `quant/__init__.py` | One API; dispatches to the C++ extension `_atcore` when present, else to `pycore.py`. `run_backtest` takes optional per-bar carry, OHLC, stop/take levels and a rebalance mask |
-| C++ core | `cpp/` | Indicators, risk, strategies, backtester (`run_backtest_ex`: carry series, intraday stops with gap fills), metrics including exposure and the Sharpe t-stat; pybind11 bindings; `at_backtest` CLI; ctest suite |
-| Data | `data/` | `MarketDataProvider` interface and `clean_ohlcv`; `SyntheticProvider`, `YahooProvider`, `CSVProvider`; `fred.py` (point-in-time rates and CPI with publication lags and staleness); `fx_macro` and `carry_series` |
-| Memory | `memory.py` | Decision log with atomic writes and corrupt-line tolerance, horizon-based outcome resolution, lessons, track record |
-| Backtest | `backtest.py` | `run_agent_backtest` (walk-forward with position context, stops and carry), the paper's five baselines plus vol-targeted buy & hold, `run_portfolio_backtest` (equal-capital sleeves) |
-| Evaluation | `evaluation.py` | `evaluate(symbols, periods, config)` over the design / holdout / paper protocol: summaries, head-to-head counts, JSON round-trip, failures recorded |
-| Instruments | `instruments.py` | `Instrument.parse` with strict validation (FX intent from "/" or "=X"; ticker character rules); pip size, periods per year, Yahoo symbol |
-| Config | `config.py` | `DEFAULT_CONFIG`, `make_config` (deep merge), `RULES_V02` (reproduces the v0.2 rules) |
-| Interface | `cli.py` | `agentic-trader analyze / scan / backtest / baselines / portfolio / evaluate / info`. Bad input gives exit status 2 and a one-line error |
+### The desk
 
-## One decision, step by step
+| Module | Responsibility |
+|---|---|
+| `graph.py` | `TradingGraph` stages: `prepare` (point-in-time data, guards, memory), `run_analyst`, `run_debate`, `run_trader`, `run_risk`, `record`. `propagate()` runs them in order; `scan()` runs a watchlist |
+| `state.py` | Typed documents with `evidence_ids`: `AnalystReport` (with `abstained`, `rule_signal`), `DebateOutcome`, `TradeProposal`, `RiskView`, `FinalDecision`; `TradingState` with `current_weight`, `knowledge`, `alpha` |
+| `agents/analysts.py` | Technical, Fundamentals, Macro (FX), News, Sentiment and Alpha analysts; `untrusted_keys`; abstention |
+| `agents/researchers.py` | Bull, bear, facilitator, weighted consensus |
+| `agents/trader.py` | Strategic weight plus tilt, ATR stops and targets, `sane_levels`, policy passages in the prompt |
+| `agents/risk.py` | Three risk analysts, portfolio manager, firm limits, no-trade band |
+| `llm.py`, `anonymize.py` | Claude client with tiers, timeout, refusal fallback, usage and cost; call budget; anonymised prompts |
+| `data/` | `MarketDataProvider`, `clean_ohlcv`, synthetic / Yahoo / CSV providers, `fred.py` point-in-time macro |
+| `memory.py` | Atomic, corruption-tolerant decision log; horizon-gated outcomes |
 
-1. **Resolve the instrument.** `Instrument.parse("EUR/USD")` gives an FX instrument
-   (base EUR, quote USD, pip 0.0001, 260 periods per year). `"AAPL"` gives an equity (252).
-   A mistyped pair (`"EUR/XYZ"`) or an invalid ticker is refused.
-2. **Load data up to `as_of`.** The provider returns cleaned OHLCV (sorted, deduplicated,
-   bad closes dropped, impossible bars widened). The graph filters to `<= as_of` again and
-   refuses to decide in two cases:
-   - fewer than 30 bars are available;
-   - the last bar is more than `max_data_staleness_days` (7) old, as with a dead feed or a
-     delisting.
-3. **Consult memory.** `resolve()` attaches outcomes to past decisions whose horizon has
-   elapsed by `as_of`. `lessons()` and `track_record()` go into the state, along with
-   `current_weight`.
-4. **Analyst team.** Four analysts are chosen by asset class: equity gets technical,
-   fundamentals, news and sentiment; FX gets technical, macro, news and sentiment. Each runs
-   `gather()` (tools), then `rules()` (the rule-based report, or an **abstention** when there
-   is no data). Only then, and only if it didn't abstain, does it make an optional LLM call.
-   Third-party text reaches the model only inside `<untrusted_data>` blocks.
-5. **Research debate.** Bull and bear speak alternately for `max_debate_rounds`. The
-   facilitator computes the weighted consensus `Σ wᵢ·confᵢ·signalᵢ / Σ wᵢ·confᵢ` and names
-   the winner using `decision_threshold`. Abstaining analysts are skipped when
-   `rules.abstain_without_data` is set. With an LLM, the facilitator returns a JSON verdict.
-6. **Trader.** It sets the target weight:
-   - `neutral + 2·score` when |score| exceeds the threshold, else `neutral`. The neutral
-     (strategic) weight comes from `risk.neutral_weight`: 1.0 for equities, 0.0 for FX.
-   - Equity weights are floored at 0 unless shorting is allowed.
-   - Stops go at `stop_atr_mult × ATR14` and targets at `take_profit_atr_mult × ATR14`.
-     Model-supplied levels on the wrong side of the entry are replaced.
-   - The size is cut by 25% if the instrument's hit rate over at least 5 resolved calls is
-     below 40%.
-7. **Risk team.** A shared fact sheet is computed:
-   - 20-day realised volatility;
-   - 1-day historical VaR95 and CVaR95 over 250 days;
-   - drawdown from the 60-day high;
-   - ATR14;
-   - the current position.
+### The agentic layer (`agentic_trader.agentic`)
 
-   Each analyst sizes from it:
-   - aggressive: `max(1.25·|w|, |vol-target w|)`;
-   - neutral: the volatility-targeted weight;
-   - conservative: `½·min(|w|, |vol-target w|)`, capped by VaR.
+| Module | Responsibility |
+|---|---|
+| `domain.py` | Frozen dataclasses: `Task`, `Plan`, `PlanStep`, `StepType`, `ToolDescriptor`, `ToolAnnotations`, `ToolRequest`/`ToolResult`, `Evidence`, `EvidenceType`, `Finding`, `PolicyDecision`, `Role`, `Capability`, `TaskState` and the legal `TRANSITIONS` |
+| `tools.py` | `ToolRegistry` (schemas derived from signatures, `register_descriptor` for remote tools), `coerce_arguments`, `ToolExecutor` (policy → gateway → coerce → timed run with retry → evidence, traced) |
+| `servers.py` | `DeskTools` and `build_registry`: 15 tools on `market_data`, `quant`, `knowledge`, `portfolio`, `execution`; `RecordingProvider` |
+| `policy.py` | Rules, `PolicyEngine`, `ROLE_CAPABILITIES`, `AutoApprovalGateway`, `QueuedApprovalGateway`, `DenyApprovalGateway` |
+| `planner.py` | `canonical_plan`, `propose_plan` (model), `validate_plan`, `make_plan` |
+| `harness.py` | `AgentHarness`, `TaskRun`: the state machine, tool batching, approvals, cancellation, governance steps |
+| `critic.py` | `Critic`: seven deterministic checks and an optional model critique that only lowers confidence |
+| `reporter.py` | `collect_facts`, template or model narrative, `number_audit`, `evidence_audit`, `Report` (JSON and markdown) |
+| `rag.py`, `knowledge/docs` | `KnowledgeBase` with a hashed TF-IDF embedder over 11 documents |
+| `tracing.py` | `Tracer` spans, `Metrics` (Prometheus text), JSON-lines logging |
+| `mcp_server.py` | The registry as an MCP stdio server; `discover`, `call`, `registry_from_stdio` |
+| `api.py` | FastAPI gateway with API-key roles |
 
-   In later rounds, each view moves 25% toward the others.
-8. **Portfolio manager.** Blends the latest views 25/50/25, or takes the LLM's weight. Then:
-   - it applies the **firm limits** in order: shorting policy, max position, VaR cap,
-     minimum trade size;
-   - it applies the **no-trade band**: it keeps the current position if the target is
-     within `rebalance_band`, and only if that position passes every limit today;
-   - it rebuilds the protective levels for the final direction.
+### The quant research layer
 
-   Every adjustment is recorded. `approved` is true when the final direction matches the
-   trader's.
-9. **Record.** The decision is logged to memory atomically. If `save_reports` is set,
-   `results/<SYM>/<date>/report.md` is written.
+| Module | Responsibility |
+|---|---|
+| `alpha.py` | Nine alphas, `compute_alphas`, `combine`, `alpha_report` (IC, decay, hit rate, spread, autocorrelation, correlations), `alpha_snapshot` |
+| `algo.py` | Volume profiles, intraday bars, TWAP / VWAP / POV / Almgren-Chriss schedules, `simulate_execution`, `plan_execution` |
+| `portfolio.py` | EWMA and Ledoit-Wolf covariance, five weighting schemes, `risk_contributions`, `construct` |
+| `stats.py` | `sharpe_stats`, `sharpe_ci_bootstrap`, `probabilistic_sharpe`, `expected_max_sharpe`, `deflated_sharpe`, `min_track_record`, `selection_report` |
+| `backtest.py` | Walk-forward agent backtest vs six baselines; `run_portfolio_backtest(weighting=...)` |
+| `evaluation.py` | Design / holdout / Q1-2024 harness with parallel workers and LLM usage accounting |
+| `quant/`, `cpp/` | Indicators (incl. rolling extremes, Spearman), risk, strategies, backtester with stops and carry, Almgren-Chriss; numpy twin |
 
-## Backtesting and evaluation
+## One task, step by step
 
-**Walk-forward** (`run_agent_backtest`). The graph runs at every `rebalance_every`-th bar
-with data up to that close and **the position it currently holds**. Each decision's weight
-and stop/take levels are held until the next rebalance. The C++ engine then applies:
+1. **Submit.** `AgentHarness.run(Task(symbol, as_of, role, current_weight, question))` creates a
+   `TaskRun` with its own `EvidenceStore` and `Tracer`.
+2. **Plan** (PLANNING → VALIDATING_PLAN). The canonical plan is knowledge search, alpha
+   snapshot, the asset class's analysts, debate, trader, risk, then critic, validation and
+   finalisation. With `agentic.llm_planner` the model proposes steps and the validator makes
+   them safe. Every tool step is pre-checked against policy for the task's role; a denial fails
+   the task here, before anything runs.
+3. **Prepare** (EXECUTING). `TradingGraph.prepare` loads history through the
+   `RecordingProvider`, so even the price history is a policy-checked tool call with DATA
+   evidence. The guards apply: at least 30 bars, latest bar within 7 days, finite position.
+4. **Tool batch.** Consecutive tool steps run in parallel through the `ToolExecutor`.
+   `knowledge.search` passages go into `state.knowledge`; `quant.alpha` into `state.alpha`.
+   If a step needs approval and the gateway has no answer, the run pauses in
+   AWAITING_APPROVAL with `pending_step` set.
+5. **Analysts.** Each analyst runs through the graph with the recording provider, so its
+   news, social, fundamentals and macro calls are policy-checked and evidenced. The harness
+   records CALCULATION evidence for the analyst's facts and DECISION evidence for the report,
+   attributes every record added during the stage to the report's `evidence_ids`, and adds a
+   `Finding` unless the analyst abstained.
+6. **Debate, trader, risk.** The same, with the facilitator's verdict citing every analyst's
+   evidence, the proposal citing the verdict, and the decision citing the proposal, the risk
+   facts and every risk view.
+7. **Critic** (CRITIQUING). Deterministic checks, then the optional model critique. The
+   multiplier is at most 1.
+8. **Validate** (VALIDATING_EVIDENCE). Findings whose evidence ids do not resolve are dropped
+   and the fact is recorded.
+9. **Finalise** (FINALISING → COMPLETED). The report is built and audited, the decision's
+   confidence is scaled by the critic's multiplier, and the decision is written to memory.
 
-- **Costs:** commission and slippage per unit of turnover, with the FX spread converted to
-  bps at the window's first price.
-- **Financing:** per-bar carry from point-in-time rates for FX, and a borrow fee on equity
-  shorts.
-- **Stops (optional):** intraday stops and targets that fill at the level, or at the open
-  on a gap; the stop is assumed first when both trade; the position re-arms at the next
-  rebalance.
+At any point, `cancel()` sets a flag checked between steps; an exception ends the run in
+FAILED with the reason; `IllegalTransition` is raised if code tries to skip a state.
 
-The six baselines run on the same bars, costs and carry: the paper's five plus
-**volatility-targeted buy & hold**.
+## The decision inside the task
 
-**Portfolio** (`run_portfolio_backtest`). One sleeve per symbol with equal capital. Sleeve
-returns are averaged daily, with equity and FX calendars aligned (a missing bar counts as a
-0 return).
+The desk's own logic is unchanged by the harness. In brief (details in the v0.3 sections of
+[the evaluation](../evaluation/evaluation.md)):
 
-**Evaluation** (`evaluate`). Runs every (period, symbol) pair. It reports:
+- **Analysts** produce a signal in [-1, 1] and a confidence, or abstain.
+- **Facilitator** computes `Σ wᵢ·confᵢ·signalᵢ / Σ wᵢ·confᵢ` and names the winner above a 0.10
+  threshold.
+- **Trader** sets `neutral + 2·score` (equities 1.0, FX 0.0 when neutral), ATR-based stop and
+  target, and reads retrieved policy passages.
+- **Risk team** sizes by volatility targeting (neutral), 1.25× or vol-target (aggressive),
+  half and VaR-capped (conservative).
+- **Portfolio manager** blends 25/50/25, applies shorting policy, max position, VaR cap and
+  minimum trade, then the no-trade band, and rebuilds the protective levels if the direction
+  changed.
 
-- per-strategy aggregates and head-to-head Sharpe counts;
-- failures as data rather than exceptions;
-- results as JSON that round-trips.
+## Backtesting, research and evaluation
 
-The default protocol is **design** 2016–2021 (every choice), **holdout** 2022–2026 (run
-once) and the paper's **Q1 2024** window. See [../evaluation/evaluation.md](../evaluation/evaluation.md).
+- **Walk-forward** (`run_agent_backtest`): the full graph at each rebalance with the held
+  position; stops and per-bar carry in the C++ engine; six baselines including
+  volatility-targeted buy & hold.
+- **Portfolio** (`run_portfolio_backtest`): one sleeve per symbol; `weighting` in `equal`,
+  `inverse_vol`, `risk_parity`, `min_variance`, `mean_variance`, re-estimated from trailing
+  returns at each rebalance and applied identically to every strategy.
+- **Alphas** (`alpha_report`): IC and t-stat, decay, hit rate, tercile spread, autocorrelation,
+  correlations, combination.
+- **Execution** (`plan_execution`, `simulate_execution`): decision → parent order → schedule →
+  fills with spread and square-root impact → implementation shortfall.
+- **Statistics** (`selection_report`): bootstrap Sharpe interval, probabilistic and deflated
+  Sharpe, minimum track record.
+- **Evaluation** (`evaluate`): design 2016–2021 for choices, holdout 2022–2026 run once,
+  Q1 2024 reference window; `RULES_V02` for before/after.
 
 ## Design decisions
 
-**Tools, then rules, then LLM.** Every agent does its numeric work before any model is
-involved, and always has a rule-based answer. This gives three properties:
+**Tools are the only path to data.** Agents keep calling a provider interface, but under the
+harness that provider is `RecordingProvider`, which turns every call into a catalogued tool
+call. One registry serves the executor, the planner's catalogue and the MCP server, so a
+capability cannot exist in one place and not the others.
 
-- the pipeline is deterministic offline;
-- an LLM failure degrades to a sensible answer, never an exception;
-- the rule-based firm is the control for measuring what the LLM adds.
+**Evidence is written before interpretation.** The executor records the digest of a tool's
+payload before returning it. Findings cite ids; the validator drops what does not resolve;
+the reporter audits the narrative. Tampering with a payload after the fact is detectable
+because `resolve` re-hashes it.
 
-**Structured state over chat history.** Following the paper, agents read concise typed
-documents, not an ever-growing transcript. Natural language exists only inside the two
-debates, and even there it is stored as structured turns.
+**Policy is code that names its rule.** Ordered rules with a fail-closed default; roles map
+to capabilities; state-changing tools always need approval; the approval identity is the tool
+and its arguments within a task. Prompts describe the rules for the model's benefit, but they
+are not what enforces them.
 
-**Guardrails after the model; injection contained before it.** Third-party text is fenced
-in `<untrusted_data>` blocks that can't be closed from inside. Model output is clipped and
-coerced. The portfolio manager's firm limits run after any model decision, so no prompt can
-produce an oversized or forbidden position.
+**The harness owns the loop.** A transition table, not a flag, decides what states are
+reachable. The governance steps are appended to any plan, including hand-built ones. Agents
+cannot schedule state changes; only the executor, under policy, can perform them.
 
-**A benchmark, then tilts.** With no view, the firm holds the strategic weight rather than
-cash. This is how real mandates work, and it is the only v0.3 change that measurably helped
-on design data. It works through exposure to the equity premium, not better forecasting,
-and the evaluation says so.
+**The critic can only lower confidence.** Deterministic checks are the review; a model may
+add concerns and a multiplier that is clipped to at most 1.
 
-**Point-in-time or nothing.** On real data, FX macro inputs come from FRED as they were known
-on each date: publication-lagged, staleness-checked, and never replaced by today's
-illustrative table for old dates. Yahoo news and fundamentals are refused for dates they
-can't serve, which also removed a network call per historical decision (backtests ran about
-8× faster).
+**Audits accept rounding, not invention.** A number in the narrative must match a fact when
+the fact is rounded to the number's displayed precision; counts are facts too, so nothing is
+exempt.
 
-**C++ with a numpy twin.** The C++ core is the performance path and the reference for
-numerical conventions:
+**Tools, then rules, then LLM.** Every agent has a rule-based answer; the model's structured
+reply replaces it when valid; failures degrade to rules. The rule-based desk is also the
+control for measuring what a model adds.
 
-- warm-up values are NaN;
-- rolling statistics use the population estimator;
-- RSI and ATR use Wilder smoothing;
-- EMA is seeded with an SMA;
-- stops fill as in diagram 10.
+**Point in time or nothing.** Prices are clipped twice; FRED values are lagged and staleness
+checked; the static macro table is never used for historical real data; alphas use only past
+bars; portfolio covariance uses only trailing returns.
 
-`pycore.py` mirrors it exactly, and randomised CI tests cross-check the two.
+**C++ with a numpy twin, cross-checked.** The numpy mirror keeps the package usable without a
+compiler, and CI proves the two agree, including the new rolling extremes, Spearman and
+Almgren-Chriss functions.
 
-**Explicit timing convention.** The weight decided at the close of bar *t* earns the return
-from *t* to *t + 1*. Weights set on the final bar earn nothing, and a unit test checks this.
-
-**Honest evaluation by construction.** `RULES_V02` keeps the old behaviour reproducible, so
-every change has a before and after. Choices are made on the design period, and the holdout
-runs once.
+**Measured, then decided.** New rules, analysts and alphas go through the design period
+before they can become defaults; the alpha analyst was measured and left off.
 
 ## Configuration surface
 
-See `config.py` for the full dictionary. The most important keys:
+See `config.py` for the full dictionary.
 
 | Key | Default | Effect |
 |---|---|---|
-| `llm_provider` | `offline` | `anthropic` enables Claude |
-| `deep_think_llm` / `quick_think_llm` | `claude-opus-5` / `claude-haiku-4-5` | Model per tier |
-| `deep_effort` / `quick_effort` | `high` / `low` | Adaptive-thinking effort |
-| `llm_timeout_s` / `max_llm_calls` | 300 / None | Request timeout; hard call cap per graph |
-| `max_debate_rounds` / `max_risk_discuss_rounds` | 2 / 1 | Debate lengths |
-| `analyst_weights` | technical 1, fundamentals 1, macro 1, news 0.7, sentiment 0.5 | Consensus weights |
-| `decision_threshold` | 0.10 | Minimum \|score\| for a directional view |
-| `rules.tsmom` / `trend_filtered_reversal` / `abstain_without_data` | all False | Research switches; measured as noise on design data |
-| `risk.neutral_weight` | equity 1.0, fx 0.0 | Strategic weight held with no view |
-| `risk.rebalance_band` | 0.10 | No-trade band around the current position |
-| `risk.max_position` / `max_var_95` / `min_trade_weight` | 1.0 / 0.02 / 0.05 | Firm limits |
-| `risk.allow_short_equity` / `allow_short_fx` | False / True | Shorting policy |
-| `risk.stop_atr_mult` / `take_profit_atr_mult` | 2.0 / 3.0 | Protective levels |
-| `backtest.use_stops` | False | Enforce the levels intraday in backtests |
-| `costs.*` | 1 bps + 1 bps slippage + 1% borrow; FX 0.8-pip spread + 0.2 bps | Backtest costs |
-| `fx_macro_source` | `auto` | Static table for synthetic data, point-in-time FRED for real data |
-| `max_data_staleness_days` | 7 | Refuse to decide on a feed older than this |
+| `llm_provider`, `deep_think_llm`, `quick_think_llm`, `deep_effort` | `offline`, `claude-opus-5`, `claude-haiku-4-5`, `high` | Model tiers |
+| `llm_timeout_s`, `max_llm_calls`, `llm_anonymize` | 300, None, False | Timeout; hard call cap; anonymised prompts |
+| `agentic.approval` | `auto` | `auto`, `queued` or `deny` gateway |
+| `agentic.llm_planner`, `llm_critic`, `llm_reporter` | False, True, True | Which governance steps may use the model |
+| `agentic.use_alpha_tool`, `critic_divergence`, `tool_timeout_s` | True, 0.6, 30 | Canonical plan and executor settings |
+| `agentic.symbol_universe`, `deny_tools`, `api_keys` | None, [], dev keys | Policy inputs and API roles |
+| `analysts` | asset-class default | Add `"alpha"` for the alpha analyst |
+| `risk.neutral_weight`, `rebalance_band`, `max_position`, `max_var_95`, `min_trade_weight` | equity 1.0 / fx 0.0, 0.10, 1.0, 0.02, 0.05 | Strategic weight, band, firm limits |
+| `risk.stop_atr_mult`, `take_profit_atr_mult` | 2.0, 3.0 | Protective levels |
+| `backtest.use_stops`, `costs.*`, `fx_macro_source`, `max_data_staleness_days` | False, bps and pips, `auto`, 7 | Backtest and data behaviour |
 
 ## Extension points
 
 | To add | Do this |
 |---|---|
-| A data source (Reddit, StockTwits, a news API) | Subclass `MarketDataProvider`, call `super().__init__(config)`, implement the methods it can serve and return only data available at `as_of` (pass prices through `clean_ohlcv`). Register it in `data/__init__.py:PROVIDERS` |
-| An analyst | Subclass `Analyst` with `name`, `role`, `instructions`, `gather()` and `rules()`; list free-text fact keys in `untrusted_keys`; return `self.abstain(...)` when there is no data; add it to `ANALYSTS` |
-| An LLM provider | Implement `complete(system, prompt, *, deep) -> str | None` and pass `llm=` to `TradingGraph`. `max_llm_calls` wraps it automatically |
-| A quant routine | Implement it in `cpp/`, bind it in `module.cpp`, mirror it in `pycore.py`, export it in `quant/__init__.py`, and add a cross-check test |
-| A baseline | Add it to `backtest.baseline_weights()` (and to C++ if it is a reusable strategy) |
-| A firm limit | Extend `PortfolioManager.guardrails()`. It runs after any model output, and the no-trade band respects it automatically |
-| A rule change | Put it behind a `config["rules"]` switch, run it through `evaluate` on the design period, then judge it on the holdout |
+| A tool | A method on `DeskTools` (JSON-safe payload), registered in `build_registry` with `ToolAnnotations` (read-only, risk, required capabilities, evidence type). It is then in-process, over MCP and in the planner's catalogue, under policy |
+| A policy rule | A callable `PolicyContext -> PolicyDecision | None`; place it before `allow_rule` in the tuple passed to `PolicyEngine` |
+| A critic check | Append a `Check` in `Critic.review`; use severity `error` for anything that must fail the review |
+| A knowledge document | A Markdown file in `agentic/knowledge/docs`; headings become chunks |
+| An analyst | Subclass `Analyst` (`gather`, `rules`, `untrusted_keys`, `abstain`) and register it in `ANALYSTS` |
+| An alpha | A function `AlphaInputs -> ndarray` in `ALPHAS` (and the asset-class lists) |
+| A weighting scheme | A function over a covariance in `portfolio.py`, added to `METHODS` and `construct` |
+| An execution algorithm | A schedule function in `algo.py` and a branch in `ExecutionPlan.schedule` |
+| A data source | Subclass `MarketDataProvider`, pass prices through `clean_ohlcv`, return only data available at `as_of` |
+| A rule change | Behind a `config["rules"]` switch; choose on the design period with `evaluate`; judge once on the holdout |
+| A quant routine | C++ plus `pycore.py` mirror, bound in `module.cpp`, exported in `quant/__init__.py`, cross-checked in tests |

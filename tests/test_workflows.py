@@ -145,7 +145,7 @@ def test_cli_backtest_portfolio_evaluate_info(tmp_path, capsys):
     assert main(["portfolio", "AAPL,EURUSD", "--start", "2024-01-02", "--end", "2024-02-29",
                  "--every", "10", "--out", str(tmp_path / "p.csv")]) == 0
     assert (tmp_path / "p.csv").exists()
-    assert main(["evaluate", "AAPL", "--periods", "paper", "--every", "10"]) == 0
+    assert main(["evaluate", "AAPL", "--periods", "q1_2024", "--every", "10"]) == 0
     assert main(["info"]) == 0
     assert '"neutral_weight"' in capsys.readouterr().out
 

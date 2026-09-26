@@ -25,6 +25,10 @@ PYBIND11_MODULE(_atcore, m) {
     m.def("realized_vol", &realized_vol, py::arg("close"), py::arg("n"),
           py::arg("periods_per_year"));
     m.def("atr", &atr, py::arg("high"), py::arg("low"), py::arg("close"), py::arg("n") = 14);
+    m.def("rolling_max", &rolling_max, py::arg("x"), py::arg("n"));
+    m.def("rolling_min", &rolling_min, py::arg("x"), py::arg("n"));
+    m.def("spearman", &spearman, py::arg("x"), py::arg("y"));
+    m.def("almgren_chriss", &almgren_chriss, py::arg("total"), py::arg("n"), py::arg("kappa"));
     m.def(
         "macd",
         [](const Series& c, int f, int s, int sig) {

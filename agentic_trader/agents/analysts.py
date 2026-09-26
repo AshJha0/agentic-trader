@@ -45,8 +45,8 @@ class Analyst(Agent):
                   for k in self.untrusted_keys if facts.get(k)]
         return (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}). "
-            f"As-of date: {state.as_of.isoformat()}. Last close: {state.last_price:.6g}.\n"
-            f"Data from your tools:\n{fmt_facts(plain)}\n"
+            f"As-of date: {state.as_of.isoformat()}. Last close: {state.fmt_px(state.last_price)}.\n"
+            f"Data from your tools:\n{fmt_facts(state.prompt_facts(plain))}\n"
             + ("\n".join(blocks) + "\n" if blocks else "")
             + f"\n{self.instructions}\nSignal direction refers to {_direction_note(state)}.\n"
             'JSON keys: "signal" (number in [-1, 1]), "confidence" (number in [0, 1]), '
@@ -59,7 +59,8 @@ class Analyst(Agent):
         # Nothing to analyse -> no model call (saves cost, and the model cannot
         # invent a view from an empty input).
         if not report.abstained:
-            data = self.ask_json(self.prompt(facts, state), ("signal", "confidence", "summary"))
+            data = self.ask_json(self.prompt(facts, state), ("signal", "confidence", "summary"),
+                                 state=state)
             if data:
                 kp = data.get("key_points") or []
                 report = AnalystReport(
@@ -70,6 +71,7 @@ class Analyst(Agent):
                     key_points=[str(k) for k in kp][:5] if isinstance(kp, list) else [],
                     facts=facts,
                     source="llm",
+                    rule_signal=report.signal,
                 )
         state.reports[self.name] = report
         return report
@@ -132,7 +134,8 @@ class TechnicalAnalyst(Analyst):
         if f["sma50"]:
             up = c > f["sma50"]
             s += 0.30 if up else -0.30
-            pts.append(f"Price {'above' if up else 'below'} 50-day SMA ({f['sma50']:.5g})")
+            # Scale-free wording: no raw price level in text that reaches a prompt.
+            pts.append(f"Price {abs(c / f['sma50'] - 1):.1%} {'above' if up else 'below'} the 50-day SMA")
         if f["sma50"] and f["sma200"]:
             golden = f["sma50"] > f["sma200"]
             uptrend, downtrend = golden, not golden
@@ -396,10 +399,66 @@ class SentimentAnalyst(Analyst):
         return AnalystReport(self.name, sig, conf, f"Crowd sentiment score {sig:+.2f}.", pts, f)
 
 
+# --------------------------------------------------------------------------
+class AlphaAnalyst(Analyst):
+    """Quant analyst: the alpha library's combined signal, weighted by measured IC.
+
+    Uses the ``quant.alpha`` tool output when the agentic harness ran it (so the
+    IC table is evidence); otherwise computes the snapshot from the state's
+    history. Alphas whose IC over the lookback is negative get zero weight.
+    """
+    name = "alpha"
+    role = ("Quantitative Alpha Analyst. You read a library of systematic signals (momentum, "
+            "reversal, breakout, volatility, carry) and their measured predictive power, and "
+            "give a direction for the next one to four weeks.")
+    instructions = ("Weight signals by their information coefficient; distrust a signal whose IC "
+                    "t-statistic is below 2. Report the combined view and the strongest components.")
+
+    def gather(self, state, provider):
+        from ..alpha import alpha_snapshot, compute_alphas, combine, forward_returns, information_coefficient
+        if state.alpha:
+            return dict(state.alpha)
+        df = state.history
+        ins = state.instrument
+        carry = provider.carry_series(ins, df.index) if ins.is_fx else None
+        latest = alpha_snapshot(df, ins, carry)
+        ic = {}
+        if len(df) >= 120:
+            sig = compute_alphas(df, ins, None, carry)
+            fwd = forward_returns(df["Close"].to_numpy(float), 10)
+            for name in sig.columns:
+                v, t, n = information_coefficient(sig[name].to_numpy(), fwd)
+                ic[name] = {"IC": v, "t(IC)": t, "n": n}
+            latest["combined"] = combine(sig, {k: max(0.0, v["IC"]) if v["IC"] == v["IC"] else 0.0
+                                               for k, v in ic.items()}).iloc[-1]
+            latest["combined"] = None if latest["combined"] != latest["combined"] else float(latest["combined"])
+        return {"horizon": 10, "latest": latest, "ic": ic}
+
+    def rules(self, f, state):
+        latest, ic = f.get("latest") or {}, f.get("ic") or {}
+        comb = latest.get("combined")
+        if comb is None:
+            return self.abstain("Not enough history for the alpha library.", f)
+        pts = []
+        ranked = sorted(((k, v) for k, v in ic.items() if v.get("IC") is not None and k != "combined"),
+                        key=lambda kv: -abs(kv[1]["IC"]))
+        for name, v in ranked[:3]:
+            val = latest.get(name)
+            pts.append(f"{name}: value {val:+.2f}, IC {v['IC']:+.3f} (t {v['t(IC)']:.1f})"
+                       if val is not None else f"{name}: IC {v['IC']:+.3f}")
+        strong = sum(1 for _, v in ranked if abs(v.get("t(IC)") or 0) >= 2)
+        sig = clip(comb, -1, 1)
+        conf = clip(0.3 + 0.3 * abs(sig) + 0.05 * strong, 0, 0.8)
+        return AnalystReport(self.name, sig, conf,
+                             f"IC-weighted alpha composite {sig:+.2f}; {strong} of {len(ranked)} signals "
+                             f"have |t(IC)| >= 2 over the lookback.", pts, f)
+
+
 ANALYSTS = {
     "technical": TechnicalAnalyst,
     "fundamentals": FundamentalsAnalyst,
     "macro": MacroAnalyst,
     "news": NewsAnalyst,
     "sentiment": SentimentAnalyst,
+    "alpha": AlphaAnalyst,
 }

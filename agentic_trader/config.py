@@ -18,6 +18,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "use_refusal_fallback": True,
     "llm_timeout_s": 300,   # per request; adaptive thinking on the deep tier can take minutes
     "max_llm_calls": None,  # hard cap per TradingGraph (None = unlimited); beyond it agents use rules
+    # Hide ticker, calendar and price level from the model (anonymize.py). Use it for
+    # any backtest inside the model's training period: otherwise the model can recall
+    # what happened next instead of reasoning from the data.
+    "llm_anonymize": False,
 
     # ---- Workflow ------------------------------------------------------------
     "analysts": None,  # None -> default set per asset class (see graph.DEFAULT_ANALYSTS)
@@ -25,6 +29,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_risk_discuss_rounds": 1,
     "analyst_weights": {
         "technical": 1.0, "fundamentals": 1.0, "macro": 1.0, "news": 0.7, "sentiment": 0.5,
+        "alpha": 1.0,
     },
     "decision_threshold": 0.10,  # |consensus score| below this -> no directional view
     # Rule-based reasoning switches. Each is a separately measured change; the
@@ -92,6 +97,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "fx_inflation": {
         "USD": 2.7, "EUR": 2.0, "GBP": 3.6, "JPY": 3.0, "CHF": 0.1,
         "AUD": 2.1, "CAD": 1.7, "NZD": 2.7, "SEK": 0.8, "NOK": 3.0,
+    },
+
+    # ---- Agentic layer (agentic_trader.agentic) ----------------------------------
+    "agentic": {
+        "approval": "auto",          # auto | queued | deny: what happens to REQUIRE_APPROVAL
+        "llm_planner": False,        # let the model propose the plan (validated either way)
+        "llm_critic": True,          # optional model critique (can only lower confidence)
+        "llm_reporter": True,        # model-written executive summary (audited either way)
+        "use_alpha_tool": True,      # run quant.alpha in the canonical plan
+        "critic_divergence": 0.6,    # max |model signal - rule signal| before the critic flags it
+        "tool_timeout_s": 30.0,
+        "symbol_universe": None,     # list of allowed symbols for tool calls (None = any valid)
+        "deny_tools": [],
+        # API keys -> roles for `agentic-trader serve`. Development values only.
+        "api_keys": {"dev-viewer-key": "viewer", "dev-analyst-key": "analyst",
+                     "dev-trader-key": "trader", "dev-risk-key": "risk", "dev-admin-key": "admin"},
     },
 
     # ---- Output --------------------------------------------------------------

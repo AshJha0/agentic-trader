@@ -9,7 +9,7 @@ import numpy as np
 from .. import quant
 from ..state import FinalDecision, RiskView, TradingState
 from .base import Agent, clip, fmt_facts
-from .trader import action_for, allow_short, atr14, protective_levels, sane_levels
+from .trader import action_for, allow_short, atr14, policy_passages, protective_levels, sane_levels
 
 
 def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
@@ -88,14 +88,14 @@ class RiskAnalyst(Agent):
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}.\n"
             f"Trader proposal: {p.action.value} weight {p.target_weight:+.2f}; {p.rationale}\n\n"
-            f"Risk facts:\n{fmt_facts(f)}\n"
+            f"Risk facts:\n{fmt_facts(state.prompt_facts(f))}\n"
             + ("\nDiscussion so far:\n" + "\n".join(
                 f"{v.stance} (round {v.round}, {v.recommended_weight:+.2f}): {v.argument}"
                 for v in history) if history else "")
             + f'\n\nRound {rnd}. JSON keys: "recommended_weight" (signed fraction of capital), '
               '"argument" (<= 120 words, respond to the other analysts).'
         )
-        data = self.ask_json(prompt, ("recommended_weight", "argument"))
+        data = self.ask_json(prompt, ("recommended_weight", "argument"), state=state)
         if data:
             mx = f["max_position"]
             view = RiskView(self.stance, clip(data["recommended_weight"], -mx, mx),
@@ -144,18 +144,19 @@ class PortfolioManager(Agent):
 
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}, last "
-            f"close {state.last_price:.6g}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
+            f"close {state.fmt_px(state.last_price)}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
             f"Debate verdict: {state.debate.summary}\n\nTrader proposal: {p.action.value} "
             f"{p.target_weight:+.2f}. {p.rationale}\n\nRisk discussion:\n"
             + "\n".join(f"{v.stance} (round {v.round}, {v.recommended_weight:+.2f}): {v.argument}"
                         for v in state.risk_views)
-            + f"\n\nRisk facts and firm limits:\n{fmt_facts(f)}\n"
+            + f"\n\nRisk facts and firm limits:\n{fmt_facts(state.prompt_facts(f))}\n"
             + ("\nLessons from past decisions:\n" + "\n".join(state.lessons) + "\n"
                if state.lessons else "")
+            + policy_passages(state)
             + '\nJSON keys: "target_weight" (final signed fraction of capital), "confidence" '
               '([0, 1]), "rationale" (2-4 sentences explaining approval/resizing/rejection).'
         )
-        data = self.ask_json(prompt, ("target_weight", "rationale"))
+        data = self.ask_json(prompt, ("target_weight", "rationale"), state=state)
         if data:
             w = clip(data["target_weight"], -1, 1)
             conf = clip(data.get("confidence"), 0, 1, conf)

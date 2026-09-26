@@ -82,7 +82,9 @@ class DecisionMemory:
                 verdict = f"was right: position {e.weight:+.2f} earned {e.pnl:+.2%}"
             else:
                 verdict = f"was wrong: position {e.weight:+.2f} lost {e.pnl:+.2%}"
-            e.lesson = (f"{e.as_of} {e.action} {symbol} at {e.price:.5g} {verdict} by "
+            # No raw price level in the lesson: it is fed back into prompts, which
+            # may be anonymised; the return and dates carry the information.
+            e.lesson = (f"{e.as_of} {e.action} {symbol} {verdict} by "
                         f"{e.resolved_on}. Reasoning then: {e.summary[:160]}")
             n += 1
         if n:
