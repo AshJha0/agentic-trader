@@ -41,20 +41,21 @@ Series wilder(const Series& x, int n, std::size_t start) {
 Series sma(const Series& x, int n) {
     check_window(n);
     Series out(x.size(), NaN);
-    // Running sum over the current NaN-free stretch: a NaN resets it, so leading
-    // NaNs (a derived series' warm-up) do not poison every later window.
-    double acc = 0.0;
-    int count = 0;
+    // Each window is summed directly, as rolling_std does. A running sum drifts by
+    // cancellation noise: 1.0 added then removed leaves ~1e-16, which a later window of
+    // 1e-38 values sees as its mean, and zscore then reports +-1 for a flat window (found
+    // by the hypothesis fuzzer). A NaN resets the NaN-free run, so leading NaNs (a
+    // derived series' warm-up) do not poison every later window, and no window straddles one.
+    int run = 0;
     for (std::size_t i = 0; i < x.size(); ++i) {
         if (std::isnan(x[i])) {
-            acc = 0.0;
-            count = 0;
+            run = 0;
             continue;
         }
-        acc += x[i];
-        if (count == n) acc -= x[i - n];
-        else ++count;
-        if (count == n) out[i] = acc / n;
+        if (++run < n) continue;
+        double acc = 0.0;
+        for (std::size_t j = i + 1 - n; j <= i; ++j) acc += x[j];
+        out[i] = acc / n;
     }
     return out;
 }

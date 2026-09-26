@@ -37,6 +37,19 @@ def test_ema_skips_leading_nans():
     assert np.isnan(e[:4]).all() and e[4] == pytest.approx(2.0)
 
 
+def test_sma_sums_each_window_directly():
+    """A running sum leaves cancellation noise: 1.0 in and out left ~1e-16, which a later
+    window of 1e-38 values read as its mean, so zscore said +1 on one backend and 0 on the
+    other (found by the hypothesis fuzzer). Both backends now agree: the last window
+    [1.2e-38, 0] has a real spread, and its z-score is -1."""
+    x = np.array([1.0, 1.17549435e-38, 1.17549435e-38, 0.0])
+    for backend in (quant, pycore):
+        z = backend.zscore(x, 2)
+        assert np.isnan(z[0]) and z[1] == pytest.approx(-1.0) and z[2] == 0.0 and z[3] == pytest.approx(-1.0)
+        assert backend.sma(x, 2)[3] == pytest.approx(0.5 * 1.17549435e-38, rel=1e-12)
+        assert np.isnan(backend.sma([1.0, NAN, 2.0, 3.0], 2)[2]) and backend.sma([1.0, NAN, 2.0, 3.0], 2)[3] == 2.5
+
+
 def test_flat_prices():
     flat = np.full(40, 7.0)
     assert quant.zscore(flat, 20)[-1] == 0.0                # zero std -> 0, not NaN/inf

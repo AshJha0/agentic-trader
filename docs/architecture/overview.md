@@ -21,12 +21,13 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 |---|---|
 | `graph.py` | `TradingGraph` stages: `prepare` (point-in-time data, guards, memory), `run_analyst`, `run_debate`, `run_trader`, `run_risk`, `record`. `propagate()` runs them in order; `scan()` runs a watchlist |
 | `state.py` | Typed documents with `evidence_ids`: `AnalystReport` (with `abstained`, `rule_signal`), `DebateOutcome`, `TradeProposal`, `RiskView`, `FinalDecision`; `TradingState` with `current_weight`, `knowledge`, `alpha` |
-| `agents/analysts.py` | Technical, Fundamentals, Macro (FX), News, Sentiment and Alpha analysts; `untrusted_keys`; abstention |
+| `agents/analysts.py` | Technical, Fundamentals, Macro (FX), News, Sentiment, Alpha and (v0.6) cross-sectional XAlpha analysts; `untrusted_keys`; abstention |
 | `agents/researchers.py` | Bull, bear, facilitator, weighted consensus |
 | `agents/trader.py` | Strategic weight plus tilt, ATR stops and targets, `sane_levels`, policy passages in the prompt |
 | `agents/risk.py` | Three risk analysts, portfolio manager, firm limits, no-trade band |
 | `llm.py`, `anonymize.py` | Claude client with tiers, timeout, refusal fallback, usage and cost; call and dollar budgets (`BudgetedLLM`); anonymised prompts |
-| `data/` | `MarketDataProvider`, `clean_ohlcv`, synthetic / Yahoo / CSV providers, `fred.py` point-in-time macro with optional ALFRED vintages for revised series |
+| `data/` | `MarketDataProvider`, `clean_ohlcv`, synthetic / Yahoo / CSV providers, `fred.py` point-in-time macro with optional ALFRED vintages for revised series, `edgar.py` (v0.6) point-in-time fundamentals and filing-stream news from SEC EDGAR (facts by *filed* date, first prints) |
+| `prompts.py`, `calibration.py` | v0.6: content hashes of every prompt the desk can send (recorded in every evaluation); the dispersion / anchoring / drift harness for the desk's judgement on one frozen state |
 | `memory.py` | Atomic, corruption-tolerant decision log; horizon-gated outcomes |
 
 ### The agentic layer (`agentic_trader.agentic`)
@@ -45,7 +46,7 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 | `rag.py`, `knowledge/docs` | `KnowledgeBase` with a hashed TF-IDF embedder over 11 documents |
 | `tracing.py` | `Tracer` spans, `Metrics` (Prometheus text), JSON-lines logging |
 | `mcp_server.py` | The registry as an MCP stdio server; `discover`, `call`, `registry_from_stdio` |
-| `api.py` | FastAPI gateway with API-key roles; `serve_options` (TLS, no development keys off loopback); archive fallback on the read routes |
+| `api.py` | FastAPI gateway with API-key roles; `serve_options` (TLS, no development keys off loopback); archive fallback on the read routes; (v0.6) a bounded task pool with a queue limit (`503` when full) and multi-process serving over a shared task store |
 
 ### The quant research layer
 
@@ -55,9 +56,9 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 | `xalpha.py` | Cross-sectional alphas: per-day z-scores / ranks within asset class, per-date IC with an overlap-aware t-statistic, quantile spreads, breadth; `xalpha_report`, `xalpha_snapshot` |
 | `algo.py` | Volume profiles, intraday bars, TWAP / VWAP / POV / Almgren-Chriss schedules, `simulate_execution`, `plan_execution` |
 | `portfolio.py` | EWMA and Ledoit-Wolf covariance, five weighting schemes, hierarchical risk budgets across groups, `risk_contributions`, `construct` |
-| `stats.py` | `sharpe_stats`, `sharpe_ci_bootstrap`, `probabilistic_sharpe`, `expected_max_sharpe`, `deflated_sharpe`, `min_track_record`, `selection_report` |
+| `stats.py` | `sharpe_stats`, `sharpe_ci_bootstrap`, `probabilistic_sharpe`, `expected_max_sharpe`, `deflated_sharpe`, `min_track_record`, `selection_report`, (v0.6) `paired_bootstrap` across instruments |
 | `backtest.py` | Walk-forward agent backtest vs six baselines with optional square-root market impact (`impact_coefficients`); `run_portfolio_backtest(weighting=..., class_budgets=...)` |
-| `evaluation.py` | Design / holdout / Q1-2024 / reserve harness over the core and extended universes, with parallel workers and LLM usage accounting |
+| `evaluation.py` | Design / holdout / Q1-2024 / reserve harness over the core and extended universes, with parallel workers, LLM usage accounting, (v0.6) repeated runs, cross-instrument paired bootstraps and the prompt hashes in `meta` |
 | `quant/`, `cpp/` | Indicators (incl. rolling extremes, Spearman), risk, strategies, backtester with stops and carry, Almgren-Chriss; numpy twin |
 
 ## One task, step by step

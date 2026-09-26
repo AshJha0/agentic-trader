@@ -76,7 +76,7 @@ Every agent is constructed as `Agent(llm, config)`; `RiskAnalyst` also takes a s
 
 | Class | Entry point | Tier |
 |---|---|---|
-| `TechnicalAnalyst`, `FundamentalsAnalyst`, `MacroAnalyst`, `NewsAnalyst`, `SentimentAnalyst`, `AlphaAnalyst` | `run(state, provider) -> AnalystReport` | quick |
+| `TechnicalAnalyst`, `FundamentalsAnalyst`, `MacroAnalyst`, `NewsAnalyst`, `SentimentAnalyst`, `AlphaAnalyst`, `XAlphaAnalyst` | `run(state, provider) -> AnalystReport` | quick |
 | `BullResearcher`, `BearResearcher` | `speak(state, round, history) -> DebateTurn` | deep |
 | `DebateFacilitator` | `judge(state, turns) -> DebateOutcome` | deep |
 | `Trader` | `run(state) -> TradeProposal` | deep |
@@ -110,6 +110,38 @@ registry. To add an analyst, subclass `analysts.Analyst` (`name`, `role`, `instr
 `fundamentals(instrument, as_of)`, `macro(instrument, as_of)`, `carry_series(instrument,
 dates)`; `real_world` class attribute. Implementations: `SyntheticProvider`, `YahooProvider`,
 `CSVProvider`; `get_provider(config)`, `PROVIDERS`; `base.fx_macro`.
+
+`YahooProvider.history` downloads the union of every range asked so far and, since v0.6,
+always through today, so a walk-forward caller (or the cross-sectional analyst asking for 45
+peers) never triggers a download per step; `clip_history` applies the point-in-time cut at
+the requested end. `YahooProvider` (v0.6) serves historical **fundamentals and news from SEC EDGAR** when a contact
+User-Agent is configured (`EDGAR_USER_AGENT="Name email@domain"` in the environment or `.env`,
+or `config["edgar_user_agent"]`; the SEC refuses requests without one). `edgar=False` or
+`--no-edgar` turns it off; `edgar_cache_dir` / `--edgar-cache` caches every endpoint call as
+JSON on disk; `edgar_ciks` overrides ticker → CIK (predecessor filers after a reorganisation;
+`XOM` is shipped); `edgar_cache_max_age_days` (7; `None` = forever) re-fetches cached endpoint files
+older than that, so a reused cache cannot hide new filings from a live decision. Without a contact, both fall back to the Yahoo-only behaviour with one warning.
+
+`edgar.EdgarClient(user_agent=None, cache_dir=None, fetch=None, min_interval=0.11, ciks=None)`:
+`cik(ticker)`, `profile(ticker)` (name, SIC), `filings(ticker)` (every filing with its date, form,
+8-K item codes and accession), `facts(ticker)` (every XBRL fact as a long frame with the date it
+was *filed*), `news(ticker, as_of, lookback_days) -> list[NewsItem]` (8-K items mapped to
+headlines with a mild tone score, periodic and ownership filings, insider Form 4 counts; routine
+prospectus supplements are excluded) and `fundamentals(ticker, as_of, price=None) -> dict`
+(`report_period_end`, `filed`, `lag_days`, `revenue_ttm`, `revenue_growth_yoy`, `net_margin`,
+`eps_ttm`, `pe_ratio`, `debt_to_equity`, `fcf_yield`; `eps_surprise` and `insider_net_buying`
+are `None` — EDGAR has no consensus data — and funds/trusts (SIC 6221, index ETFs) return `{}`).
+`price` must be the close *as traded* on `as_of` and `splits` maps split ex-dates to ratios: every
+EPS and share-count print is brought to the `as_of` share basis (`rebase_per_share`) before quarters
+are mixed, which is what `YahooProvider` supplies from a second, unadjusted download
+(`as_traded_close`, `splits`). Year-over-year growth is reported only when the two trailing
+years are exactly a year apart.
+Point in time means: a fact or filing exists at `as_of` iff `filed <= as_of`, and a restated
+value never replaces the first print. Quarterly flows are rebuilt from the reported spans
+(`quarterly_series`: direct quarters, year-to-date differencing, Q4 from the 10-K, 12/16-week
+fiscal quarters) and summed with `ttm`. `EdgarClient.from_config(config)` returns `None` when
+EDGAR is off or unconfigured; `edgar_user_agent(config)` resolves the contact. At most ten
+requests per second are made and every response is memoised.
 
 `fred.FredClient(vintages=False, vintage_step_days=31, cache_dir=None, fetch=None)`:
 `value_asof(spec, as_of)`, `series_asof(spec, dates)`, `rate(ccy, as_of)`, `inflation(ccy,
@@ -154,7 +186,7 @@ Also: `backtest_config_for(...)`, `baseline_weights(full, allow_short, target_vo
 
 ### Evaluation (`agentic_trader.evaluation`)
 
-#### `evaluate(symbols=None, periods=None, config=None, rebalance_every=5, provider=None, progress=None, llm=None, workers=1) -> EvaluationResult`
+#### `evaluate(symbols=None, periods=None, config=None, rebalance_every=5, provider=None, progress=None, llm=None, workers=1, repeats=1) -> EvaluationResult`
 
 `symbols` defaults to `UNIVERSES["all"]` (60 instruments); `periods` to the three
 `DEFAULT_PERIODS` of `PERIODS` (`design` 2016-01-04 → 2021-12-31, `holdout` 2022-01-03 →
@@ -164,6 +196,17 @@ Also: `backtest_config_for(...)`, `baseline_weights(full, allow_short, target_vo
 from `universe_group(symbol)`. `EvaluationResult`: `rows`, `meta` (incl. LLM usage, impact and
 vintage settings), `summary(period=None, universe=None)`, `head_to_head(universe=None)`,
 `to_json` / `from_json`.
+
+v0.6 additions. `repeats > 1` runs the *agent* that many times per (period, symbol) — the
+baselines once — and tags every row with `run`; `run_dispersion(metric="Sharpe")` reports, per
+period, the mean across instruments of the across-run standard deviation and range (the
+model's own variance; zero offline). `paired(baseline="Buy&Hold", metric="Sharpe", period=None,
+universe=None, strategy=AGENT, n_boot=10000, seed=0) -> stats.PairedBootstrap` bootstraps the
+mean per-instrument difference across the universe (instruments resampled with replacement,
+pairs kept together; repeated runs enter as their mean); `paired_table(metric, universe)` does it
+for every period and baseline (`n`, mean difference, 95% interval, two-sided `p`, `wins`).
+`meta` also records `repeats`, `prompts` (the prompt registry, see below), `lookback_days`,
+`alpha_lookback_days` and `edgar`.
 
 `CORE_UNIVERSE` (`equity`, `fx`: the 15 instruments every rule choice was made on),
 `EXTENDED_UNIVERSE` (`equity`, `macro_etf`, `fx`: 45 never consulted), `UNIVERSES`
@@ -218,23 +261,25 @@ with retry → evidence record (`FAILED` on error) → metrics and span.
 
 ### Desk tools (`servers.py`)
 
+`lookback_days=None` (the default everywhere) resolves to `config["lookback_days"]` (400) for `market_data.history`, `quant.technical`, `quant.risk` and `portfolio.construct`, and to `config["alpha_lookback_days"]` (900) for `quant.alpha` and `quant.xalpha`.
+
 `DeskTools(provider, config, knowledge=None, positions=None, capital=None)` and
 `build_registry(tools)` give 16 tools on five servers:
 
 | Tool | Arguments | Evidence | Notes |
 |---|---|---|---|
-| `market_data.history` | `symbol, as_of, lookback_days=400` | DATA | OHLCV up to the close |
+| `market_data.history` | `symbol, as_of, lookback_days=None` | DATA | OHLCV up to the close |
 | `market_data.news`, `market_data.social` | `symbol, as_of, lookback_days=7` | DATA | Published ≤ `as_of` |
 | `market_data.fundamentals`, `market_data.macro` | `symbol, as_of` | DATA | Point in time |
-| `quant.technical` | `symbol, as_of, lookback_days=400` | CALCULATION | Indicator snapshot |
-| `quant.risk` | `symbol, as_of, proposed_weight=0, lookback_days=400` | CALCULATION | Vol, VaR, CVaR, drawdown, ATR, limits |
-| `quant.alpha` | `symbol, as_of, horizon=10, lookback_days=900` | CALCULATION | Snapshot, IC table, best three (needs 300 bars) |
-| `quant.xalpha` | `symbols, as_of, horizon=10, lookback_days=900` | CALCULATION | Cross-sectional scores per symbol, per-date IC table, best three, groups (≥ 3 symbols, 300 bars each) |
+| `quant.technical` | `symbol, as_of, lookback_days=None` | CALCULATION | Indicator snapshot |
+| `quant.risk` | `symbol, as_of, proposed_weight=0, lookback_days=None` | CALCULATION | Vol, VaR, CVaR, drawdown, ATR, limits |
+| `quant.alpha` | `symbol, as_of, horizon=10, lookback_days=None` | CALCULATION | Snapshot, IC table, best three (needs 300 bars) |
+| `quant.xalpha` | `symbols, as_of, horizon=10, lookback_days=None` | CALCULATION | Cross-sectional scores per symbol, per-date IC table, best three, groups (≥ 3 symbols, 300 bars each) |
 | `quant.baselines` | `symbol, start, end` | CALCULATION | Six baselines' CR, Sharpe, MDD |
 | `knowledge.search` | `query, k=3` | DOCUMENT | `k` in 1–10 |
 | `knowledge.list_documents` | — | DOCUMENT | |
 | `portfolio.position` | `symbol` | DATA | Weight and capital |
-| `portfolio.construct` | `symbols, targets, as_of, method="risk_parity", lookback_days=400` | CALCULATION | Trailing covariance |
+| `portfolio.construct` | `symbols, targets, as_of, method="risk_parity", lookback_days=None` | CALCULATION | Trailing covariance |
 | `execution.plan` | `symbol, as_of, target_weight, current_weight=0, algo=None` | CALCULATION | Simulated; no order |
 | `execution.submit_order` | `symbol, side, quantity, note=""` | ORDER | High risk, not read-only: always needs approval; writes a ticket only |
 
@@ -348,9 +393,18 @@ JSON lines.
 
 ### HTTP API (`api.py`; needs `pip install "agentic-trader[api]"`)
 
-`create_app(harness=None, graph=None, config=None, api_keys=None)` returns a FastAPI app;
-`serve(host="127.0.0.1", port=8000, config=None, ssl_certfile=None, ssl_keyfile=None,
-allow_dev_keys=False)` runs it with uvicorn (`agentic-trader serve`). Every route except
+`create_app(harness=None, graph=None, config=None, api_keys=None, workers=None,
+queue_limit=None)` returns a FastAPI app. Tasks run on a **bounded thread pool** (`workers`,
+default `config["agentic"]["workers"]` = 4) rather than one thread per request; `queue_limit`
+(default `config["agentic"]["queue_limit"]` = 64) caps the tasks accepted but unfinished, beyond
+which `POST /tasks` answers `503` with `Retry-After: 5`. `serve(host="127.0.0.1", port=8000,
+config=None, ssl_certfile=None, ssl_keyfile=None, allow_dev_keys=False, processes=1)` runs it
+with uvicorn (`agentic-trader serve [--workers N] [--processes N]`). `processes > 1` starts
+uvicorn worker processes from `app_factory` (the configuration travels through a private temp
+file named by `AGENTIC_TRADER_APP_CONFIG`) and **requires a task store** (`multiprocess_options`
+refuses otherwise): each process owns its live runs, every process serves every record through
+the store, and a cancel or approval that lands on the wrong process answers `409`; a queued
+approval gateway therefore needs a sticky load balancer or one process. Every route except
 `/health` and `/metrics` needs an `X-API-Key` header mapped to a role
 (`config["agentic"]["api_keys"]`, development values by default; an override *replaces* them).
 
@@ -361,17 +415,17 @@ non-loopback bind without TLS logs a warning. `uses_dev_keys(api_keys)` is the c
 
 | Method and path | Capability | Returns |
 |---|---|---|
-| `GET /health` | — | `{status, tasks, live, archived, persistent, tools}` |
+| `GET /health` | — | `{status, tasks, live, archived, persistent, tools, workers, queue_limit, in_flight, running, queued, worker_pid}` |
 | `GET /metrics` | — | Prometheus text for every task |
 | `GET /tools` | any key | The catalogue |
 | `GET /tasks` | any key | Archived and live tasks (`task_id`, `symbol`, `as_of`, `role`, `state`, `live`) |
-| `POST /tasks` `{symbol, as_of, current_weight?, question?}` | `run_analytics` | `202 {task_id, state}`; the task runs in a thread |
+| `POST /tasks` `{symbol, as_of, current_weight?, question?}` | `run_analytics` | `202 {task_id, state}`; the task runs on the pool; `503` + `Retry-After` when `queue_limit` tasks are in flight |
 | `GET /tasks/{id}` | any key | The task record without the report, plus `live`; archived records from the store are served the same way |
 | `GET /tasks/{id}/report?format=json\|markdown` | any key | The report, or `409` before it exists |
 | `GET /tasks/{id}/trace`, `/evidence` | any key | Spans and summary; evidence rows |
-| `POST /tasks/{id}/cancel` | `run_analytics` | `{task_id, state}`; `409` for an archived task |
+| `POST /tasks/{id}/cancel` | `run_analytics` | `{task_id, state}`; `409` for an archived task or one owned by another process |
 | `GET /approvals` | `approve_trades` | Pending approvals |
-| `POST /approvals/{id}` `{approve, note?}` | `approve_trades` | `{approval_id, approved, task_id, state}`; `404` unknown, `409` already decided |
+| `POST /approvals/{id}` `{approve, note?}` | `approve_trades` | `{approval_id, approved, task_id, state}`; the run resumes on the task pool; `404` unknown (or queued on another process), `409` already decided |
 
 Errors: `401` missing or unknown key, `403` role lacks the capability, `404` unknown task,
 `422` invalid body.
@@ -434,6 +488,32 @@ Errors: `401` missing or unknown key, `403` role lacks the capability, `404` unk
 | `deflated_sharpe(sr, n, n_trials, var_trials_sr, skew=0, kurt=3)` | PSR against the expected maximum |
 | `min_track_record(sr, sr_benchmark=0, skew=0, kurt=3, confidence=0.95)` | Periods needed; `inf` when not above the benchmark |
 | `selection_report(chosen_returns, trial_sharpes_annual, periods_per_year=252) -> dict` | All of the above for a chosen variant |
+| `paired_bootstrap(a, b, n_boot=10000, ci=0.95, seed=0) -> PairedBootstrap` | v0.6. Bootstrap over *instruments* of the mean paired difference `a - b` (one value per instrument for two strategies): `n`, `mean_diff`, `ci_low`, `ci_high`, two-sided `p_value`, `wins`, `significant`. NaN pairs dropped; fewer than three pairs gives NaN bounds and `p = 1` |
+
+### Prompt registry (`agentic_trader.prompts`)
+
+`prompt_registry(config) -> {"bundle": hash, "agents": {name: {"system", "template"}}}` hashes
+every agent's system prompt (the text) and prompt-building code (the source of the agent's
+class chain; the user prompts are assembled inside their methods) with SHA-256 truncated to 16
+hex characters: `analyst:technical` … `analyst:xalpha`, `bull`, `bear`, `facilitator`, `trader`,
+`risk:aggressive|neutral|conservative`, `pm` and `firm_context`. `prompt_bundle_hash(config)` is
+the single number that identifies the whole prompt set; `evaluate` and `calibrate` record it, so
+two runs can be shown to have used identical wording without reading transcripts.
+
+### Calibration (`agentic_trader.calibration`)
+
+`calibrate(graph, symbol, as_of, n=5, anchors=(None, -0.5, 0.0, 0.5), progress=None) ->
+CalibrationReport` runs the desk `n` times at each anchor (`current_weight`; `None` = no book)
+on one frozen state and collects every decision (`samples`: `run`, `anchor`, `action`,
+`target_weight`, `confidence`, `approved`, `llm_share`, `trader_target`).
+`dispersion(anchor=None)` gives runs, std and range of the target weight, action agreement with
+the modal action and mean confidence; `anchoring()` the least-squares slope of the mean target
+on the anchor (0 ignores the book, 1 keeps whatever it holds); `compare(earlier)` the drift
+against a stored report on the same state (`same_prompts`, `mean_target_shift`, `std_change`,
+`action_distribution_distance` — total variation in [0, 1] — and the anchoring-slope change);
+`summary()`, `to_json` / `from_json`. CLI: `agentic-trader calibrate SYMBOL --date --n --anchors
+none,-0.5,0,0.5 [--compare earlier.json] [--out report.json]`. Offline the rules are
+deterministic (dispersion 0, agreement 1); the harness exists for the LLM desk.
 
 ### Quant core (`agentic_trader.quant`)
 
@@ -471,22 +551,23 @@ agentic-trader portfolio SYM1,SYM2,... --start D --end D [--every N] [--stops on
                                 [--weighting equal|inverse_vol|risk_parity|min_variance|mean_variance]
                                 [--class-budgets equity=0.6,fx=0.4] [--out returns.csv] [common]
 agentic-trader evaluate  [SYM1,...] [--universe core|extended|all] [--periods design,holdout,q1_2024,reserve]
-                                [--every N] [--workers N] [--out results.json] [common]
+                                [--every N] [--workers N] [--repeats N] [--out results.json] [common]
+agentic-trader calibrate SYMBOL [--date D] [--n N] [--anchors none,-0.5,0,0.5] [--compare earlier.json] [--out report.json] [common]
 agentic-trader alpha     SYMBOL --start D --end D [--horizon N] [--out signals.csv] [common]
 agentic-trader xalpha    SYM1,SYM2,... --start D --end D [--horizon N] [--standardise zscore|rank] [--out scores.csv] [common]
 agentic-trader execute   SYMBOL --target W [--current W] [--date D] [--capital X] [--algo twap|vwap|pov|ac]
                                 [--participation P] [--spread-bps X] [--impact X] [--seed N] [common]
 agentic-trader stats     returns.csv [--column NAME] [--ppy N] [--trials N] [--trial-sharpes a,b,c]
 agentic-trader tools     [--json] [common]
-agentic-trader serve     [--host H] [--port P] [--approval auto|queued|deny] [--task-db FILE]
+agentic-trader serve     [--host H] [--port P] [--approval auto|queued|deny] [--task-db FILE] [--workers N] [--processes N]
                                 [--ssl-cert PEM --ssl-key PEM] [--allow-dev-keys] [common]
 agentic-trader mcp       [common]
 agentic-trader info
 
 common: [--asset-class equity|fx] [--data synthetic|yahoo|csv] [--csv-dir DIR]
         [--llm offline|anthropic] [--deep-model ID] [--quick-model ID] [--deep-effort LEVEL]
-        [--rounds N] [--analysts a,b,c] [--allow-short] [--band X] [--max-llm-calls N] [--max-llm-cost USD]
-        [--fred-vintages] [--fred-cache DIR] [--rules default|v02] [--anonymize] [-v]
+        [--rounds N] [--analysts a,b,c] [--xalpha-universe core|extended|all|SYM,...] [--allow-short] [--band X] [--max-llm-calls N] [--max-llm-cost USD]
+        [--fred-vintages] [--fred-cache DIR] [--edgar-cache DIR] [--no-edgar] [--rules default|v02|v03] [--anonymize] [-v]
 ```
 
 `--impact` and `--capital` apply to `backtest`, `baselines`, `portfolio` and `evaluate`

@@ -51,6 +51,12 @@ your understanding. Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail 
 29. [Cross-sectional alphas: rank the room, not the stock](#29-cross-sectional-alphas-rank-the-room-not-the-stock)
 30. [Operating the desk: budgets in dollars, records that survive, keys that are real](#30-operating-the-desk-budgets-in-dollars-records-that-survive-keys-that-are-real)
 
+**Part VI — v0.6: real filings, statistical power, and the variance of a judgement**
+
+31. [Point in time is a property of the source](#31-point-in-time-is-a-property-of-the-source)
+32. [Rank the room and put it through the protocol](#32-rank-the-room-and-put-it-through-the-protocol)
+33. [Power across instruments, and the variance of a judgement](#33-power-across-instruments-and-the-variance-of-a-judgement)
+
 ---
 
 # Part I — the trading desk
@@ -704,3 +710,116 @@ the point.
 - Why is an in-flight task failed on restart instead of resumed?
 - The fuzzer's "backends agree" property is only asserted for |x| ≤ 1e6. What breaks above
   ~2^53, and is that a bug?
+
+---
+
+# Part VI — v0.6: real filings, statistical power, and the variance of a judgement
+
+## 31. Point in time is a property of the source
+
+**The idea.** "Point in time" is not a flag you set on a provider; it is a property of where
+a number came from. A vendor snapshot of today's fundamentals cannot be used for 2019 no
+matter how carefully you clip it, because the values were restated, the fields were added
+later and the snapshot has no memory of what was known when. What makes a source point in
+time is that every value carries the date it became public, and that the first print is
+kept when a later one replaces it.
+
+**In the repo.** SEC EDGAR is such a source, and it is free and keyless. `data/edgar.py`
+reads the company-facts file (every XBRL fact a company ever filed, each with its `filed`
+date) and the submissions file (every filing with its date and, for 8-Ks, its item codes).
+A fact exists at `as_of` iff `filed <= as_of`; where a value was restated, the first print
+wins. The awkward part is the accounting: 10-Q cash-flow items are year-to-date, the fourth
+quarter is only ever reported inside the 10-K, and Costco's quarters are 12 weeks with a
+16-week fourth. `quarterly_series` rebuilds quarters from the reported spans (direct
+quarters, year-to-date differencing, annual minus nine months) and `ttm` sums four
+contiguous ones, so growth, margin, EPS, leverage and FCF yield come out as a desk would
+have seen them, filing by filing. What EDGAR does not have — consensus estimates, so the
+EPS surprise — is reported as `None`, and funds and index ETFs, whose "facts" are not
+fundamentals, return nothing. The filing stream doubles as a news feed: an 8-K item 2.02 is
+an earnings release, 4.02 a restatement, 1.03 a bankruptcy; banks' thousands of
+structured-note prospectus supplements are not news and are dropped. Coverage was checked
+for every equity in the 60-name universe at two dates. The SEC asks for a contact in the
+User-Agent, so the client refuses to run without `EDGAR_USER_AGENT` rather than sending a
+fake one.
+
+**What it measured.** With real fundamentals and news, the rule-based fundamentals and news
+analysts stopped abstaining — and the result is a lesson about rules written against
+synthetic data. On the core equities the per-instrument Sharpe did not move (0.00 on design,
++0.01 on holdout, intervals about ±0.1) while exposure rose 4–7 points and drawdown
+3–4 points; the 15-sleeve portfolio's holdout Sharpe went from 1.16 to 1.09, still above plain buy & hold (1.06). On the
+22 extended equities the rules never saw, the same data added +0.02 (design) and +0.07
+(holdout) of Sharpe with intervals that exclude zero. The data stays on — a desk that hides
+filings from itself to protect a headline is not a desk — and the rules that read it are
+the next thing to put through the protocol.
+
+**Questions.**
+- Why is the *first* print the right value for a backtest even when the restated one is
+  more accurate?
+- The fundamentals analyst compares P/E to a fixed sector multiple of 22. What would a
+  point-in-time version of that comparison need?
+
+## 32. Rank the room and put it through the protocol
+
+**The idea.** A time-series alpha asks whether a signal predicts an instrument's own
+return. A cross-sectional alpha asks where the instrument ranks against its peers on the
+same signal today. The second question is the stock-picker's, and v0.5 built the research
+for it without letting an analyst consume it, because an analyst that has not cleared the
+evaluation bar is a rule change in disguise.
+
+**In the repo.** `XAlphaAnalyst` fetches the peer universe's histories (the core universe
+of the instrument's asset class by default, or `xalpha_universe`), z-scores every alpha
+across the peers on every date, measures each alpha's cross-sectional IC over the 900-day
+window, and keeps only alphas whose IC t-statistic is at least 2 in magnitude — the same
+significance gate as the time-series alpha analyst, through the same function
+(`significant_alpha_signal`). It abstains when nothing qualifies. The cross-section is
+computed once per (universe, date) and cached, so an evaluation over the whole universe
+pays for it once per decision date, and the analyst computes only the IC it needs rather
+than the full report's decay curves and spreads.
+
+**What it measured.** Put through the protocol on top of the EDGAR data, the analyst changed the core
+design period's per-instrument Sharpe by -0.01 [-0.02, 0.00] (better on 5 of
+15); on the unseen slices, core holdout 0.00, extended holdout -0.01
+[-0.01, 0.00], reserve +0.01 / -0.03. The design-period interval does not clear zero, so it is off by default — the third analyst in this repository to be measured and kept out, which is what the protocol is for. The mechanism is plain: sampled every 60 bars over the design period on the 15 core names (390 decisions), the analyst spoke on 2.6% of them — 3.8% of the equity decisions, never on FX — with a mean |signal| of 0.30 when it did, because over a 900-day window no alpha clears the cross-sectional |t(IC)| ≥ 2 gate on most dates.
+
+**Questions.**
+- The peer set for the published run was the whole 60-name universe, filtered by asset
+  class. Does using the extended names as *peers* spend them as a holdout? What exactly
+  would spend them?
+- Why must the cross-sectional analyst and the time-series alpha analyst share one
+  significance gate?
+
+## 33. Power across instruments, and the variance of a judgement
+
+**The idea.** Two questions hide behind "is the edge real?". The first is along time: is
+this instrument's Sharpe distinguishable from zero? The block bootstrap answers it. The
+second is across the universe: is the *mean* difference between two strategies over 15 or
+45 instruments more than the luck of which instruments were drawn? That needs a bootstrap
+over instruments, pairs kept together. And when the strategy is a model rather than a rule,
+a third question comes first: ask it the same thing five times — how far apart are the
+answers?
+
+**In the repo.** `stats.paired_bootstrap` resamples instruments with replacement and
+returns the mean paired difference, its interval and a two-sided p; `EvaluationResult.paired`
+and `paired_table` apply it to any metric against any baseline, and the CLI prints the
+table after every evaluation. Read against the core universe: the desk's per-instrument
+Sharpe minus buy & hold's is +0.07 [−0.05, +0.19] on the design period and −0.10
+[−0.20, 0.00] on the holdout — the noise floor the earlier concepts estimated, now measured.
+`evaluate(repeats=N)` runs the agent N times per (period, symbol) and `run_dispersion`
+reports the across-run spread, which is zero for the rules and the first number to read for
+a model. `calibration.calibrate` freezes one state and runs it n times at each of several
+anchors (the position the desk is told it already holds): dispersion of the target weight
+and agreement of the action; the anchoring slope of the mean target on the anchor (0 ignores
+the book, 1 keeps whatever it holds); and drift against a stored report on the same state
+after a model or prompt change. `prompts.prompt_registry` makes the last comparison
+meaningful: a SHA-256 of every agent's system prompt and prompt-building code, bundled into
+one hash and recorded in every evaluation and calibration result, so "same prompts" is a
+fact in the record rather than a recollection. The multi-year LLM run that uses all of this
+— model tiers on the core universe over design and holdout, three repeated runs for
+variance, one calibration — is staged with a dollar cap per stage; its results are reported
+in the evaluation when the run has been made.
+
+**Questions.**
+- The paired bootstrap treats instruments as exchangeable draws. Which of the 45 extended
+  names most obviously violate that, and what would the interval understate?
+- An anchoring slope of 1 means the desk keeps whatever it holds. Is that always wrong?
+  When is it exactly the no-trade band doing its job?

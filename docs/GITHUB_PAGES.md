@@ -29,7 +29,7 @@ names begin with an underscore, add an empty `docs/.nojekyll` so Pages serves th
 
 | URL | Content |
 |---|---|
-| `/` | `docs/index.html`: the landing page (numbers block, honesty note, the three layers, out-of-sample results tables, component cards, a sample audited task, quick start) |
+| `/` | `docs/index.html`: the landing page (what changed in the current release, numbers block, honesty note, the three layers, the current out-of-sample tables with the earlier ones folded below, component cards, a sample audited task, quick start) |
 | Everything else | Linked to Markdown rendered on github.com: `LEARN.md`, `COOKBOOK.md`, `docs/architecture/overview.md`, `docs/DIAGRAMS.md`, `docs/SPECIFICATION.md`, `docs/threat-model/threat-model.md`, `docs/evaluation/evaluation.md`, `docs/api/api.md` |
 
 The Mermaid diagrams in `docs/DIAGRAMS.md` render natively on github.com; no plugin is
@@ -58,9 +58,15 @@ measured numbers. If you change the code, re-check them against these sources:
 | FX carry-neutral ablation | The five settings in `docs/evaluation/evaluation.md`, `evaluate(CORE_UNIVERSE["fx"], design)` to choose and `EXTENDED_UNIVERSE["fx"]` over design/holdout/reserve to judge; `--rules v03` is the control |
 | Portfolio results | `agentic-trader portfolio <15 symbols> --data yahoo --start 2022-01-03 --end 2026-06-30` (and the design dates) |
 | Code size | Non-empty lines in `agentic_trader/**/*.py`, `tests/**/*.py` and `cpp/**/*.{cpp,hpp}` |
-| Cookbook | Run every ```python block in `COOKBOOK.md` with `PYTHONUTF8=1`; all must exit 0 (the network recipes are marked) |
+| Cookbook | `python scripts/run_cookbook.py` (every ```python block in a fresh process; `--offline` skips the network recipes, which is what CI runs); all must exit 0 |
+| EDGAR coverage | `EdgarClient(cache_dir=...).fundamentals(t, date, price)` and `.news(t, date, 90)` for every equity in `UNIVERSES["all"]` at two dates; operating companies must report growth, margin, EPS, leverage and FCF yield, funds and index ETFs nothing |
+| EDGAR-on vs EDGAR-off, cross-sectional analyst | `agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve` with `--no-edgar` (the v0.5.1 record), the default (EDGAR on) and `--analysts technical,fundamentals,news,sentiment,xalpha --xalpha-universe all`; tables from the three JSON files, paired bootstraps from `EvaluationResult.paired_table()` |
+| Multi-year LLM desk | The staged runner in the evaluation (control, Opus, Sonnet, Haiku tiers on the core universe over design + holdout at `--every 10`, three repeated Opus runs on five stocks, one calibration run), each stage with its own `--max-llm-cost` |
+| Cross-sectional analyst activity | `TradingGraph(analysts=[..., "xalpha"], xalpha_universe=UNIVERSES["all"]).propagate(sym, d)` every 60 business days over the design period on the 15 core names; share of `reports["xalpha"]` not abstained |
+| Calibration | `agentic-trader calibrate AAPL --date 2024-03-01 --n 5 --anchors none,-0.5,0,0.5 --llm anthropic --anonymize --deep-effort medium` |
 | Fuzz findings | `pytest tests/test_fuzz.py`; the "found and fixed" list in the changelog is the record of what the first run caught |
-| Diagrams | Parse every ```mermaid block in `docs/DIAGRAMS.md` with Mermaid 11 |
+| Diagrams | `python scripts/check_mermaid.py` (mermaid-cli; `--html` writes a browser page instead) |
+| Links | `python scripts/check_links.py` (`--external` also requests every external URL) |
 
 The evaluation tables are generated from the saved JSON with pandas (`to_markdown`), not
 typed by hand. Keep it that way.

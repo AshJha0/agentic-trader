@@ -16,6 +16,7 @@ The **ToolExecutor** is the only way agents reach data. Every call:
 from __future__ import annotations
 
 import inspect
+import math
 import logging
 import threading
 import time
@@ -106,12 +107,13 @@ def coerce_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[
             if not isinstance(out[k], date):
                 raise ValueError(f"argument {k} must be a date")
         elif t == "integer":
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or int(v) != v:
-                raise ValueError(f"argument {k} must be an integer")
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or (isinstance(v, float) and not math.isfinite(v)) \
+                    or int(v) != v:
+                raise ValueError(f"argument {k} must be a finite integer")
             out[k] = int(v)
         elif t == "number":
-            if isinstance(v, bool) or not isinstance(v, (int, float)):
-                raise ValueError(f"argument {k} must be a number")
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)):
+                raise ValueError(f"argument {k} must be a finite number")
             out[k] = float(v)
         elif t == "boolean":
             if not isinstance(v, bool):
@@ -260,7 +262,7 @@ class ToolExecutor:
 
             try:
                 args = coerce_arguments(tool.descriptor.input_schema, req.arguments)
-            except ValueError as e:
+            except (ValueError, TypeError, OverflowError) as e:   # any coercion failure is a bad argument, never a crash
                 span.fail(str(e))
                 self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="bad_arguments")
                 return self._fail(req, f"bad arguments: {e}",

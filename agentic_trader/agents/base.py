@@ -38,10 +38,9 @@ def untrusted_block(label: str, lines: list[str]) -> str:
     Any attempt inside the text to open or close the tag is neutralised, so a
     crafted headline cannot end the block early and smuggle instructions out.
     """
-    def neutralise(s: str) -> str:
-        return re.sub(rf"<\s*/?\s*{_TAG}[^>]*>", "[removed tag]", str(s), flags=re.I)
-
-    body = "\n".join(neutralise(line) for line in lines)
+    # Neutralised on the joined body, and without requiring a closing ">": a tag split
+    # over two lines, or left unterminated for the model to complete, is caught too.
+    body = re.sub(rf"<\s*/?\s*{_TAG}\b[^>]*>?", "[removed tag]", "\n".join(str(line) for line in lines), flags=re.I)
     return f'<{_TAG} source="{label}">\n{body}\n</{_TAG}>'
 
 

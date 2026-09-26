@@ -428,10 +428,12 @@ class AlphaAnalyst(Analyst):
     # the other analysts. A 273-day signal like tsmom_12_1 barely produces its first
     # non-NaN value in that window, leaving too few points to ever clear the significance
     # bar. The alpha analyst needs a much longer history to estimate IC at all reliably,
-    # so it fetches its own window (matching the ``quant.alpha`` tool's own default)
-    # instead of reusing ``state.history`` -- this also keeps the harness path (which
-    # calls that tool with its own lookback) and the direct path consistent.
-    lookback_days = 900
+    # so it fetches its own window -- config["alpha_lookback_days"], the same knob the
+    # ``quant.alpha`` / ``quant.xalpha`` tools default to -- instead of reusing
+    # ``state.history``, so the harness path and the direct path see the same window.
+    @property
+    def lookback_days(self) -> int:
+        return int(self.config.get("alpha_lookback_days", 900))
 
     def gather(self, state, provider):
         from datetime import timedelta
@@ -478,6 +480,172 @@ class AlphaAnalyst(Analyst):
                              "lookback.", pts, f)
 
 
+class XAlphaAnalyst(Analyst):
+    """Cross-sectional quant analyst: where this name ranks *within its universe* today.
+
+    The time-series alpha analyst asks whether a signal predicts this instrument's own
+    forward return. This one asks the question a stock-picker asks: ranked against its
+    peers on the same signals, is the name at the top or the bottom of the room? Signals
+    are z-scored across the configured universe (``xalpha_universe``; the core universe
+    of its asset class by default) on every date, each alpha's cross-sectional IC is
+    measured over ``alpha_lookback_days``, and -- exactly as for ``AlphaAnalyst`` --
+    only alphas whose IC t-statistic clears the significance bar carry weight through
+    ``alpha.significant_alpha_signal``; the analyst abstains when none does.
+
+    The universe's histories are fetched once per (universe, date) and cached across
+    instruments and threads, so an evaluation over the whole universe pays for the
+    cross-section once per decision date.
+    """
+    name = "xalpha"
+    role = ("Cross-Sectional Alpha Analyst. You rank this instrument against its peer universe on "
+            "systematic signals (momentum, reversal, breakout, volatility, carry) whose cross-sectional "
+            "predictive power has been measured, and give a relative direction for the next one to "
+            "four weeks.")
+    instructions = ("Only trust a signal whose cross-sectional IC t-statistic is at least 2 in magnitude; "
+                    "report the name's rank-based combined view and the strongest components, and abstain "
+                    "when none qualify.")
+    min_ic_tstat = 2.0
+    min_ic_n = 30
+    horizon = 10
+    min_names = 5
+
+    @property
+    def lookback_days(self) -> int:
+        return int(self.config.get("alpha_lookback_days", 900))
+
+    def universe(self, state) -> list[str]:
+        """Peers of the instrument's asset class from ``xalpha_universe`` (default: the core
+        universe of that class), plus the instrument itself. A mixed list is filtered by
+        asset class, so one configured list serves equities and FX."""
+        from ..instruments import Instrument
+        names = self.config.get("xalpha_universe")
+        if not names:
+            from ..evaluation import CORE_UNIVERSE
+            names = CORE_UNIVERSE[state.instrument.asset_class]
+        out = []
+        for n in names:
+            try:
+                ins = Instrument.parse(n)
+            except ValueError:
+                continue
+            if ins.asset_class == state.instrument.asset_class and ins.symbol not in out:
+                out.append(ins.symbol)
+        if state.instrument.symbol not in out:
+            out.append(state.instrument.symbol)
+        return out
+
+    def gather(self, state, provider):
+        from datetime import timedelta
+
+        import pandas as pd
+
+        from ..instruments import Instrument
+        from ..xalpha import _combine_scores, cross_sectional_ic, cs_zscore, forward_return_panel, ic_summary, signal_panels
+        names = self.universe(state)
+        key = (tuple(names), state.as_of, self.horizon, self.lookback_days)
+        cache = _xalpha_cache_for(provider)
+        with _XALPHA_LOCK:
+            cached = cache.get(key)
+        if cached is None:
+            frames, instruments, carry = {}, {}, {}
+            start = state.as_of - timedelta(days=self.lookback_days)
+            for n in names:
+                try:
+                    ins = Instrument.parse(n)
+                    df = provider.history(ins, start, state.as_of)
+                except Exception:  # a missing peer shrinks the cross-section; it does not stop it
+                    continue
+                df = df[df.index <= pd.Timestamp(state.as_of)]
+                if len(df) < 300:
+                    continue
+                frames[ins.symbol], instruments[ins.symbol] = df, ins
+                if ins.is_fx:
+                    carry[ins.symbol] = provider.carry_series(ins, df.index)
+            if len(frames) >= self.min_names:
+                # The same standardisation and IC as xalpha_report / xalpha_snapshot, without the
+                # decay curves, quantile spreads and correlations the analyst does not use
+                # (those cost about six times the IC itself, once per decision date).
+                groups = {s: instruments[s].asset_class for s in frames}
+                panels = signal_panels(frames, instruments, None, carry or None)
+                closes = pd.DataFrame({s: df["Close"] for s, df in frames.items()}).sort_index()
+                fwd = forward_return_panel(closes, self.horizon)
+                ppy = float(np.mean([instruments[s].periods_per_year for s in frames]))
+                scores, ic = {}, {}
+                for n, panel in panels.items():
+                    sc = cs_zscore(panel, groups, min_names=3)
+                    scores[n] = sc
+                    summ = ic_summary(cross_sectional_ic(sc, fwd, self.min_names), self.horizon, ppy)
+                    ic[n] = {"IC": float(summ["mean IC"]), "t(IC)": float(summ["t(IC)"]), "n": int(summ["days"])}
+                scores["combined"] = _combine_scores(scores, None)
+                snap: dict[str, dict[str, float | None]] = {s: {} for s in frames}
+                for n, sc in scores.items():
+                    if sc.empty:
+                        continue
+                    last = sc.iloc[-1]
+                    for s in frames:
+                        v = last.get(s)
+                        snap[s][n] = None if v is None or pd.isna(v) else float(v)
+                cached = (snap, ic, sorted(frames))
+            else:
+                cached = ({}, {}, sorted(frames))
+            _xalpha_cache_put(cache, key, cached)
+        snap, ic, members = cached
+        me = dict(snap.get(state.instrument.symbol) or {})
+        return {"universe": members, "breadth": len(members), "horizon": self.horizon,
+                "latest": {k: v for k, v in me.items() if k != "combined"}, "combined_z": me.get("combined"), "ic": ic}
+
+    def rules(self, f, state):
+        from ..alpha import significant_alpha_signal
+        latest, ic = f.get("latest") or {}, f.get("ic") or {}
+        if f.get("breadth", 0) < self.min_names:
+            return self.abstain(f"Cross-section too thin ({f.get('breadth', 0)} names with enough history).", f)
+        if state.instrument.symbol not in (f.get("universe") or []) or not latest:
+            return self.abstain(f"{state.instrument.symbol} has too little history (< 300 bars) to be scored "
+                                f"against the {f.get('breadth', 0)}-name cross-section.", f)
+        comb, strong = significant_alpha_signal(latest, ic, self.min_ic_tstat, self.min_ic_n)
+        if comb is None:
+            return self.abstain("No cross-sectional alpha clears the significance bar (|t(IC)| >= 2, "
+                                "n >= 30) over the lookback." if ic else "Not enough history for the cross-section.", f)
+        pts = []
+        for name in strong[:3]:
+            v, val = ic[name], latest.get(name)
+            pts.append(f"{name}: z {val:+.2f} vs {f['breadth']} peers, IC {v['IC']:+.3f} (t {v['t(IC)']:.1f})"
+                       if val is not None else f"{name}: IC {v['IC']:+.3f}")
+        sig = clip(comb, -1, 1)
+        conf = clip(0.3 + 0.3 * abs(sig) + 0.05 * len(strong), 0, 0.8)
+        return AnalystReport(self.name, sig, conf,
+                             f"Cross-sectional composite {sig:+.2f} from {len(strong)} significant alpha(s) "
+                             f"across {f['breadth']} names.", pts, f)
+
+
+# One cache per provider (weakly referenced, so it dies with the provider and can never
+# serve another provider's data), one entry per (universe, date): a walk-forward
+# evaluation asks for every decision date of the first instrument before the second
+# starts, so a cache must hold a whole period's dates (a few hundred) or every later
+# name recomputes them. Reads and writes are locked: evaluate(workers>1) shares it.
+import threading as _threading
+import weakref as _weakref
+
+_XALPHA_CACHES: "_weakref.WeakKeyDictionary" = _weakref.WeakKeyDictionary()
+_XALPHA_LOCK = _threading.Lock()
+_XALPHA_CACHE_MAX = 4096
+
+
+def _xalpha_cache_for(provider) -> dict:
+    with _XALPHA_LOCK:
+        cache = _XALPHA_CACHES.get(provider)
+        if cache is None:
+            cache = _XALPHA_CACHES[provider] = {}
+        return cache
+
+
+def _xalpha_cache_put(cache: dict, key, value) -> None:
+    with _XALPHA_LOCK:
+        while len(cache) >= _XALPHA_CACHE_MAX:
+            cache.pop(next(iter(cache)), None)
+        cache[key] = value
+
+
 ANALYSTS = {
     "technical": TechnicalAnalyst,
     "fundamentals": FundamentalsAnalyst,
@@ -485,4 +653,5 @@ ANALYSTS = {
     "news": NewsAnalyst,
     "sentiment": SentimentAnalyst,
     "alpha": AlphaAnalyst,
+    "xalpha": XAlphaAnalyst,
 }

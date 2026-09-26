@@ -85,12 +85,20 @@ def _config(args) -> dict:
         over["fred_vintages"] = True
     if getattr(args, "fred_cache", None):
         over["fred_cache_dir"] = args.fred_cache
+    if getattr(args, "no_edgar", False):
+        over["edgar"] = False
+    if getattr(args, "edgar_cache", None):
+        over["edgar_cache_dir"] = args.edgar_cache
     if getattr(args, "anonymize", False):
         over["llm_anonymize"] = True
     if getattr(args, "deep_effort", None):
         over["deep_effort"] = args.deep_effort
     if getattr(args, "analysts", None):
         over["analysts"] = _symbols(args.analysts)
+    if getattr(args, "xalpha_universe", None):
+        from .evaluation import UNIVERSES
+        x = args.xalpha_universe
+        over["xalpha_universe"] = UNIVERSES[x] if x in UNIVERSES else _symbols(x)
     if getattr(args, "no_memory", False):
         over["memory_path"] = None
     agentic = {}
@@ -263,18 +271,47 @@ def cmd_evaluate(args) -> int:
     syms = _symbols(args.symbol) if args.symbol else UNIVERSES[args.universe]
     _header(f"evaluate {len(syms)} symbols x {list(periods)}", cfg)
     res = evaluate(syms, periods, cfg, args.every, progress=lambda m: print("  " + m, flush=True),
-                   workers=args.workers)
+                   workers=args.workers, repeats=args.repeats)
     print("\n" + res.summary().to_string())
     if "universe" in res.rows and res.rows.universe.nunique() > 1:
         for u in sorted(res.rows.universe.unique()):
             print(f"\n[{u} universe]\n" + res.summary(universe=u).to_string())
     print("\n" + res.head_to_head().to_string(index=False))
+    paired = res.paired_table()
+    if len(paired) and (paired.n >= 3).any():
+        print("\ncross-instrument bootstrap of the agent's Sharpe minus each baseline's (95% CI, two-sided p):\n"
+              + paired.to_string(index=False))
+    disp = res.run_dispersion()
+    if len(disp):
+        print("\nacross-run dispersion of the agent's Sharpe (repeats):\n" + disp.to_string())
     if res.meta["errors"]:
         print(f"\n{len(res.meta['errors'])} failures: {res.meta['errors']}")
     _print_usage(res.meta.get("usage"), res.meta.get("agent_sources"))
     if args.out:
         res.to_json(args.out)
         print(f"results written to {args.out}")
+    return 0
+
+
+def cmd_calibrate(args) -> int:
+    from .calibration import CalibrationReport, calibrate
+    from .graph import TradingGraph
+    cfg = _config(args)
+    cfg["memory_path"] = None
+    anchors = tuple(None if a.lower() == "none" else float(a) for a in args.anchors.split(","))
+    as_of = args.date or (date.today() - timedelta(days=1)).isoformat()
+    _header(f"calibrate {args.symbol} as of {as_of}: {args.n} runs x anchors {list(anchors)}", cfg)
+    rep = calibrate(TradingGraph(cfg), args.symbol, as_of, args.n, anchors,
+                    progress=lambda m: print("  " + m, flush=True))
+    print("\n" + rep.samples.to_string(index=False))
+    print("\n" + json.dumps(rep.summary(), indent=1, default=str))
+    if args.compare:
+        print("\ndrift vs " + args.compare + ":\n" + json.dumps(rep.compare(CalibrationReport.from_json(args.compare)),
+                                                              indent=1, default=str))
+    _print_usage(rep.meta.get("usage"))
+    if args.out:
+        rep.to_json(args.out)
+        print(f"report written to {args.out}")
     return 0
 
 
@@ -418,11 +455,14 @@ def cmd_serve(args) -> int:
     cfg = _config(args)
     if args.task_db:
         cfg["agentic"]["task_db"] = args.task_db
+    if args.workers is not None:
+        cfg["agentic"]["workers"] = args.workers
     scheme = "https" if args.ssl_cert else "http"
     print(f"serving on {scheme}://{args.host}:{args.port}  (docs at /docs; approvals "
-          f"{cfg['agentic']['approval']}; task store {args.task_db or 'in memory'})")
+          f"{cfg['agentic']['approval']}; task store {args.task_db or 'in memory'}; "
+          f"{args.processes} process(es) x {cfg['agentic']['workers']} task threads)")
     serve(args.host, args.port, cfg, ssl_certfile=args.ssl_cert, ssl_keyfile=args.ssl_key,
-          allow_dev_keys=args.allow_dev_keys)
+          allow_dev_keys=args.allow_dev_keys, processes=args.processes)
     return 0
 
 
@@ -459,6 +499,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--quick-model", default=None)
         sp.add_argument("--rounds", type=int, default=None, help="debate / risk rounds")
         sp.add_argument("--analysts", default=None, help="comma list, e.g. technical,alpha,news")
+        sp.add_argument("--xalpha-universe", default=None,
+                        help="peers for the xalpha analyst: core | extended | all, or a comma list of symbols "
+                             "(default: the core universe of the instrument's asset class)")
         sp.add_argument("--allow-short", action="store_true", help="allow equity shorts")
         sp.add_argument("--band", type=float, default=None,
                         help="no-trade band: keep the position if the new target is this close")
@@ -469,6 +512,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--fred-vintages", action="store_true",
                         help="read revised FRED series (CPI) from the ALFRED vintage current at each date")
         sp.add_argument("--fred-cache", default=None, help="directory for cached FRED/ALFRED downloads")
+        sp.add_argument("--edgar-cache", default=None, help="directory for cached SEC EDGAR downloads")
+        sp.add_argument("--no-edgar", action="store_true",
+                        help="do not use SEC EDGAR for point-in-time fundamentals and filing news")
         sp.add_argument("--rules", choices=["default", "v02", "v03"], default="default",
                         help="v02 / v03 reproduce earlier rule sets for before/after comparisons")
         sp.add_argument("--anonymize", action="store_true",
@@ -544,10 +590,21 @@ def build_parser() -> argparse.ArgumentParser:
                     help="core = the 15 instruments rules were chosen on; extended = the 45 never used "
                          "for a choice; all = both (default)")
     ev.add_argument("--every", type=int, default=5, help="rebalance every N bars")
+    ev.add_argument("--repeats", type=int, default=1,
+                    help="run the agent this many times per (period, symbol) to measure model variance")
     ev.add_argument("--workers", type=int, default=1,
                     help="backtests run in parallel (useful with --llm anthropic)")
     ev.add_argument("--out", default=None, help="JSON path for all rows")
     ev.set_defaults(func=cmd_evaluate)
+
+    cb = sub.add_parser("calibrate", help="dispersion / anchoring / drift of the desk's judgement on one state")
+    common(cb)
+    cb.add_argument("--date", default=None, help="YYYY-MM-DD (default: yesterday)")
+    cb.add_argument("--n", type=int, default=5, help="runs per anchor")
+    cb.add_argument("--anchors", default="none,-0.5,0,0.5", help="comma list of current weights; 'none' = no book")
+    cb.add_argument("--compare", default=None, help="earlier calibration JSON on the same state, for drift")
+    cb.add_argument("--out", default=None, help="JSON path for the report")
+    cb.set_defaults(func=cmd_calibrate)
 
     xa = sub.add_parser("xalpha", help="cross-sectional alpha report over a universe: per-date IC, "
                                        "quantile spreads, breadth")
@@ -603,6 +660,9 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--ssl-key", default=None, help="TLS private key (PEM)")
     sv.add_argument("--allow-dev-keys", action="store_true",
                     help="allow the shipped development API keys on a non-loopback host (tests only)")
+    sv.add_argument("--workers", type=int, default=None, help="task threads per process (default 4)")
+    sv.add_argument("--processes", type=int, default=1,
+                    help="uvicorn worker processes; more than one needs --task-db")
     sv.set_defaults(func=cmd_serve)
 
     mc = sub.add_parser("mcp", help="MCP server over stdio (needs the [mcp] extra)")

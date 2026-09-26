@@ -149,10 +149,13 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
             found = PlanStep.make(StepType.AGENT, stage, rationale="canonical")
             notes.append(f"stage {stage} missing: added")
         rest.append(found)
+    # The cap only ever drops tool calls: the analysts and the debate / trader / risk
+    # stages are what makes the plan a decision, so they are never truncated away.
+    budget = max(0, MAX_STEPS - len(ordered_analysts) - len(rest))
+    if len(ordered_tools) > budget:
+        notes.append(f"plan truncated to {MAX_STEPS} steps ({len(ordered_tools) - budget} tool calls dropped)")
+        ordered_tools = ordered_tools[:budget]
     steps = ordered_tools + ordered_analysts + rest
-    if len(steps) > MAX_STEPS:
-        notes.append(f"plan truncated to {MAX_STEPS} steps")
-        steps = steps[:MAX_STEPS]
     steps.extend(governance_steps())
     return Plan(tuple(steps), source if not notes else f"{source}+repaired", tuple(notes))
 

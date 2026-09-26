@@ -106,6 +106,10 @@ class EvaluationResult:
         df = self.rows if period is None else self.rows[self.rows.period == period]
         if universe is not None and "universe" in df:
             df = df[df.universe == universe]
+        if "run" in df and df["run"].nunique() > 1:
+            # Repeated runs: one value per instrument (its mean over runs), so n counts
+            # instruments for every strategy and matches paired().
+            df = df.groupby(["period", "strategy", "symbol"], as_index=False)[METRIC_COLS].mean()
         g = df.groupby(["period", "strategy"])
         out = pd.DataFrame({
             "n": g.size(),
@@ -136,6 +140,51 @@ class EvaluationResult:
                             "median Sharpe diff": round(float((piv[AGENT] - piv[base]).median()), 3)})
         return pd.DataFrame(out)
 
+    def paired(self, baseline: str = "Buy&Hold", metric: str = "Sharpe", period: str | None = None,
+               universe: str | None = None, strategy: str = AGENT, n_boot: int = 10_000, seed: int = 0):
+        """Cross-instrument bootstrap of ``strategy - baseline`` on one metric (see ``stats.paired_bootstrap``).
+
+        With repeated agent runs, each instrument contributes its mean over runs.
+        """
+        from .stats import paired_bootstrap
+        rows = self.rows
+        if period is not None:
+            rows = rows[rows.period == period]
+        if universe is not None and "universe" in rows:
+            rows = rows[rows.universe == universe]
+        piv = rows.pivot_table(index="symbol", columns="strategy", values=metric, aggfunc="mean")
+        if strategy not in piv or baseline not in piv:
+            raise ValueError(f"need both {strategy!r} and {baseline!r} in the rows")
+        both = piv[[strategy, baseline]].dropna()
+        return paired_bootstrap(both[strategy].to_numpy(), both[baseline].to_numpy(), n_boot=n_boot, seed=seed)
+
+    def paired_table(self, metric: str = "Sharpe", universe: str | None = None, strategy: str = AGENT) -> pd.DataFrame:
+        """Per period and baseline: mean paired difference, 95% CI and two-sided p across instruments."""
+        out = []
+        rows = self.rows if universe is None or "universe" not in self.rows else self.rows[self.rows.universe == universe]
+        for period in sorted(rows.period.unique()):
+            for base in sorted(rows.strategy.unique()):
+                if base == strategy:
+                    continue
+                try:
+                    pb = self.paired(base, metric, period=period, universe=universe, strategy=strategy)
+                except ValueError:
+                    continue
+                out.append({"period": period, "baseline": base, "n": pb.n, f"mean {metric} diff": round(pb.mean_diff, 3),
+                            "ci95 low": round(pb.ci_low, 3), "ci95 high": round(pb.ci_high, 3),
+                            "p": round(pb.p_value, 3), "wins": pb.wins})
+        return pd.DataFrame(out)
+
+    def run_dispersion(self, metric: str = "Sharpe", strategy: str = AGENT) -> pd.DataFrame:
+        """With repeated runs: per period, the mean over instruments of the across-run std of ``metric``."""
+        rows = self.rows[self.rows.strategy == strategy]
+        if "run" not in rows or rows.run.nunique() < 2:
+            return pd.DataFrame()
+        g = rows.groupby(["period", "symbol"])[metric]
+        per = pd.DataFrame({"runs": g.size(), "std": g.std(ddof=1), "range": g.max() - g.min()})
+        return per.groupby("period").agg(runs=("runs", "max"), instruments=("std", "size"),
+                                         mean_std=("std", "mean"), mean_range=("range", "mean")).round(3)
+
     def to_json(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text(json.dumps({"meta": self.meta,
@@ -152,12 +201,15 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
              config: dict | None = None, rebalance_every: int = 5,
              provider: MarketDataProvider | None = None,
              progress: Callable[[str], None] | None = None,
-             llm: LLM | None = None, workers: int = 1) -> EvaluationResult:
+             llm: LLM | None = None, workers: int = 1, repeats: int = 1) -> EvaluationResult:
     """Run the agent and baselines for every (period, symbol). Failures are recorded, not raised.
 
     ``workers > 1`` runs backtests in parallel threads (useful with an LLM, whose
     calls dominate the run time). All runs share one provider, one LLM client and
-    one call budget.
+    one call budget. ``repeats > 1`` runs the agent that many times per (period,
+    symbol) -- the baselines once -- and tags every row with ``run``, so the model's
+    own variance can be measured (``run_dispersion``); offline the rules are
+    deterministic and the repeats are identical.
     """
     cfg = make_config(config)
     symbols = symbols or UNIVERSES["all"]
@@ -166,21 +218,36 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     llm = llm if llm is not None else get_llm(cfg)
     if workers < 1:
         raise ValueError("workers must be >= 1")
-    jobs = [(p, s) for p in periods for s in symbols]
+    if repeats < 1:
+        raise ValueError("repeats must be >= 1")
+    jobs = [(p, s, k) for p in periods for s in symbols for k in range(repeats)]
     t0 = time.perf_counter()
 
     if workers > 1:
         # Download data up front, one symbol at a time: data libraries are not
-        # reliably thread-safe, and later calls then hit the provider's cache.
-        for pname, sym in jobs:
+        # reliably thread-safe, and later calls then hit the provider's cache. The alpha
+        # analysts look further back, and the cross-sectional one asks for its peers too.
+        analysts = set(cfg.get("analysts") or [])
+        lookback = cfg["lookback_days"]
+        if analysts & {"alpha", "xalpha"}:
+            lookback = max(lookback, int(cfg.get("alpha_lookback_days", 900)))
+        warm: list[tuple[str, str]] = [(p, s) for p, s, _ in jobs]
+        if "xalpha" in analysts:
+            peers = cfg.get("xalpha_universe") or CORE_UNIVERSE["equity"] + CORE_UNIVERSE["fx"]
+            warm += [(p, s) for p in periods for s in peers]
+        seen: set[tuple[str, str]] = set()
+        for pname, sym in warm:
+            if (pname, sym) in seen:
+                continue
+            seen.add((pname, sym))
             start, end = (date.fromisoformat(x) for x in periods[pname])
             try:
-                provider.history(Instrument.parse(sym), start - timedelta(days=cfg["lookback_days"]), end)
+                provider.history(Instrument.parse(sym), start - timedelta(days=lookback), end)
             except Exception:
                 pass  # the backtest below records the error
 
     def run(job):
-        pname, sym = job
+        pname, sym, k = job
         start, end = periods[pname]
         try:
             rep = run_agent_backtest(sym, start, end, cfg, rebalance_every, provider, llm)
@@ -193,7 +260,7 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             a = t.loc[AGENT] if AGENT in t.index else None
             src = rep.agent_sources
             share = f"  [llm {src.get('llm', 0)}/{sum(src.values())}]" if llm is not None and src else ""
-            progress(f"{pname:<8} {sym:<7} " + (
+            progress(f"{pname:<8} {sym:<7} " + (f"run {k} " if repeats > 1 else "") + (
                 f"agent Sharpe {a['Sharpe']:+.2f} vs B&H {t.loc['Buy&Hold', 'Sharpe']:+.2f}{share}"
                 if a is not None else "baselines only"))
         return job, rep, None
@@ -205,18 +272,28 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
         outcomes = [run(j) for j in jobs]
 
     rows, errors, sources = [], [], {"llm": 0, "rules": 0}
-    for (pname, sym), rep, err in outcomes:  # job order: deterministic regardless of workers
+    baselines_done: set[tuple[str, str]] = set()
+    for (pname, sym, k), rep, err in outcomes:  # job order: deterministic regardless of workers
         if err is not None:
-            errors.append({"period": pname, "symbol": sym, "error": err})
+            errors.append({"period": pname, "symbol": sym, "run": k, "error": err})
             continue
-        for k, v in rep.agent_sources.items():
-            sources[k] = sources.get(k, 0) + v
+        for name, v in rep.agent_sources.items():
+            sources[name] = sources.get(name, 0) + v
         for strat, r in rep.table().iterrows():
+            if strat != AGENT:   # baselines are deterministic: one row each, from the first run that succeeded
+                if (pname, sym) in baselines_done:
+                    continue
             rows.append({"period": pname, "symbol": rep.instrument.symbol,
                          "asset_class": rep.instrument.asset_class,
                          "universe": universe_group(rep.instrument.symbol), "strategy": strat,
+                         "run": 0 if strat != AGENT else k,
                          **{c: float(r[c]) for c in METRIC_COLS}})
-    meta = {"periods": periods, "symbols": symbols, "rebalance_every": rebalance_every,
+        baselines_done.add((pname, sym))
+    from .prompts import prompt_registry
+    meta = {"periods": periods, "symbols": symbols, "rebalance_every": rebalance_every, "repeats": repeats,
+            "prompts": prompt_registry(cfg),
+            "lookback_days": cfg["lookback_days"], "alpha_lookback_days": cfg.get("alpha_lookback_days"),
+            "edgar": getattr(provider, "edgar", None) is not None,   # a configured, contactable EDGAR client
             "data_provider": cfg["data_provider"], "llm_provider": cfg["llm_provider"],
             "impact_coeff": cfg["costs"].get("impact_coeff", 0.0), "initial_capital": cfg["initial_capital"],
             "fred_vintages": bool(cfg.get("fred_vintages")),

@@ -30,8 +30,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_risk_discuss_rounds": 1,
     "analyst_weights": {
         "technical": 1.0, "fundamentals": 1.0, "macro": 1.0, "news": 0.7, "sentiment": 0.5,
-        "alpha": 1.0,
+        "alpha": 1.0, "xalpha": 1.0,
     },
+    # Peer universe for the cross-sectional alpha analyst (None -> the core universe of the
+    # instrument's asset class). The instrument itself is always included.
+    "xalpha_universe": None,
     "decision_threshold": 0.10,  # |consensus score| below this -> no directional view
     # Rule-based reasoning switches. Each is a separately measured change; the
     # defaults were chosen on the 2016-2021 design period only (ablation in
@@ -51,7 +54,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ---- Data ----------------------------------------------------------------
     "data_provider": "synthetic",  # "synthetic" | "yahoo" | "csv"
     "csv_dir": "data",
-    "lookback_days": 400,          # calendar days of history handed to analysts
+    "lookback_days": 400,          # calendar days of history handed to analysts and desk tools
+    # The alpha library's window (the alpha analyst and the quant.alpha / quant.xalpha
+    # tools). Longer than lookback_days because IC needs hundreds of forward returns
+    # after a 273-day signal (tsmom_12_1) has produced its first value.
+    "alpha_lookback_days": 900,
     "max_data_staleness_days": 7,  # refuse to decide if the latest bar is older than this
     "news_lookback_days": 7,
     "synthetic_seed": 7,
@@ -117,6 +124,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "fred_vintages": False,
     "fred_vintage_step_days": 31,
     "fred_cache_dir": None,
+    # SEC EDGAR point-in-time fundamentals and filing-stream news for real-data equities
+    # (yahoo provider). Free and keyless, but the SEC requires a contact User-Agent:
+    # EDGAR_USER_AGENT="Name email@domain" in the environment or .env (never committed),
+    # or edgar_user_agent here. Without it EDGAR is skipped with one warning.
+    "edgar": True,
+    "edgar_user_agent": None,
+    "edgar_cache_dir": None,          # on-disk JSON cache (one file per SEC endpoint call)
+    "edgar_cache_max_age_days": 7,    # re-fetch a cached endpoint file older than this (None = never)
+    "edgar_ciks": {},                 # ticker -> CIK overrides (predecessor filers)
     # Illustrative policy-rate / CPI levels (percent), roughly mid-2025. NOT live data.
     "fx_policy_rates": {
         "USD": 4.25, "EUR": 2.00, "GBP": 4.00, "JPY": 0.50, "CHF": 0.00,
@@ -139,6 +155,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "symbol_universe": None,     # list of allowed symbols for tool calls (None = any valid)
         "deny_tools": [],
         "task_db": None,             # SQLite path for a persistent task store (None = in memory only)
+        "workers": 4,                # task threads per API process
+        "queue_limit": 64,           # tasks accepted but unfinished per process; beyond it POST /tasks -> 503
+        "sweep_interrupted": True,   # mark in-flight store records FAILED at startup (the parent does it once for --processes N)
         # API keys -> roles for `agentic-trader serve`. Development values only.
         "api_keys": {"dev-viewer-key": "viewer", "dev-analyst-key": "analyst",
                      "dev-trader-key": "trader", "dev-risk-key": "risk", "dev-admin-key": "admin"},

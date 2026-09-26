@@ -14,6 +14,20 @@ generated from the saved result files rather than typed. To reproduce them, see
 
 ## Summary
 
+<!-- v0.6 summary -->
+- **v0.6 gave the fundamentals and news analysts real point-in-time data (SEC EDGAR) and
+  measured what the untuned rules do with it:** core equities' Sharpe 0.00 (design)
+  and +0.01 (holdout) with intervals ±0.1, exposure +4–7 points, drawdown +3–4
+  points; the 22 extended equities whose result changed: +0.02 and +0.07, intervals excluding zero.
+  The 15-sleeve portfolio's holdout Sharpe went 1.16 → 1.09. The data stays
+  on; the rules are the next protocol change. Every table below the v0.6 section is under the new default.
+- **The cross-sectional analyst (v0.6) went through the protocol:** core design -0.01
+  [-0.02, 0.00], core holdout 0.00, extended holdout -0.01,
+  reserve -0.03: **off by default**.
+- **Every difference now carries a cross-instrument bootstrap interval.** Core holdout, desk
+  minus buy & hold: -0.08 [-0.19, +0.02]; 45 extended names:
+  -0.04 [-0.10, +0.01]. The per-instrument Sharpe edge is noise
+  either way; the drawdown difference is not.
 - **Out of sample, the agents do not beat buy & hold on Sharpe instrument by instrument.**
   Holdout mean Sharpe is 0.46 against 0.55 for buy & hold over the 15 core instruments, and
   0.42 against 0.50 over the 45 extended instruments that no rule choice ever consulted
@@ -578,6 +592,304 @@ still between plain buy & hold (1.06) and the vol-targeted control (1.24). The i
 moves with it: core design Sharpe 0.70 → 0.70 / 0.69 / 0.60 at $100k / $10M / $1B, holdout
 0.46 → 0.46 / 0.45 / 0.37; the impact paid is identical (FX sleeves get no impact).
 
+<!-- v0.6 sections -->
+## v0.6: point-in-time filings for the idle analysts, and the cross-sectional analyst
+
+Two changes went through the protocol in v0.6. The first is a *data* change: the fundamentals
+and news analysts, which had abstained on every historical date since v0.1 because no
+point-in-time source existed, now read SEC EDGAR — every XBRL fact and every filing carries
+the date it was filed, so a backtest sees exactly what the market could, as first printed
+(see `data/edgar.py`; funds and index ETFs have no company facts and are unchanged; FX is
+unchanged). The second is a *rule* change: the cross-sectional alpha analyst (`xalpha`), the
+v0.5 research consumed by an analyst for the first time. Both were measured on all 60
+instruments over all four periods; the choice was made on the core design period, the
+extended universe and the reserve period judged it. The cross-instrument bootstrap
+(`stats.paired_bootstrap`, new in v0.6) gives every difference an interval: instruments are
+resampled with replacement, pairs kept together, so the interval says whether a mean
+difference across the universe is more than the luck of which instruments were drawn.
+
+### Regression check first
+
+Before measuring anything, the v0.5.1 configuration was re-run with EDGAR off
+(`--no-edgar`) on the rebuilt code:
+
+1680 rows compared; max |diff| Sharpe 0.3000, CR% 3.9900, MDD% 0.2300
+
+Three things moved, all understood. Nineteen of the 1,680 rows differ from the v0.5.1 record
+because of the `sma` fix in this release (the C++ boundary fuzzer found a window where a
+running sum's cancellation noise turned a flat z-score into ±1; both backends now sum each
+window directly): fourteen at the last displayed digit, and a handful where a moving-average
+crossing sat exactly on a threshold and one trade flipped — the largest is a baseline
+(XLF SMA(20/50), design CR 127.0% → 123.0%, Sharpe 0.95 → 0.93); the desk's own rows move by
+at most 0.21 of CR and one trade (LLY design, HD holdout). The Q1 2024 differences of 0.01
+are Yahoo's adjusted-price history moving by a day's dividend adjustments. The one larger
+difference (TLT, reserve, Sharpe 0.30) is the sentiment analyst's Yahoo headline feed, which
+only exists for the last 30 days and changes every day — the reserve period ends yesterday,
+so it is the one period that is never exactly reproducible from a live feed. Everything
+else reproduces to the last digit; the tables in this section are all from the rebuilt code.
+
+### The data change: EDGAR fundamentals and news
+
+Per instrument, the agent's Sharpe with EDGAR on minus with EDGAR off, over the instruments
+whose result changed at all (equities with company facts; ETFs and FX are identical by
+construction):
+
+| universe | period | n changed | mean Sharpe diff | 95% CI | p | better on | mean MDD diff | mean exposure diff |
+|:--|:--|--:|--:|:--|--:|--:|--:|--:|
+| core | design | 9 | +0.004 | [-0.07, +0.08] | 0.91 | 4 / 9 | +3.83 | +4.4 |
+| core | holdout | 9 | +0.010 | [-0.09, +0.10] | 0.81 | 6 / 9 | +3.24 | +6.8 |
+| core | q1_2024 | 4 | +0.335 | [-0.05, +0.81] | 0.11 | 3 / 4 | +0.56 | +7.6 |
+| core | reserve | 8 | +0.244 | [+0.05, +0.46] | 0.01 | 5 / 8 | +0.07 | +5.4 |
+| extended | design | 18 | +0.028 | [0.00, +0.05] | 0.03 | 10 / 18 | +1.11 | +4.1 |
+| extended | holdout | 18 | +0.089 | [+0.04, +0.14] | 0.00 | 13 / 18 | -0.15 | +6.6 |
+| extended | q1_2024 | 7 | +0.309 | [+0.11, +0.51] | 0.00 | 7 / 7 | +0.36 | +7.3 |
+| extended | reserve | 14 | -0.050 | [-0.23, +0.08] | 0.58 | 8 / 14 | +0.45 | +5.7 |
+| extended-macro | design | 4 | +0.002 | [-0.01, +0.01] | 0.85 | 1 / 4 | +0.29 | +0.2 |
+| extended-macro | holdout | 4 | +0.010 | [0.00, +0.02] | 0.07 | 3 / 4 | -0.27 | +0.1 |
+| extended-macro | q1_2024 | 2 | +0.075 | [+nan, +nan] | 1.00 | 2 / 2 | +0.03 | +0.7 |
+| extended-macro | reserve | 1 | +0.000 | [+nan, +nan] | 1.00 | 0 / 1 | +0.41 | +2.3 |
+| extended45 | design | 22 | +0.023 | [0.00, +0.05] | 0.04 | 11 / 22 | +0.96 | +3.3 |
+| extended45 | holdout | 22 | +0.075 | [+0.03, +0.12] | 0.00 | 16 / 22 | -0.17 | +5.4 |
+| extended45 | q1_2024 | 9 | +0.257 | [+0.10, +0.43] | 0.00 | 9 / 9 | +0.29 | +5.8 |
+| extended45 | reserve | 15 | -0.047 | [-0.21, +0.07] | 0.58 | 8 / 15 | +0.45 | +5.5 |
+
+### Core equities, per instrument (agent Sharpe, EDGAR off → on)
+
+| symbol | design off | design on | holdout off | holdout on | q1_2024 off | q1_2024 on | reserve off | reserve on |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| AAPL | 1.45 | 1.38 | 0.44 | 0.45 | -1.88 | -1.87 | 2.25 | 2.35 |
+| NVDA | 1.65 | 1.55 | 1.14 | 1.04 | 5.50 | 5.50 | 1.12 | 1.59 |
+| MSFT | 1.37 | 1.38 | 0.18 | 0.17 | 3.07 | 3.07 | 3.23 | 3.23 |
+| META | 0.67 | 0.74 | 0.77 | 0.43 | 2.93 | 2.93 | 1.81 | 2.25 |
+| GOOGL | 0.96 | 0.96 | 0.78 | 0.80 | 0.88 | 1.24 | -1.25 | -0.42 |
+| AMZN | 1.20 | 1.20 | 0.35 | 0.42 | 3.07 | 3.07 | 0.33 | 0.56 |
+| JPM | 0.55 | 0.77 | 0.80 | 0.86 | 4.98 | 4.98 | 0.57 | 0.47 |
+| XOM | 0.43 | 0.22 | 0.60 | 0.83 | 3.27 | 3.16 | 2.92 | 2.90 |
+| JNJ | 0.52 | 0.64 | 0.38 | 0.53 | -1.17 | -0.09 | 1.49 | 1.49 |
+| SPY | 1.14 | 1.14 | 0.89 | 0.89 | 4.06 | 4.06 | 1.22 | 1.22 |
+
+| symbol | design off | design on | holdout off | holdout on | q1_2024 off | q1_2024 on | reserve off | reserve on |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| AAPL | 1.45 | 1.38 | 0.44 | 0.45 | -1.88 | -1.87 | 2.25 | 2.35 |
+| NVDA | 1.65 | 1.55 | 1.14 | 1.04 | 5.50 | 5.50 | 1.12 | 1.59 |
+| MSFT | 1.37 | 1.38 | 0.18 | 0.17 | 3.07 | 3.07 | 3.23 | 3.23 |
+| META | 0.67 | 0.74 | 0.77 | 0.43 | 2.93 | 2.93 | 1.81 | 2.25 |
+| GOOGL | 0.96 | 0.96 | 0.78 | 0.80 | 0.88 | 1.24 | -1.25 | -0.42 |
+| AMZN | 1.20 | 1.20 | 0.35 | 0.42 | 3.07 | 3.07 | 0.33 | 0.56 |
+| JPM | 0.55 | 0.77 | 0.80 | 0.86 | 4.98 | 4.98 | 0.57 | 0.47 |
+| XOM | 0.43 | 0.22 | 0.60 | 0.83 | 3.27 | 3.16 | 2.92 | 2.90 |
+| JNJ | 0.52 | 0.64 | 0.38 | 0.53 | -1.17 | -0.09 | 1.49 | 1.49 |
+| SPY | 1.14 | 1.14 | 0.89 | 0.89 | 4.06 | 4.06 | 1.22 | 1.22 |
+
+**Reading.** On the core equities the rules were chosen on, the real fundamentals and news
+add nothing to risk-adjusted return — the mean Sharpe difference is 0.00 on the design period and
++0.01 on the holdout, with intervals [-0.07, +0.08] and
+[-0.09, +0.10] — while raising exposure by 4–7 points and maximum
+drawdown by 3–4 points. On the 22 extended equities the rules never saw, the same data adds
++0.02 (design) and +0.07 (holdout) of Sharpe with intervals [0.00, +0.05]
+and [+0.03, +0.12], for 3–5 points more exposure and +0.96 / -0.17
+points of drawdown. The pattern is what a data change, rather than a fitted one, looks like:
+the fundamentals analyst's rules (P/E against a fixed sector multiple, growth, margin, leverage,
+FCF yield) were written against the synthetic provider and never tuned; on large-cap names
+that mostly grew, the real numbers read bullish and the desk holds more. The portfolio view:
+
+| configuration | period | strategy | Sharpe | t(SR) | CR % | MDD % | Exp % |
+|:--|:--|:--|--:|--:|--:|--:|--:|
+| v0.5.1 rules (EDGAR off) | design | AgenticTrader | 1.54 | 3.79 | 81.3 | 8.3 | 59.2 |
+| v0.5.1 rules (EDGAR off) | design | Buy&Hold | 1.32 | 3.24 | 192.2 | 22.7 | 97.6 |
+| v0.5.1 rules (EDGAR off) | design | B&H vol-target | 1.49 | 3.65 | 92.8 | 9.8 | 79.2 |
+| v0.5.1 rules (EDGAR off) | holdout | AgenticTrader | 1.16 | 2.46 | 32.8 | 7.0 | 54.6 |
+| v0.5.1 rules (EDGAR off) | holdout | Buy&Hold | 1.06 | 2.24 | 86.6 | 20.8 | 97.6 |
+| v0.5.1 rules (EDGAR off) | holdout | B&H vol-target | 1.24 | 2.63 | 46.3 | 9.8 | 73.8 |
+| EDGAR on | design | AgenticTrader | 1.47 | 3.62 | 89.2 | 10.2 | 61.7 |
+| EDGAR on | design | Buy&Hold | 1.32 | 3.24 | 192.2 | 22.7 | 97.6 |
+| EDGAR on | design | B&H vol-target | 1.49 | 3.65 | 92.8 | 9.8 | 79.2 |
+| EDGAR on | holdout | AgenticTrader | 1.09 | 2.31 | 36.2 | 7.8 | 58.5 |
+| EDGAR on | holdout | Buy&Hold | 1.06 | 2.24 | 86.6 | 20.8 | 97.6 |
+| EDGAR on | holdout | B&H vol-target | 1.24 | 2.63 | 46.3 | 9.8 | 73.8 |
+| EDGAR + xalpha | design | AgenticTrader | 1.46 | 3.58 | 89.3 | 10.4 | 61.6 |
+| EDGAR + xalpha | design | Buy&Hold | 1.32 | 3.24 | 192.2 | 22.7 | 97.6 |
+| EDGAR + xalpha | design | B&H vol-target | 1.49 | 3.65 | 92.8 | 9.8 | 79.2 |
+| EDGAR + xalpha | holdout | AgenticTrader | 1.08 | 2.28 | 36.3 | 7.8 | 58.5 |
+| EDGAR + xalpha | holdout | Buy&Hold | 1.06 | 2.24 | 86.6 | 20.8 | 97.6 |
+| EDGAR + xalpha | holdout | B&H vol-target | 1.24 | 2.63 | 46.3 | 9.8 | 73.8 |
+
+noedgar: 122.1 s, errors 0, prompts bundle 5cf06b89f9264768, edgar False
+
+edgar: 300.6 s, errors 0, prompts bundle 5cf06b89f9264768, edgar True
+
+xalpha: 1007.7 s, errors 0, prompts bundle 5cf06b89f9264768, edgar True
+
+With the real data the 15-sleeve portfolio's design Sharpe goes from 1.54 to 1.47 and its
+holdout Sharpe from 1.16 to 1.09 — still above plain buy & hold (1.06) — with drawdowns of 10.2%
+and 7.8% instead of 8.3% and 7.0%.
+
+**Decision.** The data stays on by default. A desk that has point-in-time filings and
+ignores them because they do not flatter its untuned rules would be optimising the
+headline, not the desk, and the LLM desk needs the analysts to have something to read.
+The *rules* that consume the data are not changed in v0.6: fitting the fundamentals
+analyst's thresholds to make the real data help is a rule change under the protocol, to be
+chosen on the core design period and judged on the extended universe and the reserve
+period — and the extended-universe result above (a small, interval-clearing gain where the
+rules never looked) is the reason to expect that work to be worth doing. Every published
+number below is under the new default; the v0.5.1 EDGAR-off numbers above are the record.
+
+### The rule change: the cross-sectional alpha analyst
+
+`xalpha` z-scores the nine alphas across the instrument's peers on every date (peers: the
+60-name universe filtered by asset class in this run, so every name is a member and the
+cross-section is computed once per date), measures each alpha's cross-sectional IC over the
+900-day window, keeps only alphas whose IC t-statistic is at least 2 in magnitude — the
+same gate as the time-series alpha analyst — and abstains when none qualifies. It was added
+to the default analyst set on top of EDGAR; the difference below is therefore the analyst
+alone:
+
+| universe | period | n | mean Sharpe diff | 95% CI | p | better on | mean MDD diff | mean exposure diff | mean trades diff |
+|:--|:--|--:|--:|:--|--:|--:|--:|--:|--:|
+| core | design | 15 | -0.008 | [-0.02, 0.00] | 0.13 | 5 / 15 | +0.18 | -0.1 | -1.9 |
+| core | holdout | 15 | -0.004 | [-0.02, +0.01] | 0.54 | 8 / 15 | +0.01 | -0.0 | -0.7 |
+| core | q1_2024 | 15 | +0.095 | [+0.01, +0.22] | 0.02 | 6 / 15 | -0.05 | +0.1 | +0.1 |
+| core | reserve | 15 | +0.009 | [-0.01, +0.04] | 0.57 | 3 / 15 | -0.01 | -0.5 | -0.1 |
+| extended | design | 36 | +0.003 | [-0.01, +0.01] | 0.58 | 18 / 36 | +0.01 | +0.3 | -2.5 |
+| extended | holdout | 36 | -0.007 | [-0.02, 0.00] | 0.14 | 13 / 36 | +0.09 | +0.3 | -1.4 |
+| extended | q1_2024 | 36 | -0.016 | [-0.09, +0.03] | 0.75 | 9 / 36 | +0.03 | +0.3 | +0.2 |
+| extended | reserve | 36 | -0.007 | [-0.02, +0.01] | 0.34 | 7 / 36 | +0.04 | +0.5 | -0.0 |
+| extended-macro | design | 9 | +0.000 | [-0.02, +0.01] | 0.93 | 5 / 9 | +0.38 | +1.2 | -3.1 |
+| extended-macro | holdout | 9 | -0.008 | [-0.02, +0.01] | 0.26 | 2 / 9 | +0.57 | +1.3 | -1.0 |
+| extended-macro | q1_2024 | 9 | -0.039 | [-0.15, +0.03] | 0.58 | 5 / 9 | +0.03 | +0.8 | +0.3 |
+| extended-macro | reserve | 9 | -0.127 | [-0.29, +0.01] | 0.08 | 3 / 9 | +0.21 | +2.4 | +0.4 |
+| extended45 | design | 45 | +0.002 | [-0.01, +0.01] | 0.61 | 23 / 45 | +0.08 | +0.5 | -2.6 |
+| extended45 | holdout | 45 | -0.007 | [-0.01, 0.00] | 0.08 | 15 / 45 | +0.19 | +0.5 | -1.3 |
+| extended45 | q1_2024 | 45 | -0.021 | [-0.09, +0.02] | 0.56 | 14 / 45 | +0.03 | +0.4 | +0.2 |
+| extended45 | reserve | 45 | -0.031 | [-0.07, 0.00] | 0.05 | 10 / 45 | +0.08 | +0.9 | +0.1 |
+
+**Reading.** On the core design period — the only slice a choice may be made on — the
+analyst changed the desk's per-instrument Sharpe by -0.01 [-0.02, 0.00],
+better on 5 of 15 names, with -0.10 points of exposure, +0.18 points of drawdown and
+-1.87 trades per name. The unseen slices say: core holdout 0.00 [-0.02, +0.01],
+extended design 0.00 [-0.01, +0.01], extended holdout -0.01
+[-0.01, 0.00] (better on 15 of 45), reserve +0.01 on the core and
+-0.03 on the extended names. The design-period interval does not clear zero, so under the protocol the analyst is **off by default** — available as `analysts=[..., "xalpha"]`, exactly like the time-series alpha analyst, and measured rather than assumed.
+The reason the numbers are so close to zero is that the gate almost never opens: sampled every 60 bars over the design period on the 15 core names (390 decisions), the analyst spoke on 2.6% of them — 3.8% of the equity decisions, never on FX — with a mean |signal| of 0.30 when it did.
+Cross-sectionally, over a 900-day window, no alpha in the library clears |t(IC)| ≥ 2 on most
+dates; the desk is not being told anything it did not know. Its cost is real either way: one
+cross-section per decision date, cached across the names that share it.
+
+### Cross-instrument bootstrap: is any edge real across the universe?
+
+The agent's Sharpe minus each baseline's, per instrument, bootstrapped across instruments
+(10,000 resamples; two-sided p):
+
+| configuration | universe | period | baseline | n | mean diff | 95% CI | p | wins |
+|:--|:--|:--|:--|--:|--:|:--|--:|--:|
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | core | design | Buy&Hold | 15 | +0.073 | [-0.06, +0.20] | 0.27 | 10 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | core | design | B&H vol-target | 15 | +0.026 | [-0.12, +0.18] | 0.75 | 6 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | core | holdout | Buy&Hold | 15 | -0.089 | [-0.21, +0.03] | 0.16 | 5 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | core | holdout | B&H vol-target | 15 | -0.099 | [-0.21, +0.01] | 0.07 | 4 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | core | q1_2024 | Buy&Hold | 15 | +0.127 | [-0.55, +0.96] | 0.82 | 5 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | core | q1_2024 | B&H vol-target | 15 | +0.085 | [-0.59, +0.93] | 0.90 | 3 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | core | reserve | Buy&Hold | 15 | -0.135 | [-0.33, +0.10] | 0.22 | 3 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | core | reserve | B&H vol-target | 15 | -0.130 | [-0.39, +0.15] | 0.34 | 5 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | extended45 | design | Buy&Hold | 45 | -0.044 | [-0.11, +0.02] | 0.18 | 18 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | extended45 | design | B&H vol-target | 45 | -0.098 | [-0.16, -0.04] | 0.00 | 10 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | extended45 | holdout | Buy&Hold | 45 | -0.079 | [-0.14, -0.02] | 0.01 | 15 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | extended45 | holdout | B&H vol-target | 45 | -0.051 | [-0.11, +0.01] | 0.08 | 14 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | extended45 | q1_2024 | Buy&Hold | 45 | -0.324 | [-0.70, -0.04] | 0.02 | 9 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | extended45 | q1_2024 | B&H vol-target | 45 | -0.322 | [-0.69, -0.05] | 0.02 | 13 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | extended45 | reserve | Buy&Hold | 45 | +0.107 | [-0.10, +0.36] | 0.37 | 16 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | extended45 | reserve | B&H vol-target | 45 | +0.097 | [-0.12, +0.35] | 0.43 | 16 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | core | design | Buy&Hold | 15 | +0.076 | [-0.04, +0.19] | 0.19 | 11 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | core | design | B&H vol-target | 15 | +0.029 | [-0.10, +0.17] | 0.69 | 7 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | core | holdout | Buy&Hold | 15 | -0.083 | [-0.19, +0.02] | 0.12 | 5 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | core | holdout | B&H vol-target | 15 | -0.093 | [-0.20, +0.01] | 0.08 | 5 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | core | q1_2024 | Buy&Hold | 15 | +0.216 | [-0.43, +1.02] | 0.62 | 5 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | core | q1_2024 | B&H vol-target | 15 | +0.174 | [-0.48, +1.00] | 0.73 | 3 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | core | reserve | Buy&Hold | 15 | -0.005 | [-0.17, +0.21] | 0.90 | 6 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | core | reserve | B&H vol-target | 15 | +0.000 | [-0.20, +0.23] | 0.95 | 7 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | extended45 | design | Buy&Hold | 45 | -0.032 | [-0.10, +0.03] | 0.32 | 21 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | extended45 | design | B&H vol-target | 45 | -0.087 | [-0.15, -0.03] | 0.00 | 9 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | extended45 | holdout | Buy&Hold | 45 | -0.043 | [-0.10, +0.01] | 0.13 | 14 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | extended45 | holdout | B&H vol-target | 45 | -0.015 | [-0.07, +0.04] | 0.57 | 19 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | extended45 | q1_2024 | Buy&Hold | 45 | -0.272 | [-0.64, 0.00] | 0.05 | 11 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | extended45 | q1_2024 | B&H vol-target | 45 | -0.270 | [-0.64, 0.00] | 0.05 | 15 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | extended45 | reserve | Buy&Hold | 45 | +0.092 | [-0.11, +0.34] | 0.43 | 16 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | extended45 | reserve | B&H vol-target | 45 | +0.081 | [-0.12, +0.33] | 0.50 | 16 / 45 |
+| EDGAR + cross-sectional alpha analyst | core | design | Buy&Hold | 15 | +0.068 | [-0.05, +0.18] | 0.23 | 11 / 15 |
+| EDGAR + cross-sectional alpha analyst | core | design | B&H vol-target | 15 | +0.021 | [-0.10, +0.16] | 0.78 | 6 / 15 |
+| EDGAR + cross-sectional alpha analyst | core | holdout | Buy&Hold | 15 | -0.087 | [-0.20, +0.02] | 0.11 | 5 / 15 |
+| EDGAR + cross-sectional alpha analyst | core | holdout | B&H vol-target | 15 | -0.097 | [-0.21, +0.01] | 0.08 | 6 / 15 |
+| EDGAR + cross-sectional alpha analyst | core | q1_2024 | Buy&Hold | 15 | +0.311 | [-0.31, +1.12] | 0.42 | 5 / 15 |
+| EDGAR + cross-sectional alpha analyst | core | q1_2024 | B&H vol-target | 15 | +0.269 | [-0.35, +1.09] | 0.52 | 3 / 15 |
+| EDGAR + cross-sectional alpha analyst | core | reserve | Buy&Hold | 15 | +0.004 | [-0.17, +0.22] | 0.97 | 6 / 15 |
+| EDGAR + cross-sectional alpha analyst | core | reserve | B&H vol-target | 15 | +0.009 | [-0.20, +0.24] | 0.99 | 8 / 15 |
+| EDGAR + cross-sectional alpha analyst | extended45 | design | Buy&Hold | 45 | -0.030 | [-0.10, +0.03] | 0.34 | 22 / 45 |
+| EDGAR + cross-sectional alpha analyst | extended45 | design | B&H vol-target | 45 | -0.085 | [-0.15, -0.03] | 0.00 | 10 / 45 |
+| EDGAR + cross-sectional alpha analyst | extended45 | holdout | Buy&Hold | 45 | -0.050 | [-0.10, 0.00] | 0.06 | 13 / 45 |
+| EDGAR + cross-sectional alpha analyst | extended45 | holdout | B&H vol-target | 45 | -0.022 | [-0.07, +0.03] | 0.39 | 21 / 45 |
+| EDGAR + cross-sectional alpha analyst | extended45 | q1_2024 | Buy&Hold | 45 | -0.293 | [-0.66, 0.00] | 0.05 | 12 / 45 |
+| EDGAR + cross-sectional alpha analyst | extended45 | q1_2024 | B&H vol-target | 45 | -0.291 | [-0.66, -0.01] | 0.05 | 15 / 45 |
+| EDGAR + cross-sectional alpha analyst | extended45 | reserve | Buy&Hold | 45 | +0.061 | [-0.12, +0.30] | 0.62 | 16 / 45 |
+| EDGAR + cross-sectional alpha analyst | extended45 | reserve | B&H vol-target | 45 | +0.050 | [-0.13, +0.29] | 0.70 | 16 / 45 |
+
+**Reading.** Against plain buy & hold the desk's per-instrument Sharpe edge is not
+distinguishable from zero on any core slice — the widest intervals are Q1 2024's, a single
+quarter on 15 names — and on the extended universe the sign is negative with intervals that
+touch or exclude zero on the holdout. Against the vol-targeted control the desk is behind on
+the extended design period (interval excludes zero) and level elsewhere. This is the
+statistical form of what the tables have said since v0.3: the desk's per-instrument Sharpe
+is buy & hold's, give or take the noise of 15 or 45 names; what it changes is the drawdown.
+
+### The published tables under the v0.6 defaults
+
+Agent rows per configuration (means over instruments; the baselines do not depend on the
+configuration):
+
+| configuration | period | n | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean Exp % | mean trades | beats B&H | beats vol-target |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | design | 15 | 0.70 | 0.67 | 107.0 | 15.7 | 60.6 | 98.9 | 10 / 15 | 6 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | holdout | 15 | 0.46 | 0.44 | 33.3 | 16.9 | 55.8 | 78.5 | 5 / 15 | 4 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | q1_2024 | 15 | 2.02 | 2.93 | 8.5 | 3.5 | 67.1 | 3.9 | 5 / 15 | 3 / 15 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | reserve | 15 | 0.88 | 0.81 | 3.3 | 4.6 | 61.9 | 3.9 | 3 / 15 | 5 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | design | 15 | 0.70 | 0.74 | 115.1 | 18.0 | 63.2 | 84.1 | 11 / 15 | 7 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | holdout | 15 | 0.46 | 0.45 | 36.4 | 18.9 | 59.9 | 66.0 | 5 / 15 | 5 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | q1_2024 | 15 | 2.11 | 2.93 | 8.8 | 3.7 | 69.1 | 3.6 | 5 / 15 | 3 / 15 |
+| v0.5.1 rules + EDGAR fundamentals and news | reserve | 15 | 1.01 | 0.81 | 4.2 | 4.7 | 64.7 | 3.2 | 6 / 15 | 7 / 15 |
+| EDGAR + cross-sectional alpha analyst | design | 15 | 0.69 | 0.71 | 115.6 | 18.2 | 63.1 | 82.2 | 11 / 15 | 6 / 15 |
+| EDGAR + cross-sectional alpha analyst | holdout | 15 | 0.46 | 0.46 | 36.4 | 18.9 | 59.9 | 65.3 | 5 / 15 | 6 / 15 |
+| EDGAR + cross-sectional alpha analyst | q1_2024 | 15 | 2.20 | 2.93 | 8.9 | 3.6 | 69.2 | 3.7 | 5 / 15 | 3 / 15 |
+| EDGAR + cross-sectional alpha analyst | reserve | 15 | 1.02 | 0.82 | 4.3 | 4.7 | 64.3 | 3.1 | 6 / 15 | 8 / 15 |
+| Buy&Hold | design | 15 | 0.63 | 0.76 | 413.4 | 33.7 | 100.0 | 1.0 | — | — |
+| Buy&Hold | holdout | 15 | 0.55 | 0.56 | 91.9 | 32.4 | 100.0 | 1.0 | — | — |
+| Buy&Hold | q1_2024 | 15 | 1.89 | 2.90 | 14.0 | 5.3 | 100.0 | 1.0 | — | — |
+| Buy&Hold | reserve | 15 | 1.01 | 1.04 | 7.8 | 7.9 | 100.0 | 1.0 | — | — |
+| B&H vol-target | design | 15 | 0.67 | 0.75 | 123.1 | 21.1 | 80.9 | 760.0 | — | — |
+| B&H vol-target | holdout | 15 | 0.56 | 0.62 | 46.3 | 20.1 | 75.4 | 654.4 | — | — |
+| B&H vol-target | q1_2024 | 15 | 1.94 | 3.00 | 8.2 | 4.3 | 83.7 | 26.3 | — | — |
+| B&H vol-target | reserve | 15 | 1.01 | 1.04 | 4.1 | 4.6 | 71.2 | 35.9 | — | — |
+
+| configuration | period | n | mean Sharpe | median Sharpe | mean CR % | mean MDD % | mean Exp % | mean trades | beats B&H | beats vol-target |
+|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | design | 45 | 0.51 | 0.56 | 47.8 | 19.0 | 63.4 | 96.1 | 18 / 45 | 10 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | holdout | 45 | 0.42 | 0.43 | 26.7 | 17.7 | 61.9 | 76.7 | 15 / 45 | 14 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | q1_2024 | 45 | 1.79 | 2.40 | 4.8 | 3.6 | 72.4 | 3.4 | 9 / 45 | 13 / 45 |
+| v0.5.1 rules, EDGAR off (the v0.5.1 record) | reserve | 45 | 0.12 | -0.01 | 1.1 | 4.7 | 61.9 | 4.3 | 16 / 45 | 16 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | design | 45 | 0.52 | 0.57 | 53.8 | 19.4 | 65.1 | 87.3 | 21 / 45 | 9 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | holdout | 45 | 0.45 | 0.48 | 31.2 | 17.6 | 64.6 | 68.3 | 14 / 45 | 19 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | q1_2024 | 45 | 1.84 | 2.40 | 4.9 | 3.7 | 73.6 | 3.2 | 11 / 45 | 15 / 45 |
+| v0.5.1 rules + EDGAR fundamentals and news | reserve | 45 | 0.11 | 0.10 | 1.0 | 4.8 | 63.7 | 3.9 | 16 / 45 | 16 / 45 |
+| EDGAR + cross-sectional alpha analyst | design | 45 | 0.53 | 0.54 | 54.3 | 19.5 | 65.5 | 84.7 | 22 / 45 | 10 / 45 |
+| EDGAR + cross-sectional alpha analyst | holdout | 45 | 0.45 | 0.50 | 31.2 | 17.8 | 65.1 | 67.0 | 13 / 45 | 21 / 45 |
+| EDGAR + cross-sectional alpha analyst | q1_2024 | 45 | 1.82 | 2.40 | 4.9 | 3.7 | 74.0 | 3.4 | 12 / 45 | 15 / 45 |
+| EDGAR + cross-sectional alpha analyst | reserve | 45 | 0.07 | 0.10 | 1.0 | 4.9 | 64.7 | 4.0 | 16 / 45 | 16 / 45 |
+| Buy&Hold | design | 45 | 0.56 | 0.60 | 103.6 | 33.1 | 100.0 | 1.0 | — | — |
+| Buy&Hold | holdout | 45 | 0.50 | 0.57 | 62.3 | 27.2 | 100.0 | 1.0 | — | — |
+| Buy&Hold | q1_2024 | 45 | 2.11 | 2.47 | 6.8 | 4.9 | 100.0 | 1.0 | — | — |
+| Buy&Hold | reserve | 45 | 0.01 | 0.07 | 1.7 | 8.1 | 100.0 | 1.0 | — | — |
+| B&H vol-target | design | 45 | 0.61 | 0.64 | 71.4 | 21.4 | 85.7 | 669.4 | — | — |
+| B&H vol-target | holdout | 45 | 0.47 | 0.50 | 36.9 | 21.1 | 82.6 | 607.8 | — | — |
+| B&H vol-target | q1_2024 | 45 | 2.11 | 2.34 | 6.1 | 4.1 | 90.8 | 24.0 | — | — |
+| B&H vol-target | reserve | 45 | 0.02 | 0.11 | 0.8 | 5.7 | 79.0 | 35.1 | — | — |
+
 ## The LLM desk (v0.5.1): the first measured result
 
 Everything above is the rule-based desk. This is the first run of the same desk with Claude
@@ -747,17 +1059,27 @@ above remains the reference.
 | Real-data backtest speed-up in v0.3 | ≈8× (2.0 s → 0.24 s per quarter): Yahoo news is no longer requested for dates it cannot serve |
 | LLM calls per decision at default rounds | 14 = 4 quick-tier + 10 deep-tier. An analyst with no data makes no call, so it is 13 when news is missing |
 | Full v0.5 evaluation: 60 instruments × 4 periods, real prices, impact off | 115 s (after the first data download); each 15-instrument impact run ≈ 14 s |
-| Tests | 241 pytest tests (fuzz 21 property tests, v0.5 features 18, agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 19, LLM evaluation 11, plus the v0.3 suites) + 14 C++ test groups (42 checks) |
+| Full v0.6 evaluation with EDGAR fundamentals and news (60 × 4) | ≈ 340 s: the fundamentals are rebuilt once per filing per name (memoised on the last filing date), the filing news is a frame filter per decision |
+| One 45-name cross-section for the `xalpha` analyst (900 days, 9 alphas, IC only) | ≈ 1.4 s, computed once per (universe, date) and shared by every name at that date |
+| EDGAR walk-forward lookups | 300 fundamentals calls ≈ 1.9 s, 300 news calls ≈ 0.2 s (AAPL, after the one-off download of the company facts and filing index) |
+| Tests | 280 pytest tests (C++-boundary fuzz 21 and agentic-layer fuzz 7 property tests, v0.6 features 20, EDGAR 11, v0.5 features 18, agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 19, quant edge cases 38, LLM evaluation 11, plus the v0.3 suites) + 14 C++ test groups (44 checks) |
 
 ## Limitations
 
 - **One small LLM result.** The LLM desk has been measured once, on five stocks and one
   quarter (no Sharpe edge over the rules; smaller positions, lower returns and drawdowns).
-  Whether the model adds value over the rule-based desk on the multi-year periods, with the
-  full analyst team, remains unmeasured; it is a matter of spend, not of tooling.
-- **Half the analyst team is idle historically.** Without point-in-time news, social or
-  fundamentals data, the historical results test the technical, sentiment-proxy and macro
-  analysts only.
+  The multi-year run — model tiers on the core universe over design and holdout, repeated
+  runs for the model's variance, a calibration — is staged in v0.6 with a dollar cap per
+  stage and the full analyst team; its results are reported here the moment it has run.
+- **The social analyst is still idle historically, and the fundamentals and news rules
+  were never fitted.** v0.6 gives the fundamentals and news analysts real point-in-time
+  data (SEC EDGAR); social media has no free point-in-time archive. The rules that read the
+  filings were written against the synthetic provider, and with real data they add exposure
+  rather than risk-adjusted return on the core equities (see the v0.6 section); tuning them
+  is a rule change for the protocol, not a data fix.
+- **Filing dates are days.** EDGAR gives the date a filing was accepted, not the time; a
+  release after the close is treated as known on that day's decision. Consensus data does
+  not exist in EDGAR, so the EPS-surprise input is always empty.
 - **FRED serves the latest vintage.** Policy rates are not revised, but the few CPI inputs
   can differ slightly from what was first published. ALFRED vintages would remove this.
 - **Survivorship.** The equity universe is today's large caps, so it is biased towards
@@ -794,6 +1116,27 @@ agentic-trader evaluate --data yahoo --universe core --periods design,holdout --
 
 # the alpha-analyst check (design period only)
 agentic-trader evaluate --data yahoo --periods design --analysts technical,sentiment,macro,fundamentals,news,alpha
+
+# v0.6: EDGAR off (the v0.5.1 record), EDGAR on (the default), and the cross-sectional analyst;
+# EDGAR_USER_AGENT="Name email@domain" in .env; --edgar-cache keeps the SEC downloads
+agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve --no-edgar --out results/eval_v06_noedgar.json
+agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve --edgar-cache results/edgar_cache --out results/eval_v06_edgar.json
+agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve --edgar-cache results/edgar_cache \
+    --analysts technical,fundamentals,news,sentiment,xalpha --xalpha-universe all --out results/eval_v06_xalpha.json   # peers: the 60 names, by asset class
+# every evaluation prints the cross-instrument bootstrap; EvaluationResult.paired_table() reproduces the tables
+
+# v0.6: the multi-year LLM run, staged with a dollar cap per stage (control, Opus, Sonnet, Haiku, repeats, calibration)
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout --every 10 --rounds 1 --edgar-cache results/edgar_cache --out results/llm_control.json
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout --every 10 --rounds 1 --edgar-cache results/edgar_cache \
+    --llm anthropic --deep-effort medium --anonymize --workers 4 --max-llm-cost 650 --out results/llm_opus.json
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout --every 10 --rounds 1 --edgar-cache results/edgar_cache \
+    --llm anthropic --deep-model claude-sonnet-5 --deep-effort medium --anonymize --workers 4 --max-llm-cost 350 --out results/llm_sonnet.json
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout --every 10 --rounds 1 --edgar-cache results/edgar_cache \
+    --llm anthropic --deep-model claude-haiku-4-5 --anonymize --workers 4 --max-llm-cost 150 --out results/llm_haiku.json
+agentic-trader evaluate AAPL,NVDA,MSFT,META,GOOGL --data yahoo --periods holdout --every 10 --rounds 1 --edgar-cache results/edgar_cache \
+    --llm anthropic --deep-effort medium --anonymize --workers 5 --repeats 3 --max-llm-cost 260 --out results/llm_repeats.json
+agentic-trader calibrate AAPL --date 2024-03-01 --n 5 --anchors none,-0.5,0,0.5 --data yahoo --rounds 1 --edgar-cache results/edgar_cache \
+    --llm anthropic --deep-effort medium --anonymize --max-llm-cost 12 --out results/calibration_opus.json
 
 # the portfolio view
 agentic-trader portfolio AAPL,NVDA,MSFT,META,GOOGL,AMZN,JPM,XOM,JNJ,SPY,EURUSD,USDJPY,GBPUSD,AUDUSD,USDCAD \
