@@ -48,6 +48,7 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 | R3 | Volatility-targeted sizing for the neutral view; VaR-capped conservative view | realised | `RiskAnalyst.rules_weight` |
 | R4 | Transaction costs, slippage, equity borrow fees and point-in-time FX carry in backtests | realised; tested | `run_backtest` (`carry=`) |
 | R9 | Market impact in backtests, scaled by account size, charged to the agent and every baseline alike | realised (v0.5); tested and cross-checked C++ vs numpy; FX needs a configured notional ADV | `costs.impact_coeff`, `backtest.impact_coefficients`, `run_backtest(impact=)` |
+| R10 | An FX strategic weight from the point-in-time carry (the FX analogue of the equity premium weight), chosen on the core design period and judged on unseen crosses | realised (v0.5.1); tested; `RULES_V03` reproduces the rule set without it | `rules.fx_carry_neutral`, `risk.fx_carry_neutral_scale/cap`, [evaluation](evaluation/evaluation.md#the-fx-carry-neutral-rule-v051-the-protocols-first-use) |
 | R5 | No-trade band that never holds a position the limits forbid | realised; tested | `PortfolioManager.no_trade_band` |
 | R6 | Protective stops simulated intraday with gap fills | realised; tested in C++ and Python, cross-checked | `run_backtest_ex` |
 | R7 | Refuse decisions on stale or insufficient data | realised; tested | `graph.prepare` |
@@ -82,7 +83,7 @@ implemented). Requirements are grouped by layer: the desk (sections 1–6), the 
 | E7 | Reproducible before/after for every rule change | realised | `RULES_V02`, `--rules v02` |
 | E8 | Multi-asset portfolio evaluation with a chosen weighting scheme | realised | `run_portfolio_backtest(weighting=)` |
 | E9 | Selection-aware statistics: bootstrap interval, probabilistic and deflated Sharpe, minimum track record | realised | `stats.selection_report`, `agentic-trader stats` |
-| E10 | LLM-mode evaluation with usage and cost, in parallel | realised as a harness (`evaluate(workers=)`, `UsageTracker`, anonymisation); **the run itself has not been made**, so no LLM result is claimed | `evaluation.py`, `llm.py` |
+| E10 | LLM-mode evaluation with usage and cost, in parallel | realised; **first run made in v0.5.1** (5 stocks, Q1 2024, 271 calls, $4: same Sharpe as the rules, half the exposure). The multi-year run with the full analyst team is a matter of spend | `evaluation.py`, `llm.py`, [evaluation](evaluation/evaluation.md#the-llm-desk-v051-the-first-measured-result) |
 
 ## 6. Engineering
 

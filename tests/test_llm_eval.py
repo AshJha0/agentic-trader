@@ -97,13 +97,18 @@ def test_usage_tracker_prices_by_serving_model():
                                            cache_read_input_tokens=0, cache_creation_input_tokens=0))
     u.add("claude-haiku-4-5", SimpleNamespace(input_tokens=2_000_000, output_tokens=0))
     u.add("some-future-model", SimpleNamespace(input_tokens=5, output_tokens=5))
+    u.add("claude-haiku-4-5-20251001", SimpleNamespace(input_tokens=1_000_000, output_tokens=0))  # dated id
     u.count("errors")
     s = u.summary()
-    assert s["calls"] == 3 and s["errors"] == 1
+    assert s["calls"] == 4 and s["errors"] == 1
     assert s["by_model"]["claude-opus-5"]["cost_usd"] == pytest.approx(5.0 + 2.5)
     assert s["by_model"]["claude-haiku-4-5"]["cost_usd"] == pytest.approx(2.0)
+    assert s["by_model"]["claude-haiku-4-5-20251001"]["cost_usd"] == pytest.approx(1.0)  # family price
     assert s["by_model"]["some-future-model"]["cost_usd"] is None   # unknown price: not guessed
-    assert s["cost_usd"] == pytest.approx(9.5)
+    assert s["cost_usd"] == pytest.approx(10.5)
+    from agentic_trader.llm import price_for
+    assert price_for("claude-opus-5-5-20260101") == (4.0, 20.0)     # longest matching family wins
+    assert price_for("claude-opus-5-20260101") == (5.0, 25.0)
 
 
 def test_budget_is_thread_safe():

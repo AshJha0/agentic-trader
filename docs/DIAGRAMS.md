@@ -170,7 +170,7 @@ classDiagram
 ```mermaid
 flowchart TD
     SC["debate score s in [-1, 1]"] --> TH{"abs(s) > decision_threshold?"}
-    TH -- no --> NW["w = neutral weight<br/>equity 1.0 · FX 0.0"]
+    TH -- no --> NW["w = neutral weight<br/>equity 1.0 · FX clip(carry% / 2, ±0.5)"]
     TH -- yes --> TL["w = clip(neutral + 2s, -1, 1)"]
     NW --> SH["floor at 0 if shorting not allowed<br/>x0.75 if hit rate < 40% over 5+ calls"]
     TL --> SH

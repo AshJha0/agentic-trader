@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.5.1 — 2026-09-26
+
+The first measured LLM results, and the evaluation protocol's first use for a rule change.
+
+### LLM evaluation (first ever)
+- **The LLM desk measured for the first time**, lean by design: AAPL, NVDA, MSFT, META,
+  GOOGL over Q1 2024, a decision every 10 bars, one debate round, `claude-opus-5` at medium
+  effort with `claude-haiku-4-5` analysts, anonymised prompts, a 400-call cap, against the
+  rule-based desk on identical bars. 271 calls, 0 refusals, 0 fallbacks, 0 errors, $4.12.
+  **Same Sharpe as the rules (2.19 vs 2.19)**, less than half the exposure (23% vs 57%),
+  return (6.9% vs 15.5%) and drawdown (2.2% vs 5.6%) on every name: the model sized down
+  citing the abstaining analysts. A single quarter shows what it does, not whether it has an
+  edge; the multi-year run with the full analyst team is a matter of spend. Every
+  "not evaluated" caveat in the docs is replaced by this result and its limits.
+
+### Rules
+- **FX carry-neutral strategic weight** (`rules.fx_carry_neutral`, on by default). The FX
+  analogue of the equity strategic weight: `clip(rate_diff% / 2, ±0.5)` from the macro
+  analyst's point-in-time policy-rate differential, so the desk holds the higher-yielding
+  currency unless convinced otherwise. Chosen on the core FX pairs' design period only
+  (mean Sharpe −0.03 → +0.11, monotonic across five settings), then judged on data no choice
+  had touched, where it improved every slice: extended crosses design −0.24 → −0.15, holdout
+  +0.12 → +0.31, reserve −0.63 → +0.22; core reserve −0.58 → −0.10. It does not make the desk
+  beat buy & hold on crosses. `RULES_V03` / `--rules v03` reproduces the previous rule set;
+  the published tables are re-run under the new default and the v0.3-rule tables are kept as
+  the record. Re-run headline numbers: core holdout mean Sharpe 0.44 → 0.46, extended holdout
+  0.37 → 0.42, 15-sleeve portfolio holdout 1.14 → 1.16 (design 1.50 → 1.54); equities unchanged.
+
+### Fixed
+- `UsageTracker` cost lookup now matches a served model id with a date suffix
+  (`claude-haiku-4-5-20251001`) to its family's list price instead of reporting `n/a`.
+
 ## v0.5.0 — 2026-09-26
 
 A wider, fresher evaluation; execution-aware backtests; cross-sectional alphas; cross-asset

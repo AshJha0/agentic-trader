@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-trader"
-version = "0.5.0"
+version = "0.5.1"
 description = "Agentic multi-agent LLM trading desk for equities and FX: policy-gated tools, evidence, audited reports, C++ quant core"
 readme = "README.md"
 license = { text = "MIT" }

@@ -142,14 +142,20 @@ horizon, and must decide what to hold with *no* view. A real mandate has a bench
 equity fund without a strong opinion holds the index; active management is a tilt around it.
 
 **In the repo** (`agents/trader.py`): weight = `neutral + 2·score` when |score| exceeds the
-threshold, else `neutral`, clipped to [-1, 1]. `risk.neutral_weight` is 1.0 for equities and
-0.0 for FX. Stops sit 2 ATR against the position and targets 3 ATR in favour; model-supplied
-levels on the wrong side are replaced (`sane_levels`). Retrieved policy passages
-(section 16) are shown to the trader when the harness ran `knowledge.search`.
+threshold, else `neutral`, clipped to [-1, 1]. `risk.neutral_weight` is 1.0 for equities.
+For FX (v0.5.1, `rules.fx_carry_neutral`) the neutral weight is the *carry premium*:
+`clip(rate_diff% / 2, ±0.5)` from the macro analyst's point-in-time policy-rate
+differential, so the desk holds the higher-yielding currency unless convinced otherwise —
+the same logic as the equity benchmark, with the same "hold the premium" prior. Stops sit
+2 ATR against the position and targets 3 ATR in favour; model-supplied levels on the wrong
+side are replaced (`sane_levels`). Retrieved policy passages (section 16) are shown to the
+trader when the harness ran `knowledge.search`.
 
 **Numbers.** Raising the equity neutral weight from 0 to 0.25, 0.5 and 1.0 moved equity median
 Sharpe on the design period from 0.68 to 0.79, 0.87 and 1.06. It was the only change that
-clearly helped, and it helps by collecting the premium, not by forecasting.
+clearly helped, and it helps by collecting the premium, not by forecasting. The FX carry
+weight repeated the pattern: core-pair design mean Sharpe −0.03 → +0.11, then better on every
+unseen slice (the 10 crosses' holdout +0.12 → +0.31), still short of buy & hold on crosses.
 
 **Questions.**
 - With a 2-ATR stop and a 3-ATR target, what hit rate breaks even before costs?
@@ -202,7 +208,7 @@ list-price cost.
 | Value analyst | Company fundamentals | Rates carry, inflation (PPP), long-run valuation from FRED |
 | Alpha library | 8 signals | The same plus carry |
 | News orientation | The stock is the subject | Scored from the **base** currency's view |
-| Strategic weight | 1.0 | 0.0 |
+| Strategic weight | 1.0 (equity premium) | carry / 2 capped at ±0.5 (carry premium, v0.5.1) |
 | Shorting | Off by default | On |
 | Execution default | VWAP over 78 five-minute slices; POV above 10% of ADV | TWAP over 288 slices; spread in pips |
 | Financing | Borrow fee on shorts | Carry accrued per bar from point-in-time rates |
@@ -562,15 +568,24 @@ interval, PSR and DSR.
 
 **What was measured** (rule-based desk, real prices, frozen rules):
 
-- **Per instrument, out of sample:** mean Sharpe 0.44 against 0.55 for buy & hold. No edge on
-  risk-adjusted return.
-- **Drawdown:** about half of buy & hold's, and lower on 14 of 15 instruments.
-- **As a portfolio:** 1.14 against 1.06 for plain buy & hold, but below the vol-targeted control
+- **Per instrument, out of sample:** mean Sharpe 0.46 against 0.55 for buy & hold on the core
+  universe, 0.42 against 0.50 on the 45 unseen names. No edge on risk-adjusted return.
+- **Drawdown:** about half of buy & hold's, and lower on 14 of 15 core and 40 of 45 extended
+  instruments.
+- **As a portfolio:** 1.16 against 1.06 for plain buy & hold, but below the vol-targeted control
   at 1.24.
-- **Alpha analyst:** noise on the design period; not adopted.
-- **FX:** close to zero throughout.
+- **Alpha analyst:** noise on the design period, three times; not adopted.
+- **FX:** close to zero; the carry weight (v0.5.1) lifts it on every unseen slice without
+  reaching buy & hold on the crosses.
 
-**What was not measured:** the LLM mode, and therefore whether the agentic layer's planner,
+**What was measured once, small (v0.5.1):** the LLM desk — Claude Opus in every reasoning
+role, anonymised prompts, five stocks, one quarter, 271 calls, $4. Same Sharpe as the rules
+(2.19 against 2.19), less than half the exposure, return and drawdown on every name: the
+model read the abstaining analysts as a reason to size down, which is the right reading of
+the evidence it was given. Zero refusals, fallbacks or budget hits.
+
+**What was not measured:** whether the model adds value over the rules on the multi-year
+periods with the full analyst team, and therefore whether the agentic layer's planner,
 critic and reporter change decisions for the better. The layer's value is demonstrated as
 *governance* (what it prevents and what it makes auditable), not as *alpha*.
 
@@ -600,9 +615,12 @@ rule change is written in the evaluation: choose on the core design period, then
 the extended universe and the reserve period, and report all three.
 
 **Numbers.** The extended universe is a harder test: on its holdout the desk's mean Sharpe
-is 0.37 against 0.50 for buy & hold (core: 0.44 vs 0.55), it beats buy & hold on 14 of 45
-names, and its drawdown is 17.7% against 27.2%. The story from the core universe (no
-Sharpe edge per instrument, about half the drawdown) survives; it does not get better.
+is 0.42 against 0.50 for buy & hold (core: 0.46 vs 0.55; 0.37 and 0.44 under the v0.3
+rules), it beats buy & hold on 15 of 45 names, and its drawdown is 17.7% against 27.2%. The
+story from the core universe (no Sharpe edge per instrument, about half the drawdown)
+survives; it does not get better. The protocol's first use came at once: the FX carry
+weight (section 5) was chosen on the core pairs' design period and then judged here, on
+the ten crosses and the reserve period, where it improved every slice.
 
 **Questions.**
 - The reserve period is three months. What is it good for now, and what would it take

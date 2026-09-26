@@ -33,7 +33,7 @@ import numpy as np
 
 from . import quant
 from .backtest import run_agent_backtest, run_portfolio_backtest
-from .config import RULES_V02, make_config
+from .config import RULES_V02, RULES_V03, make_config
 from .graph import TradingGraph
 from .llm import llm_usage
 
@@ -42,8 +42,11 @@ log = logging.getLogger("agentic_trader.cli")
 
 def _config(args) -> dict:
     over: dict = {"data_provider": args.data, "llm_provider": args.llm}
-    if getattr(args, "rules", "default") == "v02":
+    rules = getattr(args, "rules", "default")
+    if rules == "v02":
         over = make_config(RULES_V02, **over)
+    elif rules == "v03":
+        over = make_config(RULES_V03, **over)
     if args.csv_dir:
         over["csv_dir"] = args.csv_dir
     if args.rounds is not None:
@@ -466,8 +469,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--fred-vintages", action="store_true",
                         help="read revised FRED series (CPI) from the ALFRED vintage current at each date")
         sp.add_argument("--fred-cache", default=None, help="directory for cached FRED/ALFRED downloads")
-        sp.add_argument("--rules", choices=["default", "v02"], default="default",
-                        help="v02 reproduces the v0.2 rule set for comparisons")
+        sp.add_argument("--rules", choices=["default", "v02", "v03"], default="default",
+                        help="v02 / v03 reproduce earlier rule sets for before/after comparisons")
         sp.add_argument("--anonymize", action="store_true",
                         help="hide ticker, dates and price level from the model (backtests)")
         sp.add_argument("--deep-effort", choices=["low", "medium", "high", "xhigh", "max"],

@@ -74,14 +74,14 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 <div class="wrap">
   <h2>Measured, not claimed</h2>
   <div class="numbers">
-    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 240 pytest tests green — 21 hypothesis fuzz properties on the C++ boundary · 18 v0.5 features · 30 agentic · 15 adversarial · 7 services (FastAPI client + a real MCP stdio round trip) · 19 quant research · 37 quant edge cases · 26 agent · 17 workflow · 13 data · 11 LLM-eval · 26 pipeline/quant · 14 C++ groups (42 checks)<br>
+    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 241 pytest tests green — 21 hypothesis fuzz properties on the C++ boundary · 18 v0.5 features · 30 agentic · 15 adversarial · 7 services (FastAPI client + a real MCP stdio round trip) · 19 quant research · 37 quant edge cases · 27 agent · 17 workflow · 13 data · 11 LLM-eval · 26 pipeline/quant · 14 C++ groups (42 checks)<br>
     One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans · every transition written to SQLite when a task store is configured<br>
     Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 16 tools on 5 servers (market_data · quant incl. cross-sectional alphas · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
     Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → read-only → argument guards → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API<br>
     Knowledge (RAG)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 runbooks and policies · 59 chunks · dependency-free hashed TF-IDF · served as DOCUMENT evidence and shown to the trader and PM<br>
     Quant research&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 9 alphas, time-series and cross-sectional (per-date IC, quantile spreads, breadth) · 4 execution algorithms + intraday simulator · square-root impact inside the backtester · 5 weighting schemes with Ledoit-Wolf covariance, cross-asset risk budgets and attribution · bootstrap, probabilistic and deflated Sharpe · ALFRED vintages<br>
-    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every choice) + 45 never consulted · design 2016–21 · holdout 2022–26 run once · reserve from 2026-07 untouched · 16-variant rule ablation · alpha analyst measured three times and kept off · impact sweep at $100k / $10M / $1B<br>
-    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; core: 15-sleeve portfolio Sharpe 1.14 vs 1.06 buy &amp; hold vs 1.24 vol-targeted B&amp;H, max drawdown 6.8% vs 20.8% · extended 45 names: mean Sharpe 0.37 vs 0.50 B&amp;H, lower drawdown on 40 of 45<br>
+    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every choice) + 45 never consulted · design 2016–21 · holdout 2022–26 run once · reserve from 2026-07 untouched · 16-variant rule ablation · alpha analyst measured three times and kept off · impact sweep at $100k / $10M / $1B · first LLM run: 5 stocks × Q1 2024, 271 Claude calls, $4<br>
+    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; core: 15-sleeve portfolio Sharpe 1.16 vs 1.06 buy &amp; hold vs 1.24 vol-targeted B&amp;H, max drawdown 7.0% vs 20.8% · extended 45 names: mean Sharpe 0.42 vs 0.50 B&amp;H, lower drawdown on 40 of 45 · v0.5.1 FX carry rule: chosen on core design, better on every unseen slice<br>
     Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈8.1k lines of Python in <code>agentic_trader</code> (47 files; 2.7k in the agentic layer, 1.1k research) · ≈1.2k lines of C++17 · ≈2.4k lines of tests · MSVC /W4 and GCC -Wall -Wextra clean · CI on Linux, Windows, macOS, Python 3.10–3.14
   </div>
 
@@ -93,11 +93,14 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     attached as a warning — the adversarial suite feeds a fabricated "350 bps / 88% / CALC-badbadba"
     narrative, an injected headline that tries to close the untrusted block, a rogue plan with an order
     and a shell command, and a model that returns a 5.0 weight, and checks that each is contained.
-    The performance figures above are from the <em>rule-based</em> desk; the LLM mode has not been
-    evaluated. Out of sample the desk does not beat buy &amp; hold on Sharpe per instrument — on the
-    15 names its rules were chosen on, and again on 45 names they never saw; it takes about half the
-    drawdown on both. Adding the alpha library as an analyst measured as noise three times and stays off.
-    With market impact on, the verdict holds at $100k and $10M and the desk loses 0.09 of Sharpe at $1B.
+    The performance figures above are from the <em>rule-based</em> desk. Out of sample it does not beat
+    buy &amp; hold on Sharpe per instrument — on the 15 names its rules were chosen on, and again on 45
+    names they never saw; it takes about half the drawdown on both. Adding the alpha library as an
+    analyst measured as noise three times and stays off. With market impact on, the verdict holds at
+    $100k and $10M and the desk loses 0.09 of Sharpe at $1B. The LLM desk has been measured once
+    (v0.5.1: five stocks, one quarter, Claude Opus, anonymised prompts, $4): the same Sharpe as the
+    rules, less than half the exposure, return and drawdown — a single quarter shows what it does, not
+    whether it has an edge.
   </div>
 
   <h2>The architectural boundary</h2>
@@ -115,7 +118,8 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
      FX carry, costs included, rules frozen before the run. Portfolio = 15 equal-capital sleeves.</p>
   <div class="tablewrap"><table class="results">
     <tr><th>Portfolio (holdout)</th><th>Sharpe</th><th>t(SR)</th><th>Return</th><th>Max DD</th><th>Exposure</th></tr>
-    <tr class="agent"><td>AgenticTrader v0.3 rules (current)</td><td>1.14</td><td>2.41</td><td>31.5%</td><td>6.8%</td><td>51%</td></tr>
+    <tr class="agent"><td>AgenticTrader v0.5.1 rules (current: + FX carry weight)</td><td>1.16</td><td>2.46</td><td>32.8%</td><td>7.0%</td><td>55%</td></tr>
+    <tr><td>AgenticTrader v0.3 rules</td><td>1.14</td><td>2.41</td><td>31.5%</td><td>6.8%</td><td>51%</td></tr>
     <tr><td>AgenticTrader v0.2 rules</td><td>1.21</td><td>2.55</td><td>20.5%</td><td>3.6%</td><td>36%</td></tr>
     <tr><td>Buy &amp; hold</td><td>1.06</td><td>2.24</td><td>86.6%</td><td>20.8%</td><td>98%</td></tr>
     <tr><td>B&amp;H vol-target (fair control)</td><td>1.24</td><td>2.63</td><td>46.3%</td><td>9.8%</td><td>74%</td></tr>
@@ -126,16 +130,27 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
      that no rule choice ever consulted, same frozen rules, mean over instruments.</p>
   <div class="tablewrap"><table class="results">
     <tr><th>Extended universe, 45 names</th><th>Design mean Sharpe</th><th>Holdout mean Sharpe</th><th>Holdout mean max DD</th><th>Beats B&amp;H (holdout)</th><th>Lower DD than B&amp;H</th></tr>
-    <tr class="agent"><td>AgenticTrader (frozen v0.3 rules)</td><td>0.49</td><td>0.37</td><td>17.7%</td><td>14 / 45</td><td>40 / 45</td></tr>
+    <tr class="agent"><td>AgenticTrader v0.5.1 rules</td><td>0.51</td><td>0.42</td><td>17.7%</td><td>15 / 45</td><td>40 / 45</td></tr>
+    <tr><td>AgenticTrader v0.3 rules</td><td>0.49</td><td>0.37</td><td>17.7%</td><td>14 / 45</td><td>40 / 45</td></tr>
     <tr><td>Buy &amp; hold</td><td>0.56</td><td>0.50</td><td>27.2%</td><td>—</td><td>—</td></tr>
     <tr><td>B&amp;H vol-target (fair control)</td><td>0.61</td><td>0.47</td><td>21.1%</td><td>—</td><td>—</td></tr>
   </table></div>
   <div class="tablewrap"><table class="results">
     <tr><th>Market impact, core universe, design period</th><th>Sharpe, impact off</th><th>$100k</th><th>$10M</th><th>$1B</th><th>Impact paid at $1B</th></tr>
-    <tr class="agent"><td>AgenticTrader (≈106 trades)</td><td>0.65</td><td>0.65</td><td>0.64</td><td>0.56</td><td>7.7%</td></tr>
+    <tr class="agent"><td>AgenticTrader (≈107 trades, v0.5.1 rules)</td><td>0.70</td><td>0.70</td><td>0.69</td><td>0.60</td><td>7.7%</td></tr>
     <tr><td>B&amp;H vol-target (≈1,100 trades)</td><td>0.67</td><td>0.67</td><td>0.67</td><td>0.62</td><td>5.7%</td></tr>
     <tr><td>Buy &amp; hold</td><td>0.62</td><td>0.62</td><td>0.62</td><td>0.62</td><td>1.0%</td></tr>
     <tr><td>MACD</td><td>0.42</td><td>0.41</td><td>0.35</td><td>−0.24</td><td>75.4%</td></tr>
+  </table></div>
+  <p class="caption">v0.5.1: the first LLM measurement — the same desk with Claude Opus (medium effort, one debate round)
+     in every reasoning role, anonymised prompts, Q1 2024, five stocks, a decision every 10 bars, against the
+     rule-based desk on identical bars. 271 calls, 0 refusals, 0 fallbacks, $4.12.</p>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Q1 2024, mean over AAPL · NVDA · MSFT · META · GOOGL</th><th>Sharpe</th><th>Return</th><th>Max DD</th><th>Exposure</th><th>Trades</th></tr>
+    <tr class="agent"><td>LLM desk (Claude Opus)</td><td>2.19</td><td>6.9%</td><td>2.2%</td><td>23%</td><td>2.4</td></tr>
+    <tr><td>Rule-based desk, same cadence</td><td>2.19</td><td>15.5%</td><td>5.6%</td><td>57%</td><td>2.8</td></tr>
+    <tr><td>Buy &amp; hold</td><td>2.27</td><td>28.6%</td><td>9.2%</td><td>100%</td><td>1.0</td></tr>
+    <tr><td>B&amp;H vol-target</td><td>2.33</td><td>13.3%</td><td>6.6%</td><td>62%</td><td>54.8</td></tr>
   </table></div>
   <div class="tablewrap"><table class="results">
     <tr><th>Design period 2016–21, agent mean over 15 instruments</th><th>Mean Sharpe</th><th>Median Sharpe</th><th>Beats B&amp;H</th><th>Beats vol-target B&amp;H</th></tr>

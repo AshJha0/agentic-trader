@@ -40,6 +40,18 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
+def price_for(model: str) -> tuple[float, float] | None:
+    """List price for a model id, matching the longest table key the id starts with.
+
+    The API reports the model that served a call, which can carry a date suffix
+    (``claude-haiku-4-5-20251001``); the table is keyed by family.
+    """
+    if model in PRICES_PER_MTOK:
+        return PRICES_PER_MTOK[model]
+    best = max((k for k in PRICES_PER_MTOK if model.startswith(k)), key=len, default=None)
+    return PRICES_PER_MTOK[best] if best else None
+
+
 class LLM(Protocol):
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None: ...
 
@@ -53,7 +65,7 @@ class ModelUsage:
     cache_write_tokens: int = 0
 
     def cost(self, model: str) -> float | None:
-        price = PRICES_PER_MTOK.get(model)
+        price = price_for(model)
         if price is None:
             return None
         pin, pout = price

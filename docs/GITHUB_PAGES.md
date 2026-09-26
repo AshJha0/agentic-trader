@@ -54,6 +54,8 @@ measured numbers. If you change the code, re-check them against these sources:
 | Impact sweep | `agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital <1e5 / 1e7 / 1e9>` |
 | Ablation tables | The 16 config overrides listed in `docs/evaluation/evaluation.md`, plus the alpha-analyst variants, each run with `evaluate(periods={"design": PERIODS["design"]})` on the core universe |
 | Selection statistics | `stats.selection_report(portfolio design returns, the 16 variants' mean Sharpes)` |
+| LLM desk vs rules (Q1 2024, 5 stocks) | `agentic-trader evaluate AAPL,NVDA,MSFT,META,GOOGL --data yahoo --periods q1_2024 --every 10 --rounds 1 --llm anthropic --deep-effort medium --max-llm-calls 400 --anonymize --workers 3` (API key, ≈$4) and the same without `--llm anthropic` |
+| FX carry-neutral ablation | The five settings in `docs/evaluation/evaluation.md`, `evaluate(CORE_UNIVERSE["fx"], design)` to choose and `EXTENDED_UNIVERSE["fx"]` over design/holdout/reserve to judge; `--rules v03` is the control |
 | Portfolio results | `agentic-trader portfolio <15 symbols> --data yahoo --start 2022-01-03 --end 2026-06-30` (and the design dates) |
 | Code size | Non-empty lines in `agentic_trader/**/*.py`, `tests/**/*.py` and `cpp/**/*.{cpp,hpp}` |
 | Cookbook | Run every ```python block in `COOKBOOK.md` with `PYTHONUTF8=1`; all must exit 0 (the network recipes are marked) |
