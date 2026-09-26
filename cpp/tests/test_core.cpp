@@ -30,6 +30,16 @@ void test_sma_ema() {
     const auto e = at::ema(x, 3);
     // seed = mean(1,2,3) = 2; alpha = 0.5 -> 3, 4
     check(near(e[2], 2.0) && near(e[3], 3.0) && near(e[4], 4.0), "ema");
+    // Direct window sums: a running sum left ~1e-16 of cancellation noise after the 1.0
+    // dropped out, which the tiny final window read as its mean (zscore +1 instead of -1).
+    const at::Series tiny = {1.0, 1.17549435e-38, 1.17549435e-38, 0.0};
+    const auto st = at::sma(tiny, 2);
+    const auto z = at::zscore(tiny, 2);
+    check(near(st[3], 0.5 * 1.17549435e-38, 1e-50) && near(z[3], -1.0) && near(z[1], -1.0) && z[2] == 0.0,
+          "sma direct window sums (no running-sum drift)");
+    const at::Series gap = {1.0, std::nan(""), 2.0, 3.0};
+    const auto g = at::sma(gap, 2);
+    check(std::isnan(g[2]) && near(g[3], 2.5), "sma window straddling a NaN is NaN");
 }
 
 void test_rsi_bounds() {

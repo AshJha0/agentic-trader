@@ -1,5 +1,123 @@
 # Changelog
 
+## v0.6.0 — 2026-09-27
+
+Point-in-time filings for the idle half of the analyst team, statistical power across the
+universe, a calibration harness for the model's judgement, pinned prompts, a cross-sectional
+analyst measured under the protocol, fuzzing of the agentic layer, a bounded task pool with
+multi-process serving, the documentation checked in CI, and one configuration knob for the
+alpha window. The measured results of every data and rule change are in
+[docs/evaluation](docs/evaluation/evaluation.md).
+
+### Data
+- **SEC EDGAR point-in-time fundamentals and filing news** (`data/edgar.py`). Free and
+  keyless; the SEC requires a contact e-mail in the User-Agent (`EDGAR_USER_AGENT` in
+  `.env`), without which EDGAR is skipped with one warning. Every XBRL fact carries the date
+  it was *filed*, so a fact exists at `as_of` iff `filed <= as_of`, and a restated value never
+  replaces the first print. Quarterly flows are rebuilt from the reported spans (direct
+  quarters, year-to-date differencing, Q4 from the 10-K, 12/16-week fiscal calendars such as
+  Costco's and PepsiCo's) and summed to trailing-twelve-month growth, margin, EPS and P/E,
+  leverage and FCF yield; EPS surprise and insider direction stay `None` because EDGAR has no
+  consensus data; funds and index ETFs (SIC 6221, no company facts) return nothing. The news
+  feed is the filing stream itself: 8-K item codes mapped to headlines with a conservative
+  tone, periodic and ownership filings, insider Form 4 counts; the thousands of routine
+  prospectus supplements banks file are excluded. Predecessor filers are mapped
+  (`edgar_ciks`; Exxon's 2026 holding-company reorganisation is shipped). Coverage was
+  checked for every equity in the 60-name universe at two dates. The Yahoo provider uses it
+  for every historical date; `--no-edgar` and `--edgar-cache` on the CLI. Social media has no
+  free point-in-time archive and that analyst still abstains on real data.
+- `alpha_lookback_days` (900) is the one knob for the alpha library's window — the alpha
+  analysts and the `quant.alpha` / `quant.xalpha` tools — next to `lookback_days` (400) for
+  everything else; every desk tool's `lookback_days` argument now defaults to the configured
+  value instead of a hard-coded 400 or 900.
+
+### Evaluation
+- **Cross-instrument bootstrap.** `stats.paired_bootstrap` resamples instruments (pairs
+  kept together) for the mean difference between two strategies; `EvaluationResult.paired`
+  and `paired_table` give the 95% interval and two-sided `p` per period and baseline, and
+  `agentic-trader evaluate` prints them. The published tables now say whether an edge across
+  the universe is distinguishable from the luck of which instruments were drawn.
+- **Repeated runs.** `evaluate(repeats=N)` / `--repeats N` runs the agent N times per
+  (period, symbol), tags rows with `run`, and `run_dispersion` reports the across-run
+  spread — the model's own variance, which any single-run difference has to clear.
+- **Prompt registry** (`prompts.py`). A SHA-256 hash of every agent's system prompt and
+  prompt-building code, bundled into one hash recorded in every evaluation and calibration
+  result.
+- **Calibration harness** (`calibration.py`, `agentic-trader calibrate`). One frozen state,
+  `n` runs per anchor: dispersion of the target weight and action agreement, the anchoring
+  slope of the target on the position the desk is told it holds, and drift against a stored
+  report on the same state.
+- **Cross-sectional alpha analyst** (`xalpha`): the v0.5 cross-sectional research consumed
+  by an analyst at last — z-scored against a peer universe on every date (`xalpha_universe`,
+  `--xalpha-universe core|extended|all|SYM,...`), significance-gated exactly like the
+  time-series alpha analyst, cached per (universe, date). Measured under the protocol on top
+  of EDGAR: core design -0.01 [-0.02, 0.00] of per-instrument
+  Sharpe, core holdout 0.00, extended holdout -0.01 [-0.01, 0.00],
+  reserve +0.01 / -0.03 — **off by default**: it spoke on 2.6% of sampled decisions (never on
+  FX) because no alpha clears the cross-sectional significance gate on most dates.
+- **The multi-year LLM harness**: model tiers, repeats and prompt hashes on the core universe
+  over design and holdout, staged with a dollar cap per stage. See the evaluation for what
+  has been run.
+
+### Engineering
+- **Agentic-layer fuzzing** (`tests/test_fuzz_agentic.py`): hypothesis properties over
+  `coerce_arguments` on random schemas and JSON, `validate_plan` on random plans (the result
+  always ends with governance, pins the task's symbol and date, schedules no state change),
+  `PolicyEngine.evaluate` (always a decision; never ALLOW for a denied, unauthorised or
+  state-changing request), `extract_json` and `untrusted_block`.
+- **Bounded task pool and multi-process serving.** `create_app(workers, queue_limit)` runs
+  tasks on a thread pool per process and answers `503` + `Retry-After` beyond
+  `agentic.queue_limit` in-flight tasks; `/health` reports in-flight, running and queued.
+  `serve --processes N` starts uvicorn worker processes from an app factory over a shared task
+  store (required: `multiprocess_options` refuses without one); every process serves every
+  record, cancel and approvals must reach the owning process (`409` elsewhere).
+- **Docs checked in CI**: a `docs` job runs every offline cookbook recipe
+  (`scripts/run_cookbook.py --offline`), renders every Mermaid diagram with mermaid-cli
+  (`scripts/check_mermaid.py`) and resolves every internal link (`scripts/check_links.py`).
+- **Landing page**: what changed in this release at the top; the older result tables below
+  the fold.
+
+### Fixed
+- **Split basis in the EDGAR per-share ratios** (found by the release review): P/E and FCF
+  yield divided a split-adjusted Yahoo close by as-first-printed EPS and share counts, so every
+  date before a stock split was off by the split factor (AAPL 2019: P/E 6 instead of 25; NVDA
+  2020: 2 instead of 85), and a trailing year that straddled a split mixed share units. The
+  fundamentals now take the close *as traded* (from a second, unadjusted Yahoo download with
+  the split table) and rebase every EPS and share-count print to the as-of basis before mixing
+  quarters; the EDGAR-on tables in the evaluation were re-run on the fix.
+- EDGAR: year-over-year revenue growth is only reported when the two trailing years are
+  exactly a year apart; the earliest print of a span wins whatever tag it was filed under; a
+  missing older submissions page loses its filings, not the ticker; a 404 is never written to
+  the disk cache; cached endpoint files older than `edgar_cache_max_age_days` (7) are
+  re-fetched so a reused cache cannot hide new filings from a live decision.
+- Multi-process serving: a record another process wrote after this one started is loaded
+  from the store on demand (`GET /tasks`, `/tasks/{id}`, `/health` and the cancel `409` all
+  see it); the interrupted-run sweep runs once in the parent so a worker restart cannot fail
+  its siblings' live runs; the configuration is validated before any worker forks; approvals
+  resume on the task pool rather than the request thread; a queued task can be cancelled
+  before it starts; stopping the server cancels the queue instead of draining it.
+- `coerce_arguments` rejects non-finite numbers with `ValueError` (an infinite integer used to
+  escape as `OverflowError`); the plan cap only ever drops tool calls, never the analysts or
+  the debate / trader / risk stages; `untrusted_block` neutralises tags split across lines or
+  left unterminated; the cross-sectional cache is per provider and locked; the calibration
+  drift compares at an anchor both reports sampled; baseline rows survive a failed first
+  repeat and `summary()` counts instruments once under repeats; `scripts/check_links.py`
+  slugs headings the way GitHub does.
+- `sma` on both backends now sums each window directly (as `rolling_std` already did)
+  instead of carrying a running sum: the C++ boundary fuzzer found a window `[1e-38, 0]`
+  after a `1.0` where the running sum left cancellation noise the flatness floor could not
+  see, so `zscore` answered +1 on one backend and 0 on the other. The published tables were
+  re-run on the fixed code; 19 of 1,680 rows moved, all but a few at the last displayed
+  digit (the regression check in the evaluation lists the largest).
+- `YahooProvider.history` extends every download to today: a walk-forward caller asks for
+  a window ending at each successive as-of date, and each step used to be a new download
+  once the requested end passed the cached range (found when the cross-sectional analyst
+  fetched 45 peers per decision date). The point-in-time cut is still applied by
+  `clip_history` at the requested end.
+- The cross-sectional analyst computes only the IC it needs instead of the full
+  `xalpha_report` (decay curves, quantile spreads and correlations cost six times the IC
+  itself), and the desk tools' `lookback_days` arguments no longer carry hard-coded windows.
+
 ## v0.5.1 — 2026-09-26
 
 The first measured LLM results, and the evaluation protocol's first use for a rule change.

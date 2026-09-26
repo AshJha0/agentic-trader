@@ -115,7 +115,7 @@ class AgentHarness:
     def __init__(self, graph: TradingGraph, policy: PolicyEngine | None = None,
                  gateway: ApprovalGateway | None = None, knowledge: KnowledgeBase | None = None,
                  positions: dict[str, float] | None = None, capital: float | None = None,
-                 store: TaskStore | None = None):
+                 store: TaskStore | None = None, sweep_interrupted: bool | None = None):
         self.graph = graph
         self.config = graph.config
         acfg = self.config.get("agentic", {})
@@ -135,19 +135,37 @@ class AgentHarness:
         self.store = store
         self.archive: dict[str, dict[str, Any]] = {}
         if store is not None:
-            interrupted = store.mark_interrupted()
-            if interrupted:
-                log.warning("%d task(s) were in flight when the previous process stopped; marked FAILED",
-                            interrupted)
+            # The sweep belongs to whoever owns the store for this service: one process, or
+            # the parent of `serve --processes N` (a worker starting must not fail its
+            # siblings' live runs).
+            sweep = acfg.get("sweep_interrupted", True) if sweep_interrupted is None else sweep_interrupted
+            if sweep:
+                interrupted = store.mark_interrupted()
+                if interrupted:
+                    log.warning("%d task(s) were in flight when the previous process stopped; marked FAILED",
+                                interrupted)
             self.archive = {r["task_id"]: r for r in store.load_all()}
 
     def record(self, task_id: str) -> dict[str, Any] | None:
-        """The JSON record of a live run or an archived one (``None`` if unknown)."""
+        """The JSON record of a live run, an archived one, or one another process wrote to
+        the shared store since this process started (``None`` if unknown)."""
         run = self.runs.get(task_id)
         if run is not None:
             from .store import record_of
             return record_of(run)
-        return self.archive.get(task_id)
+        rec = self.archive.get(task_id)
+        if rec is None and self.store is not None:
+            rec = self.store.load(task_id)
+            if rec is not None:
+                self.archive[task_id] = rec
+        return rec
+
+    def archived_summaries(self) -> list[dict[str, Any]]:
+        """Every record in the store (all processes), or the in-memory archive without one."""
+        if self.store is not None:
+            return self.store.summaries()
+        return [{"task_id": r["task_id"], "symbol": r["symbol"], "as_of": r["as_of"], "role": r["role"],
+                 "state": r["state"]} for r in self.archive.values()]
 
     def _persist(self, run: TaskRun) -> None:
         if self.store is not None:
@@ -178,6 +196,11 @@ class AgentHarness:
     def resume(self, run: TaskRun) -> TaskRun:
         """Drive a run to a terminal state or to AWAITING_APPROVAL."""
         if run.done:
+            return run
+        if run.cancel_requested and run.state is TaskState.CREATED:   # cancelled while queued: do no work
+            self._transition(run, TaskState.CANCELLED, "cancelled before start")
+            run.finished_at = utc_now()
+            self._persist(run)
             return run
         try:
             if run.state is TaskState.CREATED:
@@ -394,7 +417,9 @@ class AgentHarness:
         return []
 
     def decide_approval(self, approval_id: str, approve: bool, decided_by: str = "human",
-                        note: str = "") -> TaskRun:
+                        note: str = "", resume: bool = True) -> TaskRun:
+        """Record a decision and, by default, resume the run on the calling thread; the API
+        passes ``resume=False`` and hands the continuation to its task pool instead."""
         if not isinstance(self.gateway, QueuedApprovalGateway):
             raise ValueError("approvals are not queued in this harness")
         a = self.gateway.resolve(approval_id, approve, decided_by, note)
@@ -402,7 +427,7 @@ class AgentHarness:
         run.evidence.record(EvidenceType.APPROVAL, decided_by,
                             f"{'approved' if approve else 'rejected'} {a.request.tool}",
                             {"approval": a.id, "note": note}, run.correlation_id)
-        return self.resume(run)
+        return self.resume(run) if resume else run
 
 
 def wait_until_done(run: TaskRun, timeout_s: float = 60.0) -> TaskRun:

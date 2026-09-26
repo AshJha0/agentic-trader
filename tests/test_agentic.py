@@ -401,7 +401,7 @@ def test_cancel_between_steps():
     run = h.submit(Task("AAPL", AS_OF))
     run.cancel_requested = True
     h.resume(run)
-    assert run.state is TaskState.CANCELLED and run.trading_state is not None
+    assert run.state is TaskState.CANCELLED and run.trading_state is None      # cancelled while queued: no work done
 
 
 def test_harness_is_usable_from_threads():

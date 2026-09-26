@@ -39,6 +39,9 @@ Mermaid 11 parser before release. The prose explanation is in
 25. [Execution-aware backtest: from the daily bar to an impact charge](#25-execution-aware-backtest-from-the-daily-bar-to-an-impact-charge)
 26. [Cross-sectional alpha pipeline](#26-cross-sectional-alpha-pipeline)
 27. [Hierarchical risk budgets across asset classes](#27-hierarchical-risk-budgets-across-asset-classes)
+28. [Point-in-time fundamentals and news from SEC EDGAR](#28-point-in-time-fundamentals-and-news-from-sec-edgar)
+29. [Calibration harness: dispersion, anchoring, drift](#29-calibration-harness-dispersion-anchoring-drift)
+30. [The API's task pool and multi-process serving](#30-the-apis-task-pool-and-multi-process-serving)
 
 ## 1. Decision pipeline
 
@@ -763,4 +766,65 @@ flowchart LR
     A --> S["signed weights = allocation × sign(target)"]
     S --> RC["risk_contributions:<br/>group_risk (budget vs realised share)"]
     S --> BT["run_portfolio_backtest(class_budgets=)"]
+```
+
+## 28. Point-in-time fundamentals and news from SEC EDGAR
+
+```mermaid
+flowchart LR
+    T["ticker"] --> CIK["company_tickers.json<br/>ticker → CIK (+ predecessor overrides)"]
+    CIK --> SUB["submissions/CIK.json<br/>every filing: form, filed, 8-K items"]
+    CIK --> FACTS["companyfacts/CIK.json<br/>every XBRL fact with its filed date"]
+    SUB --> NEWS["news(as_of, lookback):<br/>filed in (as_of − lookback, as_of]<br/>8-K item → headline + tone<br/>10-K/Q, 13D/G, NT · Form 4 counts"]
+    FACTS --> KNOWN["facts with filed ≤ as_of<br/>first print per span"]
+    KNOWN --> Q["quarterly_series:<br/>direct quarters · YTD differencing<br/>Q4 = FY − 9M · 12/16-week quarters"]
+    Q --> TTM["ttm: four contiguous quarters"]
+    TTM --> F["fundamentals: growth, margin,<br/>EPS, leverage, FCF"]
+    PX["point-in-time close"] --> F2["P/E, FCF yield"]
+    F --> F2
+    F2 --> FA["Fundamentals analyst"]
+    NEWS --> NA["News analyst<br/>(published ≤ as_of guard)"]
+    UA["EDGAR_USER_AGENT<br/>(contact, .env)"] -.required.-> CIK
+```
+
+## 29. Calibration harness: dispersion, anchoring, drift
+
+```mermaid
+flowchart TD
+    S["one frozen state<br/>(symbol, as_of)"] --> A0["anchor None"]
+    S --> A1["anchor −0.5"]
+    S --> A2["anchor 0"]
+    S --> A3["anchor +0.5"]
+    A0 --> R0["n × propagate"]
+    A1 --> R1["n × propagate"]
+    A2 --> R2["n × propagate"]
+    A3 --> R3["n × propagate"]
+    R0 --> D["dispersion:<br/>std / range of target,<br/>action agreement"]
+    R1 --> AN["anchoring:<br/>slope of mean target<br/>on the anchor"]
+    R2 --> AN
+    R3 --> AN
+    D --> REP["CalibrationReport<br/>+ prompt bundle hash"]
+    AN --> REP
+    REP --> CMP["compare(earlier):<br/>target shift, action distance,<br/>same_prompts"]
+    OLD["stored report<br/>(earlier model / prompts)"] --> CMP
+```
+
+## 30. The API's task pool and multi-process serving
+
+```mermaid
+flowchart LR
+    LB["load balancer<br/>(sticky for approvals)"] --> P1
+    LB --> P2
+    subgraph P1["process 1 (app_factory)"]
+        H1["harness"] --> POOL1["thread pool<br/>workers=4"]
+        Q1["queue_limit"] -->|"full → 503 + Retry-After"| X1((" "))
+    end
+    subgraph P2["process 2"]
+        H2["harness"] --> POOL2["thread pool"]
+    end
+    POOL1 --> DB[("task store (SQLite)<br/>every transition")]
+    POOL2 --> DB
+    DB --> R1["GET /tasks/{id}, /report, /evidence<br/>served from any process"]
+    C["POST /tasks/{id}/cancel · /approvals"] -->|"owning process"| H1
+    C -->|"other process → 409"| H2
 ```

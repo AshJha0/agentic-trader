@@ -9,6 +9,9 @@ inflate it?
   ratios (Bailey & Lopez de Prado, 2014).
 * ``min_track_record``     how many periods are needed before a Sharpe ratio is
   significant at a given confidence.
+* ``paired_bootstrap``     bootstrap over *instruments*: is the mean per-instrument
+  difference between two strategies (Sharpe, drawdown, ...) distinguishable
+  from zero across the universe, not just along time?
 
 Sharpe ratios inside these formulas are per period (daily); the public helpers
 convert from annualised figures where they take them.
@@ -141,3 +144,51 @@ def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: flo
         "min_track_record_periods": (None if not math.isfinite(m := min_track_record(s.sharpe, sr0, s.skew, s.kurt))
                                      else round(m)),
     }
+
+
+# ------------------------------------------------------ across instruments
+@dataclass(frozen=True)
+class PairedBootstrap:
+    n: int                   # instruments with both values
+    mean_diff: float         # mean(a - b) over instruments
+    ci_low: float            # bootstrap percentile interval of the mean difference
+    ci_high: float
+    p_value: float           # two-sided: share of resamples on the other side of zero, doubled
+    wins: int                # instruments where a > b
+
+    @property
+    def significant(self) -> bool:
+        return self.n >= 3 and (self.ci_low > 0 or self.ci_high < 0)
+
+
+def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0) -> PairedBootstrap:
+    """Bootstrap the mean paired difference ``a - b`` across instruments.
+
+    The time-series bootstrap (``sharpe_ci_bootstrap``) asks whether one instrument's
+    Sharpe is real. This asks the other question the evaluation needs: given one number
+    per instrument for two strategies on the same instruments and bars, is the *average*
+    edge across the universe more than the luck of which instruments were picked? It
+    resamples instruments with replacement (pairs kept together), so it makes no
+    assumption about the distribution of per-instrument differences, only that the
+    instruments are exchangeable draws from the universe of interest.
+
+    NaN pairs are dropped. Fewer than three pairs gives NaN bounds and ``p_value = 1``.
+    """
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    if a.shape != b.shape:
+        raise ValueError("a and b must have the same length (one value per instrument)")
+    d = a - b
+    d = d[np.isfinite(d)]
+    n = int(d.size)
+    if n == 0:
+        return PairedBootstrap(0, float("nan"), float("nan"), float("nan"), 1.0, 0)
+    mean = float(d.mean())
+    wins = int((d > 0).sum())
+    if n < 3 or n_boot < 10 or not 0 < ci < 1:
+        return PairedBootstrap(n, mean, float("nan"), float("nan"), 1.0, wins)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, n, size=(n_boot, n))
+    means = d[idx].mean(axis=1)
+    lo, hi = np.quantile(means, [(1 - ci) / 2, 1 - (1 - ci) / 2])
+    tail = float(min((means <= 0).mean(), (means >= 0).mean()))
+    return PairedBootstrap(n, mean, float(lo), float(hi), min(1.0, 2.0 * tail), wins)

@@ -77,6 +77,15 @@ on synthetic data and is executed as-is when the docs are checked.
   62. [Keep tasks across restarts](#62-keep-tasks-across-restarts)
   63. [Serve with TLS and real API keys](#63-serve-with-tls-and-real-api-keys)
   64. [Evaluate the extended universe and the reserve period](#64-evaluate-the-extended-universe-and-the-reserve-period)
+- [v0.6: point-in-time filings, statistical power, calibration, operations](#v06-point-in-time-filings-statistical-power-calibration-operations)
+  65. [Point-in-time fundamentals and filing news from SEC EDGAR](#65-point-in-time-fundamentals-and-filing-news-from-sec-edgar)
+  66. [Rank a name against its peers: the cross-sectional analyst](#66-rank-a-name-against-its-peers-the-cross-sectional-analyst)
+  67. [Is the edge real across instruments? The paired bootstrap](#67-is-the-edge-real-across-instruments-the-paired-bootstrap)
+  68. [Measure the model's own variance with repeated runs](#68-measure-the-models-own-variance-with-repeated-runs)
+  69. [Calibrate the desk: dispersion, anchoring, drift](#69-calibrate-the-desk-dispersion-anchoring-drift)
+  70. [Pin the prompts: the registry hash](#70-pin-the-prompts-the-registry-hash)
+  71. [Serve with a bounded task pool and several processes](#71-serve-with-a-bounded-task-pool-and-several-processes)
+  72. [Check the docs the way CI does](#72-check-the-docs-the-way-ci-does)
 
 ## Decisions
 
@@ -1325,3 +1334,183 @@ print(res.summary(universe="extended"))
 
 The published run is `agentic-trader evaluate --data yahoo --universe all --periods
 design,holdout,q1_2024,reserve` *(network)*; `--universe core` reproduces the v0.3/v0.4 tables.
+
+## v0.6: point-in-time filings, statistical power, calibration, operations
+
+### 65. Point-in-time fundamentals and filing news from SEC EDGAR
+
+The SEC's EDGAR API is free and keyless, and every fact carries the date it was *filed*, so a
+backtest can see exactly what the market could. The SEC requires a contact in the User-Agent:
+`EDGAR_USER_AGENT="Name email@domain"`. The `agentic-trader` CLI reads it from `.env`
+(git-ignored); a Python script does not, so export it in the shell, pass
+`make_config(..., edgar_user_agent="Name email@domain")`, or call
+`agentic_trader.cli.load_dotenv()` first. With it, the Yahoo provider serves historical
+fundamentals and a filing-stream news feed for every real-data equity; without it, both fall
+back to the old behaviour with one warning. Per-share figures use the close *as traded* on the
+date and EDGAR's prints rebased across every later stock split.
+
+```python
+from datetime import date
+from agentic_trader import Instrument, make_config
+from agentic_trader.data import get_provider
+
+from agentic_trader.cli import load_dotenv
+load_dotenv()                                                                              # EDGAR_USER_AGENT from .env
+p = get_provider(make_config(data_provider="yahoo", edgar_cache_dir="results/edgar_cache"))   # network
+assert p.edgar is not None, "set EDGAR_USER_AGENT"
+ins = Instrument.parse("AAPL")
+p.history(ins, date(2022, 1, 1), date(2022, 12, 31))        # the close is needed for P/E and FCF yield
+f = p.fundamentals(ins, date(2022, 6, 15))
+print(f["report_period_end"], f["filed"], f["lag_days"], f["revenue_growth_yoy"], f["pe_ratio"], f["source"])
+for item in p.news(ins, date(2022, 6, 15), 60):
+    print(item.published, item.headline, item.sentiment)
+```
+
+The client itself is usable on its own — `EdgarClient(cache_dir=...).fundamentals("COST",
+date(2023, 6, 15), price=500.0)` — and a `fetch` argument replaces the download for tests.
+Funds and index ETFs return `{}`, and `eps_surprise` is `None`: EDGAR has no consensus data,
+and the desk does not guess.
+
+### 66. Rank a name against its peers: the cross-sectional analyst
+
+The `xalpha` analyst z-scores the alpha library across a peer universe on every date, keeps
+only alphas whose cross-sectional IC is significant, and reports where the name sits today.
+Peers default to the core universe of the instrument's asset class; a mixed list is filtered
+by asset class, so one setting serves equities and FX.
+
+```python
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.memory import DecisionMemory
+
+cfg = make_config(analysts=["technical", "xalpha"], xalpha_universe=["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "JPM"])
+g = TradingGraph(cfg, memory=DecisionMemory(None), on_event=lambda *_: None)
+state, decision = g.propagate("AAPL", "2020-06-01")
+r = state.reports["xalpha"]
+print(r.abstained, round(r.signal, 3), r.summary)
+print(r.facts["breadth"], r.facts["universe"][:4])
+print({k: {m: round(x, 3) for m, x in v.items()} for k, v in list(r.facts["ic"].items())[:2]})   # IC, t(IC), n per alpha
+```
+
+The cross-section is computed once per (universe, date) and cached across instruments and
+threads, so an evaluation over the whole universe pays for it once per decision date. Whether
+it is on by default is decided by the protocol, not by taste: see the evaluation.
+
+### 67. Is the edge real across instruments? The paired bootstrap
+
+The time-series bootstrap asks whether one instrument's Sharpe is real. Across a universe the
+question is different: is the *mean* difference between two strategies more than the luck of
+which instruments were drawn? `paired_bootstrap` resamples instruments with replacement, pairs
+kept together, and every evaluation prints the table.
+
+```python
+import numpy as np
+from agentic_trader import make_config
+from agentic_trader.evaluation import evaluate
+from agentic_trader.stats import paired_bootstrap
+
+rng = np.random.default_rng(0)
+base = rng.normal(0.5, 0.3, 30)
+print(paired_bootstrap(base + 0.02, base))                                     # not distinguishable from zero
+print(paired_bootstrap(base + 0.25 + rng.normal(0, 0.05, 30), base).significant)
+
+res = evaluate(["AAPL", "MSFT", "NVDA", "META", "GOOGL", "EURUSD", "USDJPY"], {"q": ("2024-01-02", "2024-03-28")},
+               make_config(), rebalance_every=10)
+print(res.paired_table())                                                      # per period and baseline
+print(res.paired("B&H vol-target", metric="MDD%", period="q"))                 # any metric column
+```
+
+### 68. Measure the model's own variance with repeated runs
+
+Ask the same model the same question three times and the answers differ. `repeats` runs the
+agent that many times per (period, symbol) — the baselines once — tags every row with `run`,
+and `run_dispersion` reports the across-run spread. Offline the rules are deterministic, so the
+dispersion is zero; with `--llm anthropic` it is the number you want before reading any
+single-run difference.
+
+```python
+from agentic_trader import make_config
+from agentic_trader.evaluation import AGENT, evaluate
+
+res = evaluate(["AAPL", "EURUSD"], {"q": ("2024-01-02", "2024-02-29")}, make_config(), rebalance_every=10, repeats=3)
+print(res.rows[res.rows.strategy == AGENT][["symbol", "run", "Sharpe"]])
+print(res.run_dispersion())
+```
+
+```bash
+agentic-trader evaluate AAPL,NVDA --data yahoo --periods holdout --every 10 --repeats 3 --llm anthropic --anonymize --max-llm-cost 50
+```
+
+### 69. Calibrate the desk: dispersion, anchoring, drift
+
+One frozen state, `n` runs per anchor. Dispersion is the spread of the target weight at one
+anchor; anchoring is the slope of the mean target on the position the desk is told it already
+holds; drift is the comparison against a stored report on the same state after a model or
+prompt change.
+
+```python
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.calibration import CalibrationReport, calibrate
+from agentic_trader.memory import DecisionMemory
+
+g = TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None)
+rep = calibrate(g, "AAPL", "2024-03-01", n=2, anchors=(None, -0.5, 0.0, 0.5))
+print(rep.samples[["anchor", "run", "action", "target_weight"]].to_string(index=False))
+print(rep.dispersion(None))            # std 0, agreement 1: the rules are deterministic
+print(rep.anchoring())                 # slope of target on anchor
+rep.to_json("results/calibration_rules.json")
+print(rep.compare(CalibrationReport.from_json("results/calibration_rules.json"))["same_prompts"])
+```
+
+```bash
+agentic-trader calibrate AAPL --date 2024-03-01 --n 5 --anchors none,-0.5,0,0.5 --llm anthropic --anonymize --deep-effort medium --max-llm-cost 10 --out results/calibration_opus.json
+```
+
+### 70. Pin the prompts: the registry hash
+
+Every evaluation and calibration record carries a hash of every agent's system prompt and
+prompt-building code, so two results can be shown to have used identical wording.
+
+```python
+from agentic_trader import make_config
+from agentic_trader.prompts import prompt_bundle_hash, prompt_registry
+
+reg = prompt_registry(make_config())
+print(reg["bundle"], len(reg["agents"]))
+print(reg["agents"]["trader"], reg["agents"]["analyst:news"])
+assert prompt_bundle_hash(make_config(lookback_days=10)) == reg["bundle"]      # config knobs are not prompts
+```
+
+### 71. Serve with a bounded task pool and several processes
+
+Tasks run on a pool of `agentic.workers` threads per process; when `agentic.queue_limit` tasks
+are in flight, `POST /tasks` answers `503` with `Retry-After` instead of opening another thread
+and another LLM budget. Several processes share one task store.
+
+```python
+from fastapi.testclient import TestClient
+from agentic_trader import TradingGraph, make_config
+from agentic_trader.agentic import AgentHarness
+from agentic_trader.agentic.api import create_app, multiprocess_options
+
+h = AgentHarness(TradingGraph(make_config(memory_path=None)))
+c = TestClient(create_app(harness=h, workers=2, queue_limit=0))
+print(c.get("/health").json()["workers"], c.post("/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01"},
+                                                 headers={"X-API-Key": "dev-trader-key"}).status_code)   # 503
+try:
+    multiprocess_options(2, make_config())
+except ValueError as e:
+    print("refused:", str(e)[:50], "...")
+print(multiprocess_options(2, make_config(agentic={"task_db": "results/tasks.sqlite"})))
+```
+
+```bash
+agentic-trader serve --processes 4 --workers 4 --task-db results/tasks.sqlite --host 127.0.0.1
+```
+
+### 72. Check the docs the way CI does
+
+```bash
+python scripts/run_cookbook.py --offline      # every recipe in a fresh process; --offline skips the network ones
+python scripts/check_mermaid.py               # mermaid-cli renders every diagram (or --html for a browser page)
+python scripts/check_links.py                 # every relative link and anchor; --external requests the URLs too
+```

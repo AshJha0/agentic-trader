@@ -47,14 +47,13 @@ def sma(x, n: int) -> np.ndarray:
     out = np.full(len(x), NaN)
     if len(x) < n:
         return out
-    # Cumulative sums over NaN-free stretches only: a NaN resets the window, so a
-    # derived series' leading NaNs do not poison every later value (mirrors C++).
+    # Each window is summed directly (mirrors C++): a cumulative sum drifts by cancellation
+    # noise, which a later window of tiny values sees as its mean. A window containing a
+    # NaN is NaN, so a derived series' leading NaNs do not poison every later value.
     nan = np.isnan(x)
-    c = np.cumsum(np.insert(np.where(nan, 0.0, x), 0, 0.0))
-    win = (c[n:] - c[:-n]) / n
-    bad = np.cumsum(np.insert(nan.astype(int), 0, 0))
-    has_nan = (bad[n:] - bad[:-n]) > 0
-    out[n - 1:] = np.where(has_nan, NaN, win)
+    windows = np.lib.stride_tricks.sliding_window_view(np.where(nan, 0.0, x), n)
+    has_nan = np.lib.stride_tricks.sliding_window_view(nan, n).any(axis=1)
+    out[n - 1:] = np.where(has_nan, NaN, windows.sum(axis=1) / n)
     return out
 
 

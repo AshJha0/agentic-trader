@@ -91,14 +91,20 @@ class DeskTools:
         self.capital = float(capital if capital is not None else config.get("initial_capital", 100_000.0))
         self.orders: list[dict[str, Any]] = []
 
-    def _history(self, symbol: str, as_of: date, lookback_days: int) -> tuple[Instrument, pd.DataFrame]:
+    def _history(self, symbol: str, as_of: date, lookback_days: int | None,
+                 alpha: bool = False) -> tuple[Instrument, pd.DataFrame]:
+        """History up to ``as_of``. ``lookback_days=None`` means the configured window:
+        ``lookback_days`` for the desk, ``alpha_lookback_days`` for the alpha library."""
+        if lookback_days is None:
+            lookback_days = int(self.config.get("alpha_lookback_days", 900) if alpha else self.config["lookback_days"])
         ins = Instrument.parse(symbol)
         df = self.provider.history(ins, as_of - timedelta(days=lookback_days), as_of)
         return ins, df[df.index <= pd.Timestamp(as_of)]
 
     # ------------------------------------------------------- market_data
-    def history(self, symbol: str, as_of: date, lookback_days: int = 400) -> dict:
-        """Daily OHLCV bars up to and including the as-of close (point in time)."""
+    def history(self, symbol: str, as_of: date, lookback_days: int | None = None) -> dict:
+        """Daily OHLCV bars up to and including the as-of close (point in time). The lookback
+        defaults to the desk's configured window."""
         _, df = self._history(symbol, _as_date(as_of), lookback_days)
         return _frame_payload(df)
 
@@ -123,7 +129,7 @@ class DeskTools:
         return _clean(self.provider.macro(Instrument.parse(symbol), _as_date(as_of)))
 
     # --------------------------------------------------------------- quant
-    def technical(self, symbol: str, as_of: date, lookback_days: int = 400) -> dict:
+    def technical(self, symbol: str, as_of: date, lookback_days: int | None = None) -> dict:
         """Technical indicator snapshot: moving averages, RSI, MACD, Bollinger, KDJ, ATR, momentum."""
         from ..agents.analysts import TechnicalAnalyst
         from ..state import TradingState
@@ -132,7 +138,7 @@ class DeskTools:
             raise ValueError(f"not enough history for {ins.display}")
         return _clean(TechnicalAnalyst(None, self.config).gather(TradingState(ins, _as_date(as_of), df), self.provider))
 
-    def risk(self, symbol: str, as_of: date, proposed_weight: float = 0.0, lookback_days: int = 400) -> dict:
+    def risk(self, symbol: str, as_of: date, proposed_weight: float = 0.0, lookback_days: int | None = None) -> dict:
         """Risk facts for a proposed weight: realised vol, VaR95, CVaR95, drawdown, ATR, firm limits."""
         from ..agents.risk import risk_facts
         from ..state import Action, TradeProposal, TradingState
@@ -143,9 +149,10 @@ class DeskTools:
         st.proposal = TradeProposal(Action.HOLD, float(proposed_weight), 0.0, st.last_price, None, None, 10, "")
         return _clean(risk_facts(st, self.config))
 
-    def alpha(self, symbol: str, as_of: date, horizon: int = 10, lookback_days: int = 900) -> dict:
-        """Latest alpha signals and their information coefficients over the lookback."""
-        ins, df = self._history(symbol, _as_date(as_of), lookback_days)
+    def alpha(self, symbol: str, as_of: date, horizon: int = 10, lookback_days: int | None = None) -> dict:
+        """Latest alpha signals and their information coefficients over the lookback (default:
+        the configured alpha window, alpha_lookback_days)."""
+        ins, df = self._history(symbol, _as_date(as_of), lookback_days, alpha=True)
         if len(df) < 300:
             raise ValueError(f"alpha evaluation needs at least 300 bars for {ins.display}")
         carry = self.provider.carry_series(ins, df.index) if ins.is_fx else None
@@ -154,7 +161,7 @@ class DeskTools:
         return _clean({"horizon": horizon, "latest": snap, "ic": rep.table.to_dict(orient="index"),
                        "best": rep.best(3)})
 
-    def xalpha(self, symbols: list[str], as_of: date, horizon: int = 10, lookback_days: int = 900) -> dict:
+    def xalpha(self, symbols: list[str], as_of: date, horizon: int = 10, lookback_days: int | None = None) -> dict:
         """Cross-sectional alpha scores across a universe: today's z-scored ranks per name, the
         per-date IC summary of every alpha over the lookback, and the best alphas."""
         from ..xalpha import xalpha_report, xalpha_snapshot
@@ -163,7 +170,7 @@ class DeskTools:
         d = _as_date(as_of)
         frames, instruments, carry = {}, {}, {}
         for s in symbols:
-            ins, df = self._history(s, d, lookback_days)
+            ins, df = self._history(s, d, lookback_days, alpha=True)
             if len(df) < 300:
                 raise ValueError(f"cross-sectional evaluation needs at least 300 bars for {ins.display}")
             frames[ins.symbol], instruments[ins.symbol] = df, ins
@@ -210,7 +217,7 @@ class DeskTools:
         return {"symbol": sym, "weight": self.positions.get(sym, 0.0), "capital": self.capital}
 
     def construct(self, symbols: list[str], targets: list[float], as_of: date,
-                  method: str = "risk_parity", lookback_days: int = 400) -> dict:
+                  method: str = "risk_parity", lookback_days: int | None = None) -> dict:
         """Allocate capital across signed targets using trailing covariance (no look-ahead)."""
         if len(symbols) != len(targets) or not symbols:
             raise ValueError("symbols and targets must be non-empty and the same length")
