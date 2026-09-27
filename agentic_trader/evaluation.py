@@ -347,6 +347,9 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     symbols = symbols or UNIVERSES["all"]
     periods = periods or {p: PERIODS[p] for p in DEFAULT_PERIODS}
     provider = provider or get_provider(cfg)
+    macro_sources = getattr(provider, "macro_sources", None)
+    if isinstance(macro_sources, dict):
+        macro_sources.clear()   # this run's tally only: the provider may be shared across runs
     llm = llm if llm is not None else get_llm(cfg)
     if workers < 1:
         raise ValueError("workers must be >= 1")
@@ -438,7 +441,9 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             "neutral_weight": cfg["risk"].get("neutral_weight"),
             "use_stops": cfg.get("backtest", {}).get("use_stops"),
             "errors": errors, "seconds": round(time.perf_counter() - t0, 1),
-            "agent_sources": sources, "timings": timings, "provenance": provenance()}
+            "agent_sources": sources,
+            "macro_sources": dict(macro_sources) if isinstance(macro_sources, dict) else {},
+            "timings": timings, "provenance": provenance()}
     if llm is not None:
         meta.update(models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
                     effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},

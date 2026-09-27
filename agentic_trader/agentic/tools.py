@@ -7,7 +7,10 @@ optional MCP server.
 
 The **ToolExecutor** is the only way agents reach data. Every call:
 
-1. is checked by the policy engine for the calling role (ALLOW / DENY / REQUIRE_APPROVAL);
+1. is checked by the policy engine for the calling role (ALLOW / DENY / REQUIRE_APPROVAL),
+   and its arguments are bound to the tool's schema (unknown, missing or mistyped
+   arguments are a denial) before any approval is asked for, so a person is never
+   asked to approve a request the tool could not even accept;
 2. runs on its own worker thread with a hard deadline; a read-only tool is retried
    once on a timeout or transient error, a state-changing tool is never retried
    (one approval, at most one side effect) and a timed-out one is reported as
@@ -279,6 +282,16 @@ class ToolExecutor:
                 self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="denied")
                 return self._fail(req, f"denied by policy ({decision.rule}): {decision.reason}",
                                   evidence_type=tool.descriptor.annotations.evidence_type)
+            # Bind the arguments before the approval decision: a request the tool cannot
+            # accept is refused as an argument-guard denial, never parked for a person.
+            try:
+                args = coerce_arguments(tool.descriptor.input_schema, req.arguments)
+            except (ValueError, TypeError, OverflowError) as e:   # any coercion failure is a bad argument, never a crash
+                span.fail(str(e))
+                span.set(policy=PolicyOutcome.DENY.value, rule="argument_guard")
+                self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="bad_arguments")
+                return self._fail(req, f"denied by policy (argument_guard): bad arguments: {e}",
+                                  evidence_type=tool.descriptor.annotations.evidence_type)
             if decision.outcome is PolicyOutcome.REQUIRE_APPROVAL:
                 verdict = self.gateway.decide(self.task_id, req, decision.reason)
                 if verdict is None:
@@ -293,14 +306,6 @@ class ToolExecutor:
                 self.evidence.record(EvidenceType.APPROVAL, self.gateway.name,
                                      f"approved {name} ({decision.rule})", {"request": req.request_id,
                                                                             "reason": decision.reason}, cid)
-
-            try:
-                args = coerce_arguments(tool.descriptor.input_schema, req.arguments)
-            except (ValueError, TypeError, OverflowError) as e:   # any coercion failure is a bad argument, never a crash
-                span.fail(str(e))
-                self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="bad_arguments")
-                return self._fail(req, f"bad arguments: {e}",
-                                  evidence_type=tool.descriptor.annotations.evidence_type)
 
             t0 = time.perf_counter()
             payload, error, attempts = None, None, 0
@@ -354,8 +359,14 @@ class ToolExecutor:
         return None
 
 
+_TICKET_KEYS = ("quantity_unit", "notional", "notional_currency", "price")
+
+
 def _summarise(name: str, args: dict[str, Any], payload: Any) -> str:
-    keys = ", ".join(f"{k}={v}" for k, v in list(args.items())[:3])
+    # The first three arguments, plus the fields that say what an order's numbers are, so
+    # the one-line evidence summary of a ticket reads with its unit, notional and price.
+    shown = list(args)[:3] + [k for k in _TICKET_KEYS if k in args and k not in list(args)[:3]]
+    keys = ", ".join(f"{k}={args[k]}" for k in shown)
     if isinstance(payload, list):
         size = f"{len(payload)} items"
     elif isinstance(payload, dict):

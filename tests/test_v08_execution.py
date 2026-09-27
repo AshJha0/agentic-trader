@@ -323,6 +323,56 @@ def test_ticket_size_guard_before_approval_and_at_execution():
     assert gate.pending() == [] and not tools.orders                # never reached an approver
     assert tools.order_cap == float(DeskTools(SyntheticProvider(CFG), make_config(CFG, execution={"max_order_notional": 5e3}),
                                               capital=100_000.0).order_cap) * 20
+    frozen = DeskTools(SyntheticProvider(CFG), make_config(CFG, execution={"max_order_notional": 0}), capital=100_000.0)
+    assert frozen.order_cap == 0.0                                    # zero freezes ticketing; it is not "unset"
+    with pytest.raises(ValueError, match="per-order cap 0"):
+        frozen.submit_order(**ticket_from_plan(frozen.plan("AAPL", AS_OF, 0.1)))
+
+
+def test_submit_order_accepts_only_plans_this_desk_produced():
+    # Finding 71 residual: plan_id is a checksum anyone can compute; what authenticates a
+    # ticket is that this desk planned it, with these numbers.
+    tools = DeskTools(SyntheticProvider(CFG), CFG, capital=100_000.0)
+    forged = plan_reference("USDJPY", "buy", 1e12, "USD", 1000.0, "USD", 150.0)
+    with pytest.raises(ValueError, match="not one this desk produced"):
+        tools.submit_order("USDJPY", "buy", 1e12, "USD", 1000.0, "USD", 150.0, forged)
+    forged = plan_reference("AAPL", "buy", 1e9, "shares", 10_000.0, "USD", 0.00001)
+    with pytest.raises(ValueError, match="not one this desk produced"):
+        tools.submit_order("AAPL", "buy", 1e9, "shares", 10_000.0, "USD", 0.00001, forged)
+    assert tools.orders == []
+    ex = ToolExecutor(build_registry(tools), PolicyEngine({"max_position": 1.0, "max_order_notional": tools.order_cap}),
+                      EvidenceStore(), Role.TRADER, AutoApprovalGateway())
+    r = ex.call("execution.submit_order", symbol="USDJPY", side="buy", quantity=1e12, quantity_unit="USD", notional=1000.0,
+                notional_currency="USD", price=150.0,
+                plan_id=plan_reference("USDJPY", "buy", 1e12, "USD", 1000.0, "USD", 150.0))
+    assert not r.ok and "not one this desk produced" in r.error and tools.orders == []
+    # the desk's own plan is accepted, unchanged; the same numbers under another plan's id are not
+    plan = tools.plan("USDJPY", AS_OF, 0.5)
+    other = tools.plan("USDJPY", AS_OF, 0.25)
+    ticket = tools.submit_order(**ticket_from_plan(plan))
+    assert ticket["plan_known"] is True and ticket["quantity"] == plan["quantity"]
+    with pytest.raises(ValueError):
+        tools.submit_order(**{**ticket_from_plan(plan), "plan_id": other["plan_id"]})
+    # a plan produced by another desk (or process) needs the operator's explicit opt-in
+    elsewhere = DeskTools(SyntheticProvider(CFG), CFG, capital=100_000.0).plan("AAPL", AS_OF, 0.1)
+    with pytest.raises(ValueError, match="allow_external_plans"):
+        tools.submit_order(**ticket_from_plan(elsewhere))
+    lenient = DeskTools(SyntheticProvider(CFG), make_config(CFG, execution={"allow_external_plans": True}),
+                        capital=100_000.0)
+    t = lenient.submit_order(**ticket_from_plan(elsewhere))
+    assert t["status"] == "ticketed" and t["plan_known"] is False
+    assert CFG["execution"].get("allow_external_plans", False) is False
+
+
+def test_plan_tool_treats_ac_kappa_zero_as_twap():
+    # Finding 32 residual: ``costs.ac_kappa: 0`` (documented as TWAP) fell through ``or 3.0``.
+    twap = make_config(CFG, costs={"ac_kappa": 0.0})
+    p0 = DeskTools(SyntheticProvider(twap), twap, capital=1e6).plan("AAPL", AS_OF, 0.5, algo="ac")
+    pt = DeskTools(SyntheticProvider(twap), twap, capital=1e6).plan("AAPL", AS_OF, 0.5, algo="twap")
+    p3 = DeskTools(SyntheticProvider(CFG), CFG, capital=1e6).plan("AAPL", AS_OF, 0.5, algo="ac")
+    assert p0["ac_kappa"] == 0.0 and p3["ac_kappa"] == 3.0 and p0["algo"] == "ac"
+    assert p0["avg_price"] == pytest.approx(pt["avg_price"]) and p0["impact_cost_bps"] == pytest.approx(pt["impact_cost_bps"])
+    assert p0["avg_price"] != pytest.approx(p3["avg_price"]) or p0["impact_cost_bps"] != pytest.approx(p3["impact_cost_bps"])
 
 
 # ---------------------------------------------------------- 72: plan sizes from the book
@@ -396,12 +446,15 @@ def test_cli_execute_honours_the_long_only_policy_and_allow_short(capsys):
 
 # ------------------------------------------------------------ 89: the credited carry line
 def test_carry_summary_reports_what_the_backtester_credited():
+    # The final bar never accrues (carry is earned over the step to the next bar), so 63
+    # bars are 62 accruing ones: 36 with a rate, 26 without.
     c = np.array([0.0325] * 36 + [np.nan] * 27)
     line = carry_summary(c, 0.0)
-    assert line.startswith(f"carry {36 * 0.0325 / 63:+.2%} p.a. credited") and "+1.86%" in line
-    assert "+3.25% on 36/63 bars" in line and "0 on 27 with no point-in-time rate" in line
-    assert carry_summary(np.full(63, 0.0325), 0.0) == "carry +3.25% p.a. credited (point-in-time, all 63 bars)"
-    assert carry_summary(np.full(5, np.nan), 0.0) == "carry +0.00% p.a. credited (5/5 bars with no point-in-time rate)"
+    assert line.startswith(f"carry {36 * 0.0325 / 62:+.2%} p.a. credited") and "+1.89%" in line
+    assert "+3.25% on 36/62 accruing bars" in line and "0 on 26 with no point-in-time rate" in line
+    assert carry_summary(np.full(63, 0.0325), 0.0) == "carry +3.25% p.a. credited (point-in-time, all 62 accruing bars)"
+    assert carry_summary(np.full(5, np.nan), 0.0) == \
+        "carry +0.00% p.a. credited (4/4 accruing bars with no point-in-time rate)"
     assert carry_summary(None, 0.0252) == "carry +2.52% p.a."
 
 
@@ -415,7 +468,7 @@ def test_cli_backtest_prints_the_credited_carry(monkeypatch, capsys):
     args = build_parser().parse_args(["baselines", "USDJPY", "--start", "2026-07-01", "--end", "2026-09-25"])
     assert cmd_backtest(args, include_agent=False) == 0
     out = capsys.readouterr().out
-    assert "carry +1.86% p.a. credited (+3.25% on 36/63 bars, 0 on 27 with no point-in-time rate)" in out
+    assert "carry +1.89% p.a. credited (+3.25% on 36/62 accruing bars, 0 on 26 with no point-in-time rate)" in out
     assert "+3.25% p.a. (mean" not in out
 
 

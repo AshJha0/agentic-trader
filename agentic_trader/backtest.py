@@ -167,7 +167,9 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
     algo = costs.get("execution_algo")
     if algo and algo != "vwap":
         n = 288 if ins.is_fx else 78
-        ratio_algo = algo_cost_ratio(algo, n, "fx" if ins.is_fx else "equity", float(costs.get("ac_kappa") or 3.0))
+        kappa = costs.get("ac_kappa")
+        kappa = 3.0 if kappa is None else float(kappa)   # 0 is TWAP, not "unset"
+        ratio_algo = algo_cost_ratio(algo, n, "fx" if ins.is_fx else "equity", kappa)
         # A NaN coefficient means "no impact" to the engine, so a non-finite schedule cost must
         # fail loudly rather than silently switch impact off.
         if not np.isfinite(ratio_algo) or ratio_algo <= 0:

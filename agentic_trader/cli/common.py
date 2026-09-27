@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from datetime import date, timedelta
 from pathlib import Path
@@ -63,8 +64,8 @@ def _config(args) -> dict:
     if getattr(args, "execution_algo", None):
         costs["execution_algo"] = args.execution_algo
     if getattr(args, "ac_kappa", None) is not None:
-        if args.ac_kappa < 0:
-            raise ValueError("--ac-kappa must be >= 0")
+        if not math.isfinite(args.ac_kappa) or args.ac_kappa < 0:
+            raise ValueError("--ac-kappa must be finite and >= 0")
         costs["ac_kappa"] = args.ac_kappa
     _section(over, "costs", **costs)
     if getattr(args, "capital", None) is not None and getattr(args, "cmd", "") != "execute":

@@ -436,8 +436,8 @@ def plan_execution(decision: FinalDecision, instrument: Instrument, current_weig
         raise ValueError("capital and last_price must be positive")
     if algo is not None and algo not in ALGOS:
         raise ValueError(f"unknown execution algo {algo!r} (twap, vwap, pov or ac)")
-    if ac_kappa < 0:
-        raise ValueError("ac_kappa must be >= 0")
+    if not (ac_kappa >= 0) or not math.isfinite(ac_kappa):
+        raise ValueError("ac_kappa must be finite and >= 0")
     if allow_short is None:
         allow_short = instrument.is_fx
     target = float(decision.target_weight)

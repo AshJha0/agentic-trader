@@ -230,8 +230,8 @@ def spearman(x, y) -> float:
 def almgren_chriss(total: float, n: int, kappa: float) -> np.ndarray:
     if n <= 0:
         raise ValueError("almgren_chriss: n must be positive")
-    if not kappa >= 0:
-        raise ValueError("almgren_chriss: kappa must be >= 0")
+    if not kappa >= 0 or not np.isfinite(kappa):
+        raise ValueError("almgren_chriss: kappa must be finite and >= 0")
     if kappa < 1e-8:
         return np.full(n, total / n)
     # x(t) = X sinh(kappa (1 - t)) / sinh(kappa) = X exp(-kappa t) expm1(-2 kappa (1 - t)) / expm1(-2 kappa):
@@ -648,11 +648,13 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         impact_in = abs(trade) ** 1.5 * impact_k(t) * scale if trade != 0.0 else 0.0
         k_in = abs(trade) * unit_cost + impact_in
         g = w * price_ret + carry + cash - borrow
-        growth = (1.0 - k_in) * (1.0 + g)
+        f_in, f_g, f_out = 1.0 - k_in, 1.0 + g, 1.0
+        growth = f_in * f_g
         impact_paid += impact_in
         if exited:
             impact_out = abs(w) ** 1.5 * impact_k(t + 1) * scale
-            growth *= 1.0 - (abs(w) * unit_cost + impact_out)
+            f_out = 1.0 - (abs(w) * unit_cost + impact_out)
+            growth *= f_out
             impact_paid += impact_out
             trades.append(Trade(t + 1, w, 0.0, float(exit_px)))
             traded[t + 1] += abs(w)
@@ -660,15 +662,18 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
             exits += 1
             stopped = True
 
+        # Each factor is a fraction of the account left after one leg of the bar (entry cost,
+        # the move, the exit cost); any one of them reaching zero is ruin, whatever the product.
         ret = growth - 1.0
+        nxt = equity[t] * (1.0 + ret)
         if ruined:
-            ret = 0.0
-        elif equity[t] * growth <= 0.0:
-            ret = -1.0
+            ret, nxt = 0.0, equity[t]
+        elif f_in <= 0.0 or f_g <= 0.0 or f_out <= 0.0 or nxt <= 0.0:
+            ret, nxt = -1.0, 0.0
             ruined, ruined_at = True, t + 1
         positions[t] = w
         returns[t + 1] = ret
-        equity[t + 1] = equity[t] * (1.0 + ret)
+        equity[t + 1] = nxt
         prev = 0.0 if (exited or ruined or w == 0.0) else w * gross / (1.0 + g)
     positions[T - 1] = prev
     metrics = compute_metrics(equity, positions, ppy,

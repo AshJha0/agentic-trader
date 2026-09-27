@@ -6,7 +6,9 @@ validator:
 
 * drops steps with an unknown type, tool or stage (and records why);
 * drops unknown arguments and pins ``symbol`` / ``as_of`` to the task's values,
-  so a plan cannot look at another instrument or another date;
+  so a plan cannot look at another instrument or another date, and clips a
+  ``symbols`` list to the configured universe (a step with nothing left is dropped,
+  never a reason to fail the run);
 * enforces stage order dependencies (debate needs analysts, trader needs the
   debate, risk needs the trader), inserting canonical stages when missing;
 * appends the governance steps (critic, validate, finalise) when a plan omits
@@ -124,11 +126,36 @@ def max_plan_lookback_bars(config: dict[str, Any] | None) -> int:
     return int((config or {}).get("agentic", {}).get("max_plan_lookback_bars", DEFAULT_MAX_PLAN_LOOKBACK_BARS))
 
 
+def clip_symbols(symbols: list[Any] | tuple[Any, ...], universe: list[str] | tuple[str, ...] | None
+                 ) -> tuple[list[str], list[str], list[int]]:
+    """(kept, dropped, indices): the entries of a ``symbols`` list that are in the configured
+    universe (canonical spelling, duplicates removed) with their positions in the original
+    list, and the entries that are not or do not parse. With no universe every parseable
+    entry is kept."""
+    allowed = {s.upper() for s in universe} if universe else None
+    kept: list[str] = []
+    dropped: list[str] = []
+    indices: list[int] = []
+    for i, s in enumerate(symbols):
+        try:
+            sym = Instrument.parse(str(s)).symbol
+        except ValueError:
+            dropped.append(str(s))
+            continue
+        if allowed is not None and sym not in allowed:
+            dropped.append(sym)
+        elif sym not in kept:
+            kept.append(sym)
+            indices.append(i)
+    return kept, dropped, indices
+
+
 def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, analysts: list[str],
                   registry: ToolRegistry, source: str = "llm", config: dict[str, Any] | None = None) -> Plan:
     notes: list[str] = []
     steps: list[PlanStep] = []
     allowed_agents = {f"{ANALYST_PREFIX}{a}" for a in analysts} | set(AGENT_STAGES)
+    universe = (config or {}).get("agentic", {}).get("symbol_universe")
     for i, raw in enumerate(raw_steps[:MAX_STEPS * 2]):
         if not isinstance(raw, dict):
             notes.append(f"step {i}: not an object, dropped")
@@ -154,6 +181,17 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
                 if clean.get("as_of", task.as_of.isoformat()) != task.as_of.isoformat():
                     notes.append(f"step {i}: {name} as_of pinned to {task.as_of.isoformat()}")
                 clean["as_of"] = task.as_of.isoformat()
+            if "symbols" in props and isinstance(clean.get("symbols"), (list, tuple)):
+                kept, dropped_syms, idx = clip_symbols(clean["symbols"], universe)
+                if dropped_syms:
+                    notes.append(f"step {i}: {name} symbols {dropped_syms} outside the configured universe dropped")
+                if not kept:
+                    notes.append(f"step {i}: {name} has no symbol in the configured universe, dropped")
+                    continue
+                targets = clean.get("targets")   # a parallel list (portfolio.construct) keeps its alignment
+                if isinstance(targets, (list, tuple)) and len(targets) == len(clean["symbols"]):
+                    clean["targets"] = [targets[j] for j in idx]
+                clean["symbols"] = kept
             if "current_weight" in props and task.current_weight is not None:
                 if clean.get("current_weight", task.current_weight) != task.current_weight:
                     notes.append(f"step {i}: {name} current_weight pinned to {task.current_weight:+.4f}")
@@ -190,14 +228,8 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
             found = PlanStep.make(StepType.AGENT, stage, rationale="canonical")
             notes.append(f"stage {stage} missing: added")
         rest.append(found)
-    # The cap only ever drops tool calls: the analysts and the debate / trader / risk
-    # stages are what makes the plan a decision, so they are never truncated away.
-    budget = max(0, MAX_STEPS - len(ordered_analysts) - len(rest))
-    if len(ordered_tools) > budget:
-        notes.append(f"plan truncated to {MAX_STEPS} steps ({len(ordered_tools) - budget} tool calls dropped)")
-        ordered_tools = ordered_tools[:budget]
-    # Data budget: identical tool steps are pointless repeats, and the bars the remaining
-    # steps would load must fit the configured cap.
+    # Identical tool steps are pointless repeats: they go before the step cap is applied, so
+    # copies of one step cannot crowd a distinct later step out of the budget.
     seen: set[str] = set()
     unique_tools = []
     for s in ordered_tools:
@@ -207,6 +239,13 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
             continue
         seen.add(key)
         unique_tools.append(s)
+    # The cap only ever drops tool calls: the analysts and the debate / trader / risk
+    # stages are what makes the plan a decision, so they are never truncated away.
+    budget = max(0, MAX_STEPS - len(ordered_analysts) - len(rest))
+    if len(unique_tools) > budget:
+        notes.append(f"plan truncated to {MAX_STEPS} steps ({len(unique_tools) - budget} tool calls dropped)")
+        unique_tools = unique_tools[:budget]
+    # Data budget: the bars the remaining steps would load must fit the configured cap.
     cap, spent, kept_tools = max_plan_lookback_bars(config), 0, []
     for s in unique_tools:
         cost = step_cost_bars(s, config)

@@ -155,7 +155,8 @@ quantile = _dispatch_scalar("quantile", 1)
 
 
 def almgren_chriss(total: float, n: int, kappa: float) -> np.ndarray:
-    """Almgren-Chriss slice quantities (see cpp/include/at/indicators.hpp); finite for any kappa."""
+    """Almgren-Chriss slice quantities (see cpp/include/at/indicators.hpp): finite for any finite
+    kappa >= 0 (0 = TWAP); a negative or non-finite kappa raises ValueError."""
     n = _window(n)
     if _cpp is None:
         return pycore.almgren_chriss(total, n, kappa)
@@ -198,7 +199,8 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
 
     A target is executed on a decision bar (the target changes, or ``rebalance`` is set);
     between decisions the units are held and the weight drifts with the market, with no
-    trade and no cost. The leverage cap applies to targets. Equity is floored at 0 (ruin).
+    trade and no cost. The leverage cap applies to targets. Equity is floored at 0 (ruin:
+    any one leg of a bar -- entry cost, move or exit cost -- consuming the whole account).
 
     Optional per-bar arrays (same length as ``prices``):
       carry      annual carry rate per bar (overrides ``config.carry_annual``)

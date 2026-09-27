@@ -5,11 +5,16 @@ Point-in-time caveats, handled conservatively:
     total-return prices. Fine historically. A bar dated *today* is never served:
     during the session Yahoo returns the in-progress bar (a few minutes of trading
     presented as a day), and the desk would otherwise decide "at the close" on it
-    and cache it for the rest of the day. ``history(end=today)`` therefore ends at
+    and cache it for the rest of the day. "Today" is the exchange's date -- the
+    calendar day in New York, never the host's local date, so a host east of UTC+4
+    (whose local midnight falls inside the US session) does not see the in-progress
+    bar as yesterday's: a bar dated D is complete once it is D+1 in New York, which
+    also lies after the 17:00-New-York roll of the FX day, so the rule is complete for
+    both equities and currency pairs. ``history(end=today)`` therefore ends at
     yesterday's bar (the graph then reports staleness 1 day); a decision for today's
     close is made tomorrow, or with ``as_of`` = yesterday, which is what the CLI
     defaults to. Only complete bars are cached, and the corporate-action table is
-    re-downloaded once per calendar day.
+    re-downloaded once per exchange day.
   * News: Yahoo only serves recent headlines. Historical dates are served from
     the SEC EDGAR filing stream instead (8-K events, periodic reports, ownership
     and insider filings; see ``data/edgar.py``), which is point-in-time by
@@ -32,6 +37,7 @@ import logging
 import threading
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -50,12 +56,29 @@ def _yf():
     return yf
 
 
+EXCHANGE_TZ = ZoneInfo("America/New_York")
+_EMPTY = ["Open", "High", "Low", "Close", "Volume"]
+
+
+def _now() -> datetime:
+    """The clock, as an aware instant (patched by tests)."""
+    return datetime.now(timezone.utc)
+
+
 def _today() -> date:
-    return date.today()
+    """The exchange's calendar date now (New York), whatever the host's timezone: a daily
+    bar dated D is complete once this is D+1."""
+    return _now().astimezone(EXCHANGE_TZ).date()
+
+
+def _empty_bars() -> pd.DataFrame:
+    return pd.DataFrame(columns=_EMPTY, index=pd.DatetimeIndex([]), dtype=float)
 
 
 def _complete_bars(df: pd.DataFrame, today: date) -> pd.DataFrame:
     """Drop any bar dated today or later: the session is not over, so it is not a daily bar."""
+    if df.empty:
+        return df
     return df[df.index < pd.Timestamp(today)]
 
 
@@ -119,7 +142,7 @@ class YahooProvider(MarketDataProvider):
                             end=(end + timedelta(days=1)).isoformat(),
                             auto_adjust=True, progress=False)
         if df is None or df.empty:
-            return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+            return _empty_bars()
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         return clean_ohlcv(df)
@@ -138,7 +161,7 @@ class YahooProvider(MarketDataProvider):
         # once, complete.
         end = min(end, last_complete)
         if end < start:
-            return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"], dtype=float)
+            return _empty_bars()
         cov = self._covered.get(sym)
         if cov is None or start < cov[0] or end > cov[1]:
             # Download the union of what was asked before and now, so repeated calls

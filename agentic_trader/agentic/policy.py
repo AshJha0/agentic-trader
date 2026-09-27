@@ -266,6 +266,32 @@ class QueuedApprovalGateway(ApprovalGateway):
         with self._lock:
             return list(self._queue.values())
 
+    def get(self, approval_id: str) -> ApprovalRequest:
+        with self._lock:
+            a = self._queue.get(approval_id)
+        if a is None:
+            raise KeyError(f"unknown approval {approval_id}")
+        return a
+
+    def withdraw(self, task_id: str, note: str = "run finished") -> int:
+        """Close a finished run's pending requests: they leave the pending list and can no
+        longer be decided (``approved`` stays None), so nothing waits on a run that is over."""
+        n = 0
+        with self._lock:
+            for a in self._queue.values():
+                if a.task_id == task_id and not a.decided:
+                    a.decided, a.decided_by, a.note = True, "harness", note
+                    n += 1
+        return n
+
+    def forget(self, task_id: str) -> int:
+        """Drop every request of a task whose run left the harness (evicted): bounded memory."""
+        with self._lock:
+            gone = [k for k, a in self._queue.items() if a.task_id == task_id]
+            for k in gone:
+                del self._queue[k]
+        return len(gone)
+
     def resolve(self, approval_id: str, approve: bool, decided_by: str = "human", note: str = "") -> ApprovalRequest:
         with self._lock:
             a = self._queue.get(approval_id)

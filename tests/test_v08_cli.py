@@ -115,8 +115,6 @@ def test_version_falls_back_to_distribution_metadata(tmp_path, monkeypatch):
     assert prov_mod.package_version(tmp_path / "nope.toml") == "0.0.0+unknown"
 
 
-@pytest.mark.xfail(strict=True, reason="finding 56: CHANGELOG's top heading is still v0.7.0; the docs pass "
-                                       "adds the v0.8.0 section, after which this marker must be removed")
 def test_changelog_top_heading_matches_version():
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     heading = re.search(r"^## v(\d+\.\d+\.\d+)", text, re.M).group(1)
@@ -135,14 +133,11 @@ def test_provenance_fields_are_json_scalars_and_name_the_backend():
 
 
 def test_git_info_handles_a_directory_without_git(tmp_path):
-    prov_mod.git_info.cache_clear()
-    try:
-        assert prov_mod.git_info(str(tmp_path)) == (None, None)
-        sha, dirty = prov_mod.git_info(str(ROOT))
-        if shutil.which("git") and (ROOT / ".git").exists():
-            assert sha and len(sha) == 40 and dirty in (True, False)
-    finally:
-        prov_mod.git_info.cache_clear()
+    assert prov_mod.git_info(str(tmp_path)) == (None, None)
+    sha, dirty = prov_mod.git_info(str(ROOT))
+    if shutil.which("git") and (ROOT / ".git").exists():
+        assert sha and len(sha) == 40 and dirty in (True, False)
+    assert not hasattr(prov_mod.git_info, "cache_clear")     # computed at every call, never cached
 
 
 def test_evaluate_and_calibrate_json_record_provenance(tmp_path):

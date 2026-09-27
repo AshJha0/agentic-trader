@@ -84,9 +84,12 @@ int main(int argc, char** argv) {
     std::getline(in, line);
     const auto header = split(line);
     int ci = find_col(header, "Close");
-    if (ci < 0) ci = find_col(header, "Adj Close");
-    const int hi = find_col(header, "High");
-    const int li = find_col(header, "Low");
+    const bool adjusted_only = ci < 0;
+    if (adjusted_only) ci = find_col(header, "Adj Close");
+    // High/Low are quoted on the raw basis; next to an adjusted close they would put KDJ on
+    // two price bases, so with only "Adj Close" the bar range collapses to the close.
+    const int hi = adjusted_only ? -1 : find_col(header, "High");
+    const int li = adjusted_only ? -1 : find_col(header, "Low");
     if (ci < 0) {
         std::cerr << "CSV needs a Close column\n";
         return 1;

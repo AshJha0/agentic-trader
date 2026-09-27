@@ -6,7 +6,9 @@ are always served on one basis:
 
 * ``Close`` and ``Adj Close`` both present: every price column is put on the adjusted
   (total-return, split-adjusted) basis by the row's ``Adj Close / Close`` factor, the
-  same basis the Yahoo provider serves, so a split is not a -75% day;
+  same basis the Yahoo provider serves, so a split is not a -75% day; a row whose
+  ``Adj Close`` is blank keeps its ``Close`` and takes the factor of the nearest dated
+  row that has one (with a warning), so a missing cell is not a missing bar;
 * only ``Adj Close``: it becomes ``Close`` and any raw ``Open``/``High``/``Low`` are
   dropped (they cannot be rescaled without the raw close) and filled from ``Close``
   by ``clean_ohlcv``, with a warning that intraday levels are unavailable for the file;
@@ -39,11 +41,27 @@ def one_basis(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
     adj = pd.to_numeric(df["Adj Close"], errors="coerce")
     if "Close" in df:
         close = pd.to_numeric(df["Close"], errors="coerce")
-        factor = (adj / close).where((close > 0) & (adj > 0))
+        factor = (adj / close).where((close > 0) & (adj > 0) & np.isfinite(adj) & np.isfinite(close))
+        gap = factor.isna() & (close > 0) & np.isfinite(close)
+        if gap.any():
+            known = factor.dropna()
+            known = known[~known.index.duplicated(keep="last")].sort_index()
+            if known.empty:
+                factor = pd.Series(1.0, index=factor.index)
+                log.warning("%s: Adj Close is blank on every row with a Close; served on the raw Close basis",
+                            name or "price file")
+            else:
+                # Nearest dated row with a factor: a split is a step, so the neighbour's factor
+                # is exact away from ex-dates and the closest guess on one.
+                pos = known.index.get_indexer(factor.index[gap], method="nearest")
+                factor.loc[gap] = known.to_numpy()[pos]
+                log.warning("%s: Adj Close blank on %d row(s) with a valid Close (first %s); adjusted with "
+                            "the nearest dated row's factor", name or "price file", int(gap.sum()),
+                            factor.index[gap][0])
         for col in ("Open", "High", "Low"):
             if col in df:
                 df[col] = pd.to_numeric(df[col], errors="coerce") * factor
-        df["Close"] = adj
+        df["Close"] = adj.where(~gap, close * factor)
     else:
         dropped = [c for c in ("Open", "High", "Low") if c in df]
         if dropped:

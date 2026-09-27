@@ -1,17 +1,30 @@
-"""Prompt registry: a content hash for every prompt the desk can send.
+"""Prompt registry: a content hash over the prompts the trading desk's agents send.
 
 An LLM evaluation is only reproducible if the prompts are pinned. Each agent's
 *system* prompt is a string; its *user* prompt is built by a method. The registry
-hashes both -- the system text and the source code of the method that formats the
-facts -- so ``EvaluationResult.meta["prompts"]`` records exactly which wording
-produced a result, and two runs can be told apart (or shown identical) without
-reading transcripts.
+hashes both -- the system text and the source code that formats the facts -- so
+``EvaluationResult.meta["prompts"]`` records which wording produced a result, and
+two runs can be told apart (or shown identical) without reading transcripts.
 
-The user prompts are assembled from the agent's own methods *and* from shared
-helpers (the fact formatter, the untrusted-text fence, the report digest, the
-lessons block, the risk facts, the anonymiser). The ``shared`` entry hashes the
-source of every such helper, so an edit anywhere in the prompt-building code
-changes the bundle, not only an edit inside an agent class.
+What the bundle covers, exactly:
+
+* per agent (every analyst in ``ANALYSTS``, bull, bear, facilitator, trader, the three
+  risk stances, pm): the system prompt text and the source of the agent's class and of
+  every base class below ``Agent``;
+* ``firm_context``: the ``FIRM_CONTEXT`` preamble;
+* ``shared``: the source of each callable enumerated in ``shared_prompt_code()`` (the
+  fact formatter, the untrusted-text fence, the state's prompt facts, report digest and
+  lessons block, the direction note, the consensus score, the policy passages, the risk
+  facts, the anonymiser and its key test, the memory's settle and track-record methods,
+  the risk percentage formatter) and the value of each constant enumerated in
+  ``shared_prompt_constants()`` (the fence tag ``state._TAG`` and the anonymiser's
+  price-key and scale-free-key allow-lists, suffixes, prefixes and date pattern).
+
+Nothing else is covered. A module-level constant or helper outside those two lists,
+the data providers' fact dictionaries, the knowledge documents the tools return, and
+the agentic harness's own prompts (``agentic/critic.py``, ``agentic/planner.py``,
+``agentic/reporter.py``, sent outside any ``Agent``) can change prompt text while the
+bundle stays the same; extend the lists when such a source is added to the desk.
 
 The hashes are SHA-256 over UTF-8 text, truncated to 16 hex characters; the
 ``bundle`` hash covers every entry in name order, so a single number identifies
@@ -63,7 +76,7 @@ def _agent_entry(agent: Agent) -> dict[str, str]:
 
 
 def shared_prompt_code() -> dict[str, Callable[..., Any] | type]:
-    """Every function or class outside the agent classes whose source shapes prompt text.
+    """The functions and classes outside the agent classes whose source shapes prompt text.
 
     Looked up at call time (not bound at import), so a replaced function is seen.
     """
@@ -85,8 +98,26 @@ def shared_prompt_code() -> dict[str, Callable[..., Any] | type]:
         "consensus_score": researchers.consensus_score,
         "policy_passages": trader.policy_passages,
         "risk_facts": risk.risk_facts,
+        "_pct": risk._pct,
         "Anonymizer": anonymize.Anonymizer,
+        "is_scale_free_key": anonymize.is_scale_free_key,
         "DecisionMemory._settle": memory.DecisionMemory._settle,
+        "DecisionMemory.track_record": memory.DecisionMemory.track_record,
+    }
+
+
+def shared_prompt_constants() -> dict[str, str]:
+    """Module-level constants whose *value* shapes prompt text (``inspect.getsource`` cannot
+    see them through the functions that read them), rendered as stable text. Looked up at
+    call time, like ``shared_prompt_code``."""
+    from . import anonymize, state
+    return {
+        "state._TAG": str(state._TAG),
+        "anonymize.PRICE_KEYS": repr(sorted(anonymize.PRICE_KEYS)),
+        "anonymize.SCALE_FREE_KEYS": repr(sorted(anonymize.SCALE_FREE_KEYS)),
+        "anonymize._SCALE_FREE_SUFFIXES": repr(list(anonymize._SCALE_FREE_SUFFIXES)),
+        "anonymize._SCALE_FREE_PREFIXES": repr(list(anonymize._SCALE_FREE_PREFIXES)),
+        "anonymize._ISO_DATE": anonymize._ISO_DATE.pattern,
     }
 
 
@@ -97,6 +128,7 @@ def _shared_entry() -> dict[str, str]:
         if src == SOURCE_UNAVAILABLE:
             return {"template": SOURCE_UNAVAILABLE}
         parts.append(f"{name}:{src}")
+    parts += [f"{name}={value}" for name, value in shared_prompt_constants().items()]
     return {"template": _h("\n".join(parts))}
 
 
@@ -124,4 +156,4 @@ def prompt_bundle_hash(config: dict) -> str:
     return prompt_registry(config)["bundle"]
 
 
-__all__ = ["prompt_registry", "prompt_bundle_hash", "shared_prompt_code"]
+__all__ = ["prompt_registry", "prompt_bundle_hash", "shared_prompt_code", "shared_prompt_constants"]

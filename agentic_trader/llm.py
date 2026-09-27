@@ -105,12 +105,20 @@ def price_for(model: str) -> tuple[float, float] | None:
     return PRICES_PER_MTOK[fam] if fam else None
 
 
+def check_effort(effort: Any) -> str:
+    """``effort`` when it is one of ``EFFORT_LEVELS``; ``ValueError`` otherwise. A typo in the
+    config is a configuration error, not a request for ``high``."""
+    if effort not in EFFORT_LEVELS:
+        raise ValueError(f"effort must be one of {EFFORT_LEVELS}, not {effort!r}")
+    return str(effort)
+
+
 def request_shape(model: str, effort: str, max_tokens: int) -> dict[str, Any]:
     """The Messages API parameters for ``model``: only what that family accepts.
 
     An effort level the family lacks is lowered to the nearest one it has (``xhigh``
     becomes ``high`` on the 4.6 generation) and logged once; a family that takes no
-    effort parameter gets none.
+    effort parameter gets none. An effort outside ``EFFORT_LEVELS`` raises.
     """
     kwargs: dict[str, Any] = {"model": model, "max_tokens": int(max_tokens)}
     fam = _family(model, MODEL_CAPABILITIES)
@@ -122,7 +130,7 @@ def request_shape(model: str, effort: str, max_tokens: int) -> dict[str, Any]:
     if thinking == "adaptive":
         kwargs["thinking"] = {"type": "adaptive"}
     if efforts:
-        want = effort if effort in EFFORT_LEVELS else "high"
+        want = check_effort(effort)
         if want not in efforts:
             rank = EFFORT_LEVELS.index(want)
             lower = [e for e in efforts if EFFORT_LEVELS.index(e) <= rank]
@@ -198,27 +206,42 @@ class UsageTracker:
         with self._lock:
             setattr(self, what, getattr(self, what) + 1)
 
+    # Every read of by_model takes the lock: add() can insert a key from another worker's
+    # thread while a budget check iterates, and CPython raises on a dict that changes size.
+    def _calls(self) -> int:
+        return sum(u.calls for u in self.by_model.values())
+
+    def _cost_usd(self) -> float:
+        return sum(u.cost(m) or 0.0 for m, u in self.by_model.items())
+
+    def _unpriced_models(self) -> list[str]:
+        return sorted(m for m, u in self.by_model.items() if u.cost(m) is None)
+
     @property
     def calls(self) -> int:
-        return sum(u.calls for u in self.by_model.values())
+        with self._lock:
+            return self._calls()
 
     @property
     def cost_usd(self) -> float:
-        return sum(u.cost(m) or 0.0 for m, u in self.by_model.items())
+        with self._lock:
+            return self._cost_usd()
 
     @property
     def unpriced_models(self) -> list[str]:
         """Served ids with no list price: their spend is unknown, not zero."""
-        return sorted(m for m, u in self.by_model.items() if u.cost(m) is None)
+        with self._lock:
+            return self._unpriced_models()
 
     def summary(self) -> dict[str, Any]:
-        return {
-            "calls": self.calls, "refusals": self.refusals, "errors": self.errors,
-            "empty_replies": self.empty, "timeouts": self.timeouts, "cost_usd": round(self.cost_usd, 4),
-            "unpriced_models": self.unpriced_models,
-            "by_model": {m: {**u.__dict__, "cost_usd": None if u.cost(m) is None else round(u.cost(m), 4)}
-                         for m, u in self.by_model.items()},
-        }
+        with self._lock:
+            return {
+                "calls": self._calls(), "refusals": self.refusals, "errors": self.errors,
+                "empty_replies": self.empty, "timeouts": self.timeouts, "cost_usd": round(self._cost_usd(), 4),
+                "unpriced_models": self._unpriced_models(),
+                "by_model": {m: {**u.__dict__, "cost_usd": None if u.cost(m) is None else round(u.cost(m), 4)}
+                             for m, u in self.by_model.items()},
+            }
 
 
 class AnthropicLLM:
@@ -228,6 +251,11 @@ class AnthropicLLM:
         except ImportError as e:  # pragma: no cover
             raise ImportError("llm_provider='anthropic' needs `pip install anthropic`") from e
         self._anthropic = anthropic
+        for key in ("deep_effort", "quick_effort"):
+            try:
+                check_effort(config[key])
+            except ValueError as e:
+                raise ValueError(f"{key}: {e}") from None
         self.max_retries = int(config.get("llm_max_retries", 2))
         # Credentials: ANTHROPIC_API_KEY or an `ant auth login` profile.
         self.client = anthropic.Anthropic(timeout=float(config.get("llm_timeout_s", 300)),

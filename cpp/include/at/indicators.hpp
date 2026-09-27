@@ -67,7 +67,8 @@ double spearman(const Series& x, const Series& y);
 // n equal slices when kappa = sqrt(lambda * sigma^2 / eta) (risk aversion times
 // variance over temporary impact). kappa -> 0 gives TWAP; larger kappa
 // front-loads. Returns n non-negative quantities summing to `total`, finite for any
-// kappa >= 0 (computed in an overflow-free form; kappa -> inf puts everything in slice 1).
+// finite kappa >= 0 (computed in an overflow-free form; a huge kappa puts everything in
+// slice 1); a negative or non-finite kappa throws std::invalid_argument.
 Series almgren_chriss(double total, int n, double kappa);
 
 }  // namespace at

@@ -15,10 +15,13 @@ multi-year return. A backtest never sees the future through memory because the
 series it resolves on ends at as-of.
 
 The log on disk is append-only: one line per decision and one per resolution, each
-written with a single ``write`` and ``fsync`` under a lock. Several threads, or several
-processes (``serve --processes N``), can share one file without a whole-file rewrite
-racing another writer's records. A repeated decision for the same instrument, date
-and provider replaces the earlier one on reload (the latest line wins).
+written with a single ``write`` and ``fsync`` under an in-process lock and a file lock
+(``msvcrt.locking`` on Windows, ``fcntl.flock`` elsewhere: the MSVC C runtime emulates
+``O_APPEND`` as seek-then-write, so two handles appending at once would otherwise
+overwrite each other). Several threads, or several processes (``serve --processes N``),
+can share one file without one writer's records racing another's. A repeated decision
+for the same instrument, date and provider replaces the earlier one on reload (the
+latest line wins).
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ import logging
 import math
 import os
 import threading
+import time
 from dataclasses import asdict, dataclass, fields
 from datetime import date
 from pathlib import Path
@@ -35,6 +39,37 @@ from typing import Any
 import pandas as pd
 
 log = logging.getLogger(__name__)
+
+if os.name == "nt":
+    import msvcrt
+
+    _LOCK_AT = 1 << 60   # a byte far past any log: Windows locks are mandatory, and a reader
+                         # (another process loading the file) must never hit a locked region
+
+    def _lock_file(fd: int, timeout: float = 30.0) -> None:
+        # LK_LOCK sleeps a whole second between its retries, so poll the non-blocking form.
+        deadline = time.monotonic() + timeout
+        os.lseek(fd, _LOCK_AT, os.SEEK_SET)
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.0005)
+
+    def _unlock_file(fd: int) -> None:
+        os.lseek(fd, _LOCK_AT, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_file(fd: int, timeout: float = 30.0) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 @dataclass
@@ -121,8 +156,13 @@ class DecisionMemory:
         data = (json.dumps(obj) + "\n").encode("utf-8")
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:
-            os.write(fd, data)
-            os.fsync(fd)
+            _lock_file(fd)
+            try:
+                os.lseek(fd, 0, os.SEEK_END)
+                os.write(fd, data)
+                os.fsync(fd)
+            finally:
+                _unlock_file(fd)
         finally:
             os.close(fd)
 
@@ -144,9 +184,10 @@ class DecisionMemory:
 
         ``history`` is the price series the desk sees at ``as_of`` (a frame with a ``Close``
         column, or a series), which must not extend past ``as_of``. An entry made on another
-        provider or basis is never valued on this series; one that this series can no longer
-        value (its entry bar predates the window) is expired once more than twice its horizon
-        has elapsed. Returns the number of entries closed (resolved or expired).
+        provider or basis is never valued on this series; one that this series cannot value
+        (its entry bar predates the window, or its exit bar never arrives) is expired once
+        more than twice its horizon has elapsed. Returns the number of entries closed
+        (resolved or expired).
         """
         closes = _closes(history)
         last_pos = len(closes) - 1
@@ -160,12 +201,13 @@ class DecisionMemory:
                 pos = int(closes.index.searchsorted(pd.Timestamp(entry_day), side="right")) - 1 if same_series else -1
                 if pos >= 0 and (entry_day - closes.index[pos].date()).days <= 7:
                     exit_pos = pos + e.horizon_days
-                    if exit_pos > last_pos:
-                        continue  # horizon not reached yet
-                    self._settle(e, float(closes.iloc[pos]), float(closes.iloc[exit_pos]),
-                                 closes.index[exit_pos].date())
-                    n += 1
-                    continue
+                    if exit_pos <= last_pos:
+                        self._settle(e, float(closes.iloc[pos]), float(closes.iloc[exit_pos]),
+                                     closes.index[exit_pos].date())
+                        n += 1
+                        continue
+                # Horizon not reached, or not valuable on this series: expire once the entry is
+                # older than twice its horizon, whether or not its exit bar ever arrives.
                 if (as_of - entry_day).days > self.max_age_days(e.horizon_days):
                     e.resolved_on, e.expired = as_of.isoformat(), True
                     self._append_resolution(e)

@@ -37,18 +37,21 @@ def cmd_backtest(args, include_agent: bool = True) -> int:
 
 
 def carry_summary(carry: np.ndarray | None, carry_annual: float) -> str:
-    """The carry the backtester actually credited: the mean over every bar with an unknown
-    (NaN) point-in-time rate counted as 0, which is what the backtester books on such bars,
-    plus how many bars had no rate. Non-FX runs report the static ``carry_annual``."""
+    """The carry the backtester actually credited: the mean over every accruing bar with an
+    unknown (NaN) point-in-time rate counted as 0, which is what the backtester books on such
+    bars, plus how many of them had no rate. The final bar never accrues (carry is earned over
+    the step to the next bar, and there is none), so it is outside both the mean and the
+    count. Non-FX runs report the static ``carry_annual``."""
     if carry is None:
         return f"carry {carry_annual:+.2%} p.a."
-    c = np.asarray(carry, float)
+    c = np.asarray(carry, float)[:-1]
+    n = c.size
     unknown = int(np.isnan(c).sum())
-    credited = float(np.nan_to_num(c, nan=0.0).mean()) if c.size else 0.0
+    credited = float(np.nan_to_num(c, nan=0.0).mean()) if n else 0.0
     known = c[~np.isnan(c)]
-    detail = f"{known.mean():+.2%} on {known.size}/{c.size} bars, 0 on {unknown} with no point-in-time rate" \
-        if unknown and known.size else f"{unknown}/{c.size} bars with no point-in-time rate" if unknown \
-        else f"point-in-time, all {c.size} bars"
+    detail = f"{known.mean():+.2%} on {known.size}/{n} accruing bars, 0 on {unknown} with no point-in-time rate" \
+        if unknown and known.size else f"{unknown}/{n} accruing bars with no point-in-time rate" if unknown \
+        else f"point-in-time, all {n} accruing bars"
     return f"carry {credited:+.2%} p.a. credited ({detail})"
 
 
@@ -206,7 +209,7 @@ def cmd_execute(args) -> int:
           f"session VWAP {rep.session_vwap:.5g}, close {rep.close:.5g}")
     line = (f"implementation shortfall {rep.is_bps:+.1f} bps, vs VWAP {rep.vs_vwap_bps:+.1f} bps "
             f"(spread {rep.spread_cost_bps:.1f} bps, impact {rep.impact_cost_bps:.1f} bps")
-    if rep.unfilled > 0:
+    if rep.unfilled >= plan.lot_size * (1.0 - 1e-9):   # a closed-form schedule can leave 1e-14 of a share
         line += f", opportunity cost of {rep.unfilled:,.0f} unfilled {rep.opportunity_cost_bps:+.1f} bps"
     line += ")"
     if rep.max_participation == rep.max_participation:

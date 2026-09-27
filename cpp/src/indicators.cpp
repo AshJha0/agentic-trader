@@ -291,7 +291,8 @@ double spearman(const Series& x, const Series& y) {
 
 Series almgren_chriss(double total, int n, double kappa) {
     if (n <= 0) throw std::invalid_argument("almgren_chriss: n must be positive");
-    if (!(kappa >= 0.0)) throw std::invalid_argument("almgren_chriss: kappa must be >= 0");
+    if (!(kappa >= 0.0) || !std::isfinite(kappa))
+        throw std::invalid_argument("almgren_chriss: kappa must be finite and >= 0");
     Series out(n, 0.0);
     if (kappa < 1e-8) {  // risk-neutral limit: uniform (TWAP)
         for (int k = 0; k < n; ++k) out[k] = total / n;

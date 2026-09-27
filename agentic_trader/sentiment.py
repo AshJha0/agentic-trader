@@ -76,20 +76,47 @@ _CLAUSE_SPLIT = re.compile(r"[;:,.!?()]|\s[-–—]+\s|\s(?:as|after|while|but|w
                            re.IGNORECASE)
 
 
-def _normalise(text: str, base: str, quote: str) -> str:
-    """Upper-case text with the pair itself removed and every currency alias replaced by its code."""
+def _codes(text: str) -> str:
+    """Upper-case text with every currency alias replaced by its ISO code."""
     t = text
     for pat, code in _ALIAS_RE:
         t = pat.sub(f" {code} ", t)
-    t = t.upper()
-    for pair in (f"{base}/{quote}", f"{base}-{quote}", f"{base}{quote}", f"{base} {quote}"):
-        t = t.replace(pair, " ")
-    return t
+    return re.sub(r"\s+", " ", t.upper())
+
+
+def _normalise(text: str, base: str, quote: str) -> str:
+    """Upper-case text with the pair itself removed and every currency alias replaced by its code."""
+    return _pair_re(base, quote).sub(" ", _codes(text))
+
+
+def _pair_re(base: str, quote: str) -> re.Pattern:
+    # USD/JPY, USD-JPY, USDJPY, USD JPY, and "dollar-yen" once the aliases are padded to codes.
+    return re.compile(rf"\b{base}\s*[-/]?\s*{quote}\b")
+
+
+def _code_set(code: str) -> set[str]:
+    return {code} | {k for k, v in _EQUIVALENT.items() if v == code} | ({_EQUIVALENT[code]} if code in _EQUIVALENT else set())
 
 
 def _mentions(t: str, code: str) -> bool:
-    codes = {code} | {k for k, v in _EQUIVALENT.items() if v == code} | ({_EQUIVALENT[code]} if code in _EQUIVALENT else set())
-    return any(re.search(rf"\b{c}\b", t) for c in codes)
+    return any(re.search(rf"\b{c}\b", t) for c in _code_set(code))
+
+
+def _subject(text: str, base: str, quote: str) -> str | None:
+    """What a clause is about: 'pair', 'base' or 'quote' -- whichever is named first -- or
+    None when it names none of them. The pair is recognised before its legs are looked for,
+    so 'USD/JPY slides' is about the pair, not about the yen."""
+    t = _codes(text)
+    spans = [m.span() for m in _pair_re(base, quote).finditer(t)]
+    first: dict[str, int] = {}
+    if spans:
+        first["pair"] = min(a for a, _ in spans)
+    for role, code in (("base", base), ("quote", quote)):
+        for c in _code_set(code):
+            for m in re.finditer(rf"\b{c}\b", t):
+                if not any(a <= m.start() < b for a, b in spans):
+                    first[role] = min(first.get(role, m.start()), m.start())
+    return min(first, key=first.get) if first else None
 
 
 def score_fx_headline(text: str, base: str, quote: str) -> float:
@@ -101,14 +128,15 @@ def score_fx_headline(text: str, base: str, quote: str) -> float:
     "aussie", "RBA" -> AUD; "loonie", "BoC" -> CAD; "kiwi", "RBNZ" -> NZD; "franc",
     "SNB" -> CHF; "krona", "Riksbank" -> SEK; "krone", "Norges" -> NOK ...), on word
     boundaries. The headline is scored clause by clause (split at punctuation and at
-    "as", "after", "while", "but"): a clause about the quote currency alone is flipped,
-    one about the base currency or the pair itself is not, and a clause naming neither
-    takes the orientation of the headline as a whole. "Dollar weakens; yen strengthens
-    on hawkish BoJ" is thus negative for USD/JPY on both counts.
+    "as", "after", "while", "but"): a clause whose subject is the quote currency is
+    flipped, one about the base currency or the pair itself ("USD/JPY slides") is not,
+    a clause naming both legs is about the first-named one ("Yen gains against dollar"
+    is about the yen), and a clause naming none of them takes the orientation of the
+    headline as a whole. "Dollar weakens; yen strengthens on hawkish BoJ" is thus
+    negative for USD/JPY on both counts, and so is "USD/JPY falls as yen rallies".
     """
     base, quote = base.upper(), quote.upper()
-    whole = _normalise(text, base, quote)
-    whole_flip = _mentions(whole, quote) and not _mentions(whole, base)
+    whole_flip = _subject(text, base, quote) == "quote"
     total = 0.0
     for clause in _CLAUSE_SPLIT.split(text):
         if not clause or not clause.strip():
@@ -116,8 +144,7 @@ def score_fx_headline(text: str, base: str, quote: str) -> float:
         tone = _tone_total(clause)
         if not tone:
             continue
-        t = _normalise(clause, base, quote)
-        has_base, has_quote = _mentions(t, base), _mentions(t, quote)
-        flip = whole_flip if not (has_base or has_quote) else (has_quote and not has_base)
+        subject = _subject(clause, base, quote)
+        flip = whole_flip if subject is None else subject == "quote"
         total += -tone if flip else tone
     return math.tanh(total / 2.0)

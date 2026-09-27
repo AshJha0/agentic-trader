@@ -7,7 +7,7 @@
 
 | Guide | For |
 |---|---|
-| [LEARN.md](LEARN.md) | 33 concepts: how the repo implements them, real numbers, questions |
+| [LEARN.md](LEARN.md) | 35 concepts: how the repo implements them, real numbers, questions |
 | [COOKBOOK.md](COOKBOOK.md) | 72 copy-pasteable recipes, including the agentic layer, quant research and operations; every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 30 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
@@ -121,7 +121,7 @@ Details: [docs/evaluation](docs/evaluation/evaluation.md).
 
 | | Equity | FX |
 |---|---|---|
-| Value analyst | Fundamentals: P/E, growth, margins, leverage, FCF from SEC EDGAR facts as first filed (point in time); EPS surprise and insider direction only when a source has them | Macro: point-in-time policy-rate differential (carry), inflation (PPP), distance from the 200-day average |
+| Value analyst | Fundamentals: P/E, growth, margins, leverage, FCF from SEC EDGAR facts as known on the decision date (point in time; each trailing year from one XBRL tag and one reporting basis); EPS surprise and insider direction only when a source has them | Macro: point-in-time policy-rate differential (carry), inflation (PPP), distance from the 200-day average |
 | Alpha library | 8 signals (momentum, reversal, breakout, MACD, RSI, low-vol, 52-week high) | The same plus carry |
 | News scoring | Headline tone; historically the SEC filing stream (8-K events, reports, ownership and insider filings) with a conservative per-item tone, plus recent Yahoo headlines | Tone oriented to base vs quote ("JPY weakens" is bullish for USD/JPY) |
 | Strategic weight | 1.0 (the equity premium) | carry / 2, capped at ±0.5 (the carry premium; v0.5.1) |
@@ -149,25 +149,28 @@ agentic_trader/
     tracing.py             spans, JSON-lines logs, Prometheus text metrics
     mcp_server.py          the catalogue as an MCP stdio server + client (remote tools into a registry)
     api.py                 FastAPI gateway: tasks, reports, traces, evidence, approvals, tools, metrics; TLS guards
-    store.py               SQLite task store: records survive restarts, in-flight runs are failed on reload
+    store.py               SQLite task store: records survive restarts; in-flight runs carry an owner and a heartbeat and are failed only once their lease expires
   alpha.py                 alpha library, IC / decay / hit rate / turnover, significance-gated combination
   xalpha.py                cross-sectional alphas: per-day z-scores / ranks within asset class, per-date IC, spreads
   algo.py                  TWAP / VWAP / POV / Almgren-Chriss schedules, intraday simulator, decision -> plan
   portfolio.py             EWMA + Ledoit-Wolf covariance, 5 weighting schemes, cross-asset risk budgets, attribution
-  stats.py                 bootstrap Sharpe CI, probabilistic and deflated Sharpe, minimum track record, paired bootstrap across instruments
+  stats.py                 bootstrap Sharpe CI, probabilistic and deflated Sharpe, minimum track record, paired (cluster) bootstrap across
+                           instruments, block-bootstrap Sharpe difference between two daily series, Kupiec / Christoffersen VaR coverage
   prompts.py               prompt registry: a content hash of every prompt the desk can send, recorded in every evaluation
   calibration.py           dispersion / anchoring / drift of the desk's judgement on one frozen state
   quant/                   facade: C++ if built, otherwise pycore.py (numpy mirror)
   data/                    synthetic | yahoo | csv providers, clean_ohlcv, fred.py (point-in-time macro, ALFRED vintages),
-                           edgar.py (SEC EDGAR: point-in-time fundamentals and filing-stream news, first prints)
+                           edgar.py (SEC EDGAR: point-in-time fundamentals, as known at as_of, and filing-stream news)
   agents/                  analysts (incl. alpha and cross-sectional xalpha), researchers + facilitator, trader, risk team + PM
   graph.py                 TradingGraph stages, propagate() and scan()
   backtest.py              walk-forward agent backtest vs 6 baselines with optional market impact; portfolio backtest
-  evaluation.py            design / holdout / Q1-2024 / reserve evaluation over the core and extended universes; repeats, paired bootstraps
-  memory.py · llm.py (call and dollar budgets) · anonymize.py
+  evaluation.py            design / holdout / Q1-2024 / reserve evaluation over the core and extended universes; repeats, paired bootstraps,
+                           the registry of every variant judged on the design period (TRIALS)
+  memory.py · llm.py (call and dollar budgets) · anonymize.py · provenance.py (version, commit, backend and dependency versions in every result)
   cli/                     common.py, decisions.py (analyze/task/scan), research.py (backtest/portfolio/xalpha/alpha/execute/stats),
                            evaluate.py, services.py (tools/serve/mcp/info), parser.py (argparse wiring), __init__.py (main)
-scripts/                   run_cookbook.py · check_mermaid.py · check_links.py (the CI docs job) · build_cpp · set_api_key
+scripts/                   measure_v08.py (re-measures every published table into results/v08/) · render_v08_tables.py (prints the tables from it)
+                           run_cookbook.py · check_mermaid.py · check_links.py (the CI docs job) · build_cpp · set_api_key
 tests/                     319 pytest tests (fuzz 21 C++ boundary + 7 agentic layer, v0.7 37, v0.6 20, EDGAR 11, v0.5 19, agentic 30, adversarial 15, ...)
 examples/                  equity, FX, baseline comparison
 ```
@@ -193,7 +196,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build_cpp.ps1
 ```
 
 Without the build, everything runs on the numpy fallback, which uses identical formulas
-(cross-checked in CI). Set `AGENTIC_TRADER_BACKEND=python` to force the fallback.
+(cross-checked in CI). When the compiled core is missing, importing `agentic_trader.quant`
+emits one `RuntimeWarning` saying that every number will come from the numpy backend; set
+`AGENTIC_TRADER_BACKEND=python` to choose the fallback explicitly, which also silences the
+warning. The CLI header names the backend in use (`quant=cpp` or `quant=python`).
 
 ## Usage
 
@@ -216,7 +222,7 @@ agentic-trader backtest  NVDA --start 2024-01-02 --end 2024-03-28 --stops on --i
 agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start 2023-01-02 --end 2023-12-29 --weighting risk_parity --class-budgets equity=0.6,fx=0.4
 agentic-trader alpha     USDJPY --start 2021-01-04 --end 2024-03-28 --horizon 10
 agentic-trader xalpha    AAPL,MSFT,NVDA,JPM,XOM --start 2021-01-04 --end 2024-03-28
-agentic-trader execute   AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 5000000
+agentic-trader execute   AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 5000000   # --capital defaults to config initial_capital; whole shares (FX: whole lots of the base currency); sized at the as-of close, simulated on the next session
 agentic-trader stats     returns.csv --trials 16
 agentic-trader evaluate  AAPL,EURUSD --periods q1_2024
 ```
@@ -225,7 +231,7 @@ With real prices (network) and Claude (API key):
 
 ```bash
 agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve   # the published protocol
-agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital 1e9
+agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital 1e9   # the impact sweep: --impact / --capital / --execution-algo / --ac-kappa on evaluate too
 agentic-trader evaluate --data yahoo --fred-vintages --fred-cache results/fred_cache          # CPI as first published
 agentic-trader evaluate --data yahoo --universe core --periods design,holdout --edgar-cache results/edgar_cache  # EDGAR fundamentals and filing news (EDGAR_USER_AGENT in .env)
 set ANTHROPIC_API_KEY=...                                                  # or `ant auth login`
@@ -266,13 +272,15 @@ print(port.table())
 | `agentic.approval` | `auto`, `queued` or `deny` for tool calls that need approval |
 | `agentic.llm_planner` · `llm_critic` · `llm_reporter` | Which governance steps may use the model (all validated / audited either way) |
 | `agentic.symbol_universe` · `deny_tools` · `tool_timeout_s` · `task_db` | Policy inputs; SQLite path for the persistent task store |
-| `agentic.workers` · `agentic.queue_limit` · `agentic.sweep_interrupted` | Task threads per API process; tasks in flight beyond which `POST /tasks` answers 503; whether this process marks the store's in-flight records FAILED at startup (the parent of `serve --processes N` does it once) |
+| `agentic.workers` · `agentic.queue_limit` · `agentic.sweep_interrupted` · `agentic.instance_id` · `agentic.lease_s` | Task threads per API process; tasks in flight beyond which `POST /tasks` answers 503; whether this process sweeps the store's interrupted records at startup (the parent of `serve --processes N` does it once) — the sweep fails only records owned by this `instance_id` or whose heartbeat lease (`lease_s`, 90 s) has expired, so a sibling instance's live runs survive |
 | `agentic.api_keys` | API key → role map for `serve` (development values; an override *replaces* them) |
 | `analysts` · `xalpha_universe` | Analyst set; add `"alpha"` (time-series alpha library) or `"xalpha"` (cross-sectional, ranked against `xalpha_universe`, default the core universe of the asset class) |
 | `lookback_days` · `alpha_lookback_days` | History handed to the analysts and desk tools (400 days) and to the alpha library and its tools (900 days) |
 | `edgar` · `edgar_user_agent` · `edgar_cache_dir` · `edgar_cache_max_age_days` · `edgar_ciks` | SEC EDGAR point-in-time fundamentals and filing news for real-data equities; the SEC requires a contact (`EDGAR_USER_AGENT="Name email@domain"`, read from `.env` by the CLI), without which EDGAR is skipped with one warning; cached endpoint files older than the max age (7 days) are re-fetched |
 | `risk.neutral_weight` · `rebalance_band` · `max_position` · `max_var_95` | Strategic weight, no-trade band, firm limits |
-| `costs.impact_coeff` · `costs.fx_adv_notional` · `initial_capital` | Square-root market impact in backtests (0 = off) and the account size trades scale with |
+| `costs.impact_coeff` · `costs.fx_adv_notional` · `initial_capital` · `account_currency` | Square-root market impact in backtests (0 = off), the account size trades scale with (100,000) and the currency it is denominated in (USD) |
+| `cash_leg` · `risk_free_annual` | What idle cash earns and what Sharpe is measured against: `auto` credits the 3-month bill (FRED DTB3, one-day publication lag) on real-world providers and the constant `risk_free_annual` (0) on synthetic and CSV data; `fred`, `static`, `off` |
+| `execution.fx_lot_size` · `execution.max_order_notional` | FX orders round down to whole lots of the base currency (1000); the cap on one ticket's notional, enforced by policy before approval and again at execution (`None` = `initial_capital * risk.max_position`) |
 | `backtest.use_stops` · `costs.*` · `fx_macro_source` · `fred_vintages` · `max_data_staleness_days` | Backtest and data behaviour; ALFRED vintages for revised series |
 
 `make_config(RULES_V02)` reproduces the v0.2 rules for before/after comparisons.
@@ -299,6 +307,6 @@ print(port.table())
 pytest -q                                   # 319 tests incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
 pytest --cov=agentic_trader --cov-report=term-missing   # 94% line coverage measured in CI (a report, not a gate)
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback
-ctest --test-dir build -C Release           # 14 C++ test groups
+ctest --test-dir build -C Release           # 22 C++ test groups (cpp/tests/test_core.cpp)
 python scripts/run_cookbook.py --offline && python scripts/check_mermaid.py && python scripts/check_links.py   # the docs, as CI runs them
 ```

@@ -145,17 +145,22 @@ class FredClient:
         return s
 
     def _read_cached(self, key: str, max_age_days: float | None) -> pd.DataFrame | None:
+        raw, fresh = self._read_cache_file(key, max_age_days)
+        return raw if fresh else None
+
+    def _read_cache_file(self, key: str, max_age_days: float | None) -> tuple[pd.DataFrame | None, bool]:
+        """The cached table (None when absent or unreadable) and whether it is within ``max_age_days``."""
         if self.cache_dir is None:
-            return None
+            return None, False
         f = self.cache_dir / f"{key}.csv"
         if not f.exists():
-            return None
-        if max_age_days is not None and time.time() - f.stat().st_mtime > max_age_days * 86400.0:
-            return None
+            return None, False
         try:
-            return pd.read_csv(f, index_col=0, parse_dates=True)
+            raw = pd.read_csv(f, index_col=0, parse_dates=True)
         except Exception:  # a corrupt cache file is just re-downloaded
-            return None
+            return None, False
+        fresh = max_age_days is None or time.time() - f.stat().st_mtime <= max_age_days * 86400.0
+        return raw, fresh
 
     def _write_cached(self, key: str, raw: pd.DataFrame) -> None:
         if self.cache_dir is None:
@@ -167,16 +172,32 @@ class FredClient:
             log.warning("FRED cache write failed: %s", e)
 
     def _download(self, key: str, url: str, spec: FredSeries, max_age_days: float | None) -> pd.Series:
-        """Cached-or-fetched series; only a download that parses to a non-empty series is persisted."""
-        raw = self._read_cached(key, max_age_days)
-        if raw is not None:
+        """Cached-or-fetched series; only a download that parses to a non-empty series is persisted.
+
+        A cache file older than ``max_age_days`` is re-downloaded, but when that download
+        fails (offline, FRED down) the stale file is served with a warning rather than
+        discarded: it still covers every historical date it covered before, and losing it
+        would silently zero the FX macro view and carry of a whole re-run."""
+        cached, fresh = self._read_cache_file(key, max_age_days)
+        stale: pd.Series | None = None
+        if cached is not None:
             try:
-                return self._prepare(raw, spec)
+                s = self._prepare(cached, spec)
+                if fresh:
+                    return s
+                stale = s
             except ValueError:
                 pass   # an unusable cache file is replaced by a fresh download
         self.requests += 1
-        raw = self._fetch(url)
-        s = self._prepare(raw, spec)
+        try:
+            raw = self._fetch(url)
+            s = self._prepare(raw, spec)
+        except Exception as e:
+            if stale is None:
+                raise
+            log.warning("FRED %s: re-download of the stale cache file failed (%s); serving the cached "
+                        "table, last observation %s", key, e, stale.index[-1].date())
+            return stale
         self._write_cached(key, raw)
         return s
 

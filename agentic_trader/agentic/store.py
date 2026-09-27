@@ -10,8 +10,10 @@ Every record carries the **owner** (the harness instance that drives the run) an
 a **heartbeat** (epoch seconds, refreshed by the owner while the run is live).
 A record left in a non-terminal state is only marked FAILED (``process
 restarted``) by the interrupted-run sweep when its heartbeat has expired past the
-lease or when it belongs to the sweeping instance's own (previous) incarnation:
-a second instance sharing the store cannot fail a live sibling's runs.
+lease (or it predates leases): a second instance sharing the store cannot fail a
+live sibling's runs, even one configured with the same instance id. The sweep is a
+compare-and-swap on the state it selected, so a record another process finished
+in the meantime is left alone.
 
 On startup the harness reloads the terminal records as an *archive*: they are
 served by the API read routes exactly like live runs, but they are not resumable.
@@ -86,44 +88,78 @@ class TaskStore:
         """Persist a ``TaskRun`` (the full record plus evidence rows and trace spans)."""
         self.save_record(record_of(run), owner)
 
-    def heartbeat(self, owner: str) -> int:
-        """Refresh the lease on every live record this owner drives."""
+    def heartbeat(self, owner: str, task_ids: list[str] | tuple[str, ...] | None = None) -> int:
+        """Refresh the lease on the live records this owner drives: the given ``task_ids``
+        (what the instance actually holds; a predecessor's orphans under the same configured
+        owner id are not kept alive), or every non-terminal record of the owner when omitted."""
+        now = time.time()
         with self._lock:
-            cur = self._conn.execute(f"UPDATE tasks SET heartbeat=? WHERE owner=? AND {_NOT_TERMINAL}",
-                                     (time.time(), owner, *_TERMINAL))
+            if task_ids is None:
+                cur = self._conn.execute(f"UPDATE tasks SET heartbeat=? WHERE owner=? AND {_NOT_TERMINAL}",
+                                         (now, owner, *_TERMINAL))
+                n = cur.rowcount
+            else:
+                n = 0
+                ids = list(task_ids)
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i:i + 500]
+                    marks = ",".join("?" * len(chunk))
+                    cur = self._conn.execute(
+                        f"UPDATE tasks SET heartbeat=? WHERE owner=? AND task_id IN ({marks}) AND {_NOT_TERMINAL}",
+                        (now, owner, *chunk, *_TERMINAL))
+                    n += cur.rowcount
             self._conn.commit()
-            return cur.rowcount
+            return n
 
     def mark_interrupted(self, note: str = "process restarted", owner: str | None = None,
                          lease_s: float | None = None) -> int:
         """Fail records left in a non-terminal state by a process that is gone.
 
         With neither ``owner`` nor ``lease_s`` every non-terminal record is failed (an
-        explicit, ungated sweep). Otherwise only records that are provably orphaned are
-        touched: those written by ``owner`` itself (a previous incarnation of the same
-        configured instance id), those whose heartbeat is older than ``lease_s``, and
-        those with no owner or heartbeat at all (written before leases existed).
+        explicit, ungated sweep for a single-process restart). With ``lease_s`` only records
+        that are provably orphaned are touched: those whose heartbeat is older than
+        ``lease_s`` seconds, and those with no owner or heartbeat at all (written before
+        leases existed). The owner never widens the sweep: a live sibling sharing a
+        configured instance id keeps heartbeating its runs and they survive. ``owner``
+        without ``lease_s`` is refused rather than silently sweeping everything.
+
+        Returns the number of records this call failed. Each update is conditioned on the
+        state and version it selected, so a record finished by its owner between the select
+        and the update keeps its terminal state.
         """
+        if lease_s is None:
+            if owner is not None:
+                raise ValueError("mark_interrupted(owner=...) needs lease_s: without a lease the sweep would fail "
+                                 "every live record")
+            cutoff = None
+        else:
+            lease = float(lease_s)
+            if not lease > 0:
+                raise ValueError(f"lease_s must be a positive number of seconds, got {lease_s!r}")
+            cutoff = time.time() - lease
         with self._lock:
-            if owner is None and lease_s is None:
-                rows = self._conn.execute(f"SELECT task_id, record FROM tasks WHERE {_NOT_TERMINAL}",
-                                          _TERMINAL).fetchall()
-            else:
-                cutoff = time.time() - float(lease_s if lease_s is not None else 0.0)
+            if cutoff is None:
                 rows = self._conn.execute(
-                    f"SELECT task_id, record FROM tasks WHERE {_NOT_TERMINAL} AND "
-                    "(owner IS NULL OR heartbeat IS NULL OR owner = ? OR heartbeat < ?)",
-                    (*_TERMINAL, owner if owner is not None else "", cutoff)).fetchall()
-            for task_id, raw in rows:
+                    f"SELECT task_id, record, state, updated_at FROM tasks WHERE {_NOT_TERMINAL}",
+                    _TERMINAL).fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"SELECT task_id, record, state, updated_at FROM tasks WHERE {_NOT_TERMINAL} AND "
+                    "(owner IS NULL OR heartbeat IS NULL OR heartbeat < ?)",
+                    (*_TERMINAL, cutoff)).fetchall()
+            failed = 0
+            for task_id, raw, state, updated_at in rows:
                 rec = json.loads(raw)
                 rec["state"] = TaskState.FAILED.value
                 rec.setdefault("history", []).append([TaskState.FAILED.value, f"{_now()} {note}"])
                 rec.setdefault("errors", []).append(note)
                 rec["finished_at"] = _now()
-                self._conn.execute("UPDATE tasks SET state=?, record=?, updated_at=? WHERE task_id=?",
-                                   (rec["state"], json.dumps(rec, default=str), _now(), task_id))
+                cur = self._conn.execute(
+                    "UPDATE tasks SET state=?, record=?, updated_at=? WHERE task_id=? AND state=? AND updated_at=?",
+                    (rec["state"], json.dumps(rec, default=str), _now(), task_id, state, updated_at))
+                failed += cur.rowcount
             self._conn.commit()
-        return len(rows)
+        return failed
 
     def delete(self, task_id: str) -> bool:
         with self._lock:

@@ -79,6 +79,16 @@ def frame_from_payload(payload: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(cols, index=idx).astype(float)
 
 
+def default_order_cap(config: dict, capital: float | None = None) -> float:
+    """The per-order notional cap a desk built from ``config`` enforces: ``execution.max_order_notional``
+    when set (0 freezes ticketing), else the capital times the max position."""
+    cap = config.get("execution", {}).get("max_order_notional")
+    if cap is not None:
+        return float(cap)
+    cap_capital = float(capital if capital is not None else config.get("initial_capital", 100_000.0))
+    return cap_capital * float(config["risk"].get("max_position", 1.0))
+
+
 class DeskTools:
     """Holds the objects the tool functions close over."""
 
@@ -96,8 +106,7 @@ class DeskTools:
     @property
     def order_cap(self) -> float:
         """Largest notional one ticket may carry, in the account currency."""
-        cap = self.config.get("execution", {}).get("max_order_notional")
-        return float(cap) if cap else self.capital * float(self.config["risk"].get("max_position", 1.0))
+        return default_order_cap(self.config, self.capital)
 
     def _history(self, symbol: str, as_of: date, lookback_days: int | None,
                  alpha: bool = False) -> tuple[Instrument, pd.DataFrame]:
@@ -304,7 +313,8 @@ class DeskTools:
                               account_currency=self.account_currency, base_to_account=rate,
                               allow_short=allow_short,
                               lot_size=self.config.get("execution", {}).get("fx_lot_size", 1000.0),
-                              ac_kappa=float(self.config["costs"].get("ac_kappa") or 3.0))
+                              ac_kappa=3.0 if self.config["costs"].get("ac_kappa") is None
+                              else float(self.config["costs"]["ac_kappa"]))
         if plan is None:
             effective = target if (allow_short or target >= 0) else 0.0
             note = "" if effective == target else \
@@ -334,8 +344,10 @@ class DeskTools:
         ``quantity_unit`` (whole shares, or whole lots of the pair's base currency), ``notional``
         in ``notional_currency`` (the account currency), the reference ``price`` it was sized at,
         and the ``plan_id`` that binds those fields together. The ticket is refused when the
-        fields do not match the plan reference, the notional exceeds the per-order cap, or it
-        would take a long-only book short; ``intent`` records reduce vs short against the book."""
+        fields do not match the plan reference, the notional exceeds the per-order cap, it
+        would take a long-only book short, or the plan is not one this desk produced with these
+        exact fields (``execution.allow_external_plans`` admits tickets planned elsewhere);
+        ``intent`` records reduce vs short against the book."""
         from ..algo import plan_reference, trade_intent
         ins = Instrument.parse(symbol)
         if side not in ("buy", "sell"):
@@ -369,11 +381,26 @@ class DeskTools:
             raise ValueError(f"{ins.display} is long-only and the book holds {before:+.4f}: a {side} of "
                              f"{notional:,.0f} {self.account_currency} would leave it at {after:+.4f} (short); "
                              f"at most {max(before, 0.0) * self.capital:,.0f} may be sold (reduce to flat)")
+        # The plan reference is a checksum anyone can compute; what authenticates a ticket is
+        # that this desk planned it, with these numbers.
+        known = self.plans.get(plan_id)
+        if known is None:
+            if not self.config.get("execution", {}).get("allow_external_plans", False):
+                raise ValueError(f"plan {plan_id} is not one this desk produced: call execution.plan first and "
+                                 "submit its ticket unchanged (execution.allow_external_plans admits others)")
+        else:
+            planned = {"symbol": known["symbol"], "side": known["side"], "quantity": float(known["quantity"]),
+                       "quantity_unit": known["quantity_unit"], "notional": float(known["notional"]),
+                       "notional_currency": str(known["notional_currency"]).upper(), "price": float(known["price"])}
+            given = {"symbol": ins.symbol, "side": side, "quantity": quantity, "quantity_unit": str(quantity_unit),
+                     "notional": notional, "notional_currency": str(notional_currency).upper(), "price": price}
+            if planned != given:
+                raise ValueError(f"ticket fields differ from plan {plan_id}: submit the plan's ticket unchanged")
         ticket = {"id": f"ORD-{len(self.orders) + 1:05d}", "plan_id": plan_id, "symbol": ins.symbol,
                   "side": side, "intent": trade_intent(before, after, tol=one_lot), "quantity": quantity,
                   "quantity_unit": quantity_unit, "notional": notional, "notional_currency": self.account_currency,
                   "price": price, "position_before": before, "position_after": round(after, 6),
-                  "plan_known": plan_id in self.plans, "note": note, "status": "ticketed"}
+                  "plan_known": known is not None, "note": note, "status": "ticketed"}
         self.orders.append(ticket)
         return ticket
 

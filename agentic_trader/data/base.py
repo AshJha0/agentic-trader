@@ -129,10 +129,10 @@ def clip_history(df: pd.DataFrame, start: date | None, end: date) -> pd.DataFram
 def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     """Normalise a raw OHLCV frame: sorted unique dates, no bad closes, sane ranges.
 
-    * rows without a positive Close are dropped (holidays, bad ticks, placeholders);
+    * rows without a positive, finite Close are dropped (holidays, bad ticks, placeholders);
     * duplicate dates keep the last row; the index is sorted;
-    * missing Open/High/Low are filled from Close, and High/Low are widened to
-      contain Open and Close so intraday stop logic never sees an impossible bar;
+    * missing or non-finite Open/High/Low are filled from Close, and High/Low are widened
+      to contain Open and Close so intraday stop logic never sees an impossible bar;
     * missing Volume becomes 0.
     """
     df = df.copy()
@@ -140,10 +140,11 @@ def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     if getattr(df.index, "tz", None) is not None:
         df.index = df.index.tz_localize(None)
     df = df[~df.index.duplicated(keep="last")].sort_index()
-    df = df[pd.to_numeric(df["Close"], errors="coerce") > 0]
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    df = df[(close > 0) & np.isfinite(close)]
     for col in ("Open", "High", "Low"):
         df[col] = pd.to_numeric(df[col], errors="coerce") if col in df else np.nan
-        df[col] = df[col].where(df[col] > 0).fillna(df["Close"])
+        df[col] = df[col].where((df[col] > 0) & np.isfinite(df[col])).fillna(df["Close"])
     df["High"] = df[["High", "Open", "Close"]].max(axis=1)
     df["Low"] = df[["Low", "Open", "Close"]].min(axis=1)
     df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0) if "Volume" in df else 0.0

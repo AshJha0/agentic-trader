@@ -38,38 +38,51 @@ needed.
 ## Keeping the landing page honest
 
 `docs/index.html`, `README.md`, `LEARN.md` and `docs/evaluation/evaluation.md` quote real
-measured numbers. If you change the code, re-check them against these sources:
+measured numbers. Since v0.8 every real-data number comes from one place: `results/v08/`,
+written by `scripts/measure_v08.py` and turned into the markdown tables by
+`scripts/render_v08_tables.py`. Nothing in those files is typed by hand. If you change the
+code, re-run the driver and re-render; if you change a document, re-check its numbers against
+these sources:
 
 | Figure | How to re-measure |
 |---|---|
-| Dependency versions behind a re-run | `pip install -r requirements-lock.txt` before reproducing, so a discrepancy is data drift or a code change, not a different numpy/pandas resolution; see [the evaluation's Reproducing section](evaluation/evaluation.md#reproducing) |
-| Test counts | `pytest --collect-only -q` (per file); the `void test_` functions and `check(` calls in `cpp/tests/test_core.cpp` |
-| CI jobs | `.github/workflows/ci.yml` matrix: 5 Python versions + 3 OSes |
+| Every real-data table (per-instrument summaries, head-to-head, paired tables, portfolio views, cash leg on/off, drawdown against the control, impact sweep, execution algorithms, EDGAR / carry / rules / xalpha / alpha / track-record re-checks, VaR coverage, selection statistics, rebalance-phase sweep) | `.venv\Scripts\python.exe scripts/measure_v08.py` (about an hour on the C++ backend; `--only eval_main,portfolio_holdout,...` or the stages `var_coverage`, `trials`, `phase_sweep` for a subset; a run whose output exists is skipped, so re-running fills gaps), then `.venv\Scripts\python.exe scripts/render_v08_tables.py` (prints every table and writes `results/v08/tables.md`; `--section` for one). Yahoo, FRED and SEC EDGAR (`EDGAR_USER_AGENT` in `.env`) are needed |
+| Provenance of a number | Every `results/v08/*.json` carries `provenance` (package version, git commit and dirty flag, quant backend, Python, platform, dependency versions) and every `--out` CSV has a `<stem>.provenance.json` sidecar; `results/v08/manifest.json` records the run. A table whose provenance does not name the commit under test is not evidence for that commit |
+| Dependency versions behind a re-run | `pip install -r requirements-lock.txt` before reproducing, so a discrepancy is data drift or a code change, not a different numpy/pandas resolution. The lock is the full transitive freeze of the environment that produced the v0.8 numbers (CPython 3.12.10, win_amd64, 2026-09-27) and is valid for **Python 3.12 only** (numpy 2.5.3 requires ≥ 3.12); CI's `lock` job installs from it and runs the suite; see [the evaluation's Reproducing section](evaluation/evaluation.md#reproducing) |
+| Test counts | `pytest --collect-only -q` (per file); the `void test_` functions in `cpp/tests/test_core.cpp` (22, run as the single `ctest` test `at_core_tests`) |
+| CI jobs | `.github/workflows/ci.yml`: `python` (5 versions, 3.10–3.14, numpy backend), `lock` (3.12 from the lock file), `cpp` (3 OSes), `docs` |
 | Decision and task latency | Time `TradingGraph(...).propagate("AAPL", "2024-03-01")` and `AgentHarness(graph).run(Task("AAPL", date(2024, 3, 1)))` over 20 runs after one warm-up run, offline, C++ backend |
 | Evidence, findings, steps, checks and spans per task | `run.to_dict()` of the task above: `evidence_count`, `len(findings)`, `len(plan.steps)`, `len(critic.checks)`, `trace.spans` |
-| Tools and servers | `len(harness.registry)` and `harness.registry.servers` (or `agentic-trader tools`) |
+| Tools and servers | `len(harness.registry)` and `harness.registry.servers()` (or `agentic-trader tools`): 16 tools on 5 servers at v0.8.0 |
 | Knowledge documents and chunks | `len(default_knowledge_base().documents)` and `len(default_knowledge_base().chunks)` |
 | LLM calls per decision | Cookbook recipe 17 (prints `14 4 10` at default rounds) |
-| Real-price evaluation (per instrument, design / holdout / Q1 2024), core universe | `agentic-trader evaluate --data yahoo --universe core --periods design,holdout,q1_2024 --out results/eval_v03.json`; the same with `--rules v02` for the "before" column |
-| Extended universe and reserve period | `agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve --out results/eval_v05_all.json`; tables from `rows[rows.universe != "core"]` |
-| Impact sweep | `agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital <1e5 / 1e7 / 1e9>` |
-| Ablation tables | The 16 config overrides listed in `docs/evaluation/evaluation.md`, plus the alpha-analyst variants, each run with `evaluate(periods={"design": PERIODS["design"]})` on the core universe |
-| Selection statistics | `stats.selection_report(portfolio design returns, the 16 variants' mean Sharpes)` |
-| LLM desk vs rules (Q1 2024, 5 stocks) | `agentic-trader evaluate AAPL,NVDA,MSFT,META,GOOGL --data yahoo --periods q1_2024 --every 10 --rounds 1 --llm anthropic --deep-effort medium --max-llm-calls 400 --anonymize --workers 3` (API key, ≈$4) and the same without `--llm anthropic` |
-| FX carry-neutral ablation | The five settings in `docs/evaluation/evaluation.md`, `evaluate(CORE_UNIVERSE["fx"], design)` to choose and `EXTENDED_UNIVERSE["fx"]` over design/holdout/reserve to judge; `--rules v03` is the control |
-| Portfolio results | `agentic-trader portfolio <15 symbols> --data yahoo --start 2022-01-03 --end 2026-06-30` (and the design dates) |
+| Real-price evaluation (per instrument, design / holdout / Q1 2024 / reserve), all 60 instruments | `measure_v08.py --only eval_main` (`agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve --out results/v08/eval_main.json` is the same run); `--only eval_rules_v02` for the v0.2 "before" column on the core universe, `eval_rules_v03` for the FX carry rule off; tables by `universe` from `EvaluationResult.summary` / `paired_table` (the `scheme` column says whether the cluster bootstrap engaged: `clusters` needs 5 groups, i.e. `--universe all`) |
+| Cash leg | `measure_v08.py --only eval_cash_leg_off,portfolio_design_cash_leg_off,portfolio_holdout_cash_leg_off` beside the defaults: `cash_leg: off` credits nothing and the metrics fall back to the constant, so the difference is what idle cash at the point-in-time bill rate is worth to each strategy. Synthetic-provider numbers do not move (the rate is the constant 0) |
+| Impact sweep | `agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital <1e5 / 1e7 / 1e9>` (parses since v0.8; `measure_v08.py --only eval_impact_1e5,eval_impact_1e7,eval_impact_1e9` is the same); the coefficient is now scaled by the equity actually traded |
+| Execution algorithms at $1B | `measure_v08.py --only portfolio_holdout_impact_1e9_vwap,portfolio_holdout_impact_1e9_twap,portfolio_holdout_impact_1e9_ac`: each sleeve pays the impact of its own capital share |
+| Ablation tables and selection statistics | The trials registry `evaluation.TRIALS` (26 variants, `reproducible_trials()` the 24 the current engine can re-run), each with `evaluate(periods={"design": PERIODS["design"]})` on the core universe — `measure_v08.py --only trials` writes `trial_*.json` and `trials.json`; `stats.selection_report(portfolio design returns, the trials' mean Sharpes)` in `render_v08_tables.py` |
+| Portfolio results and their intervals | `measure_v08.py --only portfolio_design,portfolio_holdout` (equal weight, core 15; `agentic-trader portfolio <15 symbols> --data yahoo --start 2022-01-03 --end 2026-06-30 --out ...` is the holdout run); `PortfolioReport.sharpe_difference` for the desk − vol-target and desk − B&H intervals; `--only phase_sweep` for the rebalance-offset noise floor (offsets 0–4) |
+| VaR coverage | `measure_v08.py --only var_coverage` → `var_coverage.json`: the rolling historical VaR of the portfolio's own returns at 120 / 250 days and the desk's per-instrument 250-day forecast against each core instrument's next-day return over the holdout (Kupiec and Christoffersen p); `agentic-trader stats returns.csv --var-backtest` for any series |
+| LLM desk vs rules (Q1 2024, 5 stocks) | `agentic-trader evaluate AAPL,NVDA,MSFT,META,GOOGL --data yahoo --periods q1_2024 --every 10 --rounds 1 --llm anthropic --deep-effort medium --max-llm-calls 400 --anonymize --workers 3` (API key, ≈$4) and the same without `--llm anthropic`. The one published LLM result (v0.5.1) was measured under the pre-v0.8 engine and has not been re-derived |
 | Code size | Non-empty lines in `agentic_trader/**/*.py`, `tests/**/*.py` and `cpp/**/*.{cpp,hpp}` |
 | Cookbook | `python scripts/run_cookbook.py` (every ```python block in a fresh process; `--offline` skips the network recipes, which is what CI runs); all must exit 0 |
-| EDGAR coverage | `EdgarClient(cache_dir=...).fundamentals(t, date, price)` and `.news(t, date, 90)` for every equity in `UNIVERSES["all"]` at two dates; operating companies must report growth, margin, EPS, leverage and FCF yield, funds and index ETFs nothing |
-| EDGAR-on vs EDGAR-off, cross-sectional analyst | `agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve` with `--no-edgar` (the v0.5.1 record), the default (EDGAR on) and `--analysts technical,fundamentals,news,sentiment,xalpha --xalpha-universe all`; tables from the three JSON files, paired bootstraps from `EvaluationResult.paired_table()` |
-| Multi-year LLM desk | The staged runner in the evaluation (control, Opus, Sonnet, Haiku tiers on the core universe over design + holdout at `--every 10`, three repeated Opus runs on five stocks, one calibration run), each stage with its own `--max-llm-cost` |
-| Cross-sectional analyst activity | `TradingGraph(analysts=[..., "xalpha"], xalpha_universe=UNIVERSES["all"]).propagate(sym, d)` every 60 business days over the design period on the 15 core names; share of `reports["xalpha"]` not abstained |
+| EDGAR coverage | `EdgarClient(cache_dir=...).fundamentals(t, date, price, splits)` and `.news(t, date, 90)` for every equity in `UNIVERSES["all"]` at two dates; operating companies must report growth, margin, EPS, leverage and FCF yield where the recency and share-class guards allow it, funds and index ETFs nothing |
+| EDGAR-on vs EDGAR-off, cross-sectional analyst, alpha analyst, track-record cut | `measure_v08.py --only eval_noedgar` / `eval_xalpha` / `eval_alpha` / `eval_no_trackrecord_cut` against `eval_main`; paired bootstraps from `EvaluationResult.paired_table()` with the BH flag |
+| Multi-year LLM desk | The staged runner in the evaluation (control, Opus, Sonnet, Haiku tiers on the core universe over design + holdout at `--every 10`, three repeated Opus runs on five stocks, one calibration run), each stage with its own `--max-llm-cost`. Not run as of v0.8.0 |
+| Cross-sectional analyst activity | `TradingGraph(make_config(analysts=["technical", "fundamentals", "news", "sentiment", "xalpha"], xalpha_universe=UNIVERSES["all"])).propagate(sym, d)` every 60 business days over the design period on the 15 core names; share of `reports["xalpha"]` not abstained |
 | Calibration | `agentic-trader calibrate AAPL --date 2024-03-01 --n 5 --anchors none,-0.5,0,0.5 --llm anthropic --anonymize --deep-effort medium` |
 | Fuzz findings | `pytest tests/test_fuzz.py`; the "found and fixed" list in the changelog is the record of what the first run caught |
-| Diagrams | `python scripts/check_mermaid.py` (mermaid-cli; `--html` writes a browser page instead) |
+| Diagrams | `python scripts/check_mermaid.py` (mermaid-cli; `--html` writes `build/mermaid_check.html`, open it and read `window.__mermaid`) |
 | Links | `python scripts/check_links.py` (`--external` also requests every external URL) |
 
-The evaluation tables are generated from the saved JSON with pandas (`to_markdown`), not
-typed by hand. Keep it that way.
+The evaluation tables are generated from the saved JSON by `scripts/render_v08_tables.py`
+(earlier sections: pandas `to_markdown` from the JSON of their day), not typed by hand. Keep
+it that way. The historical sections of the evaluation keep the numbers measured under the
+earlier engines, each under a banner saying so; the v0.8 section is the current measurement.
+
+The real-data numbers quoted in `README.md`, `docs/index.html`, `LEARN.md` and the
+evaluation are only as current as the last render of `results/v08`: after any re-run of the
+driver, re-render and re-paste before publishing. The render script's output is the
+reference; a document that disagrees with it is the one that is wrong.
 
 A wrong number on the landing page is a documentation bug. Treat it like one.

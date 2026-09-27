@@ -242,9 +242,11 @@ class FundamentalsAnalyst(Analyst):
             s += 0.05 * np.sign(ins)
             pts.append(f"Insiders net {'buyers' if ins > 0 else 'sellers'} ({ins:+d} filings)")
         sig = clip(s, -1, 1)
+        window = f"({f.get('report_period_end', 'n/a')}"
+        if f.get("revenue_period_end"):
+            window += f"; revenue figures through {f['revenue_period_end']}"
         return AnalystReport(self.name, sig, clip(0.3 + 0.4 * abs(sig), 0, 0.8),
-                             f"Fundamentals score {sig:+.2f} from the latest report "
-                             f"({f.get('report_period_end', 'n/a')}).", pts, f)
+                             f"Fundamentals score {sig:+.2f} from the latest report {window}).", pts, f)
 
 
 # --------------------------------------------------------------------------

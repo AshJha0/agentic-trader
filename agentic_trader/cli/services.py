@@ -43,7 +43,9 @@ def cmd_serve(args) -> int:
 
 def cmd_mcp(args) -> int:
     from ..agentic.mcp_server import main as mcp_main
-    argv = ["--data", args.data] + (["--csv-dir", args.csv_dir] if args.csv_dir else [])
+    argv = ["--data", args.data, "--role", args.role] + (["--csv-dir", args.csv_dir] if args.csv_dir else [])
+    if args.approval:
+        argv += ["--approval", args.approval]
     return mcp_main(argv)
 
 

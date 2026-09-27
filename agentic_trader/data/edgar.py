@@ -19,9 +19,10 @@ Fundamentals are derived from the raw facts rather than taken from a vendor
 snapshot: quarterly flows are reconstructed from the reported spans (10-Q values
 are year-to-date for cash-flow items, and Q4 is only ever reported inside the
 10-K), summed to trailing-twelve-month figures and combined with the price the
-caller passes in. Reconstruction never mixes XBRL tags (a filer that reports gross
+caller passes in. Reconstruction never mixes concepts (a filer that reports gross
 revenue under one tag and net revenue under another gets one concept per trailing
-window) nor reporting bases (see ``quarterly_table``). Consensus data (EPS surprise)
+window; a renamed tag is recognised by an identical span printed under both names)
+nor reporting bases (see ``quarterly_table``). Consensus data (EPS surprise)
 is not available from EDGAR and is reported as ``None`` rather than guessed.
 
 News is the filing stream itself: 8-K item codes map to short headlines with a
@@ -154,10 +155,20 @@ _TTM_SPAN = (240, 300)
 # one quarter before the report period has stopped being reported (a dead per-class series).
 MAX_INSTANT_AGE_DAYS = 400
 MAX_FLOW_LAG_DAYS = _QUARTER[1]
-# A later print of a span that differs from the earlier one by more than this fraction marks
-# a change of reporting basis (discontinued operations, a restatement); smaller differences
-# are ordinary revisions and the later print simply replaces the earlier one.
+# A filing that re-prints at least BASIS_CHANGE_MIN_SPANS spans of one concept differing from
+# the earlier prints by more than BASIS_CHANGE_TOLERANCE has recast its comparatives onto a
+# new reporting basis (discontinued operations, a restatement). A single divergent re-print
+# is a revision, or an erroneous fact, inside the basis (the later print replaces the
+# earlier) unless it is the comparative of a span printed for the first time; a print that
+# returns to an earlier value is always a correction. See ``_tag_quarters``.
 BASIS_CHANGE_TOLERANCE = 0.05
+BASIS_CHANGE_MIN_SPANS = 2
+# Two tags are one concept for a filer (a rename) when every span they both print agrees
+# within this fraction; gross and net revenue tags differ by far more on every shared span.
+TAG_EQUIVALENCE_TOLERANCE = 0.01
+# The four quarters of a fiscal year must agree with its annual span within this fraction of
+# the annual figure; otherwise the audited annual figure less the three quarters is Q4.
+ANNUAL_CHECK_TOLERANCE = 0.02
 
 
 def _http_fetch(url: str, user_agent: str, timeout: float = 30.0) -> bytes:
@@ -352,7 +363,8 @@ class EdgarClient:
     # -------------------------------------------------------- fundamentals
     def fundamentals(self, ticker: str, as_of: date, price: float | None = None,
                      splits: dict[date, float] | None = None) -> dict[str, Any]:
-        """Fundamentals known at ``as_of`` (facts filed on or before it, latest print of each span).
+        """Fundamentals known at ``as_of`` (facts filed on or before it; a span's value is its
+        latest print within one reporting basis, see ``quarterly_table``).
 
         ``price`` must be the close *as traded* on ``as_of`` (not a split-adjusted history),
         and ``splits`` maps split ex-dates to their ratios (4.0 for a 4-for-1). Per-share
@@ -390,18 +402,22 @@ class EdgarClient:
         out = dict(core)
         out["lag_days"] = int((pd.Timestamp(as_of) - pd.Timestamp(out["filed"])).days) if out.get("filed") else None
         eps_ttm, shares, fcf = out.pop("_eps_ttm", None), out.pop("_shares", None), out.pop("_fcf_ttm", None)
-        ratio = SHARE_CLASS_RATIO.get(ticker.upper())
+        for tag, end, quarters, annual in out.pop("_notes", ()):
+            self._warn_once(ticker, f"annual-mismatch:{tag}:{end}",
+                            f"{tag} quarters of the year ending {end} sum to {quarters:.4g} against an annual span "
+                            f"of {annual:.4g}: Q4 taken as the annual figure less the three quarters")
+        ratio = SHARE_CLASS_RATIO.get(ticker.upper().replace(".", "-"))
         if ratio:
             eps_ttm = None if eps_ttm is None else eps_ttm / ratio
             shares = None if shares is None else shares * ratio
         rev_ttm = out.get("revenue_ttm")
         if price and shares and rev_ttm and price * shares < 0.01 * rev_ttm:
-            self._warn_once(ticker, f"market cap {price * shares:.3g} below 1% of trailing revenue {rev_ttm:.3g}: "
-                                    "the share count is not this ticker's class; per-share ratios dropped")
+            self._warn_once(ticker, "market-cap", f"market cap {price * shares:.3g} below 1% of trailing revenue "
+                            f"{rev_ttm:.3g}: the share count is not this ticker's class; per-share ratios dropped")
             shares = None
         if price and eps_ttm is not None and eps_ttm > 0.5 * price:
-            self._warn_once(ticker, f"trailing EPS {eps_ttm:.4g} above half the price {price:.4g}: the EPS facts "
-                                    "are not per share of this ticker's class; P/E dropped")
+            self._warn_once(ticker, "eps-class", f"trailing EPS {eps_ttm:.4g} above half the price {price:.4g}: "
+                            "the EPS facts are not per share of this ticker's class; P/E dropped")
             eps_ttm = None
         if eps_ttm is not None:
             out["eps_ttm"] = round(eps_ttm, 4)
@@ -411,8 +427,8 @@ class EdgarClient:
             out["fcf_yield"] = round(fcf / (price * shares), 4)
         return out
 
-    def _warn_once(self, ticker: str, msg: str) -> None:
-        key = f"{ticker.upper()}:{msg[:40]}"
+    def _warn_once(self, ticker: str, kind: str, msg: str) -> None:
+        key = f"{ticker.upper()}:{kind}"
         if key not in self._warned:
             self._warned.add(key)
             log.warning("EDGAR %s: %s", ticker.upper(), msg)
@@ -424,11 +440,13 @@ class EdgarClient:
             return {}
         if past_splits:
             known = rebase_per_share(known, past_splits)
-        rev_t = quarterly_table(known, REVENUE_TAGS, positive=True)
-        ni_t = quarterly_table(known, NET_INCOME_TAGS)
-        eps = quarterly_series(known, EPS_TAGS, units=("USD/shares",))
-        ocf = quarterly_series(known, OCF_TAGS)
-        capex = quarterly_series(known, CAPEX_TAGS)
+        notes: list[tuple[str, str, float, float]] = []
+        rev_t = quarterly_table(known, REVENUE_TAGS, positive=True, notes=notes)
+        ni_t = quarterly_table(known, NET_INCOME_TAGS, notes=notes)
+        eps = quarterly_series(known, EPS_TAGS, units=("USD/shares",), notes=notes)
+        ocf = quarterly_series(known, OCF_TAGS, notes=notes)
+        capex = quarterly_series(known, CAPEX_TAGS, notes=notes)
+        capex_reported = bool(known["tag"].isin(CAPEX_TAGS).any())
         rev, ni = rev_t["val"], ni_t["val"]
         if rev.empty and ni.empty:   # no income statement at all: not an operating company
             return {}
@@ -458,6 +476,11 @@ class EdgarClient:
         eps_ttm = ttm(eps)
         if rev_ttm is not None:
             out["revenue_ttm"] = rev_ttm
+            # The revenue window can end a quarter before the report period (a basis change or
+            # tag change not yet covering the newest quarter): say so rather than pass it off as
+            # the period's figure, and do not divide it into a net income from another window.
+            if rev.index.max() != period_end:
+                out["revenue_period_end"] = rev.index.max().date().isoformat()
         # Year over year only when the two four-quarter windows are exactly a year apart (a
         # missing quarter would otherwise compare across a 15-month gap) and are the same
         # concept on one reporting basis: another tag is another concept (gross vs net
@@ -466,15 +489,20 @@ class EdgarClient:
             cur, prev = rev_t.iloc[-1], rev_t.iloc[-5]
             if cur["tag"] == prev["tag"] and cur["gen"] == prev["gen"]:
                 out["revenue_growth_yoy"] = round(rev_ttm / rev_prev - 1.0, 4)
-        if rev_ttm and ni_ttm is not None:
+        if rev_ttm and ni_ttm is not None and rev.index.max() == ni.index.max():
             out["net_margin"] = round(ni_ttm / rev_ttm, 4)
         if eps_ttm is not None:
             out["_eps_ttm"] = eps_ttm
         if debt is not None and equity:
             out["debt_to_equity"] = round(debt / equity, 3)
         ocf_ttm, capex_ttm = ttm(ocf), ttm(capex)
-        if ocf_ttm is not None and shares:
+        # A filer that reports capital expenditure but has no current four-quarter window of
+        # it (a dead or renamed tag) has no free cash flow figure, not a free cash flow equal
+        # to operating cash flow.
+        if ocf_ttm is not None and shares and (capex_ttm is not None or not capex_reported):
             out["_fcf_ttm"], out["_shares"] = ocf_ttm - (capex_ttm or 0.0), shares
+        if notes:
+            out["_notes"] = notes
         return out
 
 
@@ -495,22 +523,45 @@ def _material(a: float, b: float) -> bool:
     return abs(a - b) > BASIS_CHANGE_TOLERANCE * max(abs(a), abs(b))
 
 
-def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: list[int],
-                  positive: bool) -> dict[int, dict[int, float]]:
-    """Quarter candidates of one tag: ``{period_end_day: {generation: value}}``.
+def _recast(gens: dict[int, float], g: int, v: float) -> bool:
+    """A print of ``v`` differs materially from the span's value in generation ``g`` and
+    from every value the span held in an earlier generation: a return to an earlier value
+    corrects an erroneous print, it does not change the basis."""
+    return g in gens and all(_material(old, v) for old in gens.values())
 
-    *Generations.* Prints are replayed filing by filing. A filing that re-prints a span
-    already known in the current generation with a materially different value (more than
-    ``BASIS_CHANGE_TOLERANCE``) opens a new generation: it, and every later filing, reports
-    on a new basis (discontinued operations, a restatement). Within a generation the latest
-    print of a span wins (an ordinary revision replaces the earlier figure).
+
+def _comparative(old: tuple[int, int], new: tuple[int, int]) -> bool:
+    """``old`` is the year-earlier comparative of ``new``: the same length, ending a year before."""
+    (s0, e0), (s1, e1) = old, new
+    return _YEAR[0] <= e1 - e0 <= _YEAR[1] and abs((e1 - s1) - (e0 - s0)) <= 14
+
+
+def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: list[int],
+                  positive: bool, notes: list[tuple[int, int, float, float]] | None = None) -> dict[int, dict[int, float]]:
+    """Quarter candidates of one concept: ``{period_end_day: {generation: value}}``.
+
+    *Generations.* Prints are replayed filing by filing. A filing that re-prints spans
+    already known in the current generation with materially different values (more than
+    ``BASIS_CHANGE_TOLERANCE``) opens a new generation when it recasts comparatives: at
+    least ``BASIS_CHANGE_MIN_SPANS`` such spans, or one that is the year-earlier comparative
+    of a span the filing prints for the first time (a first-quarter 10-Q restates exactly
+    one). It, and every later filing, then reports on a new basis (discontinued operations,
+    a restatement). Within a generation the latest print of a span wins, so any other lone
+    divergent re-print (an ordinary revision, or one erroneous fact) replaces the earlier
+    figure and is itself replaced by the next filing that prints the span; a print that
+    returns to a value the span held in an earlier generation is such a correction, never
+    a basis change, however many spans it covers.
 
     *Reconstruction*, separately per generation so no difference ever straddles a basis
     change: direct ~90-day spans are taken as they are; longer spans sharing a start date
     (year-to-date 10-Q values, the 10-K annual figure) are differenced against the next
     shorter span with the same start, which recovers Q4 (annual minus nine months) and
     quarterly cash flows (H1 minus Q1, 9M minus H1); an annual span with no nine-month
-    sibling has the direct quarters it contains subtracted, when they fill it.
+    sibling has the direct quarters it contains subtracted, when they fill it. A direct Q4
+    print is cross-checked against the annual span: when the four direct quarters disagree
+    with it by more than ``ANNUAL_CHECK_TOLERANCE`` (a 10-K whose quarterly comparatives are
+    mis-tagged), Q4 is the audited annual figure less the three quarters, and the case is
+    appended to ``notes`` as ``(end_day, generation, four_quarter_sum, annual)``.
     """
     by_filing: dict[int, list[tuple[int, int, float]]] = {}
     for s, e, v, f in zip(starts, ends, vals, filed):
@@ -519,16 +570,21 @@ def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: 
     g = 0
     for f in sorted(by_filing):
         rows = by_filing[f]
-        if any((s, e) in spans and g in spans[(s, e)] and _material(spans[(s, e)][g], v) for s, e, v in rows):
-            g += 1
+        recast = {(s, e) for s, e, v in rows if _recast(spans.get((s, e), {}), g, v)}
+        if recast:
+            first = [(s, e) for s, e, _ in rows if (s, e) not in spans]
+            if len(recast) >= BASIS_CHANGE_MIN_SPANS or any(_comparative(r, n) for r in recast for n in first):
+                g += 1
         for s, e, v in rows:
             spans.setdefault((s, e), {})[g] = v
     out: dict[int, dict[int, float]] = {}
+    direct: set[tuple[int, int]] = set()
     by_start: dict[int, list[int]] = {}
     for (s, e), gens in spans.items():
         if _QUARTER[0] <= e - s <= _QUARTER[1]:
             for gg, v in gens.items():
                 out.setdefault(e, {}).setdefault(gg, v)
+                direct.add((e, gg))
         by_start.setdefault(s, []).append(e)
     for s, es in by_start.items():
         es.sort()
@@ -540,16 +596,59 @@ def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: 
         if e - s <= _QUARTER[1]:
             continue
         expected = max(round((e - s) / 91) - 1, 1)
+        annual = _YEAR[0] <= e - s <= _YEAR[1]
         for gg, v in gens.items():
-            if gg in out.get(e, {}):
+            have = out.get(e, {}).get(gg)
+            if have is not None and not (annual and (e, gg) in direct):
                 continue
             inside = [q for q, qg in out.items() if s < q < e and gg in qg]
-            if len(inside) == expected and _QUARTER[0] <= e - max(inside) <= _QUARTER[1]:
-                out.setdefault(e, {})[gg] = v - sum(out[q][gg] for q in inside)
+            if len(inside) != expected or not _QUARTER[0] <= e - max(inside) <= _QUARTER[1]:
+                continue
+            rest = v - sum(out[q][gg] for q in inside)
+            if have is None:
+                out.setdefault(e, {})[gg] = rest
+            elif abs(have - rest) > ANNUAL_CHECK_TOLERANCE * abs(v):
+                out[e][gg] = rest
+                if notes is not None:
+                    notes.append((e, gg, v - rest + have, v))
     if positive:
         out = {e: {gg: v for gg, v in gens.items() if v > 0} for e, gens in out.items()}
         out = {e: gens for e, gens in out.items() if gens}
     return out
+
+
+def _tag_classes(sub: pd.DataFrame, tags: tuple[str, ...]) -> list[list[str]]:
+    """The tags present in ``sub`` grouped into concepts, each class in rank order and the
+    classes ordered by their best rank. Two tags are one concept for a filer when they print
+    identical spans (same start and end) and every such span's latest print under each tag
+    agrees within ``TAG_EQUIVALENCE_TOLERANCE``: a renamed tag re-prints the comparatives it
+    took over. Gross and net revenue share spans but never values; net income with and
+    without the non-controlling interest agree on some spans but not all; both stay apart."""
+    present = [t for t in tags if (sub["tag"] == t).any()]
+    rank = {t: i for i, t in enumerate(present)}
+    parent = {t: t for t in present}
+
+    def root(t: str) -> str:
+        while parent[t] != t:
+            t = parent[t]
+        return t
+
+    latest = (sub[["tag", "start", "end", "val", "filed"]].sort_values("filed", kind="stable")
+              .drop_duplicates(["tag", "start", "end"], keep="last"))
+    for i, a in enumerate(present):
+        ra = latest[latest["tag"] == a]
+        for b in present[i + 1:]:
+            m = ra.merge(latest[latest["tag"] == b], on=["start", "end"], suffixes=("_a", "_b"))
+            if m.empty:
+                continue
+            scale = m[["val_a", "val_b"]].abs().max(axis=1)
+            if ((m["val_a"] - m["val_b"]).abs() <= TAG_EQUIVALENCE_TOLERANCE * scale).all():
+                lo, hi = sorted((root(a), root(b)), key=rank.get)
+                parent[hi] = lo
+    classes: dict[str, list[str]] = {}
+    for t in present:
+        classes.setdefault(root(t), []).append(t)
+    return [classes[r] for r in present if r in classes]
 
 
 def _window(quarters: dict[int, dict[int, float]], anchor: int) -> tuple[list[int], int] | None:
@@ -576,19 +675,25 @@ def _window(quarters: dict[int, dict[int, float]], anchor: int) -> tuple[list[in
 
 
 def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,
-                    positive: bool = False) -> pd.DataFrame:
+                    positive: bool = False, notes: list[tuple[str, str, float, float]] | None = None) -> pd.DataFrame:
     """Quarterly values by period end with the tag and basis generation each came from.
 
-    Each tag is reconstructed on its own (``_tag_quarters``); values of different tags
-    are never differenced or summed. The result is assembled from trailing four-quarter
-    windows: for the latest quarter end known under any tag, the highest-ranked tag that
-    has four consecutive quarters of one reporting basis ending there supplies all four;
-    the next uncovered quarter end is treated the same way, and so on back in time. A
-    quarter that belongs to no such window is left out, so ``ttm`` can only ever sum one
-    concept on one basis. With ``positive`` a reconstructed quarter that is not positive
-    (revenue) is rejected rather than reported.
+    Each concept is reconstructed on its own (``_tag_quarters``): a concept is one tag, or
+    the tags a filer has shown to be one concept by printing an identical span under both
+    (``_tag_classes``, a rename), and values of different concepts are never differenced or
+    summed. The result is assembled from trailing four-quarter windows tiled back from the
+    latest quarter end known under any concept, each window being four consecutive quarters
+    of one concept on one reporting basis. The concept of a window is the one chosen for
+    the previous window in time while it still covers the new one (continuity: a filer
+    printing two revenue concepts side by side keeps reporting the same one); the tag rank
+    decides only where no previous choice covers. Older windows are then re-expressed in
+    the newer window's concept where it covers them. A quarter that belongs to no such window
+    is left out, so ``ttm`` can only ever sum one concept on one basis. With ``positive`` a
+    reconstructed quarter that is not positive (revenue) is rejected rather than reported.
+    ``notes`` collects the annual cross-check failures as ``(tag, year_end, quarters, annual)``.
 
-    Columns: ``val``; ``tag``; ``gen`` (0 = the filer's original basis, +1 per change).
+    Columns: ``val``; ``tag`` (the best-ranked tag of the concept); ``gen`` (0 = the filer's
+    original basis, +1 per change).
     """
     empty = pd.DataFrame({"val": pd.Series(dtype=float), "tag": pd.Series(dtype=object),
                           "gen": pd.Series(dtype=int)})
@@ -598,43 +703,53 @@ def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str
         return empty
     epoch = pd.Timestamp("1970-01-01")
     per_tag: list[tuple[str, dict[int, dict[int, float]]]] = []
-    for tag in tags:
-        rows = sub[sub["tag"] == tag]
-        if rows.empty:
-            continue
+    for members in _tag_classes(sub, tags):
+        # The preferred tag's print of a span comes last within a filing, so it is the one kept.
+        rows = sub[sub["tag"].isin(members)].sort_values("_rank", ascending=False, kind="stable")
+        found: list[tuple[int, int, float, float]] = []
         q = _tag_quarters(((rows["start"] - epoch).dt.days).tolist(), ((rows["end"] - epoch).dt.days).tolist(),
-                          rows["val"].astype(float).tolist(), ((rows["filed"] - epoch).dt.days).tolist(), positive)
+                          rows["val"].astype(float).tolist(), ((rows["filed"] - epoch).dt.days).tolist(), positive, found)
+        if notes is not None:
+            notes.extend((members[0], (epoch + pd.Timedelta(days=e)).date().isoformat(), qs, a) for e, _, qs, a in found)
         if q:
-            per_tag.append((tag, q))
-    result: dict[int, tuple[float, str, int]] = {}
-    anchors = sorted({e for _, q in per_tag for e in q}, reverse=True)
-    last_tag: str | None = None
-    for anchor in anchors:
-        if any(abs(anchor - r) < _QUARTER[0] for r in result):
+            per_tag.append((members[0], q))
+    tiles: list[dict[str, tuple[list[int], int]]] = []
+    covered: set[int] = set()
+    for anchor in sorted({e for _, q in per_tag for e in q}, reverse=True):
+        if any(abs(anchor - r) < _QUARTER[0] for r in covered):
             continue
-        # The tag of the window just placed goes first, so consecutive years stay on one
-        # concept when it covers both (a filer printing two revenue concepts side by side).
-        order = sorted(per_tag, key=lambda tq: tq[0] != last_tag)
-        for tag, q in order:
-            w = _window(q, anchor)
-            if w is None:
-                continue
-            ends, g = w
-            for e in ends:
-                result[e] = (q[e][g], tag, g)
-            last_tag = tag
-            break
-    if not result:
+        covers = {tag: w for tag, q in per_tag if (w := _window(q, anchor)) is not None}
+        if not covers:
+            continue
+        tiles.append(covers)
+        for ends, _ in covers.values():
+            covered.update(ends)
+    if not tiles:
         return empty
+    chosen: list[str] = []
+    for covers in reversed(tiles):
+        chosen.append(chosen[-1] if chosen and chosen[-1] in covers else next(iter(covers)))
+    chosen.reverse()
+    # Older windows are re-expressed in the concept of the newer one where it covers them,
+    # so growth compares like with like as far back as that concept goes.
+    for i in range(1, len(tiles)):
+        if chosen[i - 1] in tiles[i]:
+            chosen[i] = chosen[i - 1]
+    quarters = dict(per_tag)
+    result: dict[int, tuple[float, str, int]] = {}
+    for covers, tag in zip(tiles, chosen):
+        ends, g = covers[tag]
+        for e in ends:
+            result[e] = (quarters[tag][e][g], tag, g)
     keys = sorted(result)
     return pd.DataFrame({"val": [result[k][0] for k in keys], "tag": [result[k][1] for k in keys],
                          "gen": [result[k][2] for k in keys]}, index=pd.to_datetime(keys, unit="D"))
 
 
 def quarterly_series(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,
-                     positive: bool = False) -> pd.Series:
+                     positive: bool = False, notes: list[tuple[str, str, float, float]] | None = None) -> pd.Series:
     """Quarterly values by period end: the ``val`` column of ``quarterly_table``."""
-    return quarterly_table(known, tags, units, positive)["val"]
+    return quarterly_table(known, tags, units, positive, notes)["val"]
 
 
 def latest_instant(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,

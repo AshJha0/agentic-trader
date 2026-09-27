@@ -37,9 +37,11 @@
 // first (the conservative choice with daily bars). After an exit the position stays
 // flat until the next rebalance.
 //
-// Ruin: once a bar's loss reaches the whole account (equity[t] (1 + r_t) <= 0) the
-// equity is floored at 0, the position is written off and every later bar is flat
-// with return 0; ``ruined_at`` records the bar and the metrics report ``ruined``.
+// Ruin: once any leg of a bar consumes the whole account -- the entry cost
+// ((1 - k_in) <= 0), the move ((1 + g) <= 0), the exit cost ((1 - k_out) <= 0) or the
+// resulting equity (<= 0) -- the equity is floored at 0, the position is written off
+// and every later bar is flat with return 0; ``ruined_at`` records the bar and the
+// metrics report ``ruined``.
 #pragma once
 
 #include <string>

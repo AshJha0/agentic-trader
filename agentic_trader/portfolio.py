@@ -420,8 +420,11 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
     ``allocation`` is the pre-scale split and ``scale`` the factor applied.
 
     Raises ``ValueError`` when the window cannot support an allocation (too few rows,
-    a covariance with no positive variance, a non-finite solve), so a caller such as
-    ``run_portfolio_backtest`` can keep its previous allocation rather than hold NaN.
+    no active sleeve with positive variance, a non-finite solve), so a caller such as
+    ``run_portfolio_backtest`` can keep its previous allocation rather than hold NaN. An
+    active sleeve whose returns have zero variance in the window (a forward-filled or
+    frozen series) is allocated 0 by every scheme, with a warning, and a budgeted group
+    with no other active sleeve gets nothing.
 
     **Cross-asset risk budgets.** With ``groups`` (symbol -> group, e.g. the asset
     class) and ``group_budgets`` (group -> share of portfolio risk), allocation is
@@ -462,6 +465,14 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
     if active.any():
         if not (np.diag(cov)[active] > 0).any():
             raise ValueError("no active sleeve has positive variance in this window: nothing to allocate on")
+        # A sleeve with zero sample variance is a data artefact (forward-fill, a holiday block),
+        # not a risk-free asset: every scheme treats it as inactive rather than letting the
+        # minimisers hand it the whole book.
+        flat = active & ~(np.diag(cov) > 0)
+        if flat.any():
+            log.warning("zero variance in this window for %s: allocated 0 (no information to size on)",
+                        [s for s, f in zip(symbols, flat) if f])
+            active = active & ~flat
         k = int(active.sum())
         cap = min(1.0, max(max_weight, 1.0 / k))  # a cap below 1/k is infeasible on the simplex
         mu_all = np.array([(expected_returns or {}).get(s, targets[s]) for s in symbols])

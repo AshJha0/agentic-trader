@@ -7,7 +7,8 @@ and the role decides what the task and the approval endpoints may do.
 
 | method | path                       | role         | what                                   |
 |--------|----------------------------|--------------|----------------------------------------|
-| POST   | /tasks                     | analyst+     | start a task (202 + task id)           |
+| POST   | /tasks                     | analyst+     | start a task (202 + task id); the body |
+|        |                            |              | may declare ``positions`` on the book  |
 | GET    | /tasks/{id}                | viewer+      | state, plan, decision, findings, critic|
 | GET    | /tasks/{id}/report         | viewer+      | the audited report (JSON or markdown)  |
 | GET    | /tasks/{id}/trace          | viewer+      | spans                                  |
@@ -114,6 +115,8 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
         as_of: date
         current_weight: float | None = None
         question: str = ""
+        positions: dict[str, float] | None = Field(default=None, examples=[{"AAPL": 0.4, "MSFT": 0.1}],
+                                                   description="weights to declare on the desk's book")
 
     class ApprovalIn(BaseModel):
         approve: bool
@@ -172,7 +175,10 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
                 raise HTTPException(503, f"{limit} tasks already in flight; retry later",
                                     headers={"Retry-After": "5"})
             task = Task(body.symbol, body.as_of, role, body.current_weight, body.question)
-            run = harness.submit(task)
+            try:
+                run = harness.submit(task, body.positions)
+            except ValueError as e:
+                raise HTTPException(422, f"positions: {e}")
             schedule(task.id, run)
         return {"task_id": task.id, "state": run.state.value}
 
@@ -311,6 +317,9 @@ def validate_app_config(config: dict, workers: "int | None" = None, queue_limit:
     limit = int(queue_limit if queue_limit is not None else acfg.get("queue_limit", 64))
     if n_workers < 1 or limit < 0:
         raise ValueError("workers must be >= 1 and queue_limit >= 0")
+    lease = acfg.get("lease_s", 90.0)
+    if not (isinstance(lease, (int, float)) and not isinstance(lease, bool) and lease >= 1.0):
+        raise ValueError(f"agentic.lease_s must be a number of seconds >= 1, got {lease!r}")
     for k, v in acfg.get("api_keys", {}).items():
         try:
             Role(v)

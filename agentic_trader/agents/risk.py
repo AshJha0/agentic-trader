@@ -29,6 +29,7 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         "var_95_1d": quant.historical_var(r, 0.95),
         "var_95_1d_short": quant.historical_var(-r, 0.95),
         "cvar_95_1d": quant.historical_cvar(r, 0.95),
+        "cvar_95_1d_short": quant.historical_cvar(-r, 0.95),
         "drawdown_from_60d_high": float(1.0 - c[-1] / peak) if peak > 0 else 0.0,
         "atr14": atr14(state),
         "target_vol": config["risk"]["target_vol"],
@@ -48,6 +49,11 @@ def position_var(f: dict[str, Any], w: float) -> float:
     """1-day 95% VaR per unit of |weight| for a position of sign ``w``: the left tail of the
     instrument's returns for a long, the right tail (``var_95_1d_short``) for a short."""
     return f["var_95_1d_short"] if w < 0 else f["var_95_1d"]
+
+
+def position_cvar(f: dict[str, Any], w: float) -> float:
+    """1-day 95% CVaR on the same side as ``position_var``."""
+    return f["cvar_95_1d_short"] if w < 0 else f["cvar_95_1d"]
 
 
 def _book_var_now(state: TradingState) -> float | None:
@@ -108,7 +114,7 @@ class RiskAnalyst(Agent):
         text = (f"{self.stance.title()} view: size {w:+.2f} (proposal {f['proposed_weight']:+.2f}); "
                 f"20d vol {_pct(f['realized_vol_20d_annual'])}, 1-day VaR95 (position side) "
                 f"{position_var(f, f['proposed_weight']):.2%}, "
-                f"CVaR95 {f['cvar_95_1d']:.2%}, drawdown from 60d high "
+                f"CVaR95 {position_cvar(f, f['proposed_weight']):.2%}, drawdown from 60d high "
                 f"{f['drawdown_from_60d_high']:.1%}.")
         view = RiskView(self.stance, w, text, rnd)
 

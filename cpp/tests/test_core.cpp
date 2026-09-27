@@ -264,6 +264,49 @@ void test_ruin_floor() {
     check(!ok.metrics.ruined && ok.ruined_at == -1, "no ruin flag on a live account");
 }
 
+// v0.8 verification: ruin is tested per factor, not on their product (finding 18).
+void test_ruin_per_factor() {
+    // Fee alone (k_in = 3 * 0.5 = 1.5 > 1) and the move alone (3 * -80%) each ruin the account;
+    // their product (-0.5 * -1.4) is positive and used to survive with equity 70000.
+    at::BacktestConfig cfg;
+    cfg.cost_bps = 5000.0;
+    cfg.max_leverage = 3.0;
+    cfg.allow_short = false;
+    auto r = at::run_backtest(at::Series{100, 20, 25}, at::Series(3, 3.0), cfg);
+    check(r.ruined_at == 1 && r.equity[1] == 0.0 && r.equity[2] == 0.0 && r.returns[1] == -1.0,
+          "entry cost and move both negative: ruined, not a positive product");
+    check(r.positions[1] == 0.0 && r.positions[2] == 0.0 && r.metrics.ruined, "flat after per-factor ruin");
+    // Impact form: |dw| = 2, K = 0.5 -> k_in = 2^1.5 * 0.5 = 1.41 > 1 on a -80% bar at 2x.
+    at::BacktestInputs in;
+    in.impact = at::Series(3, 0.5);
+    cfg.cost_bps = 0.0;
+    r = at::run_backtest_ex(at::Series{100, 20, 25}, at::Series(3, 2.0), cfg, in);
+    check(r.ruined_at == 1 && r.equity[1] == 0.0, "entry impact >= 100%: ruined");
+    // Exit-cost form: a stop gapped through on a -80% bar at 2x (move factor -0.6) with an
+    // exit impact of 141% (exit factor -0.41); the product is +0.25.
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    at::BacktestInputs ex;
+    ex.open = {100, 20, 25}; ex.high = {100, 20, 25}; ex.low = {100, 20, 25};
+    ex.stop = {99.0, nan, nan};
+    ex.impact = {0.0, 0.5, 0.0};
+    at::BacktestConfig c2;
+    c2.cost_bps = 0.0;
+    c2.max_leverage = 2.0;
+    r = at::run_backtest_ex(at::Series{100, 20, 25}, at::Series(3, 2.0), c2, ex);
+    check(r.stop_exits == 1 && r.ruined_at == 1 && r.equity[1] == 0.0, "exit impact >= 100%: ruined");
+    // A growth so small that equity[t] * (1 + ret) rounds to 0 is ruin on that bar, not the next.
+    at::BacktestConfig c3;
+    c3.cost_bps = 1e4;
+    c3.allow_short = false;
+    const double w = std::nextafter(1.0, 0.0);
+    r = at::run_backtest(at::Series{100, 50, 60}, at::Series(3, w), c3);
+    check(r.ruined_at == 1 && r.equity[1] == 0.0 && r.returns[2] == 0.0 && r.positions[1] == 0.0,
+          "equity reaching 0 sets the ruin flag on that bar");
+    // Unchanged where a single factor is merely negative.
+    const auto ok = at::run_backtest(at::Series{100, 110, 121}, at::Series(3, 1.0), no_cost());
+    check(!ok.metrics.ruined && ok.ruined_at == -1, "no ruin on a live account");
+}
+
 // v0.8: a gap through the take-profit fills at the open, never at the stop (finding 21).
 void test_gap_through_take_profit() {
     at::BacktestInputs in;
@@ -395,6 +438,11 @@ void test_almgren_chriss_stable() {
     }
     const auto tiny = at::almgren_chriss(1.0, 4, 1e-6);
     check(near(tiny[0], 0.25, 1e-6) && near(tiny[3], 0.25, 1e-6), "small kappa -> TWAP without cancellation");
+    for (double bad : {std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), -1.0}) {
+        bool threw = false;
+        try { at::almgren_chriss(1.0, 78, bad); } catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "non-finite or negative kappa throws");
+    }
 }
 
 void test_risk() {
@@ -427,6 +475,7 @@ int main() {
     test_risk();
     test_constant_units_between_decisions();
     test_ruin_floor();
+    test_ruin_per_factor();
     test_gap_through_take_profit();
     test_cash_leg_and_excess_metrics();
     test_impact_scales_with_equity();

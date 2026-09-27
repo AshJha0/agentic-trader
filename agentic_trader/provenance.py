@@ -8,7 +8,6 @@ bumped); an installed wheel has no ``pyproject.toml`` and reads the metadata ins
 """
 from __future__ import annotations
 
-import functools
 import platform
 import re
 import subprocess
@@ -50,11 +49,11 @@ def package_version(pyproject: Path | None = None) -> str:
         return "0.0.0+unknown"
 
 
-@functools.lru_cache(maxsize=None)
 def git_info(root: str | None = None) -> tuple[str | None, bool | None]:
     """``(commit sha, dirty?)`` of the checkout containing the package, or ``(None, None)``
-    when git or the repository is unavailable. Cached: the answer cannot change inside one
-    process and the CLI prints it on every command."""
+    when git or the repository is unavailable. Computed on every call (two short git
+    subprocesses): a long-running process that writes results while commits land or files
+    change must stamp each result with the tree state at write time, not at first call."""
     cwd = root or str(_ROOT)
 
     def run(*args: str) -> str | None:
@@ -69,6 +68,8 @@ def git_info(root: str | None = None) -> tuple[str | None, bool | None]:
         return None, None
     status = run("status", "--porcelain", "--untracked-files=no")
     return sha, (bool(status) if status is not None else None)
+
+
 
 
 def _dist_version(name: str) -> str | None:

@@ -195,6 +195,193 @@ def test_small_revision_replaces_earlier_print_material_one_opens_a_new_basis():
     # a revision filed after as_of is invisible either way
     h = _edgar({G: material}).fundamentals("TST", date(2023, 7, 26))
     assert h["revenue_ttm"] == 110 + 120 + 130 + 140 and h["report_period_end"] == "2023-03-31"
+    # The same -18% re-print in a filing where it is the comparative of nothing new (the
+    # FY2023 10-K) is a lone revision: the latest print replaces the earlier one, one basis.
+    lone = base + [_f("2022-04-01", "2022-06-30", 90, "2024-02-01", "10-K")]
+    k = _edgar({G: lone}).fundamentals("TST", date(2024, 3, 1))
+    assert k["revenue_ttm"] == 620 and k["report_period_end"] == "2023-12-31"
+    assert k["revenue_growth_yoy"] == pytest.approx(620 / (100 + 90 + 120 + 130) - 1, abs=1e-4)
+
+
+def _nvda_shaped(h1_reprint=2.230, q3_reprint=2.636):
+    """NVIDIA FY2017-FY2018 (calendar-quarter stand-in): the FY2018 10-K re-prints the six-month
+    span 2017-01..06 as 2.230 (the second quarter's value; every other print is 4.167), a lone
+    erroneous fact, and everything else unchanged."""
+    r = _quarters(G, 2016, [1.305, 1.428, 2.004, 2.173], ["2016-05-20", "2016-08-19", "2016-11-22", "2017-03-01"])
+    r += [_f("2016-01-01", "2016-12-31", 6.910, "2017-03-01", "10-K"),
+          _f("2017-01-01", "2017-03-31", 1.937, "2017-05-23"),
+          _f("2017-04-01", "2017-06-30", 2.230, "2017-08-23"), _f("2017-01-01", "2017-06-30", 4.167, "2017-08-23"),
+          _f("2017-07-01", "2017-09-30", 2.636, "2017-11-21"), _f("2017-01-01", "2017-09-30", 6.803, "2017-11-21"),
+          _f("2017-01-01", "2017-12-31", 9.714, "2018-02-28", "10-K"), _f("2017-10-01", "2017-12-31", 2.911, "2018-02-28", "10-K"),
+          _f("2017-01-01", "2017-03-31", 1.937, "2018-02-28", "10-K"), _f("2017-07-01", "2017-09-30", q3_reprint, "2018-02-28", "10-K"),
+          _f("2017-01-01", "2017-06-30", h1_reprint, "2018-02-28", "10-K")]
+    return {G: r}
+
+
+def test_lone_divergent_reprint_is_a_revision_not_a_new_basis():
+    c = _edgar(_nvda_shaped())
+    f = c.fundamentals("TST", date(2018, 5, 15))
+    # v0.8 first cut: the lone re-print opened a generation whose only H1 was 2.230, Q2 became
+    # 2.230 - 1.937 = 0.293 and the trailing year 7.777 (+12.6%) instead of 9.714 (+40.6%).
+    assert f["revenue_ttm"] == pytest.approx(9.714) and f["revenue_growth_yoy"] == pytest.approx(9.714 / 6.910 - 1, abs=1e-4)
+    t = quarterly_table(_known(c, date(2018, 5, 15)), edgar_mod.REVENUE_TAGS, positive=True)
+    assert set(t["gen"]) == {0} and t.loc[pd.Timestamp("2017-06-30"), "val"] == pytest.approx(2.230)
+    # Two spans re-printed materially in one filing recast the comparatives: a new basis, on
+    # which the audited annual figure still governs the trailing year.
+    g = _edgar(_nvda_shaped(q3_reprint=2.0))
+    t2 = quarterly_table(_known(g, date(2018, 5, 15)), edgar_mod.REVENUE_TAGS, positive=True)
+    assert set(t2["gen"].iloc[-4:]) == {1} and set(t2["gen"].iloc[:4]) == {0}
+    h = g.fundamentals("TST", date(2018, 5, 15))
+    assert h["revenue_ttm"] == pytest.approx(9.714) and "revenue_growth_yoy" not in h
+
+
+def _q1_restatement():
+    """A basis change effective from the first quarter: the Q1-2022 10-Q restates its single
+    comparative (Q1-2021, -20%) alongside the new quarter; later filings restate the rest."""
+    r = _quarters(G, 2021, [10, 11, 12, 13], ["2021-04-28", "2021-07-28", "2021-10-27", "2022-02-01"])
+    r += [_f("2021-01-01", "2021-12-31", 46, "2022-02-01", "10-K"),
+          _f("2022-01-01", "2022-03-31", 9, "2022-04-28"), _f("2021-01-01", "2021-03-31", 8, "2022-04-28"),
+          _f("2022-04-01", "2022-06-30", 9.5, "2022-07-28"), _f("2022-01-01", "2022-06-30", 18.5, "2022-07-28"),
+          _f("2021-04-01", "2021-06-30", 8.8, "2022-07-28"), _f("2021-01-01", "2021-06-30", 16.8, "2022-07-28"),
+          _f("2022-07-01", "2022-09-30", 10, "2022-10-27"), _f("2022-01-01", "2022-09-30", 28.5, "2022-10-27"),
+          _f("2021-07-01", "2021-09-30", 9.6, "2022-10-27"), _f("2021-01-01", "2021-09-30", 26.4, "2022-10-27"),
+          _f("2022-01-01", "2022-12-31", 39, "2023-02-01", "10-K"), _f("2022-10-01", "2022-12-31", 10.5, "2023-02-01", "10-K"),
+          _f("2021-01-01", "2021-12-31", 36.8, "2023-02-01", "10-K"), _f("2021-10-01", "2021-12-31", 10.4, "2023-02-01", "10-K")]
+    r += _quarters(G, 2022, [9, 9.5, 10], ["2023-02-01"] * 3, ["10-K"] * 3)
+    r += _quarters(G, 2021, [8, 8.8, 9.6], ["2023-02-01"] * 3, ["10-K"] * 3)
+    return {G: r}
+
+
+def test_first_quarter_restatement_of_its_single_comparative_opens_a_basis():
+    c = _edgar(_q1_restatement())
+    # After the Q1 10-Q the new quarter is on the new basis: it is not summed with three old-basis
+    # quarters (11 + 12 + 13 + 9 = 45, which a two-span-only rule would report); the last complete
+    # year on one basis stands until the new basis has four quarters.
+    f = c.fundamentals("TST", date(2022, 5, 15))
+    assert f["revenue_ttm"] == 46 and f["report_period_end"] == "2021-12-31"
+    assert c.fundamentals("TST", date(2022, 8, 15))["revenue_ttm"] == 46
+    g = c.fundamentals("TST", date(2023, 3, 1))
+    assert g["revenue_ttm"] == 39 and g["revenue_growth_yoy"] == pytest.approx(39 / 36.8 - 1, abs=1e-4)
+    t = quarterly_table(_known(c, date(2023, 3, 1)), edgar_mod.REVENUE_TAGS, positive=True)
+    assert set(t["gen"].iloc[-8:]) == {1}
+
+
+def _amzn_shaped(consistent_10k=False):
+    """Amazon FY2012: the 10-K tags the 2012 quarter spans with the 2011 values and the 2011
+    quarter spans with the 2012 values (the annual spans are right); the 2013 10-Qs then
+    re-print the 2012 comparatives correctly."""
+    y11 = [9.857, 9.913, 10.876, 17.431]
+    y12 = [13.185, 12.834, 13.806, 21.268]
+    r = _quarters("SalesRevenueNet", 2011, y11, ["2011-04-27", "2011-07-27", "2011-10-26", "2012-02-01"])
+    r += [_f("2011-01-01", "2011-12-31", 48.077, "2012-02-01", "10-K"),
+          _f("2012-01-01", "2012-03-31", 13.185, "2012-04-27"),
+          _f("2012-04-01", "2012-06-30", 12.834, "2012-07-27"), _f("2012-01-01", "2012-06-30", 26.019, "2012-07-27"),
+          _f("2012-07-01", "2012-09-30", 13.806, "2012-10-26"), _f("2012-01-01", "2012-09-30", 39.825, "2012-10-26"),
+          _f("2012-01-01", "2012-12-31", 61.093, "2013-01-30", "10-K"), _f("2011-01-01", "2011-12-31", 48.077, "2013-01-30", "10-K")]
+    r += _quarters("SalesRevenueNet", 2012, y12 if consistent_10k else y11, ["2013-01-30"] * 4, ["10-K"] * 4)
+    r += _quarters("SalesRevenueNet", 2011, y11 if consistent_10k else y12, ["2013-01-30"] * 4, ["10-K"] * 4)
+    r += [_f("2013-01-01", "2013-03-31", 16.070, "2013-04-26"), _f("2012-01-01", "2012-03-31", 13.185, "2013-04-26"),
+          _f("2013-04-01", "2013-06-30", 15.704, "2013-07-26"), _f("2013-01-01", "2013-06-30", 31.774, "2013-07-26"),
+          _f("2012-04-01", "2012-06-30", 12.834, "2013-07-26"), _f("2012-01-01", "2012-06-30", 26.019, "2013-07-26")]
+    return {"SalesRevenueNet": r}
+
+
+def test_mis_tagged_10k_comparatives_yield_the_audited_annual_figure(caplog):
+    c = _edgar(_amzn_shaped())
+    with caplog.at_level("WARNING", logger="agentic_trader.data.edgar"):
+        f = c.fundamentals("TST", date(2013, 2, 15))
+        c.fundamentals("TST", date(2013, 3, 1))
+    # v0.8 first cut: the four mis-tagged direct quarters summed to exactly FY2011 (48.077, growth
+    # -21.3%) with the same filing's 61.093 annual span ignored.
+    assert f["revenue_ttm"] == pytest.approx(61.093) and f["revenue_growth_yoy"] == pytest.approx(61.093 / 48.077 - 1, abs=1e-4)
+    notes = [r for r in caplog.records if "annual" in r.getMessage()]
+    assert len(notes) == 2 and all("SalesRevenueNet" in r.getMessage() for r in notes)   # FY2011 and FY2012, once each
+    # The correct comparatives re-printed by the 2013 10-Qs return to their first-print values:
+    # corrections inside the basis, not a new one; the trailing year is FY less the replaced
+    # quarters plus the new ones (63.978 = 61.093 - 13.185 + 16.070).
+    assert c.fundamentals("TST", date(2013, 5, 15))["revenue_ttm"] == pytest.approx(61.093 - 13.185 + 16.070)
+    assert c.fundamentals("TST", date(2013, 8, 15))["revenue_ttm"] == pytest.approx(61.093 - 13.185 - 12.834 + 16.070 + 15.704)
+    t = quarterly_table(_known(c, date(2013, 8, 15)), edgar_mod.REVENUE_TAGS, positive=True)
+    assert set(t["gen"].iloc[-8:]) == {1}
+    # a 10-K whose quarters agree with its annual span is taken as printed, with nothing logged
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="agentic_trader.data.edgar"):
+        g = _edgar(_amzn_shaped(consistent_10k=True)).fundamentals("TST", date(2013, 2, 15))
+    assert g["revenue_ttm"] == pytest.approx(61.093) and not [r for r in caplog.records if "annual" in r.getMessage()]
+
+
+# ==================================== finding 7 / 34: tag equivalence and concept continuity
+def _renamed_tag(shared_q3=4.726, shared_q2=None):
+    """NVIDIA FY2020-FY2021 shape: the 10-Qs print ``Revenues`` (direct quarters and year to
+    date), the 10-K prints the annual span and one quarter (optionally two) under the new tag only."""
+    filed20 = ["2020-05-21", "2020-08-19", "2020-11-18", "2021-02-26"]
+    n = _quarters(N, 2019, [3.0, 3.1, 3.0, 3.1], ["2019-05-20", "2019-08-20", "2019-11-20", "2020-02-20"])
+    n += [_f("2019-01-01", "2019-12-31", 12.2, "2020-02-20", "10-K"),
+          _f("2020-01-01", "2020-03-31", 3.08, filed20[0]),
+          _f("2020-04-01", "2020-06-30", 3.866, filed20[1]), _f("2020-01-01", "2020-06-30", 6.946, filed20[1]),
+          _f("2020-07-01", "2020-09-30", 4.726, filed20[2]), _f("2020-01-01", "2020-09-30", 11.672, filed20[2])]
+    g = [_f("2020-01-01", "2020-12-31", 16.675, filed20[3], "10-K"), _f("2020-07-01", "2020-09-30", shared_q3, filed20[3], "10-K")]
+    if shared_q2 is not None:
+        g.append(_f("2020-04-01", "2020-06-30", shared_q2, filed20[3], "10-K"))
+    return {N: n, G: g}
+
+
+def test_tag_rename_with_an_identical_span_is_one_concept_gross_and_net_are_not():
+    c = _edgar(_renamed_tag())
+    known = _known(c, date(2021, 3, 1))
+    t = quarterly_table(known, edgar_mod.REVENUE_TAGS, positive=True)
+    # v0.8 first cut: no tag held both the annual and the nine-month span, Q4 was lost and the
+    # trailing year stayed at the September window (14.772) for as long as the 10-K was the
+    # only source of Q4.
+    assert t.loc[pd.Timestamp("2020-12-31"), "val"] == pytest.approx(16.675 - 11.672)
+    assert set(t["tag"]) == {G} and len(t) == 8                     # one concept, labelled by its best-ranked tag
+    f = c.fundamentals("TST", date(2021, 3, 1))
+    assert f["revenue_ttm"] == pytest.approx(16.675) and f["revenue_growth_yoy"] == pytest.approx(16.675 / 12.2 - 1, abs=1e-4)
+    sub = edgar_mod._pick(known, edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"])
+    assert edgar_mod._tag_classes(sub, edgar_mod.REVENUE_TAGS) == [[G, N]]
+    # a shared span that differs by 3% is another concept: the tags stay apart and Q4 is not built
+    d = _edgar(_renamed_tag(shared_q3=4.726 * 1.03))
+    kd = _known(d, date(2021, 3, 1))
+    assert edgar_mod._tag_classes(edgar_mod._pick(kd, edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"]),
+                                  edgar_mod.REVENUE_TAGS) == [[G], [N]]
+    assert d.fundamentals("TST", date(2021, 3, 1))["revenue_ttm"] == pytest.approx(3.1 + 3.08 + 3.866 + 4.726)
+    # ...and so do tags that agree on one shared span but not on another (net income with and
+    # without the non-controlling interest, which is nil in some quarters): every shared span must agree
+    e = _edgar(_renamed_tag(shared_q2=3.866 * 1.03))
+    ke = _known(e, date(2021, 3, 1))
+    assert edgar_mod._tag_classes(edgar_mod._pick(ke, edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"]),
+                                  edgar_mod.REVENUE_TAGS) == [[G], [N]]
+    assert e.fundamentals("TST", date(2021, 3, 1))["revenue_ttm"] == pytest.approx(3.1 + 3.08 + 3.866 + 4.726)
+    # Mastercard's gross and net tags share every quarter span and agree on none of them
+    ma = edgar_mod._pick(_known(_edgar(_ma_shaped()), date(2023, 3, 1)), edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"])
+    assert edgar_mod._tag_classes(ma, edgar_mod.REVENUE_TAGS) == [[G], [N]]
+
+
+def test_concept_is_stable_across_consecutive_filings():
+    """Berkshire 2018-2019: ``Revenues`` has years of quarters; the rank-0 tag appears with three
+    2018 quarters and covers its first trailing year at the Q1-2019 10-Q, at 70% of the level."""
+    rev = []
+    for y, base in ((2016, 50.0), (2017, 54.0), (2018, 58.0)):
+        rev += _quarters(N, y, [base, base + 1, base + 2, base + 3], [f"{y}-05-06", f"{y}-08-06", f"{y}-11-05", f"{y + 1}-02-25"])
+    rev += [_f("2019-01-01", "2019-03-31", 63.0, "2019-05-06"), _f("2019-04-01", "2019-06-30", 64.0, "2019-08-05"),
+            _f("2019-07-01", "2019-09-30", 65.0, "2019-11-04")]
+    other = [_f("2018-04-01", "2018-06-30", 0.7 * 59, "2018-08-06"), _f("2018-07-01", "2018-09-30", 0.7 * 60, "2018-11-05"),
+             _f("2018-10-01", "2018-12-31", 0.7 * 61, "2019-02-25", "10-K"), _f("2019-01-01", "2019-03-31", 0.7 * 63, "2019-05-06"),
+             _f("2019-04-01", "2019-06-30", 0.7 * 64, "2019-08-05"), _f("2019-07-01", "2019-09-30", 0.7 * 65, "2019-11-04")]
+    c = _edgar({N: rev, G: other})
+    seen = []
+    for d in (date(2019, 3, 1), date(2019, 5, 8), date(2019, 8, 10), date(2019, 11, 10)):
+        f = c.fundamentals("TST", d)
+        t = quarterly_table(_known(c, d), edgar_mod.REVENUE_TAGS, positive=True)
+        seen.append((f["revenue_ttm"], f.get("revenue_growth_yoy"), set(t["tag"].iloc[-4:])))
+    # v0.8 first cut: 2019-05-08 flipped to the rank-0 tag (176.4 = 0.7 x 252, no growth) and back
+    # only when it stopped covering; now the concept already reported is kept while it covers.
+    assert [s[0] for s in seen] == pytest.approx([58 + 59 + 60 + 61, 59 + 60 + 61 + 63, 60 + 61 + 63 + 64, 61 + 63 + 64 + 65])
+    assert all(s[1] is not None and s[2] == {N} for s in seen)
+    # with no history under any tag the rank decides, and the choice then persists
+    late = _edgar({N: [r for r in rev if r["end"] >= "2018-04-01"], G: other})
+    assert set(quarterly_table(_known(late, date(2019, 5, 8)), edgar_mod.REVENUE_TAGS, positive=True)["tag"]) == {G}
+    assert set(quarterly_table(_known(late, date(2019, 11, 10)), edgar_mod.REVENUE_TAGS, positive=True)["tag"]) == {G}
 
 
 # =================================================== finding 8: recency / share class
@@ -241,6 +428,54 @@ def test_market_cap_and_eps_sanity_checks_drop_other_class_ratios(monkeypatch):
     assert "BRK-B" in edgar_mod.SHARE_CLASS_RATIO
 
 
+def test_stale_capex_removes_fcf_rather_than_capex():
+    current = dict(share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9, eps_vals=(2.0, 1.8, 2.1, 2.0))
+    capex = "PaymentsToAcquirePropertyPlantAndEquipment"
+    dead = []
+    for y in range(2012, 2022):
+        dead += _quarters(capex, y, [1e9] * 4, [f"{y}-05-05", f"{y}-08-05", f"{y}-11-05", f"{y + 1}-02-25"])
+    facts = _brk_shaped(**current)
+    facts[capex] = dead                                             # last capex quarter 2021-12-31, OCF runs to 2023-12-31
+    f = _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)
+    assert "fcf_yield" not in f                                     # v0.8 first cut: OCF alone, 36e9 / market cap
+    assert f["eps_ttm"] == pytest.approx(7.9) and f["revenue_ttm"] == pytest.approx(246e9)
+    facts[capex] = dead + [q for y in (2022, 2023) for q in
+                           _quarters(capex, y, [1e9] * 4, [f"{y}-05-05", f"{y}-08-05", f"{y}-11-05", f"{y + 1}-02-25"])]
+    g = _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)
+    assert g["fcf_yield"] == pytest.approx((36e9 - 4e9) / (300.0 * 1.4e9), abs=1e-4)
+    del facts[capex]                                                # never reported: free cash flow is operating cash flow
+    assert _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)["fcf_yield"] == pytest.approx(36e9 / (300.0 * 1.4e9), abs=1e-4)
+
+
+def test_net_margin_needs_revenue_and_net_income_windows_ending_together():
+    current = dict(share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9, eps_vals=(2.0, 1.8, 2.1, 2.0))
+    facts = _brk_shaped(**current)
+    facts[N] = [r for r in facts[N] if r["end"] <= "2023-09-30"]   # Q4-2023 revenue not printed yet, net income is
+    f = _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)
+    assert f["report_period_end"] == "2023-12-31" and f["revenue_period_end"] == "2023-09-30"
+    assert f["revenue_ttm"] == pytest.approx(246e9) and "revenue_growth_yoy" in f
+    assert "net_margin" not in f                                    # v0.8 first cut: NI to December over revenue to September
+    g = _edgar(_brk_shaped(**current)).fundamentals("TST", date(2024, 3, 1), price=300.0)
+    assert g["net_margin"] == pytest.approx(20e9 / 246e9, abs=1e-4) and "revenue_period_end" not in g
+
+
+def test_share_class_ratio_by_normalised_ticker_and_one_warning_per_kind(monkeypatch, caplog):
+    facts = _brk_shaped(share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=941_481.0)
+    monkeypatch.setitem(edgar_mod.SHARE_CLASS_RATIO, "TS-T", 1500.0)
+    c = _edgar(facts, ticker="TS-T")
+    dash = c.fundamentals("TS-T", date(2024, 3, 1), price=300.0)
+    dot = c.fundamentals("ts.t", date(2024, 3, 1), price=300.0)      # Instrument.parse keeps BRK.B as typed
+    assert dash["eps_ttm"] == pytest.approx(11849 / 1500, abs=1e-4)
+    assert dot["eps_ttm"] == dash["eps_ttm"] and dot["fcf_yield"] == dash["fcf_yield"]   # v0.8 first cut: no ratio for the dotted spelling
+    d = _edgar(facts)                                               # no ratio: both sanity checks trip on every bar
+    with caplog.at_level("WARNING", logger="agentic_trader.data.edgar"):
+        for i, p in enumerate([300.0, 301.0, 302.5, 299.0, 310.0]):
+            d.fundamentals("TST", date(2024, 3, 1) + timedelta(days=i), price=p)
+    msgs = [r.getMessage() for r in caplog.records if r.name == "agentic_trader.data.edgar"]
+    assert sum("market cap" in m for m in msgs) == 1                 # v0.8 first cut: once per distinct price
+    assert sum("trailing EPS" in m for m in msgs) == 1
+
+
 def test_balance_sheet_instants_older_than_400_days_are_not_current():
     facts = _brk_shaped(share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9)
     facts["StockholdersEquity"] = [_f(None, "2020-12-31", 400e9, "2021-02-25", "10-K")]
@@ -257,7 +492,8 @@ def test_cached_filers_offline_regression():
     def no_net(url):
         raise AssertionError("network blocked")
     c = EdgarClient(user_agent="offline offline@example.com", cache_dir=EDGAR_CACHE, fetch=no_net,
-                    cache_max_age_days=None, ciks={"MA": "0001141391", "BRK-B": "0001067983", "JNJ": "0000200406"})
+                    cache_max_age_days=None, ciks={"MA": "0001141391", "BRK-B": "0001067983", "JNJ": "0000200406",
+                                                   "NVDA": "0001045810", "AMZN": "0001018724", "CVX": "0000093410"})
     try:
         ma = c.fundamentals("MA", date(2023, 3, 1))
     except AssertionError:
@@ -272,6 +508,27 @@ def test_cached_filers_offline_regression():
     jnj = c.fundamentals("JNJ", date(2024, 3, 1))
     assert jnj["revenue_ttm"] == pytest.approx(85.159e9, rel=1e-4)              # v0.7: 93.022e9 on two bases
     assert jnj["revenue_growth_yoy"] == pytest.approx(0.0646, abs=2e-3)
+    # (d) the concept already reported is kept while it covers: no flip to a tag with four quarters
+    b19 = c.fundamentals("BRK-B", date(2019, 5, 8))
+    assert b19["revenue_ttm"] == pytest.approx(250.042e9, rel=1e-3) and "revenue_growth_yoy" in b19   # was 176.3e9, no growth
+    ma19 = c.fundamentals("MA", date(2019, 2, 15))
+    assert ma19["revenue_ttm"] == pytest.approx(14.95e9, rel=1e-3) and "revenue_growth_yoy" in ma19    # net revenue as reported; was 21.8e9 gross
+    cvx = c.fundamentals("CVX", date(2019, 5, 10))
+    assert cvx["revenue_ttm"] == pytest.approx(163.775e9, rel=1e-3) and "revenue_growth_yoy" in cvx    # was 157.1e9, no growth
+    # (a) NVDA FY2018: the 10-K's one erroneous six-month print is a revision, not a basis change
+    nv = c.fundamentals("NVDA", date(2018, 5, 15))
+    assert nv["revenue_ttm"] == pytest.approx(9.714e9, rel=1e-4) and nv["revenue_growth_yoy"] == pytest.approx(0.4058, abs=2e-3)
+    # (c) the FY2020 annual span under the new tag completes Q4 with the nine months under the old one
+    assert c.fundamentals("NVDA", date(2020, 11, 15))["revenue_ttm"] == pytest.approx(13.065e9, rel=1e-3)   # was absent
+    # (b) AMZN FY2012 10-K with the 2011/2012 quarter values swapped: the audited annual figure governs
+    am = c.fundamentals("AMZN", date(2013, 2, 15))
+    assert am["revenue_ttm"] == pytest.approx(61.093e9, rel=1e-4) and am["revenue_growth_yoy"] == pytest.approx(0.2707, abs=2e-3)
+    assert c.fundamentals("AMZN", date(2013, 5, 15))["revenue_ttm"] == pytest.approx(63.978e9, rel=1e-4)
+    # (e) AMZN's capex moved to a tag with no complete window yet: no free cash flow, not OCF alone
+    assert "fcf_yield" not in c.fundamentals("AMZN", date(2018, 3, 1), price=1512.5)
+    # (f) JNJ in the Kenvue transition: the revenue window is a quarter behind the net income window
+    j = c.fundamentals("JNJ", date(2023, 11, 1))
+    assert j["report_period_end"] == "2023-10-01" and j["revenue_period_end"] == "2023-07-02" and "net_margin" not in j
 
 
 # ================================================ finding 15: one FX rate resolver

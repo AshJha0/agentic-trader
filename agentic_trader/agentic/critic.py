@@ -118,7 +118,10 @@ class Critic:
             allow_short = risk_cfg["allow_short_fx"] if state.instrument.is_fx else risk_cfg["allow_short_equity"]
             if d.target_weight < 0 and not allow_short:
                 problems.append("short position under a long-only policy")
-            var = (risk_facts or {}).get("var_95_1d_short" if d.target_weight < 0 else "var_95_1d")
+            facts = risk_facts or {}
+            var = facts.get("var_95_1d")
+            if d.target_weight < 0 and facts.get("var_95_1d_short") is not None:
+                var = facts["var_95_1d_short"]   # the short's loss tail; the long tail when a partial dict lacks it
             if var and risk_cfg["max_var_95"] > 0 and var * abs(d.target_weight) > risk_cfg["max_var_95"] + 1e-9:
                 problems.append(f"VaR {var * abs(d.target_weight):.2%} > cap {risk_cfg['max_var_95']:.2%}")
             rep.checks.append(Check("firm_limits", not problems,

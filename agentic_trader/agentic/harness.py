@@ -15,8 +15,12 @@ The harness owns the control plane; agents never control the loop. It:
   same step once the approval queue has an answer;
 * drives each run from exactly one thread at a time: ``resume`` holds the run's
   driving lock and a second caller returns at once, so two approval decisions
-  can never execute the same step twice;
+  can never execute the same step twice; the lock is handed back under the
+  harness lock together with the last pending-approval check, so a decision or a
+  cancellation that lands while the driver parks is never lost;
 * honours cancellation between steps;
+* seeds the desk's position book from the task's declared ``current_weight`` (and an
+  explicit positions map on ``submit``), so the tools and the report agree on the book;
 * always runs the governance steps: critic, evidence validation, audited report;
 * keeps a bounded number of finished runs in memory (``agentic.max_retained_runs``);
   the persistent store holds the rest, and the metrics are one process-level set;
@@ -26,6 +30,7 @@ The harness owns the control plane; agents never control the loop. It:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import socket
 import threading
@@ -156,6 +161,8 @@ class AgentHarness:
         self._lock = threading.Lock()
         self.owner: str = str(acfg.get("instance_id") or default_instance_id())
         self.lease_s = float(acfg.get("lease_s", 90.0))
+        if not (self.lease_s >= 1.0):   # a shorter lease would let the periodic sweep fail this instance's own runs
+            raise ValueError(f"agentic.lease_s must be at least 1 second, got {acfg.get('lease_s')!r}")
         # Persistence: records of every run this process makes, plus a bounded cache of
         # terminal records (a previous process's, or a sibling's once finished). A record
         # that is not terminal is never served from the cache: it is re-read from the store.
@@ -168,9 +175,9 @@ class AgentHarness:
         if store is not None:
             sweep = acfg.get("sweep_interrupted", True) if sweep_interrupted is None else sweep_interrupted
             if sweep:
-                # Only records this instance id wrote before (a restart) or whose lease has
-                # expired: a sibling that is alive keeps heartbeating its runs.
-                interrupted = store.mark_interrupted(owner=self.owner, lease_s=self.lease_s)
+                # Only records whose lease has expired (or that predate leases): a sibling that
+                # is alive keeps heartbeating its runs, whatever instance id it is configured with.
+                interrupted = store.mark_interrupted(lease_s=self.lease_s)
                 if interrupted:
                     log.warning("%d task(s) were in flight when the previous process stopped; marked FAILED",
                                 interrupted)
@@ -224,7 +231,9 @@ class AgentHarness:
         interval = max(self.lease_s / 3.0, 0.02)
         while not self._stop.wait(interval):
             try:
-                self.store.heartbeat(self.owner)
+                with self._lock:
+                    live = [r.id for r in self.runs.values() if not r.done]
+                self.store.heartbeat(self.owner, live)
                 # Periodic sweep of records whose owner stopped heartbeating (a crashed
                 # sibling, or a predecessor that died within the lease before we started).
                 swept = self.store.mark_interrupted(lease_s=self.lease_s)
@@ -242,7 +251,29 @@ class AgentHarness:
             self._heartbeat_thread.join(timeout=2.0)
 
     # ----------------------------------------------------------- control
-    def submit(self, task: Task) -> TaskRun:
+    def seed_positions(self, positions: dict[str, float] | None) -> None:
+        """Declare position weights on the desk's book (an explicit map from a caller)."""
+        for sym, w in (positions or {}).items():
+            ins = Instrument.parse(str(sym))
+            fw = float(w)
+            if not math.isfinite(fw):
+                raise ValueError(f"position weight for {ins.symbol} must be a finite number")
+            self.tools.positions[ins.symbol] = fw
+
+    def _seed_book(self, task: Task, ins: Instrument) -> None:
+        """The task's declared ``current_weight`` is what the desk holds for that symbol during
+        the run, so ``portfolio.position`` and ``execution.plan`` agree with the task's facts."""
+        if task.current_weight is None:
+            return
+        w = float(task.current_weight)
+        held = self.tools.positions.get(ins.symbol)
+        if held is not None and abs(held - w) > 1e-9:
+            log.warning("task %s declares %s at %+.4f; the desk's book held %+.4f and is updated",
+                        task.id, ins.symbol, w, held)
+        self.tools.positions[ins.symbol] = w
+
+    def submit(self, task: Task, positions: dict[str, float] | None = None) -> TaskRun:
+        self.seed_positions(positions)
         run = TaskRun(task, tracer=Tracer(self.metrics))
         with self._lock:
             self.runs[task.id] = run
@@ -252,9 +283,13 @@ class AgentHarness:
     def cancel(self, task_id: str) -> TaskRun:
         run = self.runs[task_id]
         run.cancel_requested = True
-        # A parked run is cancelled here; a run another thread drives sees the flag at its
-        # next step (its driver, not this thread, owns the state).
-        if run._driving.acquire(blocking=False):
+        # A parked run is cancelled here. A run another thread drives sees the flag at its
+        # next step or, when it is about to park, under the harness lock before it hands the
+        # driving lock back (``resume``), so the attempt below and that check never miss each
+        # other: either this thread gets the lock and the run is parked, or the driver applies it.
+        with self._lock:
+            got = run._driving.acquire(blocking=False)
+        if got:
             try:
                 if run.state is TaskState.AWAITING_APPROVAL:
                     self._transition(run, TaskState.CANCELLED, "cancelled while awaiting approval")
@@ -270,22 +305,28 @@ class AgentHarness:
         """Drive a run to a terminal state or to AWAITING_APPROVAL.
 
         Exactly one thread drives a run at a time; a concurrent call returns the run
-        untouched. A decision that lands while the run is being driven is picked up by the
-        driver, so no approval is lost and no step runs twice.
+        untouched. The driving lock is released under the harness lock, in the same critical
+        section as the final check for undecided approvals and a pending cancellation, so a
+        decision or a cancel that lands while the run is being driven is either seen by this
+        driver (which carries on) or arrives after the release (``continuation_due`` /
+        ``cancel`` then see nobody driving). No approval is lost and no step runs twice.
         """
         if not run._driving.acquire(blocking=False):
             log.info("task %s is already being driven; resume ignored", run.id)
             return run
+        held = True
         try:
             while True:
                 self._drive(run)
                 with self._lock:
-                    if run.state is TaskState.AWAITING_APPROVAL and self._all_decided(run):
+                    if run.state is TaskState.AWAITING_APPROVAL and (run.cancel_requested or self._all_decided(run)):
                         continue
-                    break
+                    run._driving.release()
+                    held = False
+                    return run
         finally:
-            run._driving.release()
-        return run
+            if held:
+                run._driving.release()
 
     def _all_decided(self, run: TaskRun) -> bool:
         return isinstance(self.gateway, QueuedApprovalGateway) and not self.gateway.pending(run.id)
@@ -299,8 +340,10 @@ class AgentHarness:
     def _drive(self, run: TaskRun) -> None:
         if run.done:
             return
-        if run.cancel_requested and run.state is TaskState.CREATED:   # cancelled while queued: do no work
-            self._transition(run, TaskState.CANCELLED, "cancelled before start")
+        if run.cancel_requested and run.state in (TaskState.CREATED, TaskState.AWAITING_APPROVAL):
+            # cancelled while queued or parked: do no work, resume nothing
+            note = "cancelled before start" if run.state is TaskState.CREATED else "cancelled while awaiting approval"
+            self._transition(run, TaskState.CANCELLED, note)
             self._finish(run)
             self._persist(run)
             return
@@ -341,6 +384,13 @@ class AgentHarness:
             evicted = done[:excess] if excess > 0 else []
             for r in evicted:
                 self.runs.pop(r.id, None)
+        # A finished run never asks its gateway again: its pending approvals are withdrawn
+        # (deciding one is refused with the run's state), and an evicted run's requests are
+        # dropped altogether, so the queue is bounded by the runs the harness retains.
+        if isinstance(self.gateway, QueuedApprovalGateway):
+            self.gateway.withdraw(run.id, f"run {run.state.value}")
+            for r in evicted:
+                self.gateway.forget(r.id)
         for r in evicted:
             if self.store is None:
                 self._archive_put(r.id, record_of(r))
@@ -358,6 +408,7 @@ class AgentHarness:
     def _plan(self, run: TaskRun) -> None:
         self._transition(run, TaskState.PLANNING)
         ins = Instrument.parse(run.task.symbol)
+        self._seed_book(run.task, ins)
         analysts = self.graph.analyst_names(ins)
         with run.tracer.span("plan"):
             run.plan = make_plan(run.task, ins, analysts, self.config, self.registry, self.graph.llm)
@@ -544,8 +595,13 @@ class AgentHarness:
         asks the gateway at the step."""
         if not isinstance(self.gateway, QueuedApprovalGateway):
             raise ValueError("approvals are not queued in this harness")
+        a = self.gateway.get(approval_id)           # KeyError when unknown (or withdrawn with its run)
+        run = self.runs.get(a.task_id)
+        if run is None or run.done:
+            rec = self.record(a.task_id) if run is None else None
+            state = run.state.value if run is not None else (rec["state"] if rec else "evicted")
+            raise ValueError(f"task {a.task_id} is {state}; approval {approval_id} can no longer be decided")
         a = self.gateway.resolve(approval_id, approve, decided_by, note)
-        run = self.runs[a.task_id]
         run.evidence.record(EvidenceType.APPROVAL, decided_by,
                             f"{'approved' if approve else 'rejected'} {a.request.tool}",
                             {"approval": a.id, "note": note}, run.correlation_id)

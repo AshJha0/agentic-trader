@@ -189,7 +189,9 @@ class TradingGraph:
         """Run the desk over a watchlist and return one row per symbol.
 
         A symbol that fails (no data, stale data, bad ticker) gets a row with its
-        error instead of stopping the scan. ``positions`` maps symbol -> current weight.
+        error instead of stopping the scan. ``positions`` maps symbol -> current weight;
+        keys are parsed like watchlist symbols ('EUR/USD', 'EURUSD=X' and 'eurusd' are one
+        holding) and an unparseable key raises ``ValueError`` before anything runs.
 
         When ``config["risk"]["max_book_var_95"]`` is set, every decision also sees the
         rest of the watchlist's current positions and an aligned ``book_lookback_days``
@@ -205,14 +207,20 @@ class TradingGraph:
         silently passing; at zero weight such a symbol has no effect on anyone.
         """
         rows = []
-        positions = {k.upper(): v for k, v in (positions or {}).items()}
+        positions = self._normalise_positions(positions)
         as_of_d = date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
         book_returns = None
         if self.config["risk"].get("max_book_var_95"):
             from .portfolio import MIN_BOOK_OBS
             start = as_of_d - timedelta(days=book_lookback_days)
             cols = {}
-            held_elsewhere = [s for s, w in positions.items() if w and s not in {x.upper() for x in symbols}]
+            watch = set()
+            for x in symbols:
+                try:
+                    watch.add(Instrument.parse(x).symbol)
+                except ValueError:
+                    pass
+            held_elsewhere = [s for s, w in positions.items() if w and s not in watch]
             for sym in [*symbols, *held_elsewhere]:
                 try:
                     ins = Instrument.parse(sym)
@@ -255,6 +263,22 @@ class TradingGraph:
                 log.warning("scan: %s failed: %s", sym, e)
                 rows.append({"symbol": sym.upper(), "action": "ERROR", "error": str(e)})
         return pd.DataFrame(rows)
+
+    @staticmethod
+    def _normalise_positions(positions: dict[str, float] | None) -> dict[str, float]:
+        """Book positions keyed the way ``scan`` keys its return columns (``Instrument.symbol``),
+        so 'EUR/USD', 'EURUSD=X' and 'eurusd ' are one holding; an unparseable key raises
+        rather than becoming a position the book VaR check cannot see."""
+        out: dict[str, float] = {}
+        for k, v in (positions or {}).items():
+            try:
+                sym = Instrument.parse(k).symbol
+            except ValueError as e:
+                raise ValueError(f"positions: {k!r} is not a symbol the desk can hold ({e})") from e
+            if sym in out and out[sym] != v:
+                raise ValueError(f"positions: {k!r} and an earlier key both name {sym} with different weights")
+            out[sym] = v
+        return out
 
     def save_report(self, state: TradingState) -> Path:
         out = Path(self.config["results_dir"]) / state.instrument.symbol / state.as_of.isoformat()

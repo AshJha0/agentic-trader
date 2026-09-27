@@ -111,8 +111,7 @@ def run_eval(name: str, out: Path, provider) -> None:
     res = evaluate(syms, periods, cfg, EVERY, provider=provider, workers=4,
                    progress=lambda m: log(f"  {name}: {m}"))
     res.meta["measurement"] = {"name": name, "overrides": _jsonable(over), "rebalance_every": EVERY,
-                               "seconds": round(time.time() - t0, 1),
-                               "macro_sources": _jsonable(getattr(provider, "macro_sources", None))}
+                               "seconds": round(time.time() - t0, 1)}   # meta["macro_sources"] is evaluate()'s own tally
     res.to_json(path)
     log(f"{name}: done in {time.time() - t0:.0f}s ({len(res.rows)} rows, {len(res.meta.get('errors', []))} errors)")
 
@@ -128,14 +127,19 @@ def run_portfolio(name: str, out: Path, provider) -> None:
     log(f"{name}: {len(syms)} sleeves {start} -> {end} ...")
     t0 = time.time()
     rep = run_portfolio_backtest(syms, start, end, cfg, rebalance_every=EVERY, provider=provider)
-    rep.returns.to_csv(out / f"{name}.csv")
+    frame = rep.returns.copy()
+    frame["rf"] = rep.rf if isinstance(rep.rf, np.ndarray) else float(rep.rf if rep.rf is not None else 0.0)
+    frame.to_csv(out / f"{name}.csv")
     sleeves = {s: {k: {"impact_paid": r.results[k].impact_paid, "sharpe": r.results[k].metrics.sharpe,
-                       "cumulative_return": r.results[k].metrics.cumulative_return}
+                       "cumulative_return": r.results[k].metrics.cumulative_return,
+                       "max_drawdown": r.results[k].metrics.max_drawdown}
                    for k in r.results} for s, r in rep.sleeves.items()}
     json.dump(_jsonable({"name": name, "period": period, "start": start, "end": end, "symbols": syms,
                          "overrides": over, "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1),
                          "table": rep.table().to_dict(orient="index"),
                          "metrics": {k: m for k, m in rep.metrics.items()},
+                         "sharpe_vs_vol_target": rep.sharpe_difference(AGENT, "B&H vol-target"),
+                         "sharpe_vs_buy_hold": rep.sharpe_difference(AGENT, "Buy&Hold"),
                          "sleeves": sleeves, "provenance": provenance()}),
               open(path, "w", encoding="utf-8"), indent=1)
     log(f"{name}: done in {time.time() - t0:.0f}s")

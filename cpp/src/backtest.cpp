@@ -235,11 +235,15 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         const double impact_in = trade != 0.0 ? std::pow(std::fabs(trade), 1.5) * impact_k(t) * scale : 0.0;
         const double k_in = std::fabs(trade) * unit_cost + impact_in;
         const double g = w * price_ret + carry + cash - borrow;
-        double growth = (1.0 - k_in) * (1.0 + g);
+        const double f_in = 1.0 - k_in;
+        const double f_g = 1.0 + g;
+        double f_out = 1.0;
+        double growth = f_in * f_g;
         res.impact_paid += impact_in;
         if (exited) {
             const double impact_out = std::pow(std::fabs(w), 1.5) * impact_k(t + 1) * scale;
-            growth *= 1.0 - (std::fabs(w) * unit_cost + impact_out);  // cost of the exit fill
+            f_out = 1.0 - (std::fabs(w) * unit_cost + impact_out);  // cost of the exit fill
+            growth *= f_out;
             res.impact_paid += impact_out;
             res.trades.push_back({static_cast<int>(t + 1), w, 0.0, exit_px});
             res.traded[t + 1] += std::fabs(w);
@@ -248,17 +252,22 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
             stopped = true;
         }
 
+        // Each factor is a fraction of the account left after one leg of the bar (entry cost,
+        // the move, the exit cost); any one of them reaching zero is ruin, whatever the product.
         double ret = growth - 1.0;
+        double next = res.equity[t] * (1.0 + ret);
         if (ruined) {
             ret = 0.0;
-        } else if (res.equity[t] * growth <= 0.0) {
+            next = res.equity[t];
+        } else if (f_in <= 0.0 || f_g <= 0.0 || f_out <= 0.0 || next <= 0.0) {
             ret = -1.0;
+            next = 0.0;
             ruined = true;
             res.ruined_at = static_cast<int>(t + 1);
         }
         res.positions[t] = w;
         res.returns[t + 1] = ret;
-        res.equity[t + 1] = res.equity[t] * (1.0 + ret);
+        res.equity[t + 1] = next;
         prev = (exited || ruined || w == 0.0) ? 0.0 : w * gross / (1.0 + g);
     }
     res.positions[T - 1] = prev;  // no new trade on the final bar

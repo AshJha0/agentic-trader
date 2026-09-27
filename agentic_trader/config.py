@@ -150,6 +150,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Cap on one ticket's notional in account_currency, enforced by policy before approval
         # and again by execution.submit_order. None = initial_capital * risk.max_position.
         "max_order_notional": None,
+        # Accept execution.submit_order tickets whose plan this desk did not produce. Off: a
+        # ticket must name a plan_id the desk issued and repeat its quantity, notional and
+        # price (plan_id alone is a checksum anyone can compute, not authentication).
+        "allow_external_plans": False,
     },
 
     # ---- FX macro inputs -----------------------------------------------------
@@ -202,7 +206,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_symbols_per_call": 60,          # longest `symbols` list one tool call may name
         "max_plan_lookback_bars": 200_000,   # symbols x lookback days a plan's tool steps may load in total
         "max_retained_runs": 256,            # finished runs kept in memory per harness (older ones are evicted)
-        "instance_id": None,                 # stable owner id for a service instance (None = host:pid:random)
+        # Owner id stamped on the runs an instance drives (None = host:pid:random). A stable id per
+        # deployment slot is safe across a rolling restart: the sweep fails only records whose
+        # heartbeat lease has expired, never a live sibling's just because it shares the id.
+        "instance_id": None,
         "lease_s": 90.0,                     # a live run's heartbeat lease; only expired records are swept
         "task_db": None,             # SQLite path for a persistent task store (None = in memory only)
         "workers": 4,                # task threads per API process
