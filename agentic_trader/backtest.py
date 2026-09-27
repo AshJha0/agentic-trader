@@ -204,19 +204,23 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                        asset_class: str | None = None,
                        on_decision: Callable[[FinalDecision], None] | None = None,
                        include_agent: bool = True,
-                       capital_share: pd.Series | None = None) -> ComparisonReport:
+                       capital_share: pd.Series | None = None,
+                       rebalance_offset: int = 0) -> ComparisonReport:
     """Walk-forward backtest of the desk and the baselines on one instrument.
 
     ``capital_share`` (a date-indexed fraction of ``initial_capital``, for a portfolio sleeve)
     scales the impact coefficient by ``sqrt(share_t)``: ``K_t`` is proportional to the square
     root of the capital traded, so a sleeve running 1/N of the book pays the impact of an
-    account of ``capital / N``.
+    account of ``capital / N``. ``rebalance_offset`` is the bar of the first decision
+    (``0 <= offset < rebalance_every``); sweeping it measures the cadence's phase noise.
     """
     cfg = make_config(config)
     ins = Instrument.parse(symbol, asset_class)
     start, end = _parse(start), _parse(end)
     if end < start:
         raise ValueError(f"end {end} is before start {start}")
+    if not 0 <= rebalance_offset < max(1, rebalance_every):
+        raise ValueError(f"rebalance_offset must be in [0, {max(1, rebalance_every)})")
     provider = provider or get_provider(cfg)
 
     full = provider.history(ins, start - timedelta(days=cfg["lookback_days"]), end)
@@ -254,7 +258,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
             extras.update(ohlc, stop=stop, take=take)
         sources: dict[str, int] = {}
         held = 0.0
-        for i in range(0, n - 1, max(1, rebalance_every)):
+        for i in range(rebalance_offset, n - 1, max(1, rebalance_every)):
             if i > 0:
                 # The weight the desk actually holds coming into bar i: replay the engine on the
                 # bars so far (its last position is the previous decision's units drifted with
@@ -307,6 +311,7 @@ class PortfolioReport:
     sleeves: dict[str, ComparisonReport]
     weighting: str = "equal"
     allocations: pd.DataFrame | None = None   # capital share per sleeve over time (agent strategy)
+    rf: np.ndarray | float | None = None      # per-bar (or constant) annual risk-free rate the metrics used
 
     def table(self) -> pd.DataFrame:
         rows = {}
@@ -317,13 +322,29 @@ class PortfolioReport:
                           "Calmar": m.calmar, "Exp%": 100 * m.avg_exposure}
         return pd.DataFrame(rows).T.round(2)
 
+    def sharpe_difference(self, a: str = AGENT, b: str = "B&H vol-target", block: int = 10,
+                          n_boot: int = 5000, seed: int = 0):
+        """Sharpe(a) - Sharpe(b) over the same days with a paired block bootstrap over time
+        (``stats.paired_sharpe_block_bootstrap``), on the same excess-return convention as
+        ``metrics``: the interval a portfolio-level comparison needs, which the
+        cross-instrument bootstrap cannot give."""
+        from .stats import paired_sharpe_block_bootstrap
+        ppy = max(r.instrument.periods_per_year for r in self.sleeves.values())
+        # ``metrics`` are computed from the equity curve, whose first return (bar 0, before
+        # any position) does not exist; use the same bars so sharpe_a equals metrics[a].sharpe.
+        rf = self.rf[1:] if isinstance(self.rf, np.ndarray) else self.rf
+        return paired_sharpe_block_bootstrap(self.returns[a].to_numpy(dtype=float)[1:],
+                                             self.returns[b].to_numpy(dtype=float)[1:], ppy,
+                                             rf=rf, block=block, n_boot=n_boot, seed=seed)
+
 
 def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | str,
                            config: dict | None = None, rebalance_every: int = 5,
                            provider: MarketDataProvider | None = None, llm: LLM | None = None,
                            on_decision: Callable[[FinalDecision], None] | None = None,
                            weighting: str = "equal", cov_window: int = 120,
-                           class_budgets: dict[str, float] | None = None) -> PortfolioReport:
+                           class_budgets: dict[str, float] | None = None,
+                           rebalance_offset: int = 0) -> PortfolioReport:
     """Run every symbol as its own sleeve and combine the sleeves.
 
     Each sleeve is a full walk-forward backtest (costs, carry, stops) of the agent
@@ -409,7 +430,8 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
         alloc_hist = alloc
 
     sleeves = {s: run_agent_backtest(s, start, end, cfg, rebalance_every, provider, llm,
-                                     on_decision=on_decision, capital_share=alloc[s]) for s in keys}
+                                     on_decision=on_decision, capital_share=alloc[s],
+                                     rebalance_offset=rebalance_offset) for s in keys}
     strategies = list(next(iter(sleeves.values())).results)
     rf = risk_free_series(provider, idx, cfg)
     rf_arg = cfg["risk_free_annual"] if np.isnan(rf).all() else rf
@@ -427,4 +449,4 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
         metrics[name] = quant.compute_metrics(equity, (frame("positions") * alloc).sum(axis=1).to_numpy(), ppy,
                                               rf_arg, traded=(frame("traded") * alloc).sum(axis=1).to_numpy())
     return PortfolioReport(list(symbols), idx, pd.DataFrame(rets, index=idx), metrics, sleeves,
-                           weighting, alloc_hist)
+                           weighting, alloc_hist, rf_arg)

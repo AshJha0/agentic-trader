@@ -69,6 +69,86 @@ UNIVERSES: dict[str, list[str]] = {
 UNIVERSES["all"] = UNIVERSES["core"] + UNIVERSES["extended"]
 
 
+@dataclass(frozen=True)
+class Trial:
+    """One variant judged on the design period: what it was called, which release judged it,
+    the config overrides that reproduce it under the current engine (``None`` when it is not
+    reproducible from config alone -- it still counts as a trial) and the design-period mean
+    Sharpe recorded at the time (v0.3 engine, for the historical record only)."""
+    name: str
+    version: str
+    overrides: dict | None
+    recorded_mean_sharpe: float | None = None
+
+
+_CTRL_RULES = {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False,
+               "fx_carry_neutral": False}
+_CTRL_RISK = {"rebalance_band": 0.0, "neutral_weight": {"equity": 0.0, "fx": 0.0}}
+_SIGNALS = {"tsmom": True, "trend_filtered_reversal": True, "abstain_without_data": True}
+
+
+def _v03_trial(rules: dict | None = None, risk: dict | None = None, stops: bool = False) -> dict:
+    """A v0.3 ablation variant: the v0.2 control plus the named changes (FX carry rule off, as then)."""
+    return {"rules": {**_CTRL_RULES, **(rules or {})}, "risk": {**_CTRL_RISK, **(risk or {})},
+            "backtest": {"use_stops": stops}}
+
+
+def _eq(w: float) -> dict:
+    return {"neutral_weight": {"equity": w, "fx": 0.0}}
+
+
+# Every variant ever judged on the design period, in the order it was tried. The deflated
+# Sharpe's trial count is the length of this registry (docs/evaluation "Selection statistics"),
+# and scripts/measure_v08.py re-measures every reproducible one under the current engine.
+TRIALS: tuple[Trial, ...] = (
+    Trial("v0.2 (control)", "v0.3", _v03_trial(), 0.50),
+    Trial("+ 12-1 month time-series momentum", "v0.3", _v03_trial(rules={"tsmom": True}), 0.47),
+    Trial("+ trend-filtered reversal", "v0.3", _v03_trial(rules={"trend_filtered_reversal": True}), 0.48),
+    Trial("+ abstain without data", "v0.3", _v03_trial(rules={"abstain_without_data": True}), 0.51),
+    Trial("+ no-trade band 0.10", "v0.3", _v03_trial(risk={"rebalance_band": 0.10}), 0.50),
+    Trial("+ intraday stops", "v0.3", _v03_trial(stops=True), 0.47),
+    Trial("signal changes (momentum + filter + abstain)", "v0.3", _v03_trial(rules=_SIGNALS), 0.51),
+    Trial("signal changes + band", "v0.3", _v03_trial(rules=_SIGNALS, risk={"rebalance_band": 0.10}), 0.51),
+    Trial("all five", "v0.3", _v03_trial(rules=_SIGNALS, risk={"rebalance_band": 0.10}, stops=True), 0.50),
+    Trial("strategic equity weight 0.25", "v0.3", _v03_trial(risk=_eq(0.25)), 0.54),
+    Trial("strategic equity weight 0.50", "v0.3", _v03_trial(risk=_eq(0.50)), 0.58),
+    Trial("strategic equity weight 1.00", "v0.3", _v03_trial(risk=_eq(1.00)), 0.66),
+    Trial("strategic 0.50 + band", "v0.3", _v03_trial(risk={**_eq(0.50), "rebalance_band": 0.10}), 0.58),
+    Trial("strategic 0.50 + signal changes + band", "v0.3",
+          _v03_trial(rules=_SIGNALS, risk={**_eq(0.50), "rebalance_band": 0.10}), 0.58),
+    Trial("strategic 0.50 + abstain + band", "v0.3",
+          _v03_trial(rules={"abstain_without_data": True}, risk={**_eq(0.50), "rebalance_band": 0.10}), 0.56),
+    Trial("frozen v0.3: strategic 1.00 + band", "v0.3", _v03_trial(risk={**_eq(1.00), "rebalance_band": 0.10}), 0.65),
+    Trial("+ alpha analyst (IC-weighted, all signals)", "v0.4", None, 0.60),
+    Trial("+ alpha analyst (significance-gated, 400-day window)", "v0.4", None, 0.58),
+    Trial("+ alpha analyst (significance-gated, 900-day window)", "v0.5",
+          {"analysts": ["technical", "sentiment", "macro", "fundamentals", "news", "alpha"]}, 0.65),
+    Trial("FX carry / 4, cap 0.5", "v0.5.1",
+          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 4.0, "fx_carry_neutral_cap": 0.5}}),
+    Trial("FX carry / 2, cap 0.5 (adopted)", "v0.5.1",
+          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 2.0, "fx_carry_neutral_cap": 0.5}}),
+    Trial("FX carry / 4, cap 1.0", "v0.5.1",
+          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 4.0, "fx_carry_neutral_cap": 1.0}}),
+    Trial("FX carry / 8, cap 0.25", "v0.5.1",
+          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 8.0, "fx_carry_neutral_cap": 0.25}}),
+    Trial("+ cross-sectional alpha analyst", "v0.6",
+          {"analysts": ["technical", "fundamentals", "news", "sentiment", "xalpha"], "xalpha_universe": UNIVERSES["all"]}),
+    Trial("EDGAR filings off", "v0.6", {"edgar": False}),
+    Trial("track-record size cut off", "v0.8", {"rules": {"track_record_cut": False}}),
+)
+
+
+def reproducible_trials() -> list[Trial]:
+    return [t for t in TRIALS if t.overrides is not None]
+
+
+def trial_slug(name: str) -> str:
+    s = "".join(ch if ch.isalnum() else "_" for ch in name.lower())
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s.strip("_")
+
+
 def universe_group(symbol: str) -> str:
     """``core`` / ``extended`` / ``extended-macro`` membership of a symbol (``other`` if not listed)."""
     s = symbol.upper().replace("/", "").replace("=X", "")

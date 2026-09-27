@@ -67,6 +67,12 @@ def cmd_portfolio(args) -> int:
     rep = run_portfolio_backtest(syms, args.start, args.end, cfg, rebalance_every=args.every,
                                  weighting=args.weighting, class_budgets=budgets)
     print(rep.table().to_string())
+    from ..backtest import AGENT
+    for base in ("B&H vol-target", "Buy&Hold"):
+        if base in rep.returns:
+            d = rep.sharpe_difference(AGENT, base)
+            print(f"Sharpe {AGENT} - {base}: {d.diff:+.2f} [{d.ci_low:+.2f}, {d.ci_high:+.2f}] p={d.p_value:.3f} "
+                  f"(paired block bootstrap over {d.n} days, block {d.block})")
     if rep.allocations is not None:
         print("\nlatest capital allocation:")
         print(rep.allocations.iloc[-1].round(3).to_string())

@@ -433,3 +433,77 @@ def var_backtest(returns, var_forecasts, alpha: float = 0.95) -> VarBacktest:
     return VarBacktest(n, x, rate, p, round(lr_uc, 4), round(kupiec_p, 4),
                        None if lr_ind is None else round(lr_ind, 4), p_ind,
                        None if p_cc is None else round(p_cc, 4))
+
+
+# ------------------------------------------------------------- portfolio-level intervals
+@dataclass(frozen=True)
+class SharpeDifference:
+    """Sharpe(a) - Sharpe(b) on the same days, with a paired circular block bootstrap over time."""
+    n: int                    # days used (both series finite)
+    sharpe_a: float
+    sharpe_b: float
+    diff: float
+    ci_low: float
+    ci_high: float
+    p_value: float            # two-sided: share of resamples on the other side of zero, doubled (capped at 1)
+    block: int
+    n_boot: int
+
+
+def _excess(r, rf, periods_per_year: float) -> np.ndarray:
+    r = np.asarray(r, dtype=float)
+    if rf is None:
+        return r
+    rf = np.asarray(rf, dtype=float)
+    if rf.ndim == 0:
+        return r - float(rf) / periods_per_year
+    if rf.shape != r.shape:
+        raise ValueError("rf must be a scalar or one annual rate per day")
+    return r - np.where(np.isfinite(rf), rf, 0.0) / periods_per_year
+
+
+def _sharpe_rows(x: np.ndarray, periods_per_year: float) -> np.ndarray:
+    sd = x.std(axis=1, ddof=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(sd > 0, x.mean(axis=1) / sd * math.sqrt(periods_per_year), 0.0)
+
+
+def paired_sharpe_block_bootstrap(a, b, periods_per_year: float = 252.0, rf=None, block: int = 10,
+                                  n_boot: int = 5000, ci: float = 0.95, seed: int = 0) -> SharpeDifference:
+    """Is one strategy's Sharpe higher than another's over the *same days*?
+
+    The cross-instrument bootstrap (``paired_bootstrap``) treats instruments as the unit of
+    independence, so it cannot speak to time-period luck that every instrument shared (one
+    bear market, one rally). For a portfolio-level comparison the unit is the day: both daily
+    return series are resampled with the same circular blocks (``block`` days, preserving
+    short-range autocorrelation and the pairing), each resample's annualised Sharpe is taken on
+    excess returns over ``rf`` (annual; a scalar or one rate per day, NaN = 0) and the
+    percentile interval and two-sided p of the difference are reported. Days where either
+    series is not finite are dropped; fewer than three days gives NaN bounds and ``p = 1``.
+    """
+    if block < 1 or n_boot < 1:
+        raise ValueError("block and n_boot must be positive")
+    ra, rb = _excess(a, rf, periods_per_year), _excess(b, rf, periods_per_year)
+    if ra.shape != rb.shape:
+        raise ValueError("a and b must have the same length (one return per day)")
+    keep = np.isfinite(ra) & np.isfinite(rb)
+    ra, rb = ra[keep], rb[keep]
+    n = int(ra.size)
+    nan = float("nan")
+    if n < 3:
+        return SharpeDifference(n, nan, nan, nan, nan, nan, 1.0, block, n_boot)
+    sa = float(_sharpe_rows(ra[None, :], periods_per_year)[0])
+    sb = float(_sharpe_rows(rb[None, :], periods_per_year)[0])
+    rng = np.random.default_rng(seed)
+    blk = min(block, n)
+    starts = rng.integers(0, n, size=(n_boot, -(-n // blk)))
+    idx = ((starts[:, :, None] + np.arange(blk)[None, None, :]) % n).reshape(n_boot, -1)[:, :n]
+    diffs = _sharpe_rows(ra[idx], periods_per_year) - _sharpe_rows(rb[idx], periods_per_year)
+    lo, hi = np.percentile(diffs, [100 * (1 - ci) / 2, 100 * (1 + ci) / 2])
+    point = sa - sb
+    if point == 0.0:
+        p = 1.0
+    else:
+        other = np.mean(diffs <= 0.0) if point > 0 else np.mean(diffs >= 0.0)
+        p = float(min(1.0, 2.0 * other))
+    return SharpeDifference(n, sa, sb, point, float(lo), float(hi), p, blk, n_boot)
