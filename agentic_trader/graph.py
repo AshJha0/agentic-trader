@@ -26,7 +26,7 @@ from .config import make_config
 from .data import MarketDataProvider, get_provider
 from .instruments import Instrument
 from .llm import LLM, budget_llm, get_llm
-from .memory import DecisionMemory
+from .memory import DecisionMemory, series_basis
 from .state import AnalystReport, Book, DebateOutcome, FinalDecision, TradeProposal, TradingState
 
 log = logging.getLogger(__name__)
@@ -102,13 +102,17 @@ class TradingGraph:
         if stale > self.config.get("max_data_staleness_days", 7):
             raise ValueError(f"latest {ins.display} bar is {bar_date}, {stale} days before "
                              f"{as_of}: refusing to decide on stale data")
-        state = TradingState(ins, as_of, hist, current_weight=current_weight, book=book)
+        state = TradingState(ins, as_of, hist, current_weight=current_weight, book=book,
+                             provider_name=getattr(provider, "name", ""), price_basis=series_basis(provider))
         if self.llm is not None and self.config.get("llm_anonymize"):
             state.anon = Anonymizer(ins, as_of, state.last_price)
 
-        self.memory.resolve(ins.symbol, as_of, state.last_price)
-        state.lessons = self.memory.lessons(ins.symbol, as_of)
-        state.track_record = self.memory.track_record(ins.symbol, as_of)
+        # Outcomes are valued on this very series (which ends at as_of), by the provider
+        # that recorded them, so a rebase or a provider switch cannot fake a verdict.
+        self.memory.resolve(ins.symbol, as_of, hist, provider=state.provider_name,
+                            price_basis=state.price_basis)
+        state.lessons = self.memory.lessons(ins.symbol, as_of, provider=state.provider_name)
+        state.track_record = self.memory.track_record(ins.symbol, as_of, provider=state.provider_name)
         self.on_event("data", f"{ins.display} {ins.asset_class}: {len(hist)} bars to {bar_date}, "
                               f"last {state.last_price:.6g}")
         return state
@@ -152,7 +156,8 @@ class TradingGraph:
             raise ValueError("no decision to record")
         self.memory.record(state.instrument.symbol, state.as_of, dec.action.value, dec.target_weight,
                            state.last_price, dec.rationale,
-                           horizon_days=state.proposal.horizon_days if state.proposal else 10)
+                           horizon_days=state.proposal.horizon_days if state.proposal else 10,
+                           provider=state.provider_name, price_basis=state.price_basis)
         if self.config.get("save_reports"):
             path = self.save_report(state)
             self.on_event("report", f"saved {path}")
@@ -192,22 +197,39 @@ class TradingGraph:
         if the *book's* 1-day 95% historical VaR (this instrument's proposed weight plus
         every other symbol's current weight from ``positions``) would exceed the limit.
         Symbols with no position are still part of the book's return history (at zero
-        weight) since a later scan could hold them.
+        weight) since a later scan could hold them; held symbols outside the watchlist are
+        fetched too, since the book's VaR is the VaR of what is actually held. A held
+        symbol whose history is missing or shorter than ``portfolio.MIN_BOOK_OBS`` bars
+        keeps a (NaN) column, so the check fails closed for any book holding it (the
+        Portfolio Manager flattens with a "could not be evaluated" note) instead of
+        silently passing; at zero weight such a symbol has no effect on anyone.
         """
         rows = []
         positions = {k.upper(): v for k, v in (positions or {}).items()}
         as_of_d = date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
         book_returns = None
         if self.config["risk"].get("max_book_var_95"):
+            from .portfolio import MIN_BOOK_OBS
             start = as_of_d - timedelta(days=book_lookback_days)
             cols = {}
-            for sym in symbols:
+            held_elsewhere = [s for s, w in positions.items() if w and s not in {x.upper() for x in symbols}]
+            for sym in [*symbols, *held_elsewhere]:
                 try:
                     ins = Instrument.parse(sym)
+                except Exception:  # the decision loop below reports the bad ticker
+                    continue
+                try:
                     h = self.provider.history(ins, start, as_of_d)
-                    cols[ins.symbol] = h[h.index <= pd.Timestamp(as_of_d)]["Close"].pct_change()
-                except Exception as e:  # a symbol that can't be fetched just has no book history
+                    col = h[h.index <= pd.Timestamp(as_of_d)]["Close"].pct_change()
+                except Exception as e:
                     log.warning("scan: could not build book history for %s: %s", sym, e)
+                    col = pd.Series(dtype=float)
+                bars = int(col.notna().sum())
+                if bars < MIN_BOOK_OBS:
+                    log.warning("scan: %s has %d bars of book history (need %d); a book holding it "
+                                "cannot be VaR-checked and is flattened rather than sized",
+                                ins.symbol, bars, MIN_BOOK_OBS)
+                cols[ins.symbol] = col
             if cols:
                 book_returns = pd.DataFrame(cols)
         for sym in symbols:

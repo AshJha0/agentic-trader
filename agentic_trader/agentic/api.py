@@ -63,9 +63,7 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
     if harness is None:
         validate_app_config(config or {}, workers, queue_limit)
         graph = graph or TradingGraph(config)
-        gateway = QueuedApprovalGateway() if graph.config.get("agentic", {}).get("approval", "queued") != "auto" \
-            else None
-        harness = AgentHarness(graph, gateway=gateway or QueuedApprovalGateway())
+        harness = AgentHarness(graph)   # the gateway follows config["agentic"]["approval"]: auto | queued | deny
     acfg = harness.config.get("agentic", {})
     n_workers = int(workers if workers is not None else acfg.get("workers", 4))
     limit = int(queue_limit if queue_limit is not None else acfg.get("queue_limit", 64))
@@ -86,7 +84,8 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
                 run.cancel_requested = True
         pool.shutdown(wait=False, cancel_futures=True)
 
-    app = FastAPI(title="agentic-trader", version="0.6.0", lifespan=lifespan,
+    from ..provenance import package_version
+    app = FastAPI(title="agentic-trader", version=package_version(), lifespan=lifespan,
                   description="Policy-gated, evidence-backed trading decisions for equities and FX.")
     app.state.harness = harness
     app.state.pool = pool
@@ -94,6 +93,21 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
     def in_flight() -> int:
         with futures_lock:
             return sum(1 for f in futures.values() if not f.done())
+
+    def _log_outcome(task_id: str):
+        def cb(fut: Future) -> None:
+            if fut.cancelled():
+                return
+            exc = fut.exception()
+            if exc is not None:
+                log.error("task %s: continuation raised %s: %s", task_id, type(exc).__name__, exc)
+        return cb
+
+    def schedule(task_id: str, run) -> None:
+        """Run ``harness.resume(run)`` on the pool; the Future's exception is logged, never lost."""
+        fut = pool.submit(harness.resume, run)
+        fut.add_done_callback(_log_outcome(task_id))
+        futures[task_id] = fut
 
     class TaskIn(BaseModel):
         symbol: str = Field(examples=["AAPL", "EURUSD"])
@@ -135,14 +149,13 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
                 "archived": archived, "persistent": harness.store is not None,
                 "tools": len(harness.registry), "workers": n_workers, "queue_limit": limit,
                 "in_flight": busy, "running": min(busy, n_workers), "queued": max(0, busy - n_workers),
-                "worker_pid": os.getpid()}
+                "worker_pid": os.getpid(), "approval": harness.gateway.name, "instance": harness.owner}
 
     @app.get("/metrics", response_class=PlainTextResponse)
     def metrics() -> str:
-        out = []
-        for run in list(harness.runs.values()):
-            out.append(run.tracer.metrics.render())
-        return "".join(out) or "# no tasks yet\n"
+        # One exposition for the process: every run's tracer writes to the harness's Metrics,
+        # so each family appears once and the counters are the service's totals.
+        return harness.metrics.render() or "# no tasks yet\n"
 
     @app.get("/tools")
     def tools(role: Role = Depends(role_of)) -> list[dict[str, Any]]:
@@ -160,7 +173,7 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
                                     headers={"Retry-After": "5"})
             task = Task(body.symbol, body.as_of, role, body.current_weight, body.question)
             run = harness.submit(task)
-            futures[task.id] = pool.submit(harness.resume, run)
+            schedule(task.id, run)
         return {"task_id": task.id, "state": run.state.value}
 
     @app.get("/tasks")
@@ -221,6 +234,9 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
     @app.get("/approvals")
     def approvals(role: Role = Depends(role_of)) -> list[dict[str, Any]]:
         require(role, Capability.APPROVE_TRADES)
+        if not isinstance(harness.gateway, QueuedApprovalGateway):
+            raise HTTPException(409, f"approvals are not queued on this service (approval mode "
+                                     f"{harness.gateway.name})")
         return [{"id": a.id, "task_id": a.task_id, "tool": a.request.tool, "arguments": a.request.arguments,
                  "reason": a.reason, "created_at": a.created_at.isoformat()} for a in harness.pending_approvals()]
 
@@ -233,10 +249,16 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
             raise HTTPException(404, f"unknown approval {approval_id} (approvals live on the process that queued them)")
         except ValueError as e:
             raise HTTPException(409, str(e))
-        with futures_lock:   # the continuation runs on the pool, under the same bound as a new task
-            futures[run.id] = pool.submit(harness.resume, run)
+        # Only a parked run nobody is driving gets a continuation (on the pool, under the same
+        # bound as a new task); a running driver sees the decision at the step, and a second
+        # thread can never enter the same run (the harness's per-run driving lock).
+        resumed = False
+        with futures_lock:
+            if harness.continuation_due(run):
+                schedule(run.id, run)
+                resumed = True
         return {"approval_id": approval_id, "approved": body.approve, "task_id": run.id,
-                "state": run.state.value}
+                "state": run.state.value, "resumed": resumed}
 
     return app
 
@@ -346,7 +368,7 @@ def serve(host: str = "127.0.0.1", port: int = 8000, config: dict | None = None,
     # exposed on the command line or in the environment itself). The interrupted-run
     # sweep is done here, once, so a worker starting later cannot fail its siblings' runs.
     from .store import TaskStore
-    swept = TaskStore(cfg["agentic"]["task_db"]).mark_interrupted()
+    swept = TaskStore(cfg["agentic"]["task_db"]).mark_interrupted(lease_s=float(cfg["agentic"].get("lease_s", 90.0)))
     if swept:
         log.warning("%d task(s) were in flight when the previous service stopped; marked FAILED", swept)
     cfg = make_config(cfg, agentic={"sweep_interrupted": False})

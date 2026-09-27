@@ -74,8 +74,7 @@ class Researcher(Agent):
             f"close {state.fmt_px(state.last_price)}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
             + ("Debate so far:\n" + "\n".join(f"{t.speaker}: {t.argument}" for t in history)
                if history else "You open the debate.")
-            + (f"\n\nLessons from past decisions:\n" + "\n".join(state.lessons)
-               if state.lessons else "")
+            + ("\n" + state.lessons_block() if state.lessons else "")
             + f"\n\nRound {rnd}: give your {self.side} argument."
         )
         text = self.ask_text(prompt, state) or self.rules_argument(state, rnd, history)
@@ -125,7 +124,8 @@ class DebateFacilitator(Agent):
               '[-1, 1]; the direction and strength of the prevailing view), "conviction" '
               '(number in [0, 1]), "summary" (2-4 sentences recording the decisive arguments).'
         )
-        data = self.ask_json(prompt, ("winner", "score", "summary"), state=state)
+        data = self.ask_json(prompt, ("winner", "score", "summary"), state=state,
+                             numeric=("score", "conviction"))
         if data:
             w = str(data["winner"]).lower()
             outcome = DebateOutcome(

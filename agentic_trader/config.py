@@ -17,6 +17,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Server-side refusal fallback for claude-opus-5 / claude-fable-5-1 (beta).
     "use_refusal_fallback": True,
     "llm_timeout_s": 300,   # per request; adaptive thinking on the deep tier can take minutes
+    # SDK retries per request (the SDK default). A request that times out is billed at its
+    # estimated maximum once per attempt, since the server may have served every one of them.
+    "llm_max_retries": 2,
     "max_llm_calls": None,  # hard cap per TradingGraph (None = unlimited); beyond it agents use rules
     "max_llm_cost_usd": None,  # hard cap on estimated spend (list prices); beyond it agents use rules
     # Hide ticker, calendar and price level from the model (anonymize.py). Use it for
@@ -49,6 +52,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # touched, where it improved every slice (extended crosses design -0.24 -> -0.15,
         # holdout +0.12 -> +0.31, reserve -0.63 -> +0.22). RULES_V03 turns it off.
         "fx_carry_neutral": True,          # FX strategic weight = point-in-time carry / scale, capped
+        # v0.8: the trader's 0.75x size cut when memory's hit rate over the last >= 5 resolved
+        # calls is below 40%. On in every published backtest so far (never measured
+        # separately); the switch exists so the docs pass can measure it on the design period.
+        "track_record_cut": True,
     },
 
     # ---- Data ----------------------------------------------------------------
@@ -119,21 +126,39 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # agentic_trader.algo.algo_cost_ratio). Unset by default so every published number
         # stays reproducible without opting in.
         "execution_algo": None,
+        # Dimensionless Almgren-Chriss urgency (0 = TWAP, larger = more front-loaded): used by
+        # algo_cost_ratio above and by the execution simulator's "ac" schedule (execute --ac-kappa).
         "ac_kappa": 3.0,
     },
     "initial_capital": 100_000.0,
+    # Currency the account is denominated in: initial_capital, order notionals and tickets are
+    # in it; FX order quantities are converted from it into the pair's base currency
+    # (algo.plan_execution), fetching the base->account rate for crosses.
+    "account_currency": "USD",
     "risk_free_annual": 0.0,
+    # Cash leg / risk-free rate per bar (data/base.py risk_free_series): "auto" = FRED 3-month
+    # T-bill (DTB3, 1-day publication lag) on real-world providers and risk_free_annual on
+    # synthetic/CSV data; "fred" forces DTB3; "static" = risk_free_annual everywhere; "off" =
+    # unknown (NaN) everywhere, so the backtester credits nothing.
+    "cash_leg": "auto",
     "backtest": {
         "use_stops": False,  # enforce the decision's stop-loss / take-profit intraday
+    },
+    # ---- Execution planning (algo.plan_execution: the `execute` command, execution.plan) ---
+    "execution": {
+        "fx_lot_size": 1000.0,       # FX orders are rounded down to whole lots of the base currency
+        # Cap on one ticket's notional in account_currency, enforced by policy before approval
+        # and again by execution.submit_order. None = initial_capital * risk.max_position.
+        "max_order_notional": None,
     },
 
     # ---- FX macro inputs -----------------------------------------------------
     # "auto": synthetic data uses the static table below; real data (yahoo, csv) uses
-    #         point-in-time FRED rates, falling back to the static table only for dates
-    #         within static_macro_max_age_days of today.
-    # "static" / "fred": force one source.
+    #         point-in-time FRED rates only -- a date with no FRED value for either leg
+    #         has no macro view (the analyst abstains, strategic FX weight 0, carry 0).
+    # "static" / "fred": force one source. Whatever the source, macro() and carry_series()
+    # come from the same resolver, so what the desk is shown is what the backtest credits.
     "fx_macro_source": "auto",
-    "static_macro_max_age_days": 180,
     # ALFRED vintages for revised series (CPI): read each value from the data vintage
     # that was current at the as-of date, so the backtest sees inflation as first
     # published, not as later revised. One download per series per month of history
@@ -142,6 +167,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "fred_vintages": False,
     "fred_vintage_step_days": 31,
     "fred_cache_dir": None,
+    "fred_cache_max_age_days": 1,     # re-download a cached latest-vintage series older than this (None = never)
     # SEC EDGAR point-in-time fundamentals and filing-stream news for real-data equities
     # (yahoo provider). Free and keyless, but the SEC requires a contact User-Agent:
     # EDGAR_USER_AGENT="Name email@domain" in the environment or .env (never committed),
@@ -172,6 +198,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tool_timeout_s": 30.0,
         "symbol_universe": None,     # list of allowed symbols for tool calls (None = any valid)
         "deny_tools": [],
+        # Argument guards (policy) and plan budget (validator); v0.8 agentic-services fixes.
+        "max_symbols_per_call": 60,          # longest `symbols` list one tool call may name
+        "max_plan_lookback_bars": 200_000,   # symbols x lookback days a plan's tool steps may load in total
+        "max_retained_runs": 256,            # finished runs kept in memory per harness (older ones are evicted)
+        "instance_id": None,                 # stable owner id for a service instance (None = host:pid:random)
+        "lease_s": 90.0,                     # a live run's heartbeat lease; only expired records are swept
         "task_db": None,             # SQLite path for a persistent task store (None = in memory only)
         "workers": 4,                # task threads per API process
         "queue_limit": 64,           # tasks accepted but unfinished per process; beyond it POST /tasks -> 503

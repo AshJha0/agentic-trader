@@ -1,6 +1,7 @@
 """SEC EDGAR point-in-time layer, tested offline against an injected fetch: ticker
-lookup, first-print facts, quarter reconstruction (year-to-date differencing, Q4 from
-the 10-K, 12/16-week fiscal quarters), the filing-stream news, and the provider fallbacks."""
+lookup, facts as known at as_of, quarter reconstruction (year-to-date differencing, Q4 from
+the 10-K, 12/16-week fiscal quarters), the filing-stream news, and the provider fallbacks.
+Restatement / reporting-basis semantics are in tests/test_v08_data.py."""
 import json
 from datetime import date
 
@@ -34,8 +35,8 @@ def _payloads():
         _fact("2023-03-27", "2023-06-18", 150, "2023-07-27"),
         _fact("2023-06-19", "2023-09-10", 160, "2023-10-26"),
         _fact("2023-01-01", "2023-12-31", 620, "2024-02-01", "10-K"),      # Q4 = 170 (16 weeks)
-        # a later restatement of 2022 Q1 must not replace the first print
-        _fact("2022-01-01", "2022-03-31", 999, "2023-04-27"),
+        # 2022 Q1 re-printed unchanged as the comparative in the 2023 Q1 10-Q
+        _fact("2022-01-01", "2022-03-31", 100, "2023-04-27"),
     ]
     ni = [_fact(s, e, v / 10, f, fm) for s, e, v, f, fm in [
         ("2022-01-01", "2022-03-31", 100, "2022-04-28", "10-Q"), ("2022-04-01", "2022-06-30", 110, "2022-07-28", "10-Q"),
@@ -150,7 +151,7 @@ def test_fundamentals_are_point_in_time_and_first_print(client):
     assert g["report_period_end"] == "2023-06-18" and g["revenue_ttm"] == 130 + 140 + 150 + 120
     # Before anything was filed: nothing.
     assert client.fundamentals("TST", date(2021, 1, 1)) == {}
-    # The restated 2022-Q1 value (999, filed 2023-04-27) never shows up.
+    # An unchanged comparative re-print (2022-Q1 again in the 2023-Q1 10-Q) changes nothing.
     h = client.fundamentals("TST", date(2023, 6, 1), price=20.0)
     assert h["revenue_ttm"] == 110 + 120 + 130 + 140
 
@@ -249,20 +250,23 @@ def test_per_share_prints_are_rebased_across_a_split(client):
     assert client.fundamentals("TST", date(2023, 12, 1), price=20.0, splits={date(2023, 8, 1): 4.0})["eps_ttm"] == pytest.approx(0.265, abs=1e-4)
 
 
-def test_growth_needs_adjacent_years_and_first_print_wins_across_tags(tmp_path):
+def test_growth_needs_adjacent_years_and_tags_are_never_mixed(tmp_path):
     payloads = _payloads()
     facts = payloads[edgar_mod.FACTS_URL.format(cik=CIK)]["facts"]["us-gaap"]
     rev = facts["RevenueFromContractWithCustomerExcludingAssessedTax"]["units"]["USD"]
-    # drop 2022-Q3 (a gap): TTM windows still exist but are 15 months apart -> no YoY
+    # drop 2022-Q3 (a gap): the 2022 trailing year cannot be built, so no YoY
     facts["RevenueFromContractWithCustomerExcludingAssessedTax"]["units"]["USD"] = [
         f for f in rev if not (f.get("start") == "2022-07-01" and f["end"] == "2022-09-30")]
-    # the same 2022-Q1 span first printed under a lower-ranked tag, later restated under the preferred one
+    # the same 2022-Q1 span also printed under a lower-ranked tag (another concept)
     facts["SalesRevenueNet"] = {"units": {"USD": [_fact("2022-01-01", "2022-03-31", 90, "2022-04-20")]}}
     fetch = lambda u: json.dumps(payloads[u]).encode()  # noqa: E731
     c = EdgarClient(user_agent="t t@x", cache_dir=tmp_path, fetch=fetch, min_interval=0)
     known = c.facts("TST")
-    q = edgar_mod.quarterly_series(known, edgar_mod.REVENUE_TAGS)
-    assert q.loc[pd.Timestamp("2022-03-31")] == 90                                   # earliest print, whatever the tag
+    q = edgar_mod.quarterly_table(known, edgar_mod.REVENUE_TAGS)
+    # only complete single-tag trailing years survive: the 2023 quarters of the preferred tag;
+    # the stray lower-ranked print is never stitched in (v0.6 kept it as "earliest print")
+    assert list(q.index) == list(pd.to_datetime(["2023-03-26", "2023-06-18", "2023-09-10", "2023-12-31"]))
+    assert set(q["tag"]) == {"RevenueFromContractWithCustomerExcludingAssessedTax"}
     f = c.fundamentals("TST", date(2024, 3, 1), price=20.0)
     assert "revenue_growth_yoy" not in f and f["revenue_ttm"] == 620
 

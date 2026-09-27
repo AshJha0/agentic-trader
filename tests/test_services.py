@@ -77,7 +77,10 @@ def test_api_approval_flow(client):
     c, h = client
     run = h.submit(Task("AAPL", date(2024, 3, 1), Role.TRADER))
     ex = h._executor(run)
-    res = ex.call("execution.submit_order", symbol="AAPL", side="buy", quantity=10)
+    # v0.8: a ticket carries the plan's units, notional, currency, price and plan reference (finding 71).
+    from agentic_trader.agentic.servers import ticket_from_plan
+    ticket = ticket_from_plan(h.tools.plan("AAPL", date(2024, 3, 1), 0.1))
+    res = ex.call("execution.submit_order", **ticket)
     assert not res.ok and "awaiting approval" in res.error
     assert c.get("/approvals", headers={"X-API-Key": "dev-trader-key"}).status_code == 403
     pend = c.get("/approvals", headers={"X-API-Key": "dev-risk-key"}).json()
@@ -88,8 +91,10 @@ def test_api_approval_flow(client):
                   headers={"X-API-Key": "dev-risk-key"}).status_code == 409         # already decided
     assert c.post("/approvals/APPROVAL-nope", json={"approve": False},
                   headers={"X-API-Key": "dev-risk-key"}).status_code == 404
-    assert ex.call("execution.submit_order", symbol="AAPL", side="buy", quantity=10).ok
-    assert h.tools.orders[0]["status"] == "ticketed"
+    assert ex.call("execution.submit_order", **ticket).ok
+    assert h.tools.orders[0]["status"] == "ticketed" and h.tools.orders[0]["notional"] == ticket["notional"]
+    assert pend[0]["arguments"]["notional"] == ticket["notional"]      # the approver saw the size and unit
+    assert pend[0]["arguments"]["quantity_unit"] == "shares"
 
 
 def test_api_cancel(client):
@@ -123,9 +128,13 @@ def test_mcp_stdio_round_trip_and_remote_registry():
     assert r.ok and "rsi14" in r.payload and len(ex.evidence) == 1
     assert ex.evidence.resolve(list(ex.evidence)[0].id)
     # Policy applies to remote tools too: the order needs approval (auto-granted here) and
-    # the approval itself becomes evidence before the remote call runs.
-    order = ex.call("execution.submit_order", symbol="AAPL", side="buy", quantity=1)
-    assert order.ok and order.payload["status"] == "ticketed"
+    # the approval itself becomes evidence before the remote call runs. v0.8: the ticket is
+    # the remote plan's own fields; its plan reference verifies across processes.
+    from agentic_trader.agentic.servers import ticket_from_plan
+    plan = ex.call("execution.plan", symbol="AAPL", as_of="2024-03-01", target_weight=0.1)
+    assert plan.ok and plan.payload["quantity_unit"] == "shares"
+    order = ex.call("execution.submit_order", **ticket_from_plan(plan.payload))
+    assert order.ok and order.payload["status"] == "ticketed" and order.payload["plan_id"] == plan.payload["plan_id"]
     assert any(e.type.value == "APPROVAL" for e in ex.evidence)
     viewer = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.VIEWER)
     assert "lacks propose_trades" in viewer.call("execution.submit_order", symbol="AAPL", side="buy", quantity=1).error

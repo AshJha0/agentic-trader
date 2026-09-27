@@ -34,6 +34,7 @@ from .graph import TradingGraph
 from .instruments import Instrument
 from .llm import llm_usage
 from .prompts import prompt_bundle_hash
+from .provenance import provenance
 
 DEFAULT_ANCHORS: tuple[float | None, ...] = (None, -0.5, 0.0, 0.5)
 
@@ -150,7 +151,8 @@ def calibrate(graph: TradingGraph, symbol: str | Instrument, as_of: date | str, 
                          f"conf {dec.confidence:.2f}")
     samples = pd.DataFrame(rows)
     cfg = graph.config
-    meta: dict[str, Any] = {"n": n, "anchors": list(anchors), "llm_provider": cfg["llm_provider"]}
+    meta: dict[str, Any] = {"n": n, "anchors": list(anchors), "llm_provider": cfg["llm_provider"],
+                            "provenance": provenance()}
     if graph.llm is not None:
         meta.update(models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
                     effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},

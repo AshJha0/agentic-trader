@@ -13,14 +13,25 @@ The harness owns the control plane; agents never control the loop. It:
 * batches consecutive independent tool steps in parallel;
 * pauses in AWAITING_APPROVAL when a tool needs a human, and resumes from the
   same step once the approval queue has an answer;
+* drives each run from exactly one thread at a time: ``resume`` holds the run's
+  driving lock and a second caller returns at once, so two approval decisions
+  can never execute the same step twice;
 * honours cancellation between steps;
-* always runs the governance steps: critic, evidence validation, audited report.
+* always runs the governance steps: critic, evidence validation, audited report;
+* keeps a bounded number of finished runs in memory (``agentic.max_retained_runs``);
+  the persistent store holds the rest, and the metrics are one process-level set;
+* with a store, records which instance owns each live run and heartbeats it, so
+  the interrupted-run sweep only fails runs whose lease has expired.
 """
 from __future__ import annotations
 
 import logging
+import os
+import socket
 import threading
 import time
+import uuid
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,17 +45,18 @@ from .critic import Critic, CriticReport
 from .domain import (EvidenceType, Finding, Plan, PlanStep, PolicyOutcome, StepType, Task, TaskState,
                      TERMINAL_STATES, TRANSITIONS, ToolRequest, new_id, utc_now)
 from .evidence import EvidenceStore
-from .planner import ANALYST_PREFIX, make_plan, plan_to_dict
+from .planner import ANALYST_PREFIX, make_plan, max_plan_lookback_bars, plan_cost_bars, plan_to_dict
 from .policy import (ApprovalGateway, AutoApprovalGateway, DenyApprovalGateway, PolicyEngine,
                      QueuedApprovalGateway)
 from .rag import KnowledgeBase
 from .reporter import Report, build_report
 from .servers import DeskTools, RecordingProvider, build_registry
-from .store import TaskStore
+from .store import TaskStore, record_of
 from .tools import ExecutorConfig, ToolExecutor, ToolRegistry
-from .tracing import Tracer
+from .tracing import Metrics, Tracer
 
 log = logging.getLogger(__name__)
+_TERMINAL_VALUES = frozenset(s.value for s in TERMINAL_STATES)
 
 
 class IllegalTransition(RuntimeError):
@@ -73,6 +85,7 @@ class TaskRun:
     correlation_id: str = field(default_factory=lambda: new_id("CID"))
     _executor: ToolExecutor | None = field(default=None, repr=False)
     _provider: RecordingProvider | None = field(default=None, repr=False)
+    _driving: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def id(self) -> str:
@@ -81,6 +94,11 @@ class TaskRun:
     @property
     def done(self) -> bool:
         return self.state in TERMINAL_STATES
+
+    @property
+    def driving(self) -> bool:
+        """True while a thread is inside ``AgentHarness.resume`` for this run."""
+        return self._driving.locked()
 
     @property
     def decision(self):
@@ -111,6 +129,10 @@ def _gateway(kind: str) -> ApprovalGateway:
         raise ValueError(f"unknown approval gateway {kind!r} (auto, queued or deny)") from None
 
 
+def default_instance_id() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:6]}"
+
+
 class AgentHarness:
     def __init__(self, graph: TradingGraph, policy: PolicyEngine | None = None,
                  gateway: ApprovalGateway | None = None, knowledge: KnowledgeBase | None = None,
@@ -123,41 +145,65 @@ class AgentHarness:
         self.registry: ToolRegistry = build_registry(self.tools)
         self.policy = policy or PolicyEngine({
             "symbol_universe": acfg.get("symbol_universe"), "deny_tools": acfg.get("deny_tools", ()),
-            "max_position": self.config["risk"]["max_position"]})
+            "max_position": self.config["risk"]["max_position"],
+            "max_order_notional": self.tools.order_cap,
+            "max_symbols_per_call": acfg.get("max_symbols_per_call", 60)})
         self.gateway = gateway or _gateway(acfg.get("approval", "auto"))
         self.critic = Critic(self.config, graph.llm)
+        self.metrics = Metrics()          # one exposition for the process; every run's tracer feeds it
         self.runs: dict[str, TaskRun] = {}
+        self.max_retained = max(1, int(acfg.get("max_retained_runs", 256)))
         self._lock = threading.Lock()
-        # Persistence: records of every run this process makes, plus an archive of
-        # the records a previous process left behind (read-only, not resumable).
+        self.owner: str = str(acfg.get("instance_id") or default_instance_id())
+        self.lease_s = float(acfg.get("lease_s", 90.0))
+        # Persistence: records of every run this process makes, plus a bounded cache of
+        # terminal records (a previous process's, or a sibling's once finished). A record
+        # that is not terminal is never served from the cache: it is re-read from the store.
         if store is None and acfg.get("task_db"):
             store = TaskStore(acfg["task_db"])
         self.store = store
-        self.archive: dict[str, dict[str, Any]] = {}
+        self.archive: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
         if store is not None:
-            # The sweep belongs to whoever owns the store for this service: one process, or
-            # the parent of `serve --processes N` (a worker starting must not fail its
-            # siblings' live runs).
             sweep = acfg.get("sweep_interrupted", True) if sweep_interrupted is None else sweep_interrupted
             if sweep:
-                interrupted = store.mark_interrupted()
+                # Only records this instance id wrote before (a restart) or whose lease has
+                # expired: a sibling that is alive keeps heartbeating its runs.
+                interrupted = store.mark_interrupted(owner=self.owner, lease_s=self.lease_s)
                 if interrupted:
                     log.warning("%d task(s) were in flight when the previous process stopped; marked FAILED",
                                 interrupted)
-            self.archive = {r["task_id"]: r for r in store.load_all()}
+            for rec in store.load_all():
+                if rec.get("state") in _TERMINAL_VALUES:
+                    self._archive_put(rec["task_id"], rec)
+            self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="harness-heartbeat",
+                                                      daemon=True)
+            self._heartbeat_thread.start()
+
+    # -------------------------------------------------------------- records
+    def _archive_put(self, task_id: str, rec: dict[str, Any]) -> None:
+        with self._lock:
+            self.archive[task_id] = rec
+            self.archive.move_to_end(task_id)
+            while len(self.archive) > self.max_retained:
+                self.archive.popitem(last=False)
 
     def record(self, task_id: str) -> dict[str, Any] | None:
-        """The JSON record of a live run, an archived one, or one another process wrote to
-        the shared store since this process started (``None`` if unknown)."""
+        """The JSON record of a live run, a cached terminal one, or the store's current
+        copy of a run another process drives (``None`` if unknown)."""
         run = self.runs.get(task_id)
         if run is not None:
-            from .store import record_of
             return record_of(run)
         rec = self.archive.get(task_id)
-        if rec is None and self.store is not None:
-            rec = self.store.load(task_id)
-            if rec is not None:
-                self.archive[task_id] = rec
+        if rec is not None and rec.get("state") in _TERMINAL_VALUES:
+            return rec
+        if self.store is not None:
+            fresh = self.store.load(task_id)
+            if fresh is not None:
+                rec = fresh
+                if rec.get("state") in _TERMINAL_VALUES:
+                    self._archive_put(task_id, rec)
         return rec
 
     def archived_summaries(self) -> list[dict[str, Any]]:
@@ -165,18 +211,39 @@ class AgentHarness:
         if self.store is not None:
             return self.store.summaries()
         return [{"task_id": r["task_id"], "symbol": r["symbol"], "as_of": r["as_of"], "role": r["role"],
-                 "state": r["state"]} for r in self.archive.values()]
+                 "state": r["state"]} for r in list(self.archive.values())]
 
     def _persist(self, run: TaskRun) -> None:
         if self.store is not None:
             try:
-                self.store.save(run)
+                self.store.save(run, self.owner)
             except Exception as e:  # persistence must never take a decision down with it
                 log.exception("could not persist task %s: %s", run.id, e)
 
+    def _heartbeat_loop(self) -> None:
+        interval = max(self.lease_s / 3.0, 0.02)
+        while not self._stop.wait(interval):
+            try:
+                self.store.heartbeat(self.owner)
+                # Periodic sweep of records whose owner stopped heartbeating (a crashed
+                # sibling, or a predecessor that died within the lease before we started).
+                swept = self.store.mark_interrupted(lease_s=self.lease_s)
+                if swept:
+                    log.warning("%d task(s) lost their owner's heartbeat; marked FAILED", swept)
+            except Exception as e:  # noqa: BLE001 - a closed store ends the loop, anything else is logged
+                if getattr(self.store, "closed", False):
+                    return
+                log.debug("heartbeat failed: %s", e)
+
+    def close(self) -> None:
+        """Stop the heartbeat thread (the store stays open for the caller to close)."""
+        self._stop.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=2.0)
+
     # ----------------------------------------------------------- control
     def submit(self, task: Task) -> TaskRun:
-        run = TaskRun(task)
+        run = TaskRun(task, tracer=Tracer(self.metrics))
         with self._lock:
             self.runs[task.id] = run
         self._persist(run)
@@ -185,23 +252,58 @@ class AgentHarness:
     def cancel(self, task_id: str) -> TaskRun:
         run = self.runs[task_id]
         run.cancel_requested = True
-        if run.state is TaskState.AWAITING_APPROVAL:
-            self._transition(run, TaskState.CANCELLED, "cancelled while awaiting approval")
-            run.finished_at = utc_now()
+        # A parked run is cancelled here; a run another thread drives sees the flag at its
+        # next step (its driver, not this thread, owns the state).
+        if run._driving.acquire(blocking=False):
+            try:
+                if run.state is TaskState.AWAITING_APPROVAL:
+                    self._transition(run, TaskState.CANCELLED, "cancelled while awaiting approval")
+                    self._finish(run)
+            finally:
+                run._driving.release()
         return run
 
     def run(self, task: Task) -> TaskRun:
         return self.resume(self.submit(task))
 
     def resume(self, run: TaskRun) -> TaskRun:
-        """Drive a run to a terminal state or to AWAITING_APPROVAL."""
-        if run.done:
+        """Drive a run to a terminal state or to AWAITING_APPROVAL.
+
+        Exactly one thread drives a run at a time; a concurrent call returns the run
+        untouched. A decision that lands while the run is being driven is picked up by the
+        driver, so no approval is lost and no step runs twice.
+        """
+        if not run._driving.acquire(blocking=False):
+            log.info("task %s is already being driven; resume ignored", run.id)
             return run
+        try:
+            while True:
+                self._drive(run)
+                with self._lock:
+                    if run.state is TaskState.AWAITING_APPROVAL and self._all_decided(run):
+                        continue
+                    break
+        finally:
+            run._driving.release()
+        return run
+
+    def _all_decided(self, run: TaskRun) -> bool:
+        return isinstance(self.gateway, QueuedApprovalGateway) and not self.gateway.pending(run.id)
+
+    def continuation_due(self, run: TaskRun) -> bool:
+        """True when a decision has just been recorded for a parked run nobody is driving
+        (the API then schedules ``resume`` on its pool)."""
+        with self._lock:
+            return run.state is TaskState.AWAITING_APPROVAL and not run.driving
+
+    def _drive(self, run: TaskRun) -> None:
+        if run.done:
+            return
         if run.cancel_requested and run.state is TaskState.CREATED:   # cancelled while queued: do no work
             self._transition(run, TaskState.CANCELLED, "cancelled before start")
-            run.finished_at = utc_now()
+            self._finish(run)
             self._persist(run)
-            return run
+            return
         try:
             if run.state is TaskState.CREATED:
                 self._plan(run)
@@ -215,8 +317,6 @@ class AgentHarness:
                 self._validate(run)
             if run.state is TaskState.FINALISING:
                 self._finalise(run)
-        except IllegalTransition:
-            raise
         except Exception as e:  # any bug ends in FAILED with the reason, never a half-run
             if isinstance(e, (ValueError, KeyError)):   # expected refusals: bad input, policy denial
                 log.warning("task %s failed: %s", run.id, e)
@@ -226,9 +326,24 @@ class AgentHarness:
             if not run.done:
                 self._transition(run, TaskState.FAILED, str(e)[:200])
         if run.done:
-            run.finished_at = utc_now()
+            self._finish(run)
         self._persist(run)
-        return run
+
+    def _finish(self, run: TaskRun) -> None:
+        """Bookkeeping for a run that just reached a terminal state: stamp it, drop its
+        executor, and evict the oldest finished runs beyond the retention cap."""
+        run.finished_at = utc_now()
+        run._executor = None
+        run._provider = None
+        with self._lock:
+            done = [r for r in self.runs.values() if r.done and r is not run]
+            excess = len(done) + 1 - self.max_retained
+            evicted = done[:excess] if excess > 0 else []
+            for r in evicted:
+                self.runs.pop(r.id, None)
+        for r in evicted:
+            if self.store is None:
+                self._archive_put(r.id, record_of(r))
 
     def _transition(self, run: TaskRun, new: TaskState, note: str = "") -> None:
         if new not in TRANSITIONS[run.state]:
@@ -247,13 +362,17 @@ class AgentHarness:
         with run.tracer.span("plan"):
             run.plan = make_plan(run.task, ins, analysts, self.config, self.registry, self.graph.llm)
         self._transition(run, TaskState.VALIDATING_PLAN, run.plan.source)
-        # Pre-check every tool step against policy so an impossible plan fails before it runs.
+        # Pre-check every tool step against policy, and the plan's data budget as a whole,
+        # so an impossible plan fails before it runs.
         for s in run.plan.steps:
             if s.type is StepType.TOOL:
                 d = self.policy.evaluate(ToolRequest(s.name, s.arguments, run.correlation_id, "planner"),
                                          self.registry.get(s.name).descriptor, run.task.role)
                 if d.outcome is PolicyOutcome.DENY:
                     raise ValueError(f"plan step {s.name} denied by policy ({d.rule}): {d.reason}")
+        cost, cap = plan_cost_bars(run.plan.steps, self.config), max_plan_lookback_bars(self.config)
+        if cost > cap:
+            raise ValueError(f"plan would load {cost} bars of history, over max_plan_lookback_bars={cap}")
         self._transition(run, TaskState.EXECUTING)
 
     def _executor(self, run: TaskRun) -> ToolExecutor:
@@ -418,8 +537,11 @@ class AgentHarness:
 
     def decide_approval(self, approval_id: str, approve: bool, decided_by: str = "human",
                         note: str = "", resume: bool = True) -> TaskRun:
-        """Record a decision and, by default, resume the run on the calling thread; the API
-        passes ``resume=False`` and hands the continuation to its task pool instead."""
+        """Record a decision and, by default, resume the run on the calling thread when it
+        is parked and nobody else drives it; the API passes ``resume=False`` and hands the
+        continuation to its task pool instead (see ``continuation_due``). A decision for a
+        run that is being driven, or that is not waiting, is only recorded: the driver
+        asks the gateway at the step."""
         if not isinstance(self.gateway, QueuedApprovalGateway):
             raise ValueError("approvals are not queued in this harness")
         a = self.gateway.resolve(approval_id, approve, decided_by, note)
@@ -427,7 +549,9 @@ class AgentHarness:
         run.evidence.record(EvidenceType.APPROVAL, decided_by,
                             f"{'approved' if approve else 'rejected'} {a.request.tool}",
                             {"approval": a.id, "note": note}, run.correlation_id)
-        return self.resume(run) if resume else run
+        if resume and self.continuation_due(run):
+            return self.resume(run)
+        return run
 
 
 def wait_until_done(run: TaskRun, timeout_s: float = 60.0) -> TaskRun:

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 
 from .common import _config, load_dotenv  # noqa: F401  (re-exported for backward compatibility)
@@ -32,12 +33,21 @@ from .parser import build_parser
 
 log = logging.getLogger("agentic_trader.cli")
 
+NO_DOTENV_ENV = "AGENTIC_TRADER_NO_DOTENV"
 
-def main(argv: list[str] | None = None) -> int:
+
+def main(argv: list[str] | None = None, *, dotenv: bool | None = None) -> int:
+    """Run one command. ``argv=None`` reads the real command line and, unless
+    ``AGENTIC_TRADER_NO_DOTENV`` is set, the local ``.env``; a caller that passes ``argv``
+    (tests, embedding code) gets no file read into its process environment unless it
+    asks with ``dotenv=True``."""
     for stream in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
-    load_dotenv()
+    if dotenv is None:
+        dotenv = argv is None
+    if dotenv and not os.environ.get(NO_DOTENV_ENV):
+        load_dotenv()
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if getattr(args, "verbose", False) else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")

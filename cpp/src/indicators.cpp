@@ -14,26 +14,36 @@ void check_window(int n) {
     if (n <= 0) throw std::invalid_argument("window must be positive");
 }
 
-std::size_t first_valid(const Series& x) {
-    for (std::size_t i = 0; i < x.size(); ++i)
-        if (!std::isnan(x[i])) return i;
-    return x.size();
+// Mean of x[i-n+1..i], summed in index order (the numpy twin sums the same way).
+double window_mean(const Series& x, std::size_t i, int n) {
+    double acc = 0.0;
+    for (std::size_t j = i + 1 - n; j <= i; ++j) acc += x[j];
+    return acc / n;
 }
 
-// Wilder smoothing seeded with the mean of the first n values starting at `start`.
-Series wilder(const Series& x, int n, std::size_t start) {
+// Exponential-type recursion (Wilder or EMA) with the NaN rule shared by every
+// indicator: a NaN input resets the state, the output is NaN until n consecutive
+// valid inputs have re-seeded it with their mean, and the recursion then resumes.
+// So a NaN at index k yields NaN exactly for k..k+n-1 and the series recovers.
+Series recursive_mean(const Series& x, int n, std::size_t start, double alpha) {
     Series out(x.size(), NaN);
-    const std::size_t seed = start + static_cast<std::size_t>(n) - 1;
-    if (seed >= x.size()) return out;
-    double acc = 0.0;
-    for (std::size_t i = start; i <= seed; ++i) acc += x[i];
-    double prev = acc / n;
-    out[seed] = prev;
-    for (std::size_t i = seed + 1; i < x.size(); ++i) {
-        prev = (prev * (n - 1) + x[i]) / n;
+    double prev = NaN;
+    int run = 0;
+    for (std::size_t i = start; i < x.size(); ++i) {
+        if (std::isnan(x[i])) {
+            run = 0;
+            continue;
+        }
+        if (++run < n) continue;
+        prev = run == n ? window_mean(x, i, n) : alpha * x[i] + (1.0 - alpha) * prev;
         out[i] = prev;
     }
     return out;
+}
+
+// Wilder smoothing: seeded with the mean of n values, then prev * (n-1)/n + x/n.
+Series wilder(const Series& x, int n, std::size_t start) {
+    return recursive_mean(x, n, start, 1.0 / n);
 }
 
 }  // namespace
@@ -62,20 +72,7 @@ Series sma(const Series& x, int n) {
 
 Series ema(const Series& x, int n) {
     check_window(n);
-    Series out(x.size(), NaN);
-    const std::size_t start = first_valid(x);
-    const std::size_t seed = start + static_cast<std::size_t>(n) - 1;
-    if (seed >= x.size()) return out;
-    double acc = 0.0;
-    for (std::size_t i = start; i <= seed; ++i) acc += x[i];
-    double prev = acc / n;
-    out[seed] = prev;
-    const double alpha = 2.0 / (n + 1.0);
-    for (std::size_t i = seed + 1; i < x.size(); ++i) {
-        prev = alpha * x[i] + (1.0 - alpha) * prev;
-        out[i] = prev;
-    }
-    return out;
+    return recursive_mean(x, n, 0, 2.0 / (n + 1.0));
 }
 
 Series rolling_std(const Series& x, int n) {
@@ -113,14 +110,16 @@ Series rsi(const Series& close, int n) {
     if (close.size() <= static_cast<std::size_t>(n)) return out;
     Series gains(close.size(), 0.0), losses(close.size(), 0.0);
     for (std::size_t i = 1; i < close.size(); ++i) {
-        const double d = close[i] - close[i - 1];
-        gains[i] = d > 0 ? d : 0.0;
-        losses[i] = d < 0 ? -d : 0.0;
+        const double d = close[i] - close[i - 1];  // NaN when either close is missing
+        gains[i] = std::isnan(d) ? NaN : (d > 0 ? d : 0.0);
+        losses[i] = std::isnan(d) ? NaN : (d < 0 ? -d : 0.0);
     }
     const Series ag = wilder(gains, n, 1);
     const Series al = wilder(losses, n, 1);
     for (std::size_t i = n; i < close.size(); ++i) {
-        if (al[i] == 0.0)
+        if (std::isnan(ag[i]) || std::isnan(al[i]))
+            continue;
+        else if (al[i] == 0.0)
             out[i] = ag[i] == 0.0 ? 50.0 : 100.0;
         else
             out[i] = 100.0 - 100.0 / (1.0 + ag[i] / al[i]);
@@ -298,12 +297,14 @@ Series almgren_chriss(double total, int n, double kappa) {
         for (int k = 0; k < n; ++k) out[k] = total / n;
         return out;
     }
-    // Remaining inventory x(t) = X sinh(kappa (T - t)) / sinh(kappa T) with T = 1.
-    const double denom = std::sinh(kappa);
+    // Remaining inventory x(t) = X sinh(kappa (1 - t)) / sinh(kappa), written as
+    // X exp(-kappa t) expm1(-2 kappa (1 - t)) / expm1(-2 kappa) so that neither sinh
+    // overflows for large kappa (sinh(710) is inf) nor the small-kappa ratio cancels.
+    const double denom = std::expm1(-2.0 * kappa);
     double prev = total;
     for (int k = 1; k <= n; ++k) {
         const double t = static_cast<double>(k) / n;
-        const double remaining = total * std::sinh(kappa * (1.0 - t)) / denom;
+        const double remaining = total * std::exp(-kappa * t) * std::expm1(-2.0 * kappa * (1.0 - t)) / denom;
         out[k - 1] = prev - remaining;
         prev = remaining;
     }

@@ -152,6 +152,23 @@ def test_scalar_functions_backends_agree(x, y, q):
         assert (np.isnan(out) and np.isnan(ref)) or out == pytest.approx(ref, rel=1e-9, abs=1e-9)
 
 
+def _positions_respect_cap_and_drift(r, prices, cfg):
+    """v0.8 (constant units between decisions): the leverage cap and the short-sale flag bind on
+    every bar where a trade was executed; on a hold bar the weight is the previous weight
+    drifted by the bar's price move and total return, and it never changes sign."""
+    p = np.asarray(prices, float)
+    traded = r.traded != 0
+    assert np.all(np.abs(r.positions[traded]) <= cfg.max_leverage + 1e-12)
+    if not cfg.allow_short:
+        assert np.all(r.positions >= 0)
+    for t in range(2, len(p)):
+        # two consecutive hold bars: returns[t] is then the gross return (no fee in it)
+        if traded[t] or traded[t - 1] or r.exits[t] or r.positions[t - 1] == 0.0 or r.equity[t] <= 0:
+            continue
+        drift = r.positions[t - 1] * (p[t] / p[t - 1]) / (1.0 + r.returns[t])  # the engine's own ops
+        assert r.positions[t] == pytest.approx(drift, rel=1e-9, abs=1e-12)
+
+
 @given(n=st.integers(0, 80), data=st.data())
 @FUZZ
 def test_backtester_never_crashes_and_stays_bounded(n, data):
@@ -164,9 +181,8 @@ def test_backtester_never_crashes_and_stays_bounded(n, data):
                                borrow_annual=data.draw(st.floats(0, 0.2)))
     r = quant.run_backtest(prices, weights, cfg, impact=impact)
     assert len(r.equity) == len(r.returns) == len(r.positions) == n
-    assert np.all(np.isfinite(r.equity)) and np.all(np.abs(r.positions) <= cfg.max_leverage + 1e-12)
-    if not cfg.allow_short:
-        assert np.all(r.positions >= 0)
+    assert np.all(np.isfinite(r.equity)) and np.all(r.equity >= 0)
+    _positions_respect_cap_and_drift(r, prices, cfg)
     assert r.impact_paid >= 0
     if quant.BACKEND == "cpp":
         ref = pycore.run_backtest_ex(prices, weights, cfg, impact=impact)
@@ -186,3 +202,149 @@ def test_backtester_rejects_bad_prices_and_lengths(n, data):
         quant.run_backtest(np.ones(n), np.ones(n + 1))
     with pytest.raises(ValueError):
         quant.run_backtest(np.ones(n), np.ones(n), carry=np.ones(n + 1))
+
+
+# ------------------------------------------------------------------------------------
+# Every optional per-bar input of run_backtest (finding 57). The contract in
+# quant/__init__.py: same length as prices; stop/take need open/high/low; NaN means
+# "none" for stop, take, impact and carry. Bar ranges must be usable prices (positive,
+# finite) and rates/coefficients/levels must be finite or NaN -- anything else must be a
+# ValueError, never inf/NaN equity or a NaN Sharpe.
+OPTIONAL = ("carry", "open", "high", "low", "stop", "take", "rebalance", "impact")
+ratio = st.floats(0.5, 2.0, allow_nan=False, allow_infinity=False)
+
+
+def _optional_inputs(n, prices, data):
+    """A full set of well-formed optional inputs, drawn around ``prices``."""
+    r = lambda: data.draw(hnp.arrays(np.float64, n, elements=ratio))                        # noqa: E731
+    mask = lambda: data.draw(hnp.arrays(np.bool_, n))                                       # noqa: E731
+    open_ = prices * r()
+    high = np.maximum.reduce([open_, prices, prices * r()])
+    low = np.minimum.reduce([open_, prices, prices * r()])
+    stop = np.where(mask(), prices * r(), np.nan)
+    take = np.where(mask(), prices * r(), np.nan)
+    rebalance = mask().astype(float)
+    carry = np.where(mask(), data.draw(hnp.arrays(np.float64, n, elements=st.floats(-1.0, 1.0))), np.nan)
+    impact = np.where(mask(), data.draw(hnp.arrays(np.float64, n, elements=st.floats(0, 0.05))), np.nan)
+    return dict(carry=carry, open=open_, high=high, low=low, stop=stop, take=take,
+                rebalance=rebalance, impact=impact)
+
+
+def _metrics_finite(m) -> bool:
+    # annualized_return (and so calmar) is +inf, not NaN, when a one-bar gain is too large to
+    # annualise in float64 (e.g. 1 -> 17 over one of 252 periods is 17**252); documented in pycore.
+    return all(np.isfinite(getattr(m, f)) for f in ("cumulative_return", "annualized_vol",
+                                                   "sharpe", "sortino", "max_drawdown", "win_rate",
+                                                   "turnover", "avg_exposure", "sharpe_tstat")) \
+        and not any(np.isnan(getattr(m, f)) for f in ("annualized_return", "calmar"))
+
+
+@given(n=st.integers(0, 80), data=st.data())
+@FUZZ
+def test_backtester_with_every_optional_input_is_finite_and_backends_agree(n, data):
+    prices = data.draw(hnp.arrays(np.float64, n, elements=finite_pos))
+    weights = data.draw(hnp.arrays(np.float64, n, elements=floats))
+    extras = _optional_inputs(n, prices, data)
+    # each optional input may also be left out; stop/take only together with the bar ranges
+    for name in OPTIONAL:
+        if data.draw(st.booleans(), label=f"drop {name}"):
+            extras[name] = None
+    if extras["stop"] is not None or extras["take"] is not None:
+        for k in ("open", "high", "low"):
+            if extras[k] is None:
+                extras[k] = prices.copy()
+    cfg = quant.BacktestConfig(cost_bps=data.draw(st.floats(0, 50)), slippage_bps=data.draw(st.floats(0, 50)),
+                               max_leverage=data.draw(st.floats(0.1, 3.0)), allow_short=data.draw(st.booleans()),
+                               borrow_annual=data.draw(st.floats(0, 0.2)), carry_annual=data.draw(st.floats(-0.2, 0.2)))
+    r = quant.run_backtest(prices, weights, cfg, **extras)
+    assert len(r.equity) == len(r.returns) == len(r.positions) == n
+    assert np.all(np.isfinite(r.equity)) and np.all(np.isfinite(r.returns))
+    assert _metrics_finite(r.metrics)
+    _positions_respect_cap_and_drift(r, prices, cfg)
+    assert r.impact_paid >= 0 and np.isfinite(r.impact_paid)
+    levels = np.zeros(n, bool)                          # bars on which some protective level was armed
+    for k in ("stop", "take"):
+        if extras[k] is not None:
+            levels |= ~np.isnan(extras[k])
+    assert 0 <= r.stop_exits <= int(levels.sum())
+    if quant.BACKEND == "cpp":
+        ref = pycore.run_backtest_ex(prices, weights, cfg, **extras)
+        _same(r.equity, ref.equity, _scale(r.equity))
+        _same(r.returns, ref.returns, _scale(r.returns))
+        _same(r.positions, ref.positions)
+        assert r.stop_exits == ref.stop_exits
+        assert r.impact_paid == pytest.approx(ref.impact_paid, rel=1e-9, abs=1e-15)
+        for f in ("sharpe", "max_drawdown", "cumulative_return", "turnover"):
+            assert getattr(r.metrics, f) == pytest.approx(getattr(ref.metrics, f), rel=1e-9, abs=1e-9)
+
+
+def _ohlc(n):
+    p = np.full(n, 100.0)
+    return p, dict(open=p.copy(), high=p * 1.01, low=p * 0.99)
+
+
+@pytest.mark.parametrize("name", OPTIONAL)
+def test_backtester_rejects_length_mismatch_of_every_optional_input(name):
+    p, ohlc = _ohlc(5)
+    kw = dict(ohlc) if name in ("stop", "take") else {}
+    kw[name] = np.ones(6)
+    with pytest.raises(ValueError):
+        quant.run_backtest(p, np.ones(5), **kw)
+    with pytest.raises(ValueError):
+        pycore.run_backtest_ex(p, np.ones(5), quant.BacktestConfig(), **kw)
+    with pytest.raises(ValueError):                    # levels without bar ranges
+        quant.run_backtest(p, np.ones(5), stop=np.full(5, 95.0))
+
+
+_INF, _NINF, _NAN = float("inf"), float("-inf"), float("nan")
+BAD_VALUES = [pytest.param(name, bad, id=f"{name}={bad}")
+              for name, bads in (("open", (_NAN, _INF, _NINF, 0.0, -1.0)), ("high", (_NAN, _INF, _NINF, 0.0, -1.0)),
+                                 ("low", (_NAN, _INF, _NINF, 0.0, -1.0)), ("stop", (_INF, _NINF)),
+                                 ("take", (_INF, _NINF)), ("carry", (_INF, _NINF)), ("impact", (_INF, _NINF, -1.0)),
+                                 ("rebalance", (_NAN, _INF)), ("cash_rate", (_INF, _NINF)))
+              for bad in bads]
+
+
+@pytest.mark.parametrize("name,bad", BAD_VALUES)
+def test_backtester_rejects_non_finite_or_non_positive_optional_input(name, bad):
+    """Before v0.8: open=-inf, carry=+-inf and impact=+-inf gave inf/NaN equity on both backends
+    (C++ and numpy even disagreed on the drawdown for carry=+inf); the others were silently
+    accepted. pycore.validate_backtest_inputs now rejects all of them on both backends."""
+    n = 6
+    p, ohlc = _ohlc(n)
+    w = np.full(n, 0.5)
+    kw = dict(ohlc)
+    if name in ("open", "high", "low"):
+        kw[name][2] = bad
+        kw["stop"] = np.full(n, 90.0)
+    elif name in ("stop", "take"):
+        kw[name] = np.full(n, np.nan)
+        kw[name][2] = bad
+    else:
+        kw = {name: np.where(np.arange(n) == 2, bad, 0.0)}
+    with pytest.raises(ValueError):
+        quant.run_backtest(p, w, quant.BacktestConfig(), **kw)
+    with pytest.raises(ValueError):
+        pycore.run_backtest_ex(p, w, quant.BacktestConfig(), **kw)
+
+
+def test_backtester_rejects_multidimensional_optional_input():
+    """A 2-D array is not a per-bar series and must be a ValueError on both backends. Before
+    v0.8 the C++ path raised pybind11's TypeError (a non-ValueError crossing the boundary,
+    against this module's first property) and the numpy path accepted a (T, 1) column for
+    open/high/low silently; the shared validator now rejects every case, checked as one set."""
+    p, ohlc = _ohlc(4)
+    violations = []
+    for name in OPTIONAL:
+        for shape in ((4, 1), (2, 2)):
+            kw = dict(ohlc) if name in ("stop", "take") else {}
+            kw[name] = np.ones(shape)
+            for label, fn in (("active", quant.run_backtest), ("numpy", pycore.run_backtest_ex)):
+                try:
+                    fn(p, np.ones(4), quant.BacktestConfig(), **kw)
+                    violations.append(f"{label} {name}{shape}: accepted")
+                except ValueError:
+                    pass
+                except Exception as e:                                  # noqa: BLE001
+                    violations.append(f"{label} {name}{shape}: {type(e).__name__}")
+    assert not violations, violations

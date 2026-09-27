@@ -118,7 +118,7 @@ class Critic:
             allow_short = risk_cfg["allow_short_fx"] if state.instrument.is_fx else risk_cfg["allow_short_equity"]
             if d.target_weight < 0 and not allow_short:
                 problems.append("short position under a long-only policy")
-            var = (risk_facts or {}).get("var_95_1d")
+            var = (risk_facts or {}).get("var_95_1d_short" if d.target_weight < 0 else "var_95_1d")
             if var and risk_cfg["max_var_95"] > 0 and var * abs(d.target_weight) > risk_cfg["max_var_95"] + 1e-9:
                 problems.append(f"VaR {var * abs(d.target_weight):.2%} > cap {risk_cfg['max_var_95']:.2%}")
             rep.checks.append(Check("firm_limits", not problems,
@@ -158,16 +158,25 @@ class Critic:
                 f.confidence = 0.6
                 rep.checks.append(Check("single_evidence_cap", True, f"{f.agent}: capped at 0.6"))
 
-        # optional model critique: only ever lowers
+        # optional model critique: only ever lowers, and a malformed or failed critique
+        # is a recorded finding, never a failed run (the deterministic checks stand).
         if self.llm is not None and d is not None:
-            concerns, m = self._llm_critique(state, findings)
+            try:
+                concerns, m, problems = self._llm_critique(state, findings)
+            except Exception as e:  # noqa: BLE001 - the model critique is optional
+                concerns, m, problems = [], None, [f"{type(e).__name__}: {str(e)[:160]}"]
             rep.llm_concerns, rep.llm_multiplier = concerns, m
+            if problems:
+                rep.checks.append(Check("llm_critique_wellformed", False,
+                                        "model critique ignored: " + "; ".join(problems)))
             if m is not None:
                 mult = min(mult, m)
         rep.multiplier = mult
         return rep
 
-    def _llm_critique(self, state: TradingState, findings: list[Finding]) -> tuple[list[str], float | None]:
+    def _llm_critique(self, state: TradingState, findings: list[Finding]) -> tuple[list[str], float | None, list[str]]:
+        """(concerns, multiplier, problems): what the model said, and what in its reply
+        could not be used (missing or malformed fields are tolerated, not fatal)."""
         prompt = (
             f"Review this trading decision for {state.instrument.display} as of {state.as_of.isoformat()}.\n\n"
             f"Analyst reports:\n{state.reports_digest()}\n\nFindings:\n"
@@ -181,8 +190,23 @@ class Critic:
             "You are the independent critic of a trading desk. Find weaknesses, contradictions and "
             "unsupported claims. Be specific and brief.", prompt, deep=True)
         data = extract_json(text)
-        if not data:
-            return [], None
-        concerns = [str(c)[:200] for c in data.get("concerns", []) if isinstance(data.get("concerns"), list)][:8]
-        m = clip(data.get("confidence_multiplier"), 0.0, 1.0, 1.0)
-        return concerns, min(m, 1.0)
+        if not isinstance(data, dict) or not data:
+            return [], None, ["reply is not a JSON object"]
+        problems: list[str] = []
+        raw = data.get("concerns")
+        if isinstance(raw, list):
+            concerns = [str(c)[:200] for c in raw][:8]
+        else:
+            concerns = []
+            problems.append("concerns missing" if "concerns" not in data
+                            else f"concerns is {type(raw).__name__}, not a list")
+        raw_m = data.get("confidence_multiplier")
+        if raw_m is None or isinstance(raw_m, bool):
+            problems.append("confidence_multiplier missing")
+            m = None
+        else:
+            m = clip(raw_m, 0.0, 1.0, float("nan"))
+            if m != m:   # not a number: nothing to apply
+                problems.append(f"confidence_multiplier {raw_m!r} is not a number")
+                m = None
+        return concerns, m, problems

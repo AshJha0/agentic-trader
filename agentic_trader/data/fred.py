@@ -1,4 +1,4 @@
-"""Point-in-time policy rates and inflation from FRED / ALFRED (no API key needed).
+"""Point-in-time policy rates, T-bill yields and inflation from FRED / ALFRED (no API key).
 
 Three rules keep FRED data honest in a backtest:
 
@@ -18,18 +18,34 @@ Three rules keep FRED data honest in a backtest:
   publication: the effective lag can be up to a month longer than the exact
   one, which is the conservative side. Policy rates are never revised and
   always come from the single latest download.
+
+The optional on-disk cache (``cache_dir``) holds one CSV per downloaded series. A
+latest-vintage file older than ``cache_max_age_days`` (default one day: every series
+here updates daily or monthly) is re-downloaded, so a directory populated by an old
+evaluation cannot serve a live decision stale rates; ALFRED vintage files are immutable
+snapshots and never expire. A download is parsed and validated before it is written, so
+a non-CSV body served with HTTP 200 (a proxy interstitial) is never persisted.
 """
 from __future__ import annotations
 
+import io
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
+from urllib.request import Request, urlopen
 
 import pandas as pd
 
+from ..provenance import package_version
+
 log = logging.getLogger(__name__)
+
+# FRED's edge stalls or closes connections for bare product tokens ("agentic-trader",
+# "agentic-trader (pandas)": 25 s timeouts) and serves a versioned token with a URL at once.
+USER_AGENT = f"agentic-trader/{package_version()} (+https://github.com/AshJha0/agentic-trader)"
 
 _URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
 _VINTAGE_URL = "https://alfred.stlouisfed.org/graph/alfredgraph.csv?id={sid}&vintage_date={vd}"
@@ -55,6 +71,13 @@ RATE_SERIES: dict[str, FredSeries] = {
     "AUD": FredSeries("IRSTCI01AUM156N", 40, 100),
     "CAD": FredSeries("IRSTCI01CAM156N", 40, 100),
     "NZD": FredSeries("IRSTCI01NZM156N", 40, 100),
+    "NOK": FredSeries("IRSTCI01NOM156N", 40, 100),   # SEK's OECD series (IRSTCI01SEM156N) stopped in 2020-10
+}
+
+# Cash-leg (risk-free) rates, percent per annum: the 3-month Treasury bill secondary-market
+# rate, daily, published in the H.15 release the next business day. Never revised.
+CASH_SERIES: dict[str, FredSeries] = {
+    "USD": FredSeries("DTB3", 1, 10),
 }
 
 # Consumer-price inflation, percent year over year. Revised (seasonal factors, base years).
@@ -68,44 +91,71 @@ CPI_SERIES: dict[str, FredSeries] = {
 
 Fetcher = Callable[[str], pd.DataFrame]
 
+DEFAULT_CACHE_MAX_AGE_DAYS = 1.0
 
-def _http_fetch(url: str) -> pd.DataFrame:
-    return pd.read_csv(url, index_col=0, parse_dates=True)
+
+def _http_fetch(url: str, timeout: float = 30.0, attempts: int = 2) -> pd.DataFrame:
+    req = Request(url, headers={"User-Agent": USER_AGENT})
+    for i in range(attempts):
+        try:
+            with urlopen(req, timeout=timeout) as r:  # noqa: S310 - fixed https hosts
+                body = r.read().decode("utf-8", errors="replace")
+            return pd.read_csv(io.StringIO(body), index_col=0, parse_dates=True)
+        except OSError:                       # URLError, timeouts and dropped connections
+            if i + 1 == attempts:
+                raise
+            time.sleep(1.0)
+    raise AssertionError("unreachable")
 
 
 class FredClient:
     """Downloads each series (or vintage) once per process and answers as-of queries."""
 
     def __init__(self, vintages: bool = False, vintage_step_days: int = 31,
-                 cache_dir: str | Path | None = None, fetch: Fetcher | None = None):
+                 cache_dir: str | Path | None = None, fetch: Fetcher | None = None,
+                 cache_max_age_days: float | None = DEFAULT_CACHE_MAX_AGE_DAYS):
         if vintage_step_days < 1:
             raise ValueError("vintage_step_days must be >= 1")
         self.vintages = bool(vintages)
         self.vintage_step_days = int(vintage_step_days)
         self.cache_dir = Path(cache_dir) if cache_dir else None
+        # None keeps latest-vintage files forever (a frozen historical run).
+        self.cache_max_age_days = cache_max_age_days
         self._fetch = fetch or _http_fetch
         self._cache: dict[str, pd.Series | None] = {}
         self._vintage_cache: dict[tuple[str, date], pd.Series | None] = {}
+        self.requests = 0
 
     # ------------------------------------------------------------ loading
     def _prepare(self, raw: pd.DataFrame, spec: FredSeries) -> pd.Series:
+        if raw is None or raw.shape[1] == 0:
+            raise ValueError(f"FRED {spec.series_id}: response is not a series table")
         s = pd.to_numeric(raw.iloc[:, 0], errors="coerce").dropna().sort_index()
         if spec.yoy_from_index:
             s = (s / s.shift(12) - 1.0).dropna() * 100.0
+        if s.empty:
+            raise ValueError(f"FRED {spec.series_id}: no numeric observations")
+        if not isinstance(s.index, pd.DatetimeIndex):
+            s.index = pd.to_datetime(s.index, errors="coerce")
+            s = s[s.index.notna()]
+            if s.empty:
+                raise ValueError(f"FRED {spec.series_id}: index is not dated")
         # Shift the index to the date each value became public.
         s.index = s.index + pd.Timedelta(days=spec.lag_days)
         return s
 
-    def _read_cached(self, key: str) -> pd.DataFrame | None:
+    def _read_cached(self, key: str, max_age_days: float | None) -> pd.DataFrame | None:
         if self.cache_dir is None:
             return None
         f = self.cache_dir / f"{key}.csv"
-        if f.exists():
-            try:
-                return pd.read_csv(f, index_col=0, parse_dates=True)
-            except Exception:  # a corrupt cache file is just re-downloaded
-                return None
-        return None
+        if not f.exists():
+            return None
+        if max_age_days is not None and time.time() - f.stat().st_mtime > max_age_days * 86400.0:
+            return None
+        try:
+            return pd.read_csv(f, index_col=0, parse_dates=True)
+        except Exception:  # a corrupt cache file is just re-downloaded
+            return None
 
     def _write_cached(self, key: str, raw: pd.DataFrame) -> None:
         if self.cache_dir is None:
@@ -116,15 +166,26 @@ class FredClient:
         except OSError as e:
             log.warning("FRED cache write failed: %s", e)
 
+    def _download(self, key: str, url: str, spec: FredSeries, max_age_days: float | None) -> pd.Series:
+        """Cached-or-fetched series; only a download that parses to a non-empty series is persisted."""
+        raw = self._read_cached(key, max_age_days)
+        if raw is not None:
+            try:
+                return self._prepare(raw, spec)
+            except ValueError:
+                pass   # an unusable cache file is replaced by a fresh download
+        self.requests += 1
+        raw = self._fetch(url)
+        s = self._prepare(raw, spec)
+        self._write_cached(key, raw)
+        return s
+
     def _load(self, spec: FredSeries) -> pd.Series | None:
         """The latest vintage of a series."""
         if spec.series_id not in self._cache:
             try:
-                raw = self._read_cached(spec.series_id)
-                if raw is None:
-                    raw = self._fetch(_URL.format(sid=spec.series_id))
-                    self._write_cached(spec.series_id, raw)
-                self._cache[spec.series_id] = self._prepare(raw, spec)
+                self._cache[spec.series_id] = self._download(
+                    spec.series_id, _URL.format(sid=spec.series_id), spec, self.cache_max_age_days)
             except Exception as e:  # network, schema change, discontinued series
                 log.warning("FRED %s unavailable: %s", spec.series_id, e)
                 self._cache[spec.series_id] = None
@@ -140,11 +201,8 @@ class FredClient:
         if key not in self._vintage_cache:
             try:
                 ck = f"{spec.series_id}_v{vd.isoformat()}"
-                raw = self._read_cached(ck)
-                if raw is None:
-                    raw = self._fetch(_VINTAGE_URL.format(sid=spec.series_id, vd=vd.isoformat()))
-                    self._write_cached(ck, raw)
-                self._vintage_cache[key] = self._prepare(raw, spec)
+                self._vintage_cache[key] = self._download(
+                    ck, _VINTAGE_URL.format(sid=spec.series_id, vd=vd.isoformat()), spec, None)
             except Exception as e:
                 log.warning("ALFRED %s vintage %s unavailable: %s", spec.series_id, vd, e)
                 self._vintage_cache[key] = None
@@ -201,25 +259,29 @@ class FredClient:
         return self.value_asof(spec, as_of) if spec else None
 
 
-_defaults: dict[tuple[bool, int, str | None], FredClient] = {}
+_defaults: dict[tuple[bool, int, str | None, float | None], FredClient] = {}
 _default: FredClient | None = None  # kept for tests that inject a client
+_DEFAULT_KEY = (False, 31, None, DEFAULT_CACHE_MAX_AGE_DAYS)
 
 
 def default_client(config: dict | None = None) -> FredClient:
     """Process-wide client per setting, so every provider shares one download cache.
 
     ``config["fred_vintages"]`` turns ALFRED vintages on for revised series;
-    ``config["fred_vintage_step_days"]`` sets the sampling grid and
-    ``config["fred_cache_dir"]`` an on-disk cache for the downloaded CSVs.
+    ``config["fred_vintage_step_days"]`` sets the sampling grid,
+    ``config["fred_cache_dir"]`` an on-disk cache for the downloaded CSVs and
+    ``config["fred_cache_max_age_days"]`` its expiry (None = never).
     """
     global _default
     if _default is not None and not config:
         return _default
     cfg = config or {}
+    age = cfg.get("fred_cache_max_age_days", DEFAULT_CACHE_MAX_AGE_DAYS)
     key = (bool(cfg.get("fred_vintages", False)), int(cfg.get("fred_vintage_step_days", 31)),
-           cfg.get("fred_cache_dir"))
-    if _default is not None and key == (False, 31, None):
+           cfg.get("fred_cache_dir"), None if age is None else float(age))
+    if _default is not None and key == _DEFAULT_KEY:
         return _default
     if key not in _defaults:
-        _defaults[key] = FredClient(*key)
+        _defaults[key] = FredClient(vintages=key[0], vintage_step_days=key[1], cache_dir=key[2],
+                                    cache_max_age_days=key[3])
     return _defaults[key]

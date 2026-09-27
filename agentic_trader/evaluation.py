@@ -18,6 +18,7 @@ cost, and how many agent outputs came from the model rather than the rules.
 from __future__ import annotations
 
 import json
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 import pandas as pd
 
 from .backtest import AGENT, run_agent_backtest
@@ -32,6 +34,7 @@ from .config import make_config
 from .data import MarketDataProvider, get_provider
 from .instruments import Instrument
 from .llm import LLM, get_llm, llm_usage
+from .provenance import provenance
 
 # The core universe: the 15 instruments every rule choice through v0.4 was made on.
 CORE_UNIVERSE: dict[str, list[str]] = {
@@ -142,16 +145,19 @@ class EvaluationResult:
 
     def paired(self, baseline: str = "Buy&Hold", metric: str = "Sharpe", period: str | None = None,
                universe: str | None = None, strategy: str = AGENT, n_boot: int = 10_000, seed: int = 0,
-               stratify: bool = True):
+               cluster: bool = True):
         """Cross-instrument bootstrap of ``strategy - baseline`` on one metric (see ``stats.paired_bootstrap``).
 
         With repeated agent runs, each instrument contributes its mean over runs.
-        ``stratify`` (default on) resamples within (asset class, universe) groups rather than
-        the whole set at once -- the extended universe mixes clusters of correlated
-        instruments (nine rate/credit/commodity ETFs that mostly move together, next to
-        unrelated equities), and plain resampling treats them as if they moved independently,
-        understating the interval's true width. Pass ``stratify=False`` to reproduce the
-        unstratified v0.6 numbers.
+        ``cluster`` (default on) hands the (asset class, universe) label of every instrument
+        to ``paired_bootstrap`` as its group: the extended universe mixes clusters of
+        correlated instruments (nine rate/credit/commodity ETFs that mostly move together,
+        next to unrelated equities), and resampling whole clusters is what carries their
+        shared shock into the interval. The cluster scheme only engages with at least
+        ``stats.MIN_CLUSTER_GROUPS`` distinct labels among the paired instruments (the core
+        universe has two, ``--universe all`` five); below that the plain instrument bootstrap
+        is used and the result's ``scheme``/``n_groups`` say so. Pass ``cluster=False`` for
+        the plain scheme regardless (the v0.6 numbers).
         """
         from .stats import paired_bootstrap
         rows = self.rows
@@ -164,25 +170,28 @@ class EvaluationResult:
             raise ValueError(f"need both {strategy!r} and {baseline!r} in the rows")
         both = piv[[strategy, baseline]].dropna()
         groups = None
-        if stratify and {"asset_class", "universe"} <= set(rows.columns):
+        if cluster and {"asset_class", "universe"} <= set(rows.columns):
             key = rows.drop_duplicates("symbol").set_index("symbol")
             key = (key["asset_class"].astype(str) + ":" + key["universe"].astype(str))
             aligned = key.reindex(both.index)
-            if aligned.notna().all() and aligned.nunique() > 1:
+            if aligned.notna().all():
                 groups = aligned.to_numpy()
         return paired_bootstrap(both[strategy].to_numpy(), both[baseline].to_numpy(), n_boot=n_boot, seed=seed,
                                 groups=groups)
 
     def paired_table(self, metric: str = "Sharpe", universe: str | None = None, strategy: str = AGENT,
-                     fdr_q: float = 0.05, stratify: bool = True) -> pd.DataFrame:
+                     fdr_q: float = 0.05, cluster: bool = True) -> pd.DataFrame:
         """Per period and baseline: mean paired difference, 95% CI and two-sided p across
-        instruments, plus ``significant`` corrected for the number of rows in *this table*
+        instruments, which resampling ``scheme`` produced them over how many ``groups``, plus
+        ``significant`` corrected for the number of tested rows in *this table*
         (Benjamini-Hochberg false discovery rate at ``fdr_q``). Printing many paired tests side
         by side is a multiple-comparisons problem exactly like choosing among rule variants;
         the raw per-row ``p`` is still reported, but ``significant`` is the one to read when
-        the table has more than a couple of rows.
+        the table has more than a couple of rows. BH runs on the unrounded p-values; a row
+        with fewer than three paired instruments was never tested, shows ``p`` as NaN and
+        neither counts towards nor can win a share of the false-discovery budget.
         """
-        out = []
+        out, p_raw = [], []
         rows = self.rows if universe is None or "universe" not in self.rows else self.rows[self.rows.universe == universe]
         for period in sorted(rows.period.unique()):
             for base in sorted(rows.strategy.unique()):
@@ -190,16 +199,18 @@ class EvaluationResult:
                     continue
                 try:
                     pb = self.paired(base, metric, period=period, universe=universe, strategy=strategy,
-                                     stratify=stratify)
+                                     cluster=cluster)
                 except ValueError:
                     continue
+                p = pb.p_value if math.isfinite(pb.ci_low) else float("nan")
+                p_raw.append(p)
                 out.append({"period": period, "baseline": base, "n": pb.n, f"mean {metric} diff": round(pb.mean_diff, 3),
                             "ci95 low": round(pb.ci_low, 3), "ci95 high": round(pb.ci_high, 3),
-                            "p": round(pb.p_value, 3), "wins": pb.wins})
+                            "p": round(p, 3), "wins": pb.wins, "scheme": pb.scheme, "groups": pb.n_groups})
         df = pd.DataFrame(out)
         if len(df):
             from .stats import benjamini_hochberg
-            df["significant"] = benjamini_hochberg(df["p"].to_numpy(), fdr_q)
+            df["significant"] = benjamini_hochberg(np.asarray(p_raw), fdr_q)
         return df
 
     def run_dispersion(self, metric: str = "Sharpe", strategy: str = AGENT) -> pd.DataFrame:
@@ -347,7 +358,7 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             "neutral_weight": cfg["risk"].get("neutral_weight"),
             "use_stops": cfg.get("backtest", {}).get("use_stops"),
             "errors": errors, "seconds": round(time.perf_counter() - t0, 1),
-            "agent_sources": sources, "timings": timings}
+            "agent_sources": sources, "timings": timings, "provenance": provenance()}
     if llm is not None:
         meta.update(models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
                     effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},

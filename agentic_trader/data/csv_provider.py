@@ -1,20 +1,58 @@
-"""Local CSV provider: ``<csv_dir>/<SYMBOL>.csv`` with Date,Open,High,Low,Close[,Volume].
+"""Local CSV provider: ``<csv_dir>/<SYMBOL>.csv`` with Date,Open,High,Low,Close[,Adj Close][,Volume].
 
-Column names are case-insensitive; ``Adj Close`` is used when ``Close`` is
-missing; rows may be in any order and may contain duplicates or blank closes
-(see ``clean_ohlcv``). Optional ``<SYMBOL>_news.csv`` with columns
-Date,Headline[,Source,Sentiment] supplies point-in-time news.
+Column names are case-insensitive; rows may be in any order and may contain
+duplicates or blank closes (see ``clean_ohlcv``). All four price columns of a bar
+are always served on one basis:
+
+* ``Close`` and ``Adj Close`` both present: every price column is put on the adjusted
+  (total-return, split-adjusted) basis by the row's ``Adj Close / Close`` factor, the
+  same basis the Yahoo provider serves, so a split is not a -75% day;
+* only ``Adj Close``: it becomes ``Close`` and any raw ``Open``/``High``/``Low`` are
+  dropped (they cannot be rescaled without the raw close) and filled from ``Close``
+  by ``clean_ohlcv``, with a warning that intraday levels are unavailable for the file;
+* only ``Close``: served as is.
+
+Optional ``<SYMBOL>_news.csv`` with columns Date,Headline[,Source,Sentiment] supplies
+point-in-time news.
 """
 from __future__ import annotations
 
+import logging
 import math
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from ..instruments import Instrument
-from .base import MarketDataProvider, NewsItem, clean_ohlcv, clip_history
+from .base import MarketDataProvider, NewsItem, cash_rates, clean_ohlcv, clip_history
+
+log = logging.getLogger(__name__)
+
+
+def one_basis(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
+    """Put Open/High/Low/Close on the basis of ``Adj Close`` when that column exists."""
+    if "Adj Close" not in df:
+        return df
+    df = df.copy()
+    adj = pd.to_numeric(df["Adj Close"], errors="coerce")
+    if "Close" in df:
+        close = pd.to_numeric(df["Close"], errors="coerce")
+        factor = (adj / close).where((close > 0) & (adj > 0))
+        for col in ("Open", "High", "Low"):
+            if col in df:
+                df[col] = pd.to_numeric(df[col], errors="coerce") * factor
+        df["Close"] = adj
+    else:
+        dropped = [c for c in ("Open", "High", "Low") if c in df]
+        if dropped:
+            log.warning("%s has Adj Close but no Close: %s dropped (they cannot be put on the adjusted "
+                        "basis), so intraday levels are unavailable for this file", name or "price file",
+                        "/".join(dropped))
+            df = df.drop(columns=dropped)
+        df["Close"] = adj
+    return df.drop(columns=["Adj Close"])
 
 
 class CSVProvider(MarketDataProvider):
@@ -34,8 +72,7 @@ class CSVProvider(MarketDataProvider):
             df.index = pd.to_datetime(df.index, errors="coerce")
             df = df[df.index.notna()]
             df.columns = [c.strip().title() for c in df.columns]
-            if "Close" not in df and "Adj Close" in df:
-                df["Close"] = df["Adj Close"]
+            df = one_basis(df, str(path))
             if "Close" not in df:
                 raise ValueError(f"{path} needs a Close or Adj Close column")
             self._cache[instrument.symbol] = clean_ohlcv(df)
@@ -43,6 +80,12 @@ class CSVProvider(MarketDataProvider):
 
     def history(self, instrument: Instrument, start: date, end: date) -> pd.DataFrame:
         return clip_history(self._load(instrument), start, end)
+
+    def risk_free_series(self, dates: pd.DatetimeIndex) -> np.ndarray:
+        """Local files carry no rate data: ``config["risk_free_annual"]`` at every date
+        (``cash_leg`` "off" -> NaN; "fred" -> DTB3 as on any provider)."""
+        mode = self.config.get("cash_leg", "auto")
+        return cash_rates(dates, self.config, self.real_world, "static" if mode == "auto" else mode)
 
     def news(self, instrument: Instrument, as_of: date, lookback_days: int) -> list[NewsItem]:
         path = self.dir / f"{instrument.symbol}_news.csv"

@@ -7,10 +7,16 @@ can be extended; the defaults are:
 
 1. **deny list** - tools that are never callable through the agent path;
 2. **required capabilities** - the role must hold every capability the tool asks for;
-3. **read-only** - a non-read-only tool needs ``PROPOSE_TRADES`` and approval;
-4. **argument guards** - symbols must be in the configured universe, weights
-   must be finite and within the max position, dates must not be in the future;
+3. **argument guards** - symbols (scalar ``symbol`` and every element of a
+   ``symbols`` list, capped in length) must be in the configured universe, weights
+   must be finite and within the max position, dates must not be in the future,
+   order quantities must be finite and positive and the notional below the
+   per-order cap (``max_order_notional``);
+4. **read-only** - a non-read-only tool needs ``PROPOSE_TRADES`` and approval;
 5. **risk level** - HIGH-risk tools always require approval, even for admins.
+
+The guards run before the approval outcome on purpose: a state-changing request
+with a bad argument is refused outright, never parked for a person to approve.
 
 Approval gateways decide what happens to REQUIRE_APPROVAL:
 
@@ -23,6 +29,7 @@ from __future__ import annotations
 
 import math
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Callable
@@ -70,18 +77,44 @@ def read_only_rule(ctx: PolicyContext) -> PolicyDecision | None:
                           f"{ctx.tool.name} changes state; approval required")
 
 
+DEFAULT_MAX_SYMBOLS_PER_CALL = 60
+
+
+def _deny(reason: str) -> PolicyDecision:
+    return PolicyDecision(PolicyOutcome.DENY, "argument_guard", reason)
+
+
 def argument_guard_rule(ctx: PolicyContext) -> PolicyDecision | None:
     args = ctx.request.arguments
     universe = ctx.config.get("symbol_universe")
+    allowed = {s.upper() for s in universe} if universe else None
+    candidates: list[Any] = []
     sym = args.get("symbol")
     if sym is not None:
+        candidates.append(sym)
+    syms = args.get("symbols")
+    if syms is not None:
+        if not isinstance(syms, (list, tuple)):
+            return _deny("symbols must be a list")
+        cap = int(ctx.config.get("max_symbols_per_call", DEFAULT_MAX_SYMBOLS_PER_CALL))
+        if len(syms) > cap:
+            return _deny(f"symbols lists {len(syms)} names; at most {cap} per call")
+        candidates.extend(syms)
+    for s in candidates:
         try:
-            ins = Instrument.parse(str(sym))
+            ins = Instrument.parse(str(s))
         except ValueError as e:
-            return PolicyDecision(PolicyOutcome.DENY, "argument_guard", str(e))
-        if universe and ins.symbol not in {s.upper() for s in universe}:
-            return PolicyDecision(PolicyOutcome.DENY, "argument_guard",
-                                  f"{ins.symbol} is outside the configured universe")
+            return _deny(str(e))
+        if allowed is not None and ins.symbol not in allowed:
+            return _deny(f"{ins.symbol} is outside the configured universe")
+    qty = args.get("quantity")
+    if qty is not None:
+        try:
+            fq = float(qty)
+        except (TypeError, ValueError):
+            return _deny("quantity is not a number")
+        if isinstance(qty, bool) or not math.isfinite(fq) or fq <= 0:
+            return _deny("quantity must be a finite positive number")
     for key in ("as_of", "start", "end"):
         v = args.get(key)
         if isinstance(v, str):
@@ -108,6 +141,18 @@ def argument_guard_rule(ctx: PolicyContext) -> PolicyDecision | None:
     lookback = args.get("lookback_days")
     if lookback is not None and (not isinstance(lookback, (int, float)) or not 0 < lookback <= 3660):
         return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "lookback_days must be in (0, 3660]")
+    notional = args.get("notional")
+    if notional is not None:   # an order's size is bounded before it can reach an approver
+        try:
+            nv = float(notional)
+        except (TypeError, ValueError):
+            return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "notional is not a number")
+        if not math.isfinite(nv) or nv <= 0:
+            return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "notional must be a positive finite number")
+        cap = ctx.config.get("max_order_notional")
+        if cap is not None and nv > float(cap):
+            return PolicyDecision(PolicyOutcome.DENY, "argument_guard",
+                                  f"notional {nv:,.0f} exceeds the per-order cap {float(cap):,.0f}")
     return None
 
 
@@ -124,8 +169,9 @@ def allow_rule(ctx: PolicyContext) -> PolicyDecision:
                           f"and role {ctx.role.value} holds the required capabilities")
 
 
-DEFAULT_RULES: tuple[Rule, ...] = (deny_list_rule, capability_rule, read_only_rule,
-                                   argument_guard_rule, risk_level_rule, allow_rule)
+DEFAULT_RULES: tuple[Rule, ...] = (deny_list_rule, capability_rule, argument_guard_rule,
+                                   read_only_rule, risk_level_rule, allow_rule)
+MAX_DECISIONS_KEPT = 1000
 
 
 # --------------------------------------------------------------- engine
@@ -135,7 +181,7 @@ class PolicyEngine:
         self.config = dict(config or {})
         self.rules = rules
         self.role_capabilities = role_capabilities or ROLE_CAPABILITIES
-        self.decisions: list[tuple[str, PolicyDecision]] = []
+        self.decisions: deque[tuple[str, PolicyDecision]] = deque(maxlen=MAX_DECISIONS_KEPT)
         self._lock = threading.Lock()
 
     def capabilities(self, role: Role) -> frozenset[Capability]:

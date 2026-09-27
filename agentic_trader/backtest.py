@@ -1,9 +1,15 @@
 """Walk-forward backtests of the agent firm against rule-based baselines.
 
 At each rebalance date the full agent graph is run with data up to that date's
-close and the current position; the resulting target weight (and its stop /
-take-profit levels) is held until the next rebalance. Returns and metrics come
-from the C++ backtester.
+close and the position the engine actually holds coming into that bar (the
+previous decision's units drifted with the market, or flat after a stop / take
+exit); the resulting target weight (and its stop / take-profit levels) is held as
+a constant number of units until the next rebalance. Returns and metrics come
+from the C++ backtester (conventions in cpp/include/at/backtest.hpp).
+
+Idle cash earns the provider's point-in-time risk-free rate (``risk_free_series``;
+a constant from ``config["risk_free_annual"]`` for providers without one) and every
+Sharpe is computed on excess returns over the same per-bar rate.
 
 Baselines are five classic rule-based strategies (Buy & Hold, SMA, MACD, KDJ+RSI,
 ZMR) plus ``B&H vol-target``: buy & hold scaled every day to the same volatility target the
@@ -45,6 +51,7 @@ class ComparisonReport:
     # (analyst reports, debate verdict, proposal, risk views, final decision).
     agent_sources: dict[str, int] = field(default_factory=dict)
     prices: np.ndarray | None = None  # closes over the window (for portfolio covariance)
+    rf: np.ndarray | None = None  # annual risk-free rate per bar credited on cash and used for Sharpe
 
     def table(self) -> pd.DataFrame:
         rows = {}
@@ -86,12 +93,34 @@ def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
         cfg.slippage_bps = costs["fx_slippage_bps"]
         cfg.allow_short = risk["allow_short_fx"]
         cfg.carry_annual = provider.macro(ins, start).get("rate_diff", 0.0) / 100.0
+        cfg.funded = False  # forwards: the whole account earns the cash rate, carry is the differential
     else:
         cfg.cost_bps = costs["equity_cost_bps"]
         cfg.slippage_bps = costs["equity_slippage_bps"]
         cfg.borrow_annual = costs["equity_borrow_annual"]
         cfg.allow_short = risk["allow_short_equity"]
+        cfg.funded = True
     return cfg
+
+
+def risk_free_series(provider: MarketDataProvider, dates: pd.DatetimeIndex, config: dict) -> np.ndarray:
+    """Annual risk-free rate per date (fraction, NaN = unknown), point-in-time from the provider.
+
+    Providers without ``risk_free_series`` get the constant ``config["risk_free_annual"]``.
+    """
+    fn = getattr(provider, "risk_free_series", None)
+    if not callable(fn):
+        return np.full(len(dates), float(config["risk_free_annual"]))
+    rf = np.asarray(fn(dates), dtype=float)
+    if rf.shape != (len(dates),):
+        raise ValueError(f"risk_free_series returned shape {rf.shape} for {len(dates)} dates")
+    return rf
+
+
+def _cash_rate(rf: np.ndarray) -> np.ndarray | None:
+    """Engine input for a rate series: None when nothing is known (credits nothing, metrics use
+    the constant), the series itself otherwise (unknown days credit nothing)."""
+    return None if np.isnan(rf).all() else rf
 
 
 def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
@@ -102,9 +131,11 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
     ``impact_coeff * daily_vol * sqrt(q / ADV)``. For a weight change ``dw`` on an account
     of ``capital``, ``q = |dw| * capital / price``, so the cost as a fraction of equity is
     ``|dw|^1.5 * K_t`` with ``K_t = coeff * daily_vol_t * sqrt(capital / (price_t * ADV_t))``.
-    Everything in ``K_t`` is known at the close of bar ``t``: trailing 20-day volatility
-    and trailing 20-day average volume. Bars without volume get no impact (equities with
-    missing volume, and FX unless ``costs.fx_adv_notional`` is set).
+    ``capital`` is ``initial_capital``; the engine rescales ``K_t`` by
+    ``sqrt(equity_t / initial_capital)`` so a compounding account is charged for the notional
+    it actually trades. Everything in ``K_t`` is known at the close of bar ``t``: trailing
+    20-day volatility and trailing 20-day average volume. Bars without volume get no impact
+    (equities with missing volume, and FX unless ``costs.fx_adv_notional`` is set).
 
     This single-shot formula implicitly assumes the day's trade is spread across the session
     in proportion to volume (VWAP), which ``algo.algo_cost_ratio`` shows minimises impact cost
@@ -136,7 +167,13 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
     algo = costs.get("execution_algo")
     if algo and algo != "vwap":
         n = 288 if ins.is_fx else 78
-        k = k * algo_cost_ratio(algo, n, "fx" if ins.is_fx else "equity", float(costs.get("ac_kappa") or 3.0))
+        ratio_algo = algo_cost_ratio(algo, n, "fx" if ins.is_fx else "equity", float(costs.get("ac_kappa") or 3.0))
+        # A NaN coefficient means "no impact" to the engine, so a non-finite schedule cost must
+        # fail loudly rather than silently switch impact off.
+        if not np.isfinite(ratio_algo) or ratio_algo <= 0:
+            raise ValueError(f"execution algo {algo!r} (kappa {costs.get('ac_kappa')}) has a non-finite "
+                             f"cost ratio {ratio_algo}; impact cannot be charged")
+        k = k * ratio_algo
     return np.where(np.isfinite(k), k, np.nan)
 
 
@@ -166,7 +203,15 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                        provider: MarketDataProvider | None = None, llm: LLM | None = None,
                        asset_class: str | None = None,
                        on_decision: Callable[[FinalDecision], None] | None = None,
-                       include_agent: bool = True) -> ComparisonReport:
+                       include_agent: bool = True,
+                       capital_share: pd.Series | None = None) -> ComparisonReport:
+    """Walk-forward backtest of the desk and the baselines on one instrument.
+
+    ``capital_share`` (a date-indexed fraction of ``initial_capital``, for a portfolio sleeve)
+    scales the impact coefficient by ``sqrt(share_t)``: ``K_t`` is proportional to the square
+    root of the capital traded, so a sleeve running 1/N of the book pays the impact of an
+    account of ``capital / N``.
+    """
     cfg = make_config(config)
     ins = Instrument.parse(symbol, asset_class)
     start, end = _parse(start), _parse(end)
@@ -182,10 +227,17 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     prices = window["Close"].to_numpy()
     bt = backtest_config_for(ins, cfg, prices, provider, start)
     carry = provider.carry_series(ins, window.index) if ins.is_fx else None
+    rf = risk_free_series(provider, window.index, cfg)
+    cash = _cash_rate(rf)
     ohlc = dict(open=window["Open"].to_numpy(), high=window["High"].to_numpy(),
                 low=window["Low"].to_numpy())
     k_full = impact_coefficients(full, ins, cfg)
     impact = None if k_full is None else k_full[np.asarray(mask, dtype=bool)]
+    if impact is not None and capital_share is not None:
+        share = capital_share.reindex(window.index).to_numpy(dtype=float)
+        if np.isnan(share).any() or (share < 0).any():
+            raise ValueError("capital_share must be a non-negative fraction on every bar of the window")
+        impact = impact * np.sqrt(share)
 
     results: dict[str, quant.BacktestResult] = {}
     decisions: list[FinalDecision] = []
@@ -194,40 +246,44 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                              llm=llm if llm is not None else get_llm(cfg),
                              memory=DecisionMemory(None), on_event=lambda *_: None)
         n = len(window)
-        w = np.full(n, np.nan)
+        w = np.zeros(n)
         stop, take = np.full(n, np.nan), np.full(n, np.nan)
         reb = np.zeros(n)
-        held = 0.0
+        extras = dict(carry=carry, rebalance=reb, impact=impact, cash_rate=cash)
+        if cfg.get("backtest", {}).get("use_stops"):
+            extras.update(ohlc, stop=stop, take=take)
         sources: dict[str, int] = {}
+        held = 0.0
         for i in range(0, n - 1, max(1, rebalance_every)):
+            if i > 0:
+                # The weight the desk actually holds coming into bar i: replay the engine on the
+                # bars so far (its last position is the previous decision's units drifted with
+                # the market, or 0 after a stop / take exit or ruin).
+                held = float(quant.run_backtest(
+                    prices[:i + 1], w[:i + 1], bt,
+                    **{k: (None if v is None else v[:i + 1]) for k, v in extras.items()}).positions[i])
             st, dec = graph.propagate(ins, window.index[i].date(), current_weight=held)
             for s in _sources(st):
                 sources[s] = sources.get(s, 0) + 1
-            w[i] = dec.target_weight
-            stop[i] = np.nan if dec.stop_loss is None else dec.stop_loss
-            take[i] = np.nan if dec.take_profit is None else dec.take_profit
+            # Hold each decision (weight and its protective levels) until the next one. A
+            # decision to keep the current position (the PM's no-trade band; reported to 4
+            # decimals) is executed as no trade, not as a trade to the rounded weight.
+            w[i:] = held if dec.target_weight == round(held, 4) else dec.target_weight
+            stop[i:] = np.nan if dec.stop_loss is None else dec.stop_loss
+            take[i:] = np.nan if dec.take_profit is None else dec.take_profit
             reb[i] = 1.0
-            held = dec.target_weight
             decisions.append(dec)
             if on_decision:
                 on_decision(dec)
-        # Hold each decision (weight and its protective levels) until the next one.
-        w = pd.Series(w).ffill().fillna(0.0).to_numpy()
-        seg = np.cumsum(reb)  # decision index per bar (0 before the first)
-        first = np.flatnonzero(reb)
-        stop = np.where(seg > 0, stop[first[np.maximum(seg.astype(int) - 1, 0)]], np.nan)
-        take = np.where(seg > 0, take[first[np.maximum(seg.astype(int) - 1, 0)]], np.nan)
-        extras = dict(carry=carry, rebalance=reb, impact=impact)
-        if cfg.get("backtest", {}).get("use_stops"):
-            extras.update(ohlc, stop=stop, take=take)
         results[AGENT] = quant.run_backtest(prices, w, bt, **extras)
 
     for name, weights in baseline_weights(full, bt.allow_short, cfg["risk"]["target_vol"],
                                           cfg["risk"]["max_position"],
                                           ins.periods_per_year).items():
-        results[name] = quant.run_backtest(prices, weights[mask], bt, carry=carry, impact=impact)
+        results[name] = quant.run_backtest(prices, weights[mask], bt, carry=carry, impact=impact,
+                                           cash_rate=cash)
     return ComparisonReport(ins, window.index, results, decisions, bt, carry,
-                            sources if include_agent else {}, prices)
+                            sources if include_agent else {}, prices, rf)
 
 
 def _sources(state) -> list[str]:
@@ -271,7 +327,10 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
     """Run every symbol as its own sleeve and combine the sleeves.
 
     Each sleeve is a full walk-forward backtest (costs, carry, stops) of the agent
-    and of every baseline. Sleeve returns are combined daily:
+    and of every baseline, sized with the capital it actually receives: the
+    allocation is computed first, from the provider's history alone, and each
+    sleeve's market impact is charged for an account of ``capital * share_t``
+    (``run_agent_backtest(capital_share=...)``). Sleeve returns are combined daily:
 
     * ``weighting="equal"``: 1/N of the capital per sleeve, the same for every
       strategy, so the comparison between the agent and the baselines is fair;
@@ -289,7 +348,8 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
       ``budget / n`` per sleeve of the class.
 
     Equity and FX calendars differ, so a sleeve with no bar on a date contributes
-    0 that day.
+    0 that day. The portfolio Sharpe is on excess returns over the same per-bar
+    risk-free rate the sleeves credit on idle cash.
     """
     if not symbols:
         raise ValueError("run_portfolio_backtest needs at least one symbol")
@@ -300,22 +360,23 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
         raise ValueError("class_budgets must be non-negative and not all zero")
     cfg = make_config(config)
     provider = provider or get_provider(cfg)
-    sleeves = {s: run_agent_backtest(s, start, end, cfg, rebalance_every, provider, llm,
-                                     on_decision=on_decision) for s in symbols}
-    keys = list(sleeves)
-    dates = sorted(set().union(*(r.dates for r in sleeves.values())))
-    idx = pd.DatetimeIndex(dates)
-    strategies = list(next(iter(sleeves.values())).results)
-    ppy = max(r.instrument.periods_per_year for r in sleeves.values())
+    start_d, end_d = _parse(start), _parse(end)
+    instruments = {s: Instrument.parse(s) for s in symbols}
+    keys = list(instruments)
+    # History first: the allocation must exist before the sleeves run, so that each sleeve
+    # can be charged impact for the capital it is actually given.
+    lookback_start = start_d - timedelta(days=cfg["lookback_days"])
+    history = {s: provider.history(ins, lookback_start, end_d) for s, ins in instruments.items()}
+    in_window = {s: h.index[(h.index >= pd.Timestamp(start_d)) & (h.index <= pd.Timestamp(end_d))]
+                 for s, h in history.items()}
+    idx = pd.DatetimeIndex(sorted(set().union(*in_window.values())))
+    ppy = max(ins.periods_per_year for ins in instruments.values())
 
     # Trailing instrument returns (for covariance) including the warm-up before `start`.
-    lookback_start = _parse(start) - timedelta(days=cfg["lookback_days"])
-    inst_returns = pd.DataFrame({
-        s: provider.history(r.instrument, lookback_start, _parse(end))["Close"].pct_change()
-        for s, r in sleeves.items()}).dropna(how="all")
+    inst_returns = pd.DataFrame({s: h["Close"].pct_change() for s, h in history.items()}).dropna(how="all")
 
     alloc_hist = None
-    groups = {s: r.instrument.asset_class for s, r in sleeves.items()}
+    groups = {s: ins.asset_class for s, ins in instruments.items()}
     if class_budgets is not None:
         unknown = sorted(set(groups.values()) - set(class_budgets))
         if unknown:
@@ -347,16 +408,23 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
         alloc = pd.DataFrame.from_dict(rows, orient="index", columns=keys).reindex(idx)
         alloc_hist = alloc
 
+    sleeves = {s: run_agent_backtest(s, start, end, cfg, rebalance_every, provider, llm,
+                                     on_decision=on_decision, capital_share=alloc[s]) for s in keys}
+    strategies = list(next(iter(sleeves.values())).results)
+    rf = risk_free_series(provider, idx, cfg)
+    rf_arg = cfg["risk_free_annual"] if np.isnan(rf).all() else rf
+
     rets, metrics = {}, {}
     for name in strategies:
+        def frame(attr):
+            return pd.DataFrame({s: pd.Series(np.abs(getattr(r.results[name], attr)), index=r.dates)
+                                 for s, r in sleeves.items()}).reindex(idx).fillna(0.0)
         per = pd.DataFrame({s: pd.Series(r.results[name].returns, index=r.dates)
-                            for s, r in sleeves.items()}).reindex(idx).fillna(0.0)
-        pos = pd.DataFrame({s: pd.Series(np.abs(r.results[name].positions), index=r.dates)
                             for s, r in sleeves.items()}).reindex(idx).fillna(0.0)
         port = (per * alloc).sum(axis=1)
         rets[name] = port
         equity = cfg["initial_capital"] * np.cumprod(1.0 + port.to_numpy())
-        metrics[name] = quant.compute_metrics(equity, (pos * alloc).sum(axis=1).to_numpy(), ppy,
-                                              cfg["risk_free_annual"])
+        metrics[name] = quant.compute_metrics(equity, (frame("positions") * alloc).sum(axis=1).to_numpy(), ppy,
+                                              rf_arg, traded=(frame("traded") * alloc).sum(axis=1).to_numpy())
     return PortfolioReport(list(symbols), idx, pd.DataFrame(rets, index=idx), metrics, sleeves,
                            weighting, alloc_hist)

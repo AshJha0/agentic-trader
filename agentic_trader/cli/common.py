@@ -8,14 +8,25 @@ single 700-line ``cli.py`` this package replaces mixed all four concerns in one 
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import date, timedelta
+from pathlib import Path
 
 from .. import quant
 from ..config import RULES_V02, RULES_V03, make_config
+from ..provenance import provenance
 
 log = logging.getLogger("agentic_trader.cli")
+
+
+def _section(over: dict, name: str, **values) -> None:
+    """Merge per-flag overrides *into* ``over[name]`` rather than replacing the block: with
+    ``--rules v02`` the block already carries that rule set's values (neutral weight 0, band
+    0), and a wholesale ``over["risk"] = {...}`` used to drop them silently."""
+    if values:
+        over.setdefault(name, {}).update(values)
 
 
 def _config(args) -> dict:
@@ -41,10 +52,9 @@ def _config(args) -> dict:
         risk["allow_short_equity"] = True
     if getattr(args, "band", None) is not None:
         risk["rebalance_band"] = args.band
-    if risk:
-        over["risk"] = risk
+    _section(over, "risk", **risk)
     if getattr(args, "stops", None) is not None:
-        over["backtest"] = {"use_stops": args.stops == "on"}
+        _section(over, "backtest", use_stops=args.stops == "on")
     costs = {}
     if getattr(args, "impact", None) is not None:
         if args.impact < 0:
@@ -56,8 +66,7 @@ def _config(args) -> dict:
         if args.ac_kappa < 0:
             raise ValueError("--ac-kappa must be >= 0")
         costs["ac_kappa"] = args.ac_kappa
-    if costs:
-        over["costs"] = costs
+    _section(over, "costs", **costs)
     if getattr(args, "capital", None) is not None and getattr(args, "cmd", "") != "execute":
         if args.capital <= 0:
             raise ValueError("--capital must be positive")
@@ -93,8 +102,7 @@ def _config(args) -> dict:
         agentic["approval"] = args.approval
     if getattr(args, "llm_planner", False):
         agentic["llm_planner"] = True
-    if agentic:
-        over["agentic"] = agentic
+    _section(over, "agentic", **agentic)
     return make_config(over)
 
 
@@ -114,8 +122,19 @@ def _symbols(text: str) -> list[str]:
 
 
 def _header(what: str, cfg: dict) -> None:
+    prov = provenance()
+    commit = (prov["git_commit"] or "unknown")[:12] + ("+dirty" if prov["git_dirty"] else "")
     print(f"AgenticTrader | {what} | llm={cfg['llm_provider']} data={cfg['data_provider']} "
-          f"quant={quant.BACKEND}")
+          f"quant={quant.BACKEND} | v{prov['version']} {commit}")
+
+
+def write_sidecar(out: str, extra: dict | None = None) -> str:
+    """Write ``<out stem>.provenance.json`` next to a CSV result so the numbers in it can be
+    tied to the version, commit, backend and dependency set that produced them."""
+    path = Path(out).with_suffix(".provenance.json")
+    path.write_text(json.dumps({"for": str(out), **(extra or {}), "provenance": provenance()},
+                               indent=1, default=str), encoding="utf-8")
+    return str(path)
 
 
 def _print_usage(usage: dict | None, sources: dict | None = None) -> None:

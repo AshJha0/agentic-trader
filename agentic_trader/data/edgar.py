@@ -9,15 +9,20 @@ contact and at most 10 requests per second; both are enforced here):
   date of the filing that reported it
 
 The point-in-time rule is the same everywhere: a filing or a fact exists at
-``as_of`` iff its ``filed`` date is ``<= as_of``. Where a value was later restated,
-the *first* print is used, so a backtest sees the numbers the market saw.
+``as_of`` iff its ``filed`` date is ``<= as_of``. Where a span was printed more than
+once by then (a comparative in a later filing, a restatement), the value used is the
+one *known at as_of*: the latest print filed on or before ``as_of``. For the newest
+quarter that is its first print, so no later information enters; for an older quarter
+it is what the market held at the time, restated comparatives included.
 
 Fundamentals are derived from the raw facts rather than taken from a vendor
 snapshot: quarterly flows are reconstructed from the reported spans (10-Q values
 are year-to-date for cash-flow items, and Q4 is only ever reported inside the
 10-K), summed to trailing-twelve-month figures and combined with the price the
-caller passes in. Consensus data (EPS surprise) is not available from EDGAR and is
-reported as ``None`` rather than guessed.
+caller passes in. Reconstruction never mixes XBRL tags (a filer that reports gross
+revenue under one tag and net revenue under another gets one concept per trailing
+window) nor reporting bases (see ``quarterly_table``). Consensus data (EPS surprise)
+is not available from EDGAR and is reported as ``None`` rather than guessed.
 
 News is the filing stream itself: 8-K item codes map to short headlines with a
 conservative tone score, periodic reports and ownership filings are announced as
@@ -129,6 +134,12 @@ SHARES_TAGS = ("dei:EntityCommonStockSharesOutstanding", "WeightedAverageNumberO
 # Tickers whose current SEC filer is a new holding company; history is under the predecessor.
 PREDECESSOR_CIKS: dict[str, str] = {"XOM": "0000034088"}   # Exxon Mobil Corp -> ExxonMobil Holdings (2026)
 
+# Multi-class filers whose non-dimensional per-share facts (companyfacts drops the
+# per-class dimension) are stated per share of a *different* class than the ticker:
+# ticker -> shares of the ticker's class per share of the reported class. Berkshire's
+# EPS and share count are per Class A share; one A share equals 1,500 B shares.
+SHARE_CLASS_RATIO: dict[str, float] = {"BRK-B": 1500.0}
+
 # Days in a quarter: 13 weeks normally, 12 weeks for 52/53-week fiscal calendars (Costco,
 # PepsiCo) whose fourth quarter then has 16 weeks (112 days).
 _QUARTER = (75, 120)
@@ -136,6 +147,17 @@ _QUARTER = (75, 120)
 # fundamentals in the analyst's sense, so they return nothing rather than nonsense.
 NON_OPERATING_SIC = {"6221"}   # commodity contracts brokers & dealers (GLD, SLV, USO, DBC)
 _YEAR = (350, 380)
+# Four consecutive quarters span this many days from the first end to the last.
+_TTM_SPAN = (240, 300)
+# Recency guards: a balance-sheet instant older than this (relative to the report period) is
+# not the company's current balance sheet; a flow series whose last quarter ends more than
+# one quarter before the report period has stopped being reported (a dead per-class series).
+MAX_INSTANT_AGE_DAYS = 400
+MAX_FLOW_LAG_DAYS = _QUARTER[1]
+# A later print of a span that differs from the earlier one by more than this fraction marks
+# a change of reporting basis (discontinued operations, a restatement); smaller differences
+# are ordinary revisions and the later print simply replaces the earlier one.
+BASIS_CHANGE_TOLERANCE = 0.05
 
 
 def _http_fetch(url: str, user_agent: str, timeout: float = 30.0) -> bytes:
@@ -170,6 +192,7 @@ class EdgarClient:
         self._lock = threading.Lock()
         self._mem: dict[str, Any] = {}
         self._tickers: dict[str, str] | None = None
+        self._warned: set[str] = set()
         self.requests = 0
 
     @classmethod
@@ -329,15 +352,21 @@ class EdgarClient:
     # -------------------------------------------------------- fundamentals
     def fundamentals(self, ticker: str, as_of: date, price: float | None = None,
                      splits: dict[date, float] | None = None) -> dict[str, Any]:
-        """Fundamentals known at ``as_of`` (facts filed on or before it; first prints).
+        """Fundamentals known at ``as_of`` (facts filed on or before it, latest print of each span).
 
         ``price`` must be the close *as traded* on ``as_of`` (not a split-adjusted history),
         and ``splits`` maps split ex-dates to their ratios (4.0 for a 4-for-1). Per-share
         prints are in the share units of the filing that reported them, so every EPS and
         share-count fact is brought to the ``as_of`` basis before quarters are mixed: an EPS
-        first-printed before a split is divided by the ratio, a share count multiplied. With
+        printed before a split is divided by the ratio, a share count multiplied. With
         ``splits`` omitted nothing is rescaled, which is only right for a company that has
         never split.
+
+        Per-share ratios are dropped when the inputs cannot describe the ticker's share:
+        a share count or EPS window that has stopped updating (recency guards in
+        ``_fundamentals_core``), a market capitalisation below 1% of trailing revenue, or
+        trailing EPS above half the price (a per-share fact of another share class);
+        ``SHARE_CLASS_RATIO`` converts the known multi-class filers first.
 
         The price-independent part only changes when a new filing arrives (or a split
         passes), so it is memoised per (ticker, last filing date on or before ``as_of``,
@@ -361,6 +390,19 @@ class EdgarClient:
         out = dict(core)
         out["lag_days"] = int((pd.Timestamp(as_of) - pd.Timestamp(out["filed"])).days) if out.get("filed") else None
         eps_ttm, shares, fcf = out.pop("_eps_ttm", None), out.pop("_shares", None), out.pop("_fcf_ttm", None)
+        ratio = SHARE_CLASS_RATIO.get(ticker.upper())
+        if ratio:
+            eps_ttm = None if eps_ttm is None else eps_ttm / ratio
+            shares = None if shares is None else shares * ratio
+        rev_ttm = out.get("revenue_ttm")
+        if price and shares and rev_ttm and price * shares < 0.01 * rev_ttm:
+            self._warn_once(ticker, f"market cap {price * shares:.3g} below 1% of trailing revenue {rev_ttm:.3g}: "
+                                    "the share count is not this ticker's class; per-share ratios dropped")
+            shares = None
+        if price and eps_ttm is not None and eps_ttm > 0.5 * price:
+            self._warn_once(ticker, f"trailing EPS {eps_ttm:.4g} above half the price {price:.4g}: the EPS facts "
+                                    "are not per share of this ticker's class; P/E dropped")
+            eps_ttm = None
         if eps_ttm is not None:
             out["eps_ttm"] = round(eps_ttm, 4)
             if price:
@@ -369,6 +411,12 @@ class EdgarClient:
             out["fcf_yield"] = round(fcf / (price * shares), 4)
         return out
 
+    def _warn_once(self, ticker: str, msg: str) -> None:
+        key = f"{ticker.upper()}:{msg[:40]}"
+        if key not in self._warned:
+            self._warned.add(key)
+            log.warning("EDGAR %s: %s", ticker.upper(), msg)
+
     def _fundamentals_core(self, known: pd.DataFrame, past_splits: list[tuple[pd.Timestamp, float]] = ()) -> dict[str, Any]:
         """The price-independent fundamentals from the facts known at a cutoff, per-share
         facts rescaled to the share basis after ``past_splits``."""
@@ -376,34 +424,48 @@ class EdgarClient:
             return {}
         if past_splits:
             known = rebase_per_share(known, past_splits)
-        rev = quarterly_series(known, REVENUE_TAGS)
-        ni = quarterly_series(known, NET_INCOME_TAGS)
+        rev_t = quarterly_table(known, REVENUE_TAGS, positive=True)
+        ni_t = quarterly_table(known, NET_INCOME_TAGS)
         eps = quarterly_series(known, EPS_TAGS, units=("USD/shares",))
         ocf = quarterly_series(known, OCF_TAGS)
         capex = quarterly_series(known, CAPEX_TAGS)
-        equity = latest_instant(known, EQUITY_TAGS)
-        debt = latest_instant(known, DEBT_TAGS)
-        shares = latest_instant(known, SHARES_TAGS, units=("shares",))
+        rev, ni = rev_t["val"], ni_t["val"]
         if rev.empty and ni.empty:   # no income statement at all: not an operating company
             return {}
         ends = [s.index.max() for s in (rev, ni, eps) if not s.empty]
         period_end = max(ends)
+        not_before = period_end - pd.Timedelta(days=MAX_INSTANT_AGE_DAYS)
+        equity = latest_instant(known, EQUITY_TAGS, not_before=not_before)
+        debt = latest_instant(known, DEBT_TAGS, not_before=not_before)
+        shares = latest_instant(known, SHARES_TAGS, units=("shares",), not_before=not_before)
         latest_filed = known.loc[known["end"] == period_end, "filed"].min()
         out: dict[str, Any] = {
             "report_period_end": period_end.date().isoformat(),
             "filed": latest_filed.date().isoformat() if pd.notna(latest_filed) else None,
             "sector_pe": None, "eps_surprise": None, "insider_net_buying": None,
-            "source": "sec_edgar (point-in-time, first prints)",
+            "source": "sec_edgar (point-in-time, as known at as_of)",
         }
+
+        def fresh(s: pd.Series) -> pd.Series:
+            """A flow series that is still being reported at ``period_end``; else empty."""
+            if s.empty or (period_end - s.index.max()).days > MAX_FLOW_LAG_DAYS:
+                return pd.Series(dtype=float)
+            return s
+
+        rev, ni, eps, ocf, capex = (fresh(s) for s in (rev, ni, eps, ocf, capex))
         rev_ttm, rev_prev = ttm(rev), ttm(rev, back=4)
         ni_ttm = ttm(ni)
         eps_ttm = ttm(eps)
         if rev_ttm is not None:
             out["revenue_ttm"] = rev_ttm
-        # Year over year only when the two four-quarter windows are exactly a year apart
-        # (a missing quarter would otherwise compare across a 15-month gap).
-        if rev_ttm and rev_prev and len(rev) >= 8 and 350 <= (rev.index[-1] - rev.index[-5]).days <= 380:
-            out["revenue_growth_yoy"] = round(rev_ttm / rev_prev - 1.0, 4)
+        # Year over year only when the two four-quarter windows are exactly a year apart (a
+        # missing quarter would otherwise compare across a 15-month gap) and are the same
+        # concept on one reporting basis: another tag is another concept (gross vs net
+        # revenue), and the same tag in another basis generation is a recast, not growth.
+        if rev_ttm and rev_prev and len(rev) >= 8 and _YEAR[0] <= (rev.index[-1] - rev.index[-5]).days <= _YEAR[1]:
+            cur, prev = rev_t.iloc[-1], rev_t.iloc[-5]
+            if cur["tag"] == prev["tag"] and cur["gen"] == prev["gen"]:
+                out["revenue_growth_yoy"] = round(rev_ttm / rev_prev - 1.0, 4)
         if rev_ttm and ni_ttm is not None:
             out["net_margin"] = round(ni_ttm / rev_ttm, 4)
         if eps_ttm is not None:
@@ -420,7 +482,7 @@ class EdgarClient:
 def _pick(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None) -> pd.DataFrame:
     """Facts for the given tags, in preference order (a company switches tags over the
     years -- Apple's revenue is ``SalesRevenueNet`` before 2018 -- so all are kept and the
-    earlier tag in the list wins where two report the same span)."""
+    earlier tag in the list is preferred where two cover the same trailing window)."""
     sub = known[known["tag"].isin(tags)]
     sub = sub[sub["unit"].isin(units)] if units is not None else sub[sub["unit"] == "USD"]
     if sub.empty:
@@ -429,60 +491,166 @@ def _pick(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | N
     return sub.assign(_rank=sub["tag"].map(rank)).sort_values("_rank", kind="stable")
 
 
-def quarterly_series(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None) -> pd.Series:
-    """Quarterly values by period end, first print of each span.
+def _material(a: float, b: float) -> bool:
+    return abs(a - b) > BASIS_CHANGE_TOLERANCE * max(abs(a), abs(b))
 
-    Direct ~90-day spans are taken as they are. Longer spans that share a start
-    date (year-to-date 10-Q values, and the 10-K annual figure) are differenced
-    against the shorter span with the same start, which recovers Q4 (annual minus
-    nine months) and quarterly cash flows (H1 minus Q1, 9M minus H1).
+
+def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: list[int],
+                  positive: bool) -> dict[int, dict[int, float]]:
+    """Quarter candidates of one tag: ``{period_end_day: {generation: value}}``.
+
+    *Generations.* Prints are replayed filing by filing. A filing that re-prints a span
+    already known in the current generation with a materially different value (more than
+    ``BASIS_CHANGE_TOLERANCE``) opens a new generation: it, and every later filing, reports
+    on a new basis (discontinued operations, a restatement). Within a generation the latest
+    print of a span wins (an ordinary revision replaces the earlier figure).
+
+    *Reconstruction*, separately per generation so no difference ever straddles a basis
+    change: direct ~90-day spans are taken as they are; longer spans sharing a start date
+    (year-to-date 10-Q values, the 10-K annual figure) are differenced against the next
+    shorter span with the same start, which recovers Q4 (annual minus nine months) and
+    quarterly cash flows (H1 minus Q1, 9M minus H1); an annual span with no nine-month
+    sibling has the direct quarters it contains subtracted, when they fill it.
     """
-    sub = _pick(known, tags, units)
-    sub = sub.dropna(subset=["start"])
-    if sub.empty:
-        return pd.Series(dtype=float)
-    first = sub.sort_values(["filed", "_rank"], kind="stable")   # earliest print of a span wins; tag rank breaks ties
-    # Work in integer days (numpy) rather than per-row pandas objects: this runs once per
-    # filing per tag inside a walk-forward backtest.
-    epoch = pd.Timestamp("1970-01-01")
-    starts = ((first["start"] - epoch).dt.days).to_numpy()
-    ends = ((first["end"] - epoch).dt.days).to_numpy()
-    vals = first["val"].to_numpy(dtype=float)
-    span: dict[tuple[int, int], float] = {}
-    for s, e, v in zip(starts.tolist(), ends.tolist(), vals.tolist()):
-        span.setdefault((s, e), v)                       # first print wins (sorted by rank, filed)
-    out: dict[int, float] = {}
+    by_filing: dict[int, list[tuple[int, int, float]]] = {}
+    for s, e, v, f in zip(starts, ends, vals, filed):
+        by_filing.setdefault(f, []).append((s, e, v))
+    spans: dict[tuple[int, int], dict[int, float]] = {}
+    g = 0
+    for f in sorted(by_filing):
+        rows = by_filing[f]
+        if any((s, e) in spans and g in spans[(s, e)] and _material(spans[(s, e)][g], v) for s, e, v in rows):
+            g += 1
+        for s, e, v in rows:
+            spans.setdefault((s, e), {})[g] = v
+    out: dict[int, dict[int, float]] = {}
     by_start: dict[int, list[int]] = {}
-    for (s, e), v in span.items():
+    for (s, e), gens in spans.items():
         if _QUARTER[0] <= e - s <= _QUARTER[1]:
-            out.setdefault(e, v)
+            for gg, v in gens.items():
+                out.setdefault(e, {}).setdefault(gg, v)
         by_start.setdefault(s, []).append(e)
     for s, es in by_start.items():
         es.sort()
         for a, b in zip(es, es[1:]):
-            if _QUARTER[0] <= b - a <= _QUARTER[1] and b not in out:
-                out[b] = span[(s, b)] - span[(s, a)]
-    # A longer span whose shorter sibling was never reported (an annual figure with no
-    # nine-month value): subtract the direct quarters it contains, when they fill it.
-    for (s, e), v in sorted(span.items(), key=lambda kv: kv[0][1]):
-        if e - s <= _QUARTER[1] or e in out:
+            if _QUARTER[0] <= b - a <= _QUARTER[1]:
+                for gg in spans[(s, b)].keys() & spans[(s, a)].keys():
+                    out.setdefault(b, {}).setdefault(gg, spans[(s, b)][gg] - spans[(s, a)][gg])
+    for (s, e), gens in sorted(spans.items(), key=lambda kv: kv[0][1]):
+        if e - s <= _QUARTER[1]:
             continue
-        inside = [q for q in out if s < q < e]
         expected = max(round((e - s) / 91) - 1, 1)
-        if len(inside) == expected and _QUARTER[0] <= e - max(inside) <= _QUARTER[1]:
-            out[e] = v - sum(out[q] for q in inside)
-    idx = pd.to_datetime(sorted(out), unit="D")
-    return pd.Series([out[k] for k in sorted(out)], index=idx, dtype=float)
+        for gg, v in gens.items():
+            if gg in out.get(e, {}):
+                continue
+            inside = [q for q, qg in out.items() if s < q < e and gg in qg]
+            if len(inside) == expected and _QUARTER[0] <= e - max(inside) <= _QUARTER[1]:
+                out.setdefault(e, {})[gg] = v - sum(out[q][gg] for q in inside)
+    if positive:
+        out = {e: {gg: v for gg, v in gens.items() if v > 0} for e, gens in out.items()}
+        out = {e: gens for e, gens in out.items() if gens}
+    return out
 
 
-def latest_instant(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None) -> float | None:
+def _window(quarters: dict[int, dict[int, float]], anchor: int) -> tuple[list[int], int] | None:
+    """Four consecutive quarter ends of one tag ending at ``anchor`` that share a generation
+    (the highest one), or None."""
+    if anchor not in quarters:
+        return None
+    ends = [anchor]
+    cur = anchor
+    for _ in range(3):
+        prev = [e for e in quarters if _QUARTER[0] <= cur - e <= _QUARTER[1]]
+        if not prev:
+            return None
+        cur = max(prev)
+        ends.append(cur)
+    if not _TTM_SPAN[0] <= anchor - ends[-1] <= _TTM_SPAN[1]:
+        return None
+    gens = set(quarters[anchor])
+    for e in ends[1:]:
+        gens &= set(quarters[e])
+    if not gens:
+        return None
+    return ends, max(gens)
+
+
+def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,
+                    positive: bool = False) -> pd.DataFrame:
+    """Quarterly values by period end with the tag and basis generation each came from.
+
+    Each tag is reconstructed on its own (``_tag_quarters``); values of different tags
+    are never differenced or summed. The result is assembled from trailing four-quarter
+    windows: for the latest quarter end known under any tag, the highest-ranked tag that
+    has four consecutive quarters of one reporting basis ending there supplies all four;
+    the next uncovered quarter end is treated the same way, and so on back in time. A
+    quarter that belongs to no such window is left out, so ``ttm`` can only ever sum one
+    concept on one basis. With ``positive`` a reconstructed quarter that is not positive
+    (revenue) is rejected rather than reported.
+
+    Columns: ``val``; ``tag``; ``gen`` (0 = the filer's original basis, +1 per change).
+    """
+    empty = pd.DataFrame({"val": pd.Series(dtype=float), "tag": pd.Series(dtype=object),
+                          "gen": pd.Series(dtype=int)})
+    sub = _pick(known, tags, units)
+    sub = sub.dropna(subset=["start"])
+    if sub.empty:
+        return empty
+    epoch = pd.Timestamp("1970-01-01")
+    per_tag: list[tuple[str, dict[int, dict[int, float]]]] = []
+    for tag in tags:
+        rows = sub[sub["tag"] == tag]
+        if rows.empty:
+            continue
+        q = _tag_quarters(((rows["start"] - epoch).dt.days).tolist(), ((rows["end"] - epoch).dt.days).tolist(),
+                          rows["val"].astype(float).tolist(), ((rows["filed"] - epoch).dt.days).tolist(), positive)
+        if q:
+            per_tag.append((tag, q))
+    result: dict[int, tuple[float, str, int]] = {}
+    anchors = sorted({e for _, q in per_tag for e in q}, reverse=True)
+    last_tag: str | None = None
+    for anchor in anchors:
+        if any(abs(anchor - r) < _QUARTER[0] for r in result):
+            continue
+        # The tag of the window just placed goes first, so consecutive years stay on one
+        # concept when it covers both (a filer printing two revenue concepts side by side).
+        order = sorted(per_tag, key=lambda tq: tq[0] != last_tag)
+        for tag, q in order:
+            w = _window(q, anchor)
+            if w is None:
+                continue
+            ends, g = w
+            for e in ends:
+                result[e] = (q[e][g], tag, g)
+            last_tag = tag
+            break
+    if not result:
+        return empty
+    keys = sorted(result)
+    return pd.DataFrame({"val": [result[k][0] for k in keys], "tag": [result[k][1] for k in keys],
+                         "gen": [result[k][2] for k in keys]}, index=pd.to_datetime(keys, unit="D"))
+
+
+def quarterly_series(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,
+                     positive: bool = False) -> pd.Series:
+    """Quarterly values by period end: the ``val`` column of ``quarterly_table``."""
+    return quarterly_table(known, tags, units, positive)["val"]
+
+
+def latest_instant(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,
+                   not_before: pd.Timestamp | None = None) -> float | None:
+    """Latest print of the most recent balance-sheet instant, or None when the most recent
+    instant is dated before ``not_before`` (the fact has stopped being reported)."""
     sub = _pick(known, tags, units)
     sub = sub[sub["start"].isna()]
     if sub.empty:
         return None
     sub = sub.sort_values(["end", "filed", "_rank"], kind="stable")
     latest_end = sub.iloc[-1]["end"]
-    return float(sub[sub["end"] == latest_end].iloc[0]["val"])   # first print of the latest instant
+    if not_before is not None and latest_end < not_before:
+        return None
+    at_end = sub[sub["end"] == latest_end].sort_values(["filed", "_rank"], ascending=[True, False], kind="stable")
+    return float(at_end.iloc[-1]["val"])   # latest print; the preferred tag on the same day
 
 
 PER_SHARE_DURATION_TAGS = set(EPS_TAGS) | {"WeightedAverageNumberOfDilutedSharesOutstanding",
@@ -530,9 +698,10 @@ def ttm(q: pd.Series, back: int = 0) -> float | None:
         return None
     window = q.iloc[lo:hi]
     span = (window.index[-1] - window.index[0]).days
-    if len(window) < 4 or not 240 <= span <= 300:  # four quarters must be contiguous
+    if len(window) < 4 or not _TTM_SPAN[0] <= span <= _TTM_SPAN[1]:  # four quarters must be contiguous
         return None
     return float(window.sum())
 
 
-__all__ = ["EdgarClient", "ITEM_8K", "OTHER_FORMS", "quarterly_series", "latest_instant", "ttm", "rebase_per_share"]
+__all__ = ["EdgarClient", "ITEM_8K", "OTHER_FORMS", "quarterly_series", "quarterly_table", "latest_instant",
+           "ttm", "rebase_per_share", "SHARE_CLASS_RATIO"]

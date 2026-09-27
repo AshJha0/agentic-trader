@@ -128,8 +128,9 @@ def test_exit_costs_charged_once():
     cfg = quant.BacktestConfig(cost_bps=10)
     c = [100, 100, 100]
     r = quant.run_backtest(c, [1, 1, 1], cfg, open=c, high=c, low=[100, 90, 100], stop=[95] * 3)
-    # entry 10 bps, stop loss 5 %, exit 10 bps
-    assert r.equity[1] == pytest.approx(100_000 * (1 - 0.001 - 0.05 - 0.001))
+    # entry 10 bps out of equity, then the stop loss of 5 % on the position, then exit 10 bps
+    # (v0.8: costs are paid out of equity, multiplicatively, not summed as fractions of the start)
+    assert r.equity[1] == pytest.approx(100_000 * (1 - 0.001) * (1 - 0.05) * (1 - 0.001))
 
 
 def test_stop_stays_flat_without_rebalance_mask_until_target_changes():
@@ -138,7 +139,10 @@ def test_stop_stays_flat_without_rebalance_mask_until_target_changes():
     w = [1, 1, 1, 0.5, 0.5]
     r = quant.run_backtest(c, w, quant.BacktestConfig(cost_bps=0), open=c, high=c, low=lows,
                            stop=[96, 96, 96, 80, 80])
-    assert list(r.positions) == [1, 0, 0, 0.5, 0.5]
+    # v0.8: the final bar reports the weight actually carried into it -- the 0.5 bought at bar 3,
+    # drifted by the 95 -> 100 move (constant units between decisions), not the 0.5 target.
+    drifted = 0.5 * (100 / 95) / (1 + 0.5 * (100 / 95 - 1))
+    assert list(r.positions[:4]) == [1, 0, 0, 0.5] and r.positions[4] == pytest.approx(drifted)
 
 
 def test_carry_series_nan_is_zero():
@@ -150,7 +154,8 @@ def test_carry_series_nan_is_zero():
 def test_metrics_exposure_and_tstat():
     r = quant.run_backtest([100, 101, 100, 102, 101], [0.5, 0.5, 0, 0, 0], quant.BacktestConfig(cost_bps=0))
     m = r.metrics
-    assert m.avg_exposure == pytest.approx(0.25)
+    # v0.8: bar 1 holds the units bought at bar 0, so its weight is 0.5 * 1.01 / 1.005 (constant units).
+    assert m.avg_exposure == pytest.approx((0.5 + 0.5 * 1.01 / 1.005) / 4)
     assert m.sharpe_tstat == pytest.approx(m.sharpe * np.sqrt(4 / 252))
 
 
@@ -198,7 +203,8 @@ def test_cpp_matches_python_extended_backtest(seed):
     rc = quant.run_backtest(c, w, cfg, **kw)
     rp = pycore.run_backtest_ex(c, w, cfg, **kw)
     np.testing.assert_allclose(rc.equity, rp.equity, rtol=1e-11)
-    np.testing.assert_array_equal(rc.positions, rp.positions)
+    # v0.8: held weights drift between decisions (a computed quantity, so ulp-level agreement).
+    np.testing.assert_allclose(rc.positions, rp.positions, rtol=1e-12, atol=1e-15)
     assert rc.stop_exits == rp.stop_exits and len(rc.trades) == len(rp.trades)
     assert rc.impact_paid == pytest.approx(rp.impact_paid, rel=1e-11) and rc.impact_paid > 0
     for f in ("sharpe", "sharpe_tstat", "avg_exposure", "max_drawdown", "turnover"):

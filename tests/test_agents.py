@@ -9,7 +9,8 @@ import pandas as pd
 import pytest
 
 from agentic_trader import Instrument, TradingGraph, make_config
-from agentic_trader.agents.analysts import AlphaAnalyst, SentimentAnalyst, TechnicalAnalyst
+from agentic_trader.agents.analysts import (AlphaAnalyst, FundamentalsAnalyst, MacroAnalyst, NewsAnalyst,
+                                            SentimentAnalyst, TechnicalAnalyst)
 from agentic_trader.agents.base import untrusted_block
 from agentic_trader.agents.researchers import consensus_score
 from agentic_trader.agents.risk import PortfolioManager
@@ -116,6 +117,133 @@ def test_all_abstaining_gives_zero_consensus():
     st = _state(100 + np.arange(60.0))
     st.reports = {"news": AnalystReport("news", 0.0, 0.1, "none", abstained=True)}
     assert consensus_score(st, {}, skip_abstained=True) == (0.0, 0.0)
+
+
+# ------------------------------------------------ analyst direction (finding 70)
+# Each rule analyst, fed facts that point one way, must report a signal of that sign. Until
+# these existed a flipped sentiment/news/fundamentals/macro rule was caught only by the v0.2
+# golden number below (and not at all under the default rules, where the strategic weight
+# and vol-target sizing absorb a non-consensus-flipping sign change).
+def _news_facts(headlines, as_of, sentiment=None):
+    items = [NewsItem(as_of - pd.Timedelta(days=k).to_pytimedelta(), h, sentiment=sentiment)
+             for k, h in enumerate(headlines)]
+    return {"lookback_days": 7, "count": len(items), "headlines": [i.headline for i in items], "_items": items}
+
+
+POS_EQ = ["AAPL beats earnings estimates as revenue growth accelerates", "Analysts upgrade AAPL on strong demand",
+          "AAPL rallies to a record on robust guidance"]
+NEG_EQ = ["AAPL misses estimates as margins decline", "Analysts downgrade AAPL on weak demand",
+          "AAPL slides on a regulatory probe and recession fears"]
+
+
+def test_news_analyst_signal_follows_the_headlines():
+    st = _state(100 + np.arange(60.0))
+    na = NewsAnalyst(None, CFG)
+    pos = na.rules(_news_facts(POS_EQ, st.as_of), st)
+    neg = na.rules(_news_facts(NEG_EQ, st.as_of), st)
+    assert pos.signal > 0.3 and neg.signal < -0.3 and not pos.abstained
+    assert pos.facts["recency_weighted_tone"] > 0 > neg.facts["recency_weighted_tone"]
+    # a negated word flips: "not weak" reads positive, "no growth" negative
+    assert na.rules(_news_facts(["AAPL demand not weak"], st.as_of), st).signal > 0
+    assert na.rules(_news_facts(["AAPL sees no growth"], st.as_of), st).signal < 0
+    # pre-scored items (EDGAR filings, an LLM-scored feed) are used as given, not re-lexiconed
+    assert na.rules(_news_facts(NEG_EQ, st.as_of, sentiment=0.8), st).signal > 0.3
+    assert na.rules(_news_facts(POS_EQ, st.as_of, sentiment=-0.8), st).signal < -0.3
+
+
+def test_news_analyst_recency_weights_the_latest_headline_most():
+    st = _state(100 + np.arange(60.0))
+    na = NewsAnalyst(None, CFG)
+    # equal-magnitude tones (two lexicon words each), so only the recency weights differ:
+    # today's headline carries weight 1, yesterday's 2^-0.5 (half-life two days)
+    good, bad = "Analysts upgrade AAPL on strong demand", "Analysts downgrade AAPL on weak demand"
+    fresh_bad = na.rules(_news_facts([bad, good], st.as_of), st)     # newest is bad
+    fresh_good = na.rules(_news_facts([good, bad], st.as_of), st)    # newest is good
+    assert fresh_bad.signal < 0 < fresh_good.signal
+    assert fresh_bad.signal == pytest.approx(-fresh_good.signal)
+
+
+def test_fx_news_is_read_from_the_base_currency_side():
+    st = _state(np.full(60, 150.0), symbol="USDJPY")
+    na = NewsAnalyst(None, CFG)
+    # bad news about the *quote* currency is good for the pair
+    assert na.rules(_news_facts(["JPY slides as growth data disappoints"], st.as_of), st).signal > 0
+    assert na.rules(_news_facts(["USD slides as growth data disappoints"], st.as_of), st).signal < 0
+    assert na.rules(_news_facts(["JPY strengthens as the central bank signals tightening"], st.as_of), st).signal < 0
+
+
+def test_sentiment_analyst_signal_follows_the_posts_and_fades_extremes():
+    st = _state(100 + np.arange(60.0))
+    sa = SentimentAnalyst(None, CFG)
+
+    def facts(mean, recent=None, rsi=50.0, posts=10):
+        return {"posts": posts, "mean_post_sentiment": mean, "recent_post_sentiment": mean if recent is None else recent,
+                "bullish_share": 0.5, "rsi14": rsi}
+    assert sa.rules(facts(0.8), st).signal > 0.3
+    assert sa.rules(facts(-0.8), st).signal < -0.3
+    assert sa.rules(facts(0.2, recent=0.6), st).signal > sa.rules(facts(0.2, recent=-0.2), st).signal   # improving
+    # RSI extremes are contrarian, and on their own give a view even with no posts
+    euphoria = sa.rules({"posts": 0, "rsi14": 85.0}, st)
+    capitulation = sa.rules({"posts": 0, "rsi14": 15.0}, st)
+    assert euphoria.signal < 0 < capitulation.signal and not euphoria.abstained
+    assert sa.rules(facts(0.8, rsi=85.0), st).signal < sa.rules(facts(0.8), st).signal
+
+
+def test_fundamentals_analyst_orders_cheap_growing_above_rich_shrinking():
+    st = _state(100 + np.arange(60.0))
+    fa = FundamentalsAnalyst(None, CFG)
+    base = {"sector_pe": 22.0, "net_margin": 0.1, "debt_to_equity": 0.5, "fcf_yield": 0.03, "report_period_end": "2023-12-31"}
+    good = fa.rules({**base, "pe_ratio": 10.0, "revenue_growth_yoy": 0.3, "eps_surprise": 0.05, "insider_net_buying": 3}, st)
+    bad = fa.rules({**base, "pe_ratio": 40.0, "revenue_growth_yoy": -0.3, "eps_surprise": -0.05, "insider_net_buying": -3}, st)
+    assert good.signal > 0.3 and bad.signal < -0.3
+    # each term alone moves the score the right way
+    only = lambda **kv: fa.rules({**base, **kv}, st).signal                                  # noqa: E731
+    assert only(pe_ratio=10.0) > only(pe_ratio=22.0) > only(pe_ratio=40.0)
+    assert only(pe_ratio=-5.0) < only(pe_ratio=22.0)                       # negative earnings
+    assert only(revenue_growth_yoy=0.3) > only(revenue_growth_yoy=-0.3)
+    assert only(eps_surprise=0.05) > only(eps_surprise=-0.05)
+    assert only(insider_net_buying=2) > only(insider_net_buying=-2)
+    assert only(debt_to_equity=3.0) < only(debt_to_equity=0.5)
+    assert only(fcf_yield=0.08) > only(fcf_yield=-0.02)
+    assert fa.rules({"report_period_end": "2023-12-31"}, st).abstained    # nothing numeric -> no view
+
+
+def test_macro_analyst_follows_carry_and_fades_inflation_and_stretch():
+    st = _state(np.full(260, 150.0), symbol="USDJPY")
+    ma = MacroAnalyst(None, CFG)
+
+    def facts(rate_diff, **kv):
+        return {"rate_diff": rate_diff, "base_rate": 2.0 + rate_diff, "quote_rate": 2.0, **kv}
+    assert ma.rules(facts(3.0), st).signal > 0.3 and ma.rules(facts(-3.0), st).signal < -0.3
+    assert "favours long" in ma.rules(facts(3.0), st).key_points[0]
+    assert ma.rules(facts(0.0, base_inflation=6.0, quote_inflation=2.0), st).signal < 0     # PPP drag on USD
+    assert ma.rules(facts(0.0, base_inflation=2.0, quote_inflation=6.0), st).signal > 0
+    assert ma.rules(facts(0.0, deviation_from_200d=0.1), st).signal < 0 < ma.rules(facts(0.0, deviation_from_200d=-0.1), st).signal
+    assert ma.rules({"base_rate": 1.0}, st).abstained
+
+
+def test_pipeline_news_and_social_tone_move_the_debate_the_same_way():
+    """Flip the whole synthetic feed's tone on one date: the news and sentiment reports must
+    flip sign and the research debate must lean the same way as the feed."""
+    class Toned(SyntheticProvider):
+        tone = 1.0
+
+        def news(self, instrument, as_of, lookback_days):
+            heads = POS_EQ if self.tone > 0 else NEG_EQ
+            return [NewsItem(as_of - pd.Timedelta(days=k).to_pytimedelta(), h) for k, h in enumerate(heads * 2)]
+
+        def social(self, instrument, as_of, lookback_days):
+            text = "$AAPL looking bullish, loading calls" if self.tone > 0 else "$AAPL looks weak, buying puts"
+            return [NewsItem(as_of - pd.Timedelta(days=k % 3).to_pytimedelta(), text) for k in range(6)]
+
+    cfg = make_config(CFG, analysts=["news", "sentiment"])
+    bull, bear = Toned(cfg), Toned(cfg)
+    bear.tone = -1.0
+    up, _ = graph(cfg, provider=bull).propagate("AAPL", "2024-03-01")
+    down, _ = graph(cfg, provider=bear).propagate("AAPL", "2024-03-01")
+    assert up.reports["news"].signal > 0.3 > -0.3 > down.reports["news"].signal
+    assert up.reports["sentiment"].signal > 0 > down.reports["sentiment"].signal
+    assert up.debate.score > 0 > down.debate.score
 
 
 def test_sentiment_without_posts_or_extremes_abstains():
@@ -264,8 +392,9 @@ def test_injected_model_cannot_breach_limits():
             if "Portfolio Manager" in system:
                 return json.dumps({"target_weight": 1e9, "confidence": 2, "rationale": "all in"})
             if "Trader." in system:
-                return json.dumps({"action": "buy", "target_weight": "inf", "stop_loss": -5,
-                                   "take_profit": "nan", "horizon_days": 10**9, "rationale": "x"})
+                # Numbers, so the reply passes the contract; each one is absurd.
+                return json.dumps({"action": "buy", "target_weight": 1e9, "stop_loss": -5,
+                                   "take_profit": 1e12, "horizon_days": 10**9, "rationale": "x"})
             return None
     st, d = graph(make_config(CFG, risk={"max_position": 0.3}), llm=Hijacked()).propagate(
         "NVDA", "2024-03-01")

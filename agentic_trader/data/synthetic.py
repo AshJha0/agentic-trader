@@ -24,6 +24,27 @@ _FX_START = {
     "EURUSD": 1.10, "GBPUSD": 1.27, "USDJPY": 145.0, "AUDUSD": 0.66, "USDCHF": 0.90,
     "USDCAD": 1.36, "NZDUSD": 0.60, "EURGBP": 0.86, "EURJPY": 158.0,
 }
+# Approximate USD value of one unit of each currency (mid-2020s levels), so a pair outside
+# _FX_START starts at a level consistent with its quoting convention: JPY quotes near 100+,
+# where Instrument.pip_size is 0.01, and everything else near 1. A generic uniform(0.8, 1.5)
+# start made an 0.8-pip spread on GBPJPY worth ~45 bp instead of ~0.3 bp.
+_USD_PER_UNIT = {
+    "USD": 1.0, "EUR": 1.10, "GBP": 1.27, "JPY": 1 / 145.0, "CHF": 1 / 0.90, "AUD": 0.66, "CAD": 1 / 1.36,
+    "NZD": 0.60, "SEK": 1 / 10.5, "NOK": 1 / 10.7, "DKK": 1 / 6.9, "CNH": 1 / 7.2, "CNY": 1 / 7.2,
+    "HKD": 1 / 7.8, "SGD": 1 / 1.34, "MXN": 1 / 17.0, "ZAR": 1 / 18.0, "TRY": 1 / 33.0, "PLN": 1 / 4.0,
+    "INR": 1 / 83.0, "KRW": 1 / 1350.0, "BRL": 1 / 5.0,
+}
+
+
+def fx_start_level(instrument: Instrument, fallback: float) -> float:
+    """Starting level of a synthetic pair: the table for the classic pairs, otherwise derived
+    from the legs' USD values; ``fallback`` only for a currency outside ``_USD_PER_UNIT``."""
+    if instrument.symbol in _FX_START:
+        return _FX_START[instrument.symbol]
+    b, q = _USD_PER_UNIT.get(instrument.base or ""), _USD_PER_UNIT.get(instrument.quote or "")
+    if b is None or q is None:
+        return fallback * (100.0 if instrument.quote == "JPY" else 1.0)
+    return b / q
 
 _NEWS = {
     "equity": {
@@ -86,7 +107,10 @@ class SyntheticProvider(MarketDataProvider):
         ppy = instrument.periods_per_year
         fx = instrument.is_fx
         base_vol = rng.uniform(0.06, 0.10) if fx else rng.uniform(0.18, 0.40)
-        p0 = _FX_START.get(instrument.symbol, rng.uniform(0.8, 1.5)) if fx else rng.uniform(40, 300)
+        # The uniform draw is consumed for every instrument so the rest of the stream (and
+        # thus every existing synthetic path) is unchanged by how the start level is chosen.
+        u = rng.uniform(0.8, 1.5) if fx else rng.uniform(40, 300)
+        p0 = fx_start_level(instrument, u) if fx else u
 
         drift, volmult = np.zeros(n), np.ones(n)
         i = 0
@@ -167,7 +191,9 @@ class SyntheticProvider(MarketDataProvider):
             return {}
         q_ret = float(q.iloc[-1] / q.iloc[0] - 1.0)
         rng = np.random.default_rng([self.seed, self._key(instrument), q_end.toordinal()])
-        base = np.random.default_rng([self.seed, self._key(instrument)])
+        # Salt 3: an independent stream (news uses 1, social 2). Seeding this like _frame made
+        # the first uniform draw -- base P/E -- the same u as the price path's base volatility.
+        base = np.random.default_rng([self.seed, self._key(instrument), 3])
         base_pe, base_g, base_m = base.uniform(12, 40), base.uniform(0.0, 0.2), base.uniform(0.05, 0.3)
         return {
             "report_period_end": q_end.date().isoformat(),

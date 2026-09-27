@@ -46,7 +46,8 @@ class Analyst(Agent):
         return (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}). "
             f"As-of date: {state.as_of.isoformat()}. Last close: {state.fmt_px(state.last_price)}.\n"
-            f"Data from your tools:\n{fmt_facts(state.prompt_facts(plain))}\n"
+            f"Data from your tools (a null value is unavailable: do not estimate it):\n"
+            f"{fmt_facts(state.prompt_facts(plain))}\n"
             + ("\n".join(blocks) + "\n" if blocks else "")
             + f"\n{self.instructions}\nSignal direction refers to {_direction_note(state)}.\n"
             'JSON keys: "signal" (number in [-1, 1]), "confidence" (number in [0, 1]), '
@@ -60,7 +61,7 @@ class Analyst(Agent):
         # invent a view from an empty input).
         if not report.abstained:
             data = self.ask_json(self.prompt(facts, state), ("signal", "confidence", "summary"),
-                                 state=state)
+                                 state=state, numeric=("signal", "confidence"))
             if data:
                 kp = data.get("key_points") or []
                 report = AnalystReport(
@@ -73,6 +74,8 @@ class Analyst(Agent):
                     source="llm",
                     rule_signal=report.signal,
                 )
+        # Text derived from headlines or posts stays fenced wherever it is shown next.
+        report.untrusted = bool(self.untrusted_keys)
         state.reports[self.name] = report
         return report
 
@@ -195,8 +198,9 @@ class FundamentalsAnalyst(Analyst):
     name = "fundamentals"
     role = ("Fundamentals Analyst. You assess a company's intrinsic value and financial "
             "health from its latest reported financials and insider activity.")
-    instructions = ("Assess valuation versus the sector, growth, profitability, balance-sheet "
-                    "leverage, cash generation, earnings surprise and insider activity.")
+    instructions = ("Assess valuation (against the sector only when a sector P/E is given), growth, "
+                    "profitability, balance-sheet leverage, cash generation, and earnings surprise "
+                    "and insider activity where they are reported.")
 
     def gather(self, state, provider):
         return provider.fundamentals(state.instrument, state.as_of)
@@ -206,11 +210,15 @@ class FundamentalsAnalyst(Analyst):
         if not usable:
             return self.abstain("No point-in-time fundamental data available.", f)
         s, pts = 0.0, []
-        pe, spe = f.get("pe_ratio"), f.get("sector_pe") or 22.0
-        if pe and pe > 0:
+        pe, spe = f.get("pe_ratio"), f.get("sector_pe")
+        # Relative valuation needs a benchmark from the data; the real providers have no
+        # sector P/E, and a placeholder would be scored and reported as a fact.
+        if pe and pe > 0 and spe and spe > 0:
             v = clip((spe - pe) / spe, -0.3, 0.3)
             s += v
             pts.append(f"P/E {pe:.1f} vs sector {spe:.1f} ({'cheap' if v > 0 else 'rich'})")
+        elif pe and pe > 0:
+            pts.append(f"P/E {pe:.1f}; no sector benchmark available")
         elif pe is not None and pe <= 0:
             s -= 0.1
             pts.append("Negative earnings (P/E not meaningful)")
@@ -451,9 +459,10 @@ class AlphaAnalyst(Analyst):
         ic = {}
         if len(df) >= 120:
             sig = compute_alphas(df, ins, None, carry)
-            fwd = forward_returns(df["Close"].to_numpy(float), 10)
+            horizon = 10
+            fwd = forward_returns(df["Close"].to_numpy(float), horizon)
             for name in sig.columns:
-                v, t, n = information_coefficient(sig[name].to_numpy(), fwd)
+                v, t, n = information_coefficient(sig[name].to_numpy(), fwd, horizon)
                 ic[name] = {"IC": v, "t(IC)": t, "n": n}
         return {"latest": latest, "ic": ic}
 

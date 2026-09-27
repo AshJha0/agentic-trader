@@ -2,18 +2,25 @@
 
 Point-in-time caveats, handled conservatively:
   * Prices: dividend- and split-adjusted closes (``auto_adjust=True``), i.e.
-    total-return prices. Fine historically.
+    total-return prices. Fine historically. A bar dated *today* is never served:
+    during the session Yahoo returns the in-progress bar (a few minutes of trading
+    presented as a day), and the desk would otherwise decide "at the close" on it
+    and cache it for the rest of the day. ``history(end=today)`` therefore ends at
+    yesterday's bar (the graph then reports staleness 1 day); a decision for today's
+    close is made tomorrow, or with ``as_of`` = yesterday, which is what the CLI
+    defaults to. Only complete bars are cached, and the corporate-action table is
+    re-downloaded once per calendar day.
   * News: Yahoo only serves recent headlines. Historical dates are served from
     the SEC EDGAR filing stream instead (8-K events, periodic reports, ownership
     and insider filings; see ``data/edgar.py``), which is point-in-time by
     construction; Yahoo headlines are added for the last month.
-  * Fundamentals: EDGAR XBRL facts filed on or before ``as_of`` (first prints),
-    combined with the close *as traded* on ``as_of``: the adjusted history above
-    is rescaled by every split after ``as_of`` (from a second, unadjusted download
-    made once per symbol and cached), and the same split table brings EDGAR's
-    per-share prints to the ``as_of`` basis. ``Ticker.info`` is a *current*
-    snapshot, so it is used only when EDGAR has nothing and ``as_of`` is within
-    7 days of today.
+  * Fundamentals: EDGAR XBRL facts filed on or before ``as_of`` (the latest print
+    of each span known by then), combined with the close *as traded* on ``as_of``:
+    the adjusted history above is rescaled by every split after ``as_of`` (from a
+    second, unadjusted download cached per symbol and day), and the same split
+    table brings EDGAR's per-share prints to the ``as_of`` basis. ``Ticker.info``
+    is a *current* snapshot, so it is used only when EDGAR has nothing and
+    ``as_of`` is within 7 days of today.
   * FX macro: point-in-time FRED rates (see ``data/fred.py`` and ``base.fx_macro``).
 
 EDGAR needs a contact User-Agent (``EDGAR_USER_AGENT``); without one both fall
@@ -43,25 +50,37 @@ def _yf():
     return yf
 
 
+def _today() -> date:
+    return date.today()
+
+
+def _complete_bars(df: pd.DataFrame, today: date) -> pd.DataFrame:
+    """Drop any bar dated today or later: the session is not over, so it is not a daily bar."""
+    return df[df.index < pd.Timestamp(today)]
+
+
 class YahooProvider(MarketDataProvider):
     name = "yahoo"
 
     def __init__(self, config: dict):
         super().__init__(config)
         self._cache: dict[str, pd.DataFrame] = {}
-        self._covered: dict[str, tuple[date, date]] = {}  # requested range already downloaded
+        self._covered: dict[str, tuple[date, date]] = {}  # range of complete bars already downloaded
         self._news: dict[str, list] = {}  # one headline fetch per symbol per provider
         self._actions: dict[str, pd.DataFrame] = {}  # unadjusted close + splits, per symbol, lazily
+        self._actions_day: dict[str, date] = {}      # the calendar day each action table was downloaded
         self._lock = threading.RLock()   # history() misses download once even from worker threads
         from .edgar import EdgarClient
         self.edgar = EdgarClient.from_config(config)
 
     def _corporate_actions(self, sym: str) -> pd.DataFrame:
         """``RawClose`` (split-adjusted to today, not dividend-adjusted) and ``Split`` (the
-        ratio on ex-dates, 0 elsewhere), downloaded once per symbol."""
+        ratio on ex-dates, 0 elsewhere): complete bars only, downloaded once per symbol per day."""
         with self._lock:
-            if sym not in self._actions:
-                df = _yf().download(sym, start="1990-01-01", end=(date.today() + timedelta(days=1)).isoformat(),
+            today = _today()
+            downloaded = self._actions_day.get(sym)   # None: a table supplied by the caller (tests)
+            if sym not in self._actions or (downloaded is not None and downloaded != today):
+                df = _yf().download(sym, start="1990-01-01", end=(today + timedelta(days=1)).isoformat(),
                                     auto_adjust=False, actions=True, progress=False)
                 if df is None or df.empty:
                     raise ValueError(f"no Yahoo corporate-action history for {sym}")
@@ -70,7 +89,8 @@ class YahooProvider(MarketDataProvider):
                 out = pd.DataFrame({"RawClose": pd.to_numeric(df["Close"], errors="coerce"),
                                     "Split": pd.to_numeric(df.get("Stock Splits", 0.0), errors="coerce").fillna(0.0)})
                 out.index = pd.to_datetime(out.index).tz_localize(None) if getattr(out.index, "tz", None) else pd.to_datetime(out.index)
-                self._actions[sym] = out.sort_index()
+                self._actions[sym] = _complete_bars(out.sort_index(), today)
+                self._actions_day[sym] = today
             return self._actions[sym]
 
     def splits(self, instrument: Instrument) -> dict[date, float]:
@@ -110,17 +130,26 @@ class YahooProvider(MarketDataProvider):
             return self._history_locked(sym, start, end)
 
     def _history_locked(self, sym: str, start: date, end: date) -> pd.DataFrame:
+        today = _today()
+        last_complete = today - timedelta(days=1)
+        # Only complete bars are requested and cached: today's bar is in progress (and
+        # yfinance returns it during the session), so a request ending today or later is a
+        # request through yesterday. Tomorrow the range grows and today's bar is fetched
+        # once, complete.
+        end = min(end, last_complete)
+        if end < start:
+            return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"], dtype=float)
         cov = self._covered.get(sym)
         if cov is None or start < cov[0] or end > cov[1]:
             # Download the union of what was asked before and now, so repeated calls
             # (walk-forward backtests) hit the cache even before a listing date. The
-            # end is always extended to today: a walk-forward caller asks for a window
-            # ending at each successive as-of date, and without this every step would be
-            # a new download (found when the cross-sectional analyst fetched 45 peers per
-            # decision). clip_history keeps the point-in-time cut at the requested end.
-            today = date.today()
-            lo, hi = (start, max(end, today)) if cov is None else (min(start, cov[0]), max(end, cov[1], today))
-            df = self._download(sym, lo, hi)
+            # end is always extended to the last complete bar: a walk-forward caller asks
+            # for a window ending at each successive as-of date, and without this every
+            # step would be a new download (found when the cross-sectional analyst fetched
+            # 45 peers per decision). clip_history keeps the point-in-time cut at the
+            # requested end.
+            lo, hi = (start, last_complete) if cov is None else (min(start, cov[0]), max(cov[1], last_complete))
+            df = _complete_bars(self._download(sym, lo, hi), today)
             if df.empty:
                 raise ValueError(f"no Yahoo data for {sym} between {lo} and {hi}")
             self._cache[sym] = df
@@ -139,7 +168,7 @@ class YahooProvider(MarketDataProvider):
                 filings = self.edgar.news(instrument.symbol, as_of, lookback_days)
             except Exception as e:  # EDGAR outages must not kill the pipeline either
                 log.warning("edgar news failed for %s: %s", instrument.symbol, e)
-        if (date.today() - as_of).days > self.NEWS_HORIZON_DAYS:
+        if (_today() - as_of).days > self.NEWS_HORIZON_DAYS:
             return filings
         return filings + self._yahoo_news(instrument, as_of, lookback_days)
 
@@ -184,7 +213,7 @@ class YahooProvider(MarketDataProvider):
                 f = {}
             if f:
                 return f
-        if (date.today() - as_of).days > 7:
+        if (_today() - as_of).days > 7:
             return {}
         try:
             info = _yf().Ticker(instrument.yahoo_symbol).info or {}

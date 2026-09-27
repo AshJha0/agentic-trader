@@ -69,8 +69,13 @@ class Metrics:
 def _fmt_labels(key: tuple[tuple[str, str], ...]) -> str:
     if not key:
         return ""
-    inner = ",".join(f'{k}="{v}"' for k, v in key)
+    inner = ",".join(f'{k}="{_escape(v)}"' for k, v in key)
     return "{" + inner + "}"
+
+
+def _escape(v: str) -> str:
+    """Label value escaping per the exposition format: backslash, quote, newline."""
+    return v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 @dataclass

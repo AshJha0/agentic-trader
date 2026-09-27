@@ -59,13 +59,18 @@ def test_deterministic_offline():
 
 
 def test_memory_resolves_only_past():
+    import pandas as pd
     m = DecisionMemory(None)
+    # One consistent series, +1 per bar: the outcome is read at the horizon bar of the
+    # series the desk sees at each visit, never from a price handed in by the visit.
+    idx = pd.bdate_range("2024-01-01", periods=15)
+    closes = pd.Series([100.0 + i for i in range(15)], index=idx)
     m.record("X", date(2024, 1, 1), "BUY", 0.5, 100.0, "test", horizon_days=10)
-    assert m.resolve("X", date(2024, 1, 5), 110.0) == 0  # horizon not elapsed
-    assert m.resolve("X", date(2024, 1, 12), 110.0) == 1
-    assert m.entries[0].pnl == pytest.approx(0.05)
+    assert m.resolve("X", date(2024, 1, 5), closes[:5]) == 0  # horizon (10 bars) not elapsed
+    assert m.resolve("X", date(2024, 1, 15), closes[:11]) == 1  # bar 10 after entry = 2024-01-15
+    assert m.entries[0].pnl == pytest.approx(0.05) and m.entries[0].resolved_on == "2024-01-15"
     assert m.lessons("X", date(2024, 1, 11)) == []  # not known before resolution date
-    assert len(m.lessons("X", date(2024, 1, 12))) == 1
+    assert len(m.lessons("X", date(2024, 1, 15))) == 1
 
 
 def test_fx_headline_orientation():

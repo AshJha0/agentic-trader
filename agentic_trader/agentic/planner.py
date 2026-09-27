@@ -11,7 +11,9 @@ validator:
   debate, risk needs the trader), inserting canonical stages when missing;
 * appends the governance steps (critic, validate, finalise) when a plan omits
   them, always in that order and always last;
-* caps the number of steps.
+* caps the number of steps and the plan's data budget: the bars every tool step
+  would load (symbols x lookback) must fit ``agentic.max_plan_lookback_bars``, so
+  a model cannot schedule thousands of full-history evaluations in one plan.
 
 If nothing usable remains, the canonical plan is used and the fact is recorded.
 """
@@ -27,6 +29,8 @@ from .domain import GOVERNANCE_STEPS, Plan, PlanStep, StepType, Task
 from .tools import ToolRegistry
 
 MAX_STEPS = 25
+DEFAULT_MAX_PLAN_LOOKBACK_BARS = 200_000
+_ALPHA_TOOLS = {"quant.alpha", "quant.xalpha"}
 
 # Agent stages the harness knows how to run. Analysts are "analyst:<name>".
 AGENT_STAGES = ("debate", "trader", "risk")
@@ -87,8 +91,41 @@ def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[st
     return data["steps"], text
 
 
+def step_cost_bars(step: PlanStep, config: dict[str, Any] | None = None) -> int:
+    """Calendar days of history a tool step loads, summed over its symbols (0 for steps
+    that load none). The default window is the desk's ``lookback_days`` or, for the
+    alpha tools, ``alpha_lookback_days``; an explicit ``lookback_days`` argument wins."""
+    if step.type is not StepType.TOOL:
+        return 0
+    cfg = config or {}
+    args = step.arguments
+    symbols = args.get("symbols")
+    n = len(symbols) if isinstance(symbols, (list, tuple)) else (1 if args.get("symbol") is not None else 0)
+    if n == 0:
+        return 0
+    if isinstance(args.get("start"), str) and isinstance(args.get("end"), str):
+        try:
+            days = (date.fromisoformat(args["end"]) - date.fromisoformat(args["start"])).days
+        except ValueError:
+            days = 0
+        return n * max(days, 0)
+    lookback = args.get("lookback_days")
+    if not isinstance(lookback, (int, float)) or isinstance(lookback, bool) or lookback <= 0:
+        key = "alpha_lookback_days" if step.name in _ALPHA_TOOLS else "lookback_days"
+        lookback = cfg.get(key, 900 if key == "alpha_lookback_days" else 400)
+    return int(n * lookback)
+
+
+def plan_cost_bars(steps: list[PlanStep] | tuple[PlanStep, ...], config: dict[str, Any] | None = None) -> int:
+    return sum(step_cost_bars(s, config) for s in steps)
+
+
+def max_plan_lookback_bars(config: dict[str, Any] | None) -> int:
+    return int((config or {}).get("agentic", {}).get("max_plan_lookback_bars", DEFAULT_MAX_PLAN_LOOKBACK_BARS))
+
+
 def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, analysts: list[str],
-                  registry: ToolRegistry, source: str = "llm") -> Plan:
+                  registry: ToolRegistry, source: str = "llm", config: dict[str, Any] | None = None) -> Plan:
     notes: list[str] = []
     steps: list[PlanStep] = []
     allowed_agents = {f"{ANALYST_PREFIX}{a}" for a in analysts} | set(AGENT_STAGES)
@@ -117,6 +154,10 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
                 if clean.get("as_of", task.as_of.isoformat()) != task.as_of.isoformat():
                     notes.append(f"step {i}: {name} as_of pinned to {task.as_of.isoformat()}")
                 clean["as_of"] = task.as_of.isoformat()
+            if "current_weight" in props and task.current_weight is not None:
+                if clean.get("current_weight", task.current_weight) != task.current_weight:
+                    notes.append(f"step {i}: {name} current_weight pinned to {task.current_weight:+.4f}")
+                clean["current_weight"] = float(task.current_weight)
             if not registry.get(name).descriptor.annotations.read_only:
                 notes.append(f"step {i}: {name} changes state; a plan may not schedule it, dropped")
                 continue
@@ -155,7 +196,27 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
     if len(ordered_tools) > budget:
         notes.append(f"plan truncated to {MAX_STEPS} steps ({len(ordered_tools) - budget} tool calls dropped)")
         ordered_tools = ordered_tools[:budget]
-    steps = ordered_tools + ordered_analysts + rest
+    # Data budget: identical tool steps are pointless repeats, and the bars the remaining
+    # steps would load must fit the configured cap.
+    seen: set[str] = set()
+    unique_tools = []
+    for s in ordered_tools:
+        key = json.dumps({"name": s.name, "arguments": s.arguments}, sort_keys=True, default=str)
+        if key in seen:
+            notes.append(f"duplicate tool step {s.name} dropped")
+            continue
+        seen.add(key)
+        unique_tools.append(s)
+    cap, spent, kept_tools = max_plan_lookback_bars(config), 0, []
+    for s in unique_tools:
+        cost = step_cost_bars(s, config)
+        if spent + cost > cap:
+            notes.append(f"{s.name} dropped: plan would load {spent + cost} bars, over the "
+                         f"max_plan_lookback_bars budget of {cap}")
+            continue
+        spent += cost
+        kept_tools.append(s)
+    steps = kept_tools + ordered_analysts + rest
     steps.extend(governance_steps())
     return Plan(tuple(steps), source if not notes else f"{source}+repaired", tuple(notes))
 
@@ -168,7 +229,7 @@ def make_plan(task: Task, instrument: Instrument, analysts: list[str], config: d
     if raw is None:
         plan = canonical_plan(task, instrument, analysts, config, registry)
         return Plan(plan.steps, "canonical", ("model plan unusable: canonical plan used",))
-    return validate_plan(raw, task, instrument, analysts, registry)
+    return validate_plan(raw, task, instrument, analysts, registry, config=config)
 
 
 def plan_to_dict(plan: Plan) -> dict[str, Any]:

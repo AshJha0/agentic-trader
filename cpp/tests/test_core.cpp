@@ -4,6 +4,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "at/backtest.hpp"
 #include "at/indicators.hpp"
@@ -88,7 +89,9 @@ void test_backtest_costs_and_carry() {
     cfg.carry_annual = 0.0252;
     cfg.periods_per_year = 252;
     r = at::run_backtest(p, at::Series(11, 1.0), cfg);
-    check(near(r.equity.back(), cfg.initial_capital * std::pow(1.0001, 10), 1e-6), "carry accrual");
+    // Constant units: carry accrues on the held notional (linear), it is not reinvested
+    // into a larger position each bar (which would compound 1.0001^10).
+    check(near(r.equity.back(), cfg.initial_capital * 1.001, 1e-6), "carry accrual on constant notional");
 }
 
 void test_short_clip() {
@@ -166,7 +169,7 @@ void test_carry_series_and_validation() {
     at::BacktestInputs in;
     in.carry = {0.10, 0.20, 0.0};
     auto r = at::run_backtest_ex(p, at::Series(3, 1.0), cfg, in);
-    check(near(r.equity.back(), 100000 * 1.001 * 1.002), "per-bar carry series");
+    check(near(r.equity.back(), 100000 * (1 + 0.001 + 0.002)), "per-bar carry series (linear on constant notional)");
 
     bool threw = false;
     try { at::run_backtest(at::Series{100, 0, 101}, at::Series(3, 1.0), cfg); }
@@ -215,9 +218,183 @@ void test_impact_cost() {
 void test_exposure_and_tstat() {
     const at::Series p = {100, 101, 100, 102, 101};
     const auto r = at::run_backtest(p, at::Series{0.5, 0.5, 0.0, 0.0, 0.0}, no_cost());
-    check(near(r.metrics.avg_exposure, 0.25), "average exposure = mean |w| per period");
+    // Bar 1 holds the units bought at bar 0: the weight has drifted to 0.5 * 1.01 / 1.005.
+    const double drifted = 0.5 * 1.01 / 1.005;
+    check(near(r.positions[1], drifted), "held weight drifts with the price between decisions");
+    check(near(r.metrics.avg_exposure, (0.5 + drifted) / 4.0), "average exposure = mean |w| per period");
     check(std::fabs(r.metrics.sharpe_tstat - r.metrics.sharpe * std::sqrt(4.0 / 252.0)) < 1e-12,
           "t-stat = annual Sharpe * sqrt(n / periods_per_year)");
+}
+
+// v0.8: constant units between decisions (finding 79).
+void test_constant_units_between_decisions() {
+    const at::Series p = {100, 110, 110, 121};
+    at::BacktestConfig cfg = no_cost();
+    cfg.cost_bps = 10.0;
+    auto r = at::run_backtest(p, at::Series(4, 0.5), cfg);
+    // Entry: fee 10 bps * 0.5 out of equity, then 0.5 * 10% on the rest; hold: no trade, no cost.
+    check(near(r.equity[1], 100000 * (1 - 0.0005) * 1.05), "entry cost then return");
+    check(near(r.equity[2], r.equity[1]), "no cost on a hold bar");
+    const double w1 = 0.5 * 1.1 / 1.05;
+    check(near(r.positions[1], w1) && near(r.positions[2], w1), "units held: weight drifts once, then flat price");
+    check(near(r.equity[3], r.equity[2] * (1 + w1 * 0.1)), "drifted weight earns the next move");
+    check(r.metrics.num_trades == 1 && near(r.metrics.turnover, 0.5), "one trade, turnover 0.5");
+    check(near(r.traded[0], 0.5) && near(r.traded[1], 0.0), "traded records |dw| per bar");
+    // A rebalance back to the same target is a trade (the drift correction) and is charged.
+    at::BacktestInputs in;
+    in.rebalance = {1, 1, 0, 0};
+    r = at::run_backtest_ex(p, at::Series(4, 0.5), cfg, in);
+    check(near(r.positions[1], 0.5) && near(r.metrics.turnover, 0.5 + std::fabs(0.5 - w1)),
+          "rebalancing to the same target charges the drift correction");
+}
+
+// v0.8: ruin floor (finding 18).
+void test_ruin_floor() {
+    const at::Series p = {10, 10, 24, 20, 15, 12};
+    at::BacktestConfig cfg;
+    cfg.cost_bps = 1.0;
+    const auto r = at::run_backtest(p, at::Series(6, -1.0), cfg);
+    check(near(r.equity[1], 99990.0) && r.equity[2] == 0.0 && r.equity[5] == 0.0, "equity floored at 0");
+    check(r.returns[2] == -1.0 && r.returns[3] == 0.0 && r.returns[5] == 0.0, "-100% then 0");
+    check(r.positions[2] == 0.0 && r.positions[5] == 0.0 && r.ruined_at == 2, "flat after ruin");
+    check(r.metrics.ruined && near(r.metrics.max_drawdown, 1.0) && near(r.metrics.cumulative_return, -1.0),
+          "metrics report ruin");
+    check(near(r.metrics.win_rate, 0.0), "post-ruin bars are not counted as live");
+    const auto ok = at::run_backtest(at::Series{100, 110, 121}, at::Series(3, 1.0), no_cost());
+    check(!ok.metrics.ruined && ok.ruined_at == -1, "no ruin flag on a live account");
+}
+
+// v0.8: a gap through the take-profit fills at the open, never at the stop (finding 21).
+void test_gap_through_take_profit() {
+    at::BacktestInputs in;
+    in.open = {100, 112}; in.high = {100, 115}; in.low = {100, 88};
+    in.stop = {90, 90}; in.take = {110, 110};
+    auto r = at::run_backtest_ex(at::Series{100, 100}, at::Series(2, 1.0), no_cost(), in);
+    check(near(r.equity[1], 112000.0) && r.trades.back().price == 112.0, "long: gap through the take fills at the open");
+    in.open = {100, 88}; in.high = {100, 112}; in.low = {100, 85};
+    in.stop = {110, 110}; in.take = {90, 90};
+    r = at::run_backtest_ex(at::Series{100, 100}, at::Series(2, -1.0), no_cost(), in);
+    check(near(r.equity[1], 112000.0) && r.trades.back().price == 88.0, "short: gap through the take fills at the open");
+    // Open inside both levels: the intrabar rule still fills the stop first.
+    in.open = {100, 100}; in.high = {100, 112}; in.low = {100, 85};
+    r = at::run_backtest_ex(at::Series{100, 100}, at::Series(2, -1.0), no_cost(), in);
+    check(near(r.equity[1], 90000.0), "short: both levels intrabar -> stop first");
+}
+
+// v0.8: cash leg (finding 14).
+void test_cash_leg_and_excess_metrics() {
+    const at::Series p(3, 100.0);
+    at::BacktestConfig cfg = no_cost();
+    cfg.periods_per_year = 252;
+    at::BacktestInputs in;
+    in.cash_rate = {0.0252, std::numeric_limits<double>::quiet_NaN(), 0.0252};
+    auto r = at::run_backtest_ex(p, at::Series(3, 0.5), cfg, in);
+    check(near(r.equity[1], 100000 * (1 + 0.5 * 1e-4)) && near(r.equity[2], r.equity[1]),
+          "funded: idle cash (1-|w|) earns the rate; NaN credits nothing");
+    cfg.funded = false;
+    r = at::run_backtest_ex(p, at::Series(3, 0.5), cfg, in);
+    check(near(r.equity[1], 100000 * (1 + 1e-4)), "unfunded (FX): the whole account earns the rate");
+    // Excess-return Sharpe with a per-bar rf equals the constant-rf Sharpe when rf is constant.
+    const at::Series e = {100, 101, 100.5, 102, 103};
+    const at::Series pos(5, 1.0);
+    const auto a = at::compute_metrics(e, pos, 252, 0.03);
+    const auto b = at::compute_metrics_rf(e, pos, 252, at::Series(5, 0.03));
+    check(near(a.sharpe, b.sharpe) && near(a.sortino, b.sortino) && near(a.sharpe_tstat, b.sharpe_tstat),
+          "per-bar rf == constant rf when constant");
+    const auto c = at::compute_metrics_rf(e, pos, 252, at::Series{0.0, 0.0, 0.0, 0.0, 0.0});
+    check(near(c.sharpe, at::compute_metrics(e, pos, 252, 0.0).sharpe), "zero series == rf 0");
+    // Hand-computed excess-return Sharpe with a varying rf: mean / std (ddof 1) of r_t - rf_t / ppy.
+    const at::Series rf = {0.01, 0.02, 0.03, 0.04, 0.05};
+    double ex[4], mean = 0.0;
+    for (int i = 0; i < 4; ++i) { ex[i] = e[i + 1] / e[i] - 1.0 - rf[i] / 252.0; mean += ex[i] / 4.0; }
+    double var = 0.0;
+    for (double v : ex) var += (v - mean) * (v - mean) / 3.0;
+    const auto d = at::compute_metrics_rf(e, pos, 252, rf);
+    check(near(d.sharpe, mean / std::sqrt(var) * std::sqrt(252.0), 1e-12), "excess-return Sharpe with per-bar rf");
+    bool threw = false;
+    try { at::compute_metrics(e, at::Series(3, 1.0), 252); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check(threw, "compute_metrics rejects a positions length mismatch");
+}
+
+// v0.8: impact rescales with the equity actually traded (finding 23).
+void test_impact_scales_with_equity() {
+    const at::Series p = {100, 200, 200, 200};
+    at::BacktestInputs in;
+    in.impact = {0.0, 0.0, 0.01, 0.0};
+    auto r = at::run_backtest_ex(p, at::Series{1, 1, 0, 0}, no_cost(), in);
+    check(near(r.equity[1], 200000.0) && near(r.positions[1], 1.0), "doubling keeps a 100% book at 100%");
+    check(near(r.impact_paid, 0.01 * std::sqrt(2.0)), "K_t scaled by sqrt(equity / initial capital)");
+    check(near(r.equity[3], 200000.0 * (1 - 0.01 * std::sqrt(2.0))), "impact charged at the scaled coefficient");
+}
+
+// v0.8: crossovers ignore rounding noise on flat windows (finding 20).
+void test_crossover_dead_band() {
+    for (double level : {1.08, 7e5, 0.3333333}) {
+        const at::Series flat(120, level);
+        const auto s = at::strat_sma_cross(flat, 20, 50, true);
+        const auto m = at::strat_macd(flat, 12, 26, 9, true);
+        bool all_flat = true;
+        for (std::size_t i = 0; i < flat.size(); ++i) all_flat = all_flat && s[i] == 0.0 && m[i] == 0.0;
+        check(all_flat, "flat series -> no position");
+    }
+    at::Series up(120);
+    for (int i = 0; i < 120; ++i) up[i] = 100.0 + i;
+    check(at::strat_sma_cross(up, 20, 50, true).back() == 1.0, "a real trend is still a signal");
+}
+
+// v0.8: one NaN bar affects only the window it touches, on every indicator (finding 76).
+void test_nan_recovery() {
+    at::Series c(80), h(80), l(80);
+    for (int i = 0; i < 80; ++i) {
+        c[i] = 100 + std::sin(i * 0.37) * 5 + 0.05 * i;
+        h[i] = c[i] + 1;
+        l[i] = c[i] - 1;
+    }
+    const auto clean_rsi = at::rsi(c, 14);
+    const int k = 40;
+    at::Series cn = c, hn = h, ln = l;
+    cn[k] = hn[k] = ln[k] = std::nan("");
+    auto span = [](const at::Series& v, int from) {
+        int first = -1, last = -1;
+        for (std::size_t i = from; i < v.size(); ++i)
+            if (std::isnan(v[i])) { if (first < 0) first = static_cast<int>(i); last = static_cast<int>(i); }
+        return std::pair<int, int>(first, last);
+    };
+    const auto e = at::ema(cn, 10);
+    check(span(e, 20) == std::make_pair(k, k + 9) && !std::isnan(e[k + 10]), "ema: NaN for k..k+n-1, then recovers");
+    const auto r = at::rsi(cn, 14);
+    check(span(r, 20) == std::make_pair(k, k + 14) && !std::isnan(r[k + 15]), "rsi: NaN for k..k+n (two changes lost)");
+    check(near(r[k - 1], clean_rsi[k - 1]), "rsi unchanged before the gap");
+    const auto a = at::atr(hn, ln, cn, 14);
+    check(span(a, 20) == std::make_pair(k, k + 14) && !std::isnan(a[k + 15]), "atr: NaN for k..k+n, then recovers");
+    const auto m = at::macd(cn, 12, 26, 9);
+    check(span(m.hist, 39) == std::make_pair(k, k + 33) && !std::isnan(m.hist[k + 34]), "macd hist: slow + signal - 1 bars");
+    // ema still skips leading NaNs.
+    const auto lead = at::ema(at::Series{std::nan(""), std::nan(""), 1.0, 2.0, 3.0}, 3);
+    check(std::isnan(lead[3]) && near(lead[4], 2.0), "ema skips leading NaNs");
+}
+
+// v0.8: Almgren-Chriss never overflows (findings 19 / 33).
+void test_almgren_chriss_stable() {
+    for (double kappa : {1e-6, 1e-3, 0.5, 3.0, 50.0, 700.0, 1e4, 1e6}) {
+        const auto q = at::almgren_chriss(1.0, 78, kappa);
+        double sum = 0.0;
+        bool finite = true;
+        for (double v : q) { sum += v; finite = finite && std::isfinite(v) && v >= -1e-15; }
+        check(finite && near(sum, 1.0, 1e-9), "schedule finite, non-negative and sums to total");
+    }
+    check(near(at::almgren_chriss(1.0, 78, 1e4)[0], 1.0, 1e-12), "huge kappa: everything in the first slice");
+    // Matches the textbook sinh form where that form is representable.
+    const auto q = at::almgren_chriss(1.0, 5, 3.0);
+    double prev = 1.0;
+    for (int k = 1; k <= 5; ++k) {
+        const double rem = std::sinh(3.0 * (1.0 - k / 5.0)) / std::sinh(3.0);
+        check(near(q[k - 1], prev - rem, 1e-14), "stable form == sinh form");
+        prev = rem;
+    }
+    const auto tiny = at::almgren_chriss(1.0, 4, 1e-6);
+    check(near(tiny[0], 0.25, 1e-6) && near(tiny[3], 0.25, 1e-6), "small kappa -> TWAP without cancellation");
 }
 
 void test_risk() {
@@ -248,6 +425,14 @@ int main() {
     test_impact_cost();
     test_exposure_and_tstat();
     test_risk();
+    test_constant_units_between_decisions();
+    test_ruin_floor();
+    test_gap_through_take_profit();
+    test_cash_leg_and_excess_metrics();
+    test_impact_scales_with_equity();
+    test_crossover_dead_band();
+    test_nan_recovery();
+    test_almgren_chriss_stable();
     if (failures == 0) std::printf("all C++ core tests passed\n");
     return failures == 0 ? 0 : 1;
 }

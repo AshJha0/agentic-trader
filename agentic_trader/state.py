@@ -12,6 +12,7 @@ that findings and reports can be audited.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from enum import Enum
@@ -20,6 +21,21 @@ from typing import Any
 import pandas as pd
 
 from .instruments import Instrument
+
+_TAG = "untrusted_data"
+
+
+def untrusted_block(label: str, lines: list[str]) -> str:
+    """Wrap third-party (or previously model-written) text so the model can tell data
+    from instructions.
+
+    Any attempt inside the text to open or close the tag is neutralised, so a
+    crafted headline cannot end the block early and smuggle instructions out.
+    """
+    # Neutralised on the joined body, and without requiring a closing ">": a tag split
+    # over two lines, or left unterminated for the model to complete, is caught too.
+    body = re.sub(rf"<\s*/?\s*{_TAG}\b[^>]*>?", "[removed tag]", "\n".join(str(line) for line in lines), flags=re.I)
+    return f'<{_TAG} source="{label}">\n{body}\n</{_TAG}>'
 
 
 class Action(str, Enum):
@@ -45,6 +61,9 @@ class AnalystReport:
     # The rule-based signal when a model reply replaced it (None otherwise). The
     # critic flags a model view that diverges too far from the rules on the same facts.
     rule_signal: float | None = None
+    # True when the analyst read third-party text (headlines, social posts): its summary
+    # and key points may quote that text, so downstream prompts show them fenced.
+    untrusted: bool = False
     evidence_ids: tuple[str, ...] = ()
 
 
@@ -74,7 +93,7 @@ class TradeProposal:
     entry_price: float
     stop_loss: float | None
     take_profit: float | None
-    horizon_days: int
+    horizon_days: int      # holding horizon in trading days (bars), not calendar days
     rationale: str
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
@@ -149,6 +168,10 @@ class TradingState:
     knowledge: list[dict[str, Any]] = field(default_factory=list)
     alpha: dict[str, Any] = field(default_factory=dict)
     book: "Book | None" = None  # other current positions + returns, for a book-level VaR check
+    # Which provider priced ``history`` and on what basis: stamped on the memory record so
+    # an outcome is only ever valued on the same kind of series.
+    provider_name: str = ""
+    price_basis: str = ""
 
     @property
     def last_price(self) -> float:
@@ -168,7 +191,13 @@ class TradingState:
         return self.anon.facts(facts) if self.anon is not None else facts
 
     def reports_digest(self) -> str:
-        """Compact text of all analyst reports, used in downstream prompts."""
+        """Compact text of all analyst reports, used in downstream prompts.
+
+        A report built from third-party text (``untrusted``) keeps its numbers in the
+        open but its summary and key points inside an ``<untrusted_data>`` block: the
+        news analyst's key points quote headlines verbatim, and a model-written summary
+        may too, so the fence has to travel with the text into every later prompt.
+        """
         lines = []
         if self.current_weight is not None:
             lines.append(f"[portfolio] current position weight {self.current_weight:+.2f}")
@@ -176,9 +205,24 @@ class TradingState:
             if r.abstained:
                 lines.append(f"[{r.analyst}] no data - abstains: {r.summary}")
                 continue
-            lines.append(f"[{r.analyst}] signal={r.signal:+.2f} conf={r.confidence:.2f}: {r.summary}")
-            lines.extend(f"  - {p}" for p in r.key_points[:6])
+            head = f"[{r.analyst}] signal={r.signal:+.2f} conf={r.confidence:.2f}"
+            if r.untrusted:
+                lines.append(f"{head}: report text (written from third-party material) follows")
+                lines.append(untrusted_block(f"{r.analyst} report (from third-party text)",
+                                             [r.summary, *(f"- {p}" for p in r.key_points[:6])]))
+            else:
+                lines.append(f"{head}: {r.summary}")
+                lines.extend(f"  - {p}" for p in r.key_points[:6])
         return "\n".join(lines)
+
+    def lessons_block(self) -> str:
+        """The memory lessons for a prompt, fenced: a lesson quotes an earlier decision's
+        rationale, which may itself have been model-written from third-party text."""
+        if not self.lessons:
+            return ""
+        return ("\nLessons from past decisions:\n"
+                + untrusted_block("memory lessons (earlier decisions on this instrument)", self.lessons)
+                + "\n")
 
     def to_markdown(self) -> str:
         ins = self.instrument
