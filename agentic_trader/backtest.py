@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from . import quant
+from .algo import algo_cost_ratio
 from .config import make_config
 from .data import MarketDataProvider, get_provider
 from .graph import TradingGraph
@@ -104,6 +105,14 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
     Everything in ``K_t`` is known at the close of bar ``t``: trailing 20-day volatility
     and trailing 20-day average volume. Bars without volume get no impact (equities with
     missing volume, and FX unless ``costs.fx_adv_notional`` is set).
+
+    This single-shot formula implicitly assumes the day's trade is spread across the session
+    in proportion to volume (VWAP), which ``algo.algo_cost_ratio`` shows minimises impact cost
+    under the square-root law -- so it is also exactly what ``costs.execution_algo`` unset (or
+    ``"vwap"``) means here. Setting it to ``"twap"`` or ``"ac"`` (Almgren-Chriss, urgency
+    ``costs.ac_kappa``) scales ``K_t`` by that schedule's cost relative to VWAP on the same
+    session, so a trade's simulated cost then depends on how it would be worked, not only on
+    its size; the default is unchanged so every existing published number stays reproducible.
     """
     costs = config["costs"]
     coeff = float(costs.get("impact_coeff") or 0.0)
@@ -124,6 +133,10 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = np.where(adv > 0, capital / (close * adv), np.nan)
     k = coeff * vol * np.sqrt(ratio)
+    algo = costs.get("execution_algo")
+    if algo and algo != "vwap":
+        n = 288 if ins.is_fx else 78
+        k = k * algo_cost_ratio(algo, n, "fx" if ins.is_fx else "equity", float(costs.get("ac_kappa") or 3.0))
     return np.where(np.isfinite(k), k, np.nan)
 
 

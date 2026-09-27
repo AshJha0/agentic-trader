@@ -23,7 +23,8 @@ from agentic_trader.llm import BudgetedLLM, UsageTracker, budget_llm
 from agentic_trader.memory import DecisionMemory
 from agentic_trader.portfolio import construct
 from agentic_trader.xalpha import (cross_sectional_ic, cs_rank, cs_zscore, forward_return_panel, ic_summary,
-                                   quantile_spread, signal_panels, xalpha_report, xalpha_snapshot)
+                                   quantile_spread, signal_panels, significance_gated_scores, xalpha_report,
+                                   xalpha_snapshot)
 
 CFG = make_config(memory_path=None)
 QUIET = dict(memory=DecisionMemory(None), on_event=lambda *_: None)
@@ -92,12 +93,30 @@ def test_xalpha_report_and_snapshot(universe):
     # FX days exist where no equity name has a score (different calendars): the FX
     # block is scored on its own, so the equity columns are NaN there, never 0-filled.
     assert comb[eq_cols].isna().any(axis=1).any()
-    assert set(rep.best(2)) <= set(rep.table.index) - {"combined"}
-    assert rep.correlations.shape[0] == rep.correlations.shape[1] == len(rep.signals) - 1
+    assert set(rep.best(2)) <= set(rep.table.index) - {"combined", "significance_gated"}
+    # v0.7: "significance_gated" is the combination XAlphaAnalyst actually trades (only the
+    # alphas whose IC clears the significance bar, IC-weighted) -- reported alongside
+    # "combined" (equal-weighted over every alpha) rather than only implied by a docstring.
+    assert "significance_gated" in rep.table.index and "significance_gated" in rep.signals
+    assert rep.correlations.shape[0] == rep.correlations.shape[1] == len(rep.signals) - 2
     snap = xalpha_snapshot(frames, instruments, carry=carry)
     assert set(snap) == set(frames) and "combined" in snap["AAPL"]
     ranked = xalpha_report(frames, instruments, 10, carry=carry, standardise="rank")
     assert np.nanmax(ranked.signals["combined"].abs().to_numpy()) <= 1.0 + 1e-9
+
+
+def test_significance_gated_scores_excludes_non_significant_alphas(universe):
+    frames, instruments, carry = universe
+    scores = {"a": pd.DataFrame({"AAPL": [1.0, 0.5], "MSFT": [0.5, 1.0]}),
+             "b": pd.DataFrame({"AAPL": [-1.0, -0.5], "MSFT": [-0.5, -1.0]})}
+    ic = {"a": {"IC": 0.3, "t(IC)": 3.0, "n": 100}, "b": {"IC": 0.1, "t(IC)": 0.5, "n": 100}}
+    got = significance_gated_scores(scores, ic)
+    only_a = scores["a"]   # only "a" clears the bar, so this must equal "a" exactly (weight 1, den = |0.3|)
+    pd.testing.assert_frame_equal(got, only_a.clip(-1.0, 1.0), check_dtype=False)
+    # nothing clears the bar -> an empty (all-NaN) frame of the right shape, not a crash
+    none_ic = {"a": {"IC": 0.01, "t(IC)": 0.2, "n": 5}, "b": {"IC": 0.01, "t(IC)": 0.2, "n": 5}}
+    empty = significance_gated_scores(scores, none_ic)
+    assert empty.isna().all().all() and empty.shape == only_a.shape
     with pytest.raises(ValueError):
         xalpha_report(frames, instruments, 10, standardise="bogus")
     with pytest.raises(ValueError):

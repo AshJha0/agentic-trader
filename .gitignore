@@ -13,3 +13,8 @@ agentic_trader/quant/_atcore*.so
 
 # Claude Code session files (preview launch config)
 .claude/
+
+# Coverage reports (from `pytest --cov`, run in CI and optionally locally)
+.coverage
+coverage.xml
+htmlcov/

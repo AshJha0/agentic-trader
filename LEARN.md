@@ -487,10 +487,28 @@ basis points.
 **Numbers.** A 2.5 million-dollar AAPL buy (0.06% of ADV) via VWAP in 78 slices: 100% filled,
 spread 1.0 bps, impact 0.4 bps, −5.4 bps shortfall against arrival on that day's path.
 
+**The daily backtest's cost model, and closing the loop (v0.7).** The one-shot square-root
+formula in `backtest.impact_coefficients` (used for the walk-forward backtests throughout
+this page, one decision per rebalance day rather than an intraday session) implicitly assumes
+a trade is *worked* as VWAP -- matching participation to the volume curve, which
+`algo.algo_cost_ratio` shows minimises the square-root-law sum for a fixed total quantity, by
+the same convexity argument as the questions below. `costs.execution_algo` makes that
+assumption explicit and, when set to `"twap"` or `"ac"`, scales the day's impact by that
+schedule's cost relative to VWAP on the same volume curve -- so the backtest's simulated cost
+finally depends on *how* a trade would be worked, not only its size, closing the gap between
+the per-slice simulator above and the daily backtester. Measured on the core universe's
+holdout portfolio at $1B: TWAP costs a little more than VWAP (2.51% vs 2.37% of equity paid
+in impact over the period) because it ignores equities' U-shaped intraday curve; an
+aggressively front-loaded Almgren-Chriss (kappa=5) costs more again (3.14%), for trading
+ahead of the volume rather than with it.
+
 **Questions.**
 - Why does a VWAP-shaped schedule show exactly the half-spread against session VWAP while a
   TWAP schedule does not?
 - When would you choose Almgren-Chriss over VWAP, and which parameter decides?
+- `algo_cost_ratio` is exactly 1.0 for VWAP by construction, for *any* volume curve. What
+  property of the square-root law makes matching the curve always at least as good as any
+  other split of the same total quantity?
 
 ## 22. Portfolio construction
 
@@ -813,13 +831,47 @@ the book, 1 keeps whatever it holds); and drift against a stored report on the s
 after a model or prompt change. `prompts.prompt_registry` makes the last comparison
 meaningful: a SHA-256 of every agent's system prompt and prompt-building code, bundled into
 one hash and recorded in every evaluation and calibration result, so "same prompts" is a
-fact in the record rather than a recollection. The multi-year LLM run that uses all of this
-— model tiers on the core universe over design and holdout, three repeated runs for
-variance, one calibration — is staged with a dollar cap per stage; its results are reported
-in the evaluation when the run has been made.
+fact in the record rather than a recollection. The multi-year LLM harness that uses all of
+this — model tiers on the core universe over design and holdout, three repeated runs for
+variance, one calibration — is staged with a dollar cap per stage but **has not been run**;
+the evaluation's Limitations section says so explicitly, so "the code supports it" is never
+mistaken for "it has been measured".
 
 **Questions.**
 - The paired bootstrap treats instruments as exchangeable draws. Which of the 45 extended
   names most obviously violate that, and what would the interval understate?
 - An anchoring slope of 1 means the desk keeps whatever it holds. Is that always wrong?
   When is it exactly the no-trade band doing its job?
+
+## 34. Is the risk model telling the truth? VaR coverage backtesting
+
+**The idea.** A 95% VaR cap is a promise: "on 95% of days, the loss will not exceed this
+number." A promise needs a test, not a diagram. Two questions separate a well-calibrated
+risk model from a lucky or unlucky one: does the *rate* of breaches match the target (too
+many means overconfident, too few means needlessly wide), and are breaches *independent* in
+time (clustering means the model reacts too slowly to a regime change, even if its average
+rate looks fine)? Kupiec (1995) answers the first with a likelihood-ratio test of the
+observed breach count against a binomial at the target rate. Christoffersen (1998) answers
+the second by comparing the likelihood of the observed breach/no-breach sequence under
+independence versus under a first-order Markov chain that lets the breach probability depend
+on yesterday. Both reduce to a chi-square statistic; this repo computes the tail probability
+in closed form from the standard normal CDF rather than pulling in scipy for one function.
+
+**In the repo.** `stats.rolling_var_forecast` builds a walk-forward historical-VaR forecast
+(each day uses only the trailing window before it, so there is no look-ahead), and
+`stats.var_backtest` runs both tests against the realized returns, returning a `VarBacktest`
+with the breach rate, both LR statistics and both p-values, plus a two-test "conditional
+coverage" p-value (the sum of the two LRs against 2 degrees of freedom). `agentic-trader
+stats --var-backtest` exposes it on any returns CSV. Run against the 15-sleeve core
+portfolio's holdout returns at two window lengths, neither test rejects at any conventional
+level: the breach rate (5.7% at a 120-day window, 4.5% at 250 days) is statistically
+indistinguishable from the 5% target, and breaches are statistically indistinguishable from
+independent (see [the evaluation's VaR coverage section](docs/evaluation/evaluation.md#var-coverage-is-the-desks-risk-model-calibrated)
+for the full table). This is what makes the result usable: a p-value that failed to reject
+would have been reported exactly the same way.
+
+**Questions.**
+- Kupiec and Christoffersen both look backward at realized breaches. What kind of risk-model
+  failure would neither test ever catch?
+- The forecast here is historical VaR on 120/250-day windows. What would change if the
+  window were much shorter — would you expect more or fewer breaches to cluster?

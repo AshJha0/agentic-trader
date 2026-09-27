@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from .. import quant
-from ..state import FinalDecision, RiskView, TradingState
+from ..state import Book, FinalDecision, RiskView, TradingState
 from .base import Agent, clip, fmt_facts
 from .trader import action_for, allow_short, atr14, policy_passages, protective_levels, sane_levels
 
@@ -32,7 +32,19 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         "max_var_95": config["risk"]["max_var_95"],
         "rebalance_band": config["risk"].get("rebalance_band", 0.0),
         "short_selling_allowed": allow_short(state, config),
+        "max_book_var_95": config["risk"].get("max_book_var_95"),
+        # Informational only (current book, no proposed change): the enforced check runs in
+        # PortfolioManager.guardrails, which has state.book and can evaluate the proposed
+        # weight's own effect on it -- a plain fact dict can only report a number, not act.
+        "book_var_95_now": (_book_var_now(state) if state.book is not None else None),
     }
+
+
+def _book_var_now(state: TradingState) -> float | None:
+    from ..portfolio import book_var_95
+    sym = state.instrument.symbol
+    positions = {**state.book.positions, sym: state.current_weight or 0.0}
+    return book_var_95(positions, state.book.returns)
 
 
 class RiskAnalyst(Agent):
@@ -67,6 +79,10 @@ class RiskAnalyst(Agent):
             w = vt
         else:
             w = float(np.sign(w0)) * min(abs(w0), abs(vt)) * 0.5
+            # historical_var is always >= 0 (quant.historical_var returns max(0, -q)), so the
+            # left side of this chained comparison is 0 or NaN only when there is no VaR to
+            # scale by, and it then evaluates false: the division below is never reached with
+            # a zero or NaN var_95_1d, whatever max_var_95 is.
             if f["var_95_1d"] * abs(w) > f["max_var_95"] > 0:
                 w *= f["max_var_95"] / (f["var_95_1d"] * abs(w))
         return clip(w, -mx, mx)
@@ -111,7 +127,11 @@ class PortfolioManager(Agent):
             "enforced after your decision.")
     stance_weights = {"aggressive": 0.25, "neutral": 0.5, "conservative": 0.25}
 
-    def guardrails(self, w: float, f: dict[str, Any]) -> tuple[float, list[str]]:
+    def guardrails(self, w: float, f: dict[str, Any], symbol: str | None = None,
+                   book: Book | None = None) -> tuple[float, list[str]]:
+        """``symbol`` and ``book`` are only needed for the book-level VaR check (both
+        ``None`` -- the default -- leaves every other guardrail exactly as before that
+        check existed)."""
         notes = []
         mx, lim = f["max_position"], f["max_var_95"]
         if w < 0 and not f["short_selling_allowed"]:
@@ -124,6 +144,11 @@ class PortfolioManager(Agent):
             new = math.copysign(lim / f["var_95_1d"], w)
             notes.append(f"VaR limit {lim:.2%}: {w:+.2f} -> {new:+.2f}")
             w = new
+        if book is not None and symbol is not None and f.get("max_book_var_95") and w != 0:
+            from ..portfolio import book_var_scale
+            w, _, note = book_var_scale(symbol, w, book.positions, book.returns, f["max_book_var_95"])
+            if note:
+                notes.append(note)
         if 0 < abs(w) < self.config["risk"]["min_trade_weight"]:
             notes.append("below minimum trade size -> flat")
             w = 0.0
@@ -162,8 +187,9 @@ class PortfolioManager(Agent):
             conf = clip(data.get("confidence"), 0, 1, conf)
             rationale, source = str(data["rationale"]), "llm"
 
-        w, notes = self.guardrails(w, f)
-        w, band_note = self.no_trade_band(w, state.current_weight, f)
+        sym = state.instrument.symbol
+        w, notes = self.guardrails(w, f, sym, state.book)
+        w, band_note = self.no_trade_band(w, state.current_weight, f, sym, state.book)
         if band_note:
             notes.append(band_note)
         approved = (np.sign(w) == np.sign(p.target_weight))
@@ -183,8 +209,8 @@ class PortfolioManager(Agent):
         state.decision = d
         return d
 
-    def no_trade_band(self, w: float, current: float | None,
-                      f: dict[str, Any]) -> tuple[float, str | None]:
+    def no_trade_band(self, w: float, current: float | None, f: dict[str, Any],
+                      symbol: str | None = None, book: Book | None = None) -> tuple[float, str | None]:
         """Keep the current position when the new target is within ``rebalance_band`` of it.
 
         Small target changes cost spread and commission without changing the risk
@@ -194,7 +220,7 @@ class PortfolioManager(Agent):
         band = f.get("rebalance_band", 0.0)
         if current is None or band <= 0 or w == current or abs(w - current) >= band:
             return w, None
-        kept, fixes = self.guardrails(current, f)
+        kept, fixes = self.guardrails(current, f, symbol, book)
         if fixes or kept != current:
             return w, None
         return current, f"within no-trade band ({abs(w - current):.2f} < {band:.2f}): keep {current:+.2f}"

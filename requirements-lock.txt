@@ -1,0 +1,32 @@
+# Exact dependency versions used to generate the numbers currently published in
+# docs/evaluation/evaluation.md, README.md and docs/index.html (v0.7.0).
+#
+# `pyproject.toml` pins only lower bounds (`numpy>=1.24`, ...), so `pip install -e ".[all]"`
+# can resolve a different numpy/pandas/etc. than the one a set of published numbers was
+# measured with. Re-running an evaluation with a different resolution and seeing a
+# different number is not evidence of anything wrong with the code -- but without this
+# file there was no way to tell that drift apart from data drift (Yahoo's occasional
+# revision of adjusted history, EDGAR filings added after a cache was built) or an actual
+# behaviour change. Install this exact set before reproducing a published table:
+#
+#   pip install -r requirements-lock.txt
+#   pip install -e . --no-deps
+#
+# Regenerate after intentionally moving to new dependency versions (and re-running every
+# affected evaluation): pip freeze | grep -E '^(numpy|pandas|anthropic|yfinance|pybind11|
+# mcp|fastapi|uvicorn|httpx|pytest|hypothesis|tabulate)==' > requirements-lock.txt, by hand
+# (a full `pip freeze` also captures unrelated tooling installed in the same environment).
+numpy==2.5.3
+pandas==3.0.6
+anthropic==1.8.0
+yfinance==1.7.0
+pybind11==3.1.0
+mcp==2.2.0
+fastapi==0.141.1
+uvicorn==0.54.0
+httpx==0.28.1
+pytest==9.1.1
+hypothesis==6.168.1
+tabulate==0.10.0
+# cmake: not pip-installed in the environment that generated these numbers (a system
+# cmake >= 3.18 built the C++ core instead); pin your CI/toolchain's cmake separately.

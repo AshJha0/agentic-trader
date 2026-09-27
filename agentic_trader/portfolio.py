@@ -17,12 +17,17 @@ desk targets, so a flat sleeve stays flat and a short sleeve stays short.
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 import pandas as pd
+
+from . import quant
+
+log = logging.getLogger(__name__)
 
 Method = Literal["equal", "inverse_vol", "risk_parity", "min_variance", "mean_variance"]
 METHODS: tuple[str, ...] = ("equal", "inverse_vol", "risk_parity", "min_variance", "mean_variance")
@@ -135,37 +140,54 @@ def risk_parity_weights(cov: np.ndarray, budget: np.ndarray | None = None, iters
     return x / x.sum()
 
 
-def min_variance_weights(cov: np.ndarray, cap: float = 1.0, iters: int = 2000) -> np.ndarray:
-    """Long-only minimum variance with a per-asset cap (projected gradient)."""
+@dataclass(frozen=True)
+class Convergence:
+    """Whether a projected-gradient solver reached its stopping tolerance, and after how many
+    iterations. An unconverged solve still returns its best iterate -- silently returning that
+    iterate with no way to tell it apart from a converged one is how an ill-conditioned
+    covariance (near-duplicate sleeves, a very tight cap) produces an allocation nobody checked."""
+    converged: bool
+    iterations: int
+
+
+def min_variance_weights(cov: np.ndarray, cap: float = 1.0, iters: int = 2000,
+                         return_info: bool = False):
+    """Long-only minimum variance with a per-asset cap (projected gradient).
+
+    Returns the weights array, or ``(weights, Convergence)`` when ``return_info=True``.
+    """
     c = np.asarray(cov, float)
     n = c.shape[0]
     w = _simplex_box_projection(equal_weights(n), cap)
     lipschitz = 2 * max(np.linalg.eigvalsh(c).max(), 1e-12)
-    for _ in range(iters):
+    for i in range(iters):
         g = 2 * c @ w
         w_new = _simplex_box_projection(w - g / lipschitz, cap)
         if np.abs(w_new - w).max() < 1e-10:
-            return w_new
+            return (w_new, Convergence(True, i + 1)) if return_info else w_new
         w = w_new
-    return w
+    return (w, Convergence(False, iters)) if return_info else w
 
 
 def mean_variance_weights(mu: np.ndarray, cov: np.ndarray, risk_aversion: float = 5.0,
-                          cap: float = 1.0, iters: int = 2000) -> np.ndarray:
-    """Long-only max of mu'w - (lambda/2) w'Sigma w on the capped simplex."""
+                          cap: float = 1.0, iters: int = 2000, return_info: bool = False):
+    """Long-only max of mu'w - (lambda/2) w'Sigma w on the capped simplex.
+
+    Returns the weights array, or ``(weights, Convergence)`` when ``return_info=True``.
+    """
     c, m = np.asarray(cov, float), np.asarray(mu, float)
     if risk_aversion <= 0:
         raise ValueError("risk_aversion must be positive")
     n = c.shape[0]
     w = _simplex_box_projection(equal_weights(n), cap)
     lipschitz = risk_aversion * max(np.linalg.eigvalsh(c).max(), 1e-12)
-    for _ in range(iters):
+    for i in range(iters):
         g = -m + risk_aversion * c @ w
         w_new = _simplex_box_projection(w - g / lipschitz, cap)
         if np.abs(w_new - w).max() < 1e-10:
-            return w_new
+            return (w_new, Convergence(True, i + 1)) if return_info else w_new
         w = w_new
-    return w
+    return (w, Convergence(False, iters)) if return_info else w
 
 
 # ------------------------------------------------------------- attribution
@@ -182,6 +204,63 @@ def risk_contributions(w: np.ndarray, cov: np.ndarray) -> dict[str, np.ndarray |
             "diversification_ratio": weighted_avg_vol / vol if vol > 0 else float("nan")}
 
 
+# --------------------------------------------------------------- book risk
+def book_var_95(weights: dict[str, float], returns: pd.DataFrame, alpha: float = 0.95) -> float | None:
+    """Historical VaR of a weighted book (the same convention as ``quant.historical_var`` for
+    one instrument: a non-negative loss fraction).
+
+    ``returns`` is an aligned (T, N) frame of daily returns for at least the symbols in
+    ``weights`` that have any history; symbols in ``weights`` missing from ``returns``
+    contribute nothing (their return is implicitly treated as exactly zero, which never
+    manufactures diversification credit for missing data). Returns ``None`` when fewer than
+    20 aligned, finite observations are available -- too little to trust a quantile.
+    """
+    cols = [s for s in weights if s in returns.columns]
+    if not cols:
+        return None
+    w = np.array([weights[s] for s in cols])
+    r = returns[cols].to_numpy(float)
+    port = r @ w
+    port = port[np.isfinite(port)]
+    if port.size < 20:
+        return None
+    return quant.historical_var(port, alpha)
+
+
+def book_var_scale(symbol: str, proposed_weight: float, other_positions: dict[str, float],
+                   returns: pd.DataFrame, max_var_95: float | None, alpha: float = 0.95,
+                   grid: int = 41) -> tuple[float, float | None, str | None]:
+    """Scale ``proposed_weight`` in ``symbol`` down, if needed, so the book (``other_positions``
+    unchanged, ``symbol`` at the scaled weight) stays within ``max_var_95`` of 1-day 95%
+    historical VaR.
+
+    Book VaR is *not* assumed monotonic in this instrument's own weight -- a new position can
+    be a partial hedge against the rest of the book, in which case increasing it could lower
+    book VaR -- so the largest feasible scale is found by a grid search over
+    ``[0, proposed_weight]`` rather than a closed-form or bisected root. Returns
+    ``(scaled_weight, book_var_95_after, note)``; ``note`` is ``None`` when no scaling was
+    needed (including when the check is off: ``max_var_95`` falsy).
+    """
+    def var_at(c: float) -> float:
+        w = dict(other_positions)
+        w[symbol] = c * proposed_weight
+        v = book_var_95(w, returns, alpha)
+        return float("inf") if v is None else v
+
+    full = var_at(1.0)
+    if proposed_weight == 0 or not max_var_95 or max_var_95 <= 0 or full == float("inf") or full <= max_var_95:
+        return proposed_weight, (None if full == float("inf") else full), None
+    zero = var_at(0.0)
+    if zero > max_var_95:
+        return 0.0, zero, (f"book VaR {zero:.2%} already exceeds the {max_var_95:.2%} limit without "
+                          f"this position; flattened rather than sized")
+    cs = np.linspace(0.0, 1.0, grid)
+    feasible = [c for c in cs if var_at(c) <= max_var_95]
+    best = max(feasible) if feasible else 0.0
+    scaled = best * proposed_weight
+    return scaled, var_at(best), f"book VaR limit {max_var_95:.2%}: {proposed_weight:+.2f} -> {scaled:+.2f}"
+
+
 # ----------------------------------------------------------- construction
 @dataclass
 class PortfolioWeights:
@@ -195,10 +274,15 @@ class PortfolioWeights:
     correlations: pd.DataFrame
     scale: float                  # vol-target scaling applied (1 = none)
     group_risk: pd.DataFrame | None = None   # per group: budget, allocation, share of risk
+    converged: bool = True         # False if an iterative solver (min_variance, mean_variance)
+                                   # hit its iteration cap before its tolerance: the allocation
+                                   # is its best iterate, not a verified optimum (e.g. a covariance
+                                   # near-singular from highly correlated sleeves)
 
     def to_dict(self) -> dict:
         d = {"method": self.method, "expected_vol": round(self.expected_vol, 4),
              "diversification_ratio": round(self.diversification_ratio, 3), "scale": round(self.scale, 4),
+             "converged": self.converged,
              "weights": {s: round(float(w), 4) for s, w in zip(self.symbols, self.weights)}}
         if self.group_risk is not None:
             d["group_risk"] = self.group_risk.round(4).to_dict(orient="index")
@@ -206,18 +290,21 @@ class PortfolioWeights:
 
 
 def _allocate(method: str, sub: np.ndarray, cap: float, mu: np.ndarray | None,
-              risk_aversion: float) -> np.ndarray:
-    """Long-only allocation (sums to 1) of the active sleeves by one scheme."""
+              risk_aversion: float) -> tuple[np.ndarray, Convergence]:
+    """Long-only allocation (sums to 1) of the active sleeves by one scheme, with whether it
+    converged. The closed-form schemes (equal, inverse-vol, risk parity's fixed-point solve
+    already tracks its own tolerance internally) are reported as converged; only the iterative
+    optimisers can silently stop early."""
     k = sub.shape[0]
     if method == "equal":
-        return equal_weights(k)
+        return equal_weights(k), Convergence(True, 0)
     if method == "inverse_vol":
-        return inverse_vol_weights(sub)
+        return inverse_vol_weights(sub), Convergence(True, 0)
     if method == "risk_parity":
-        return risk_parity_weights(sub)
+        return risk_parity_weights(sub), Convergence(True, 0)
     if method == "min_variance":
-        return min_variance_weights(sub, cap)
-    return mean_variance_weights(mu, sub, risk_aversion, cap)
+        return min_variance_weights(sub, cap, return_info=True)
+    return mean_variance_weights(mu, sub, risk_aversion, cap, return_info=True)
 
 
 def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method = "risk_parity",
@@ -259,6 +346,7 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
     active = tgt != 0
     alloc = np.zeros(n)
     group_risk = None
+    converged = True
     if group_budgets is not None:
         if groups is None:
             raise ValueError("group_budgets needs groups (symbol -> group)")
@@ -273,7 +361,8 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
         mu_all = np.array([(expected_returns or {}).get(s, targets[s]) for s in symbols])
         if group_budgets is None:
             sub = cov[np.ix_(active, active)]
-            a = _allocate(method, sub, cap, mu_all[active], risk_aversion)
+            a, info = _allocate(method, sub, cap, mu_all[active], risk_aversion)
+            converged = info.converged
             alloc[active] = np.minimum(a, cap)
         else:
             live = [g for g in group_budgets if any(active[i] and groups[s] == g for i, s in enumerate(symbols))]
@@ -285,7 +374,8 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
                 idx = [i for i, s in enumerate(symbols) if active[i] and groups[s] == g]
                 subg = cov[np.ix_(idx, idx)]
                 capg = min(1.0, max(max_weight, 1.0 / len(idx)))
-                a = _allocate(method, subg, capg, mu_all[idx], risk_aversion)
+                a, info = _allocate(method, subg, capg, mu_all[idx], risk_aversion)
+                converged = converged and info.converged
                 P[idx, j] = np.minimum(a, capg) / max(np.minimum(a, capg).sum(), 1e-12)
             # Across groups: risk parity with the budgets on the group covariance.
             cov_g = P.T @ cov @ P
@@ -309,5 +399,9 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
                             "component": rc["component"], "pct_of_risk": rc["pct"]}, index=symbols).round(4)
     corr = pd.DataFrame(cov / np.outer(np.sqrt(np.diag(cov)), np.sqrt(np.diag(cov))),
                         index=symbols, columns=symbols).round(3)
+    if not converged:
+        log.warning("%s allocation did not converge within its iteration cap; the result is "
+                    "the solver's best iterate, not a verified optimum (check for near-"
+                    "duplicate or highly correlated sleeves)", method)
     return PortfolioWeights(symbols, alloc, w, method, rc["vol"], contrib, rc["diversification_ratio"],
-                            corr, scale, group_risk)
+                            corr, scale, group_risk, converged)

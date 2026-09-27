@@ -160,10 +160,35 @@ def test_alpha_report_structure(frames):
     assert "combined" in rep.table.index and set(rep.decay.columns) == {1, 5, 10, 21, 42}
     assert rep.correlations.shape == (9, 9) and set(rep.best(2)) <= set(rep.table.index)
     assert ((rep.table["hit%"].dropna() >= 0) & (rep.table["hit%"].dropna() <= 100)).all()
+    # v0.7: "significance_gated" is what AlphaAnalyst actually trades (significant_alpha_signal),
+    # measured with its own row rather than only the equal-weighted "combined" diagnostic.
+    assert "significance_gated" in rep.table.index and "significance_gated" in rep.signals
+    assert set(rep.best(2)) <= set(rep.table.index) - {"combined", "significance_gated"}
     snap = alpha_snapshot(df, ins, carry)
     assert "combined" in snap and all(v is None or -1 <= v <= 1 for v in snap.values())
     with pytest.raises(ValueError):
         alpha_report(df, ins, 0)
+
+
+def test_significance_gated_series_matches_the_analyst_at_one_bar(frames):
+    from agentic_trader.alpha import significance_gated_series, significant_alpha_signal
+    ins, df, carry = frames["USDJPY"]
+    rep = alpha_report(df, ins, 10, carry_series=carry)
+    ic = {n: {"IC": v["IC"], "t(IC)": v["t(IC)"], "n": v["n"]} for n, v in rep.table.to_dict(orient="index").items()}
+    latest = {n: (None if pd.isna(v) else float(v)) for n, v in rep.signals.iloc[-1].items()}
+    expected, _ = significant_alpha_signal(latest, ic)
+    got = rep.signals["significance_gated"].iloc[-1]
+    if expected is None:
+        assert pd.isna(got)
+    else:
+        # rep.table (hence `ic` here) is rounded to 4 decimals for display, while
+        # significance_gated_series uses the unrounded IC weights internally -- so this
+        # only agrees to display precision, not bit-for-bit.
+        assert got == pytest.approx(expected, abs=1e-3)
+    # no alpha clears the bar -> an all-NaN series, not zeros or a crash
+    empty = significance_gated_series(rep.signals.drop(columns=["combined", "significance_gated"]),
+                                      {n: {"IC": 0.001, "t(IC)": 0.1, "n": 5} for n in rep.table.index})
+    assert empty.isna().all()
 
 
 def test_significant_alpha_signal_gates_on_tstat_and_n():

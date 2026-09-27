@@ -42,6 +42,7 @@ measured numbers. If you change the code, re-check them against these sources:
 
 | Figure | How to re-measure |
 |---|---|
+| Dependency versions behind a re-run | `pip install -r requirements-lock.txt` before reproducing, so a discrepancy is data drift or a code change, not a different numpy/pandas resolution; see [the evaluation's Reproducing section](evaluation/evaluation.md#reproducing) |
 | Test counts | `pytest --collect-only -q` (per file); the `void test_` functions and `check(` calls in `cpp/tests/test_core.cpp` |
 | CI jobs | `.github/workflows/ci.yml` matrix: 5 Python versions + 3 OSes |
 | Decision and task latency | Time `TradingGraph(...).propagate("AAPL", "2024-03-01")` and `AgentHarness(graph).run(Task("AAPL", date(2024, 3, 1)))` over 20 runs after one warm-up run, offline, C++ backend |
