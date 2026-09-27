@@ -179,14 +179,67 @@ def information_coefficient(signal, fwd) -> tuple[float, float, int]:
 class AlphaReport:
     instrument: Instrument
     horizon: int
-    table: pd.DataFrame            # one row per alpha (and "combined")
+    table: pd.DataFrame            # one row per alpha, plus "combined" and "significance_gated"
     decay: pd.DataFrame            # IC by horizon, one row per alpha
     correlations: pd.DataFrame     # alpha x alpha correlation of signals
     signals: pd.DataFrame = field(repr=False)
 
     def best(self, k: int = 3) -> list[str]:
-        t = self.table.drop(index="combined", errors="ignore")
+        t = self.table.drop(index=["combined", "significance_gated"], errors="ignore")
         return list(t.sort_values("IC", ascending=False).index[:k])
+
+
+def significance_gated_series(sig: pd.DataFrame, ic: dict[str, dict], min_tstat: float = 2.0,
+                              min_n: int = 30) -> pd.Series:
+    """The full time series of what ``significant_alpha_signal`` would return at every bar,
+    given a *fixed* (full-sample) significance gate: IC-magnitude-weighted mean of the alphas
+    whose measured IC clears ``min_tstat``/``min_n`` in ``ic``, using the same "skip a missing
+    value from both the numerator and denominator" rule as that function -- reproduced here as
+    a vectorised series rather than the single-bar computation ``significant_alpha_signal``
+    does live, so a report can show what the analyst's *actual* combination rule would have
+    looked like over history, not just the equal-weighted ``combine()`` diagnostic.
+
+    This is a full-sample diagnostic, not a walk-forward backtest: the gate is decided once
+    from the whole sample's IC, the same way every other column in ``alpha_report`` measures
+    IC from the whole sample. The walk-forward version -- the gate re-decided at each date from
+    only prior data -- is what ``AlphaAnalyst``/``XAlphaAnalyst`` actually do live, and what
+    ``run_agent_backtest``/``evaluate`` measure; this series is for reading how the *rule*, not
+    the point-in-time procedure, would have behaved.
+    """
+    weights = {name: v["IC"] for name, v in (ic or {}).items()
+              if name not in ("combined", "significance_gated") and isinstance(v, dict)
+              and v.get("IC") is not None and v["IC"] == v["IC"]
+              and abs(v.get("t(IC)") or 0.0) >= min_tstat and (v.get("n") or 0) >= min_n}
+    if not weights:
+        return pd.Series(np.nan, index=sig.index)
+    cols = [c for c in weights if c in sig.columns]
+    w = pd.Series({c: weights[c] for c in cols}, dtype=float)
+    valid = sig[cols].notna()
+    num = (sig[cols].fillna(0.0) * w).sum(axis=1)
+    den = (valid * w.abs()).sum(axis=1)
+    return (num / den.where(den > 0)).clip(-1.0, 1.0)
+
+
+def _alpha_diagnostics(s: np.ndarray, fwd: np.ndarray) -> dict[str, float]:
+    """IC, hit rate, tercile spread, autocorrelation and coverage of one signal series
+    against forward returns -- the row every column of ``alpha_report``'s table gets,
+    factored out so ``significance_gated`` gets exactly the same measurement as every
+    individual alpha and ``combined``, not a different one."""
+    ic, t, n = information_coefficient(s, fwd)
+    ok = np.isfinite(s) & np.isfinite(fwd)
+    hit = float(np.mean(np.sign(s[ok]) == np.sign(fwd[ok]))) if n else float("nan")
+    spread = float("nan")
+    if n >= 30:
+        lo, hi = np.quantile(s[ok], [1 / 3, 2 / 3])
+        top, bot = fwd[ok][s[ok] >= hi], fwd[ok][s[ok] <= lo]
+        if top.size and bot.size:
+            spread = float(top.mean() - bot.mean())
+    valid = s[np.isfinite(s)]
+    ac = float("nan")
+    if valid.size > 10 and valid[:-1].std() > 0 and valid[1:].std() > 0:
+        ac = float(np.corrcoef(valid[:-1], valid[1:])[0, 1])
+    return {"IC": ic, "t(IC)": t, "n": n, "hit%": 100 * hit, "tercile spread%": 100 * spread,
+            "autocorr": ac, "coverage%": 100 * np.isfinite(s).mean()}
 
 
 def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
@@ -202,25 +255,18 @@ def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
     rows, decay = {}, {}
     for name in sig.columns:
         s = sig[name].to_numpy()
-        ic, t, n = information_coefficient(s, fwd)
-        ok = np.isfinite(s) & np.isfinite(fwd)
-        hit = float(np.mean(np.sign(s[ok]) == np.sign(fwd[ok]))) if n else float("nan")
-        spread = float("nan")
-        if n >= 30:
-            lo, hi = np.quantile(s[ok], [1 / 3, 2 / 3])
-            top, bot = fwd[ok][s[ok] >= hi], fwd[ok][s[ok] <= lo]
-            if top.size and bot.size:
-                spread = float(top.mean() - bot.mean())
-        valid = s[np.isfinite(s)]
-        ac = float("nan")
-        if valid.size > 10 and valid[:-1].std() > 0 and valid[1:].std() > 0:
-            ac = float(np.corrcoef(valid[:-1], valid[1:])[0, 1])
-        rows[name] = {"IC": ic, "t(IC)": t, "n": n, "hit%": 100 * hit, "tercile spread%": 100 * spread,
-                      "autocorr": ac, "coverage%": 100 * np.isfinite(s).mean()}
+        rows[name] = _alpha_diagnostics(s, fwd)
         decay[name] = {h: information_coefficient(s, forward_returns(close, h))[0] for h in decay_horizons}
+    # The row nobody was measuring: the significance-gated combination is what the alpha
+    # analysts actually trade (agents.analysts.significant_alpha_signal), not "combined"
+    # above, which is an equal-weighted diagnostic over every alpha regardless of quality.
+    sig["significance_gated"] = significance_gated_series(sig.drop(columns=["combined"]), rows)
+    s = sig["significance_gated"].to_numpy()
+    rows["significance_gated"] = _alpha_diagnostics(s, fwd)
+    decay["significance_gated"] = {h: information_coefficient(s, forward_returns(close, h))[0] for h in decay_horizons}
     table = pd.DataFrame(rows).T.round(4)
     with np.errstate(invalid="ignore", divide="ignore"):  # a constant or empty column has no correlation
-        corr = sig.drop(columns="combined").corr().round(3)
+        corr = sig.drop(columns=["combined", "significance_gated"]).corr().round(3)
     return AlphaReport(instrument, horizon, table, pd.DataFrame(decay).T.round(4), corr, sig)
 
 
@@ -253,7 +299,7 @@ def significant_alpha_signal(latest: dict[str, float | None], ic: dict[str, dict
     """
     weights: dict[str, float] = {}
     for name, v in (ic or {}).items():
-        if name == "combined" or not isinstance(v, dict):
+        if name in ("combined", "significance_gated") or not isinstance(v, dict):
             continue
         icv, t, n = v.get("IC"), v.get("t(IC)"), v.get("n")
         if icv is not None and icv == icv and abs(t or 0.0) >= min_tstat and (n or 0) >= min_n:

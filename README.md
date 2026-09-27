@@ -61,10 +61,10 @@ interval across instruments.
   and $10M and loses 0.09 at $1B; signal-flipping baselines lose far more.
 - **Alpha analyst:** measured three times on the design period: noise, so it stays off.
 - **LLM desk:** measured once (v0.5.1: five stocks, Q1 2024, Claude Opus, anonymised prompts,
-  $4): the same Sharpe as the rules with less than half the exposure. The multi-year run —
+  $4): the same Sharpe as the rules with less than half the exposure. The multi-year harness —
   Opus, Sonnet and Haiku tiers on the core universe over design and holdout, repeated runs
-  for the model's variance, a calibration — is staged with a dollar cap per stage and its
-  results are reported the moment it has run.
+  for the model's variance, a calibration — exists (staged, dollar-capped per stage) but
+  **has not been run**; this remains the only measured LLM result.
 
 Details: [docs/evaluation](docs/evaluation/evaluation.md).
 
@@ -164,9 +164,11 @@ agentic_trader/
   graph.py                 TradingGraph stages, propagate() and scan()
   backtest.py              walk-forward agent backtest vs 6 baselines with optional market impact; portfolio backtest
   evaluation.py            design / holdout / Q1-2024 / reserve evaluation over the core and extended universes; repeats, paired bootstraps
-  memory.py · llm.py (call and dollar budgets) · anonymize.py · cli.py
+  memory.py · llm.py (call and dollar budgets) · anonymize.py
+  cli/                     common.py, decisions.py (analyze/task/scan), research.py (backtest/portfolio/xalpha/alpha/execute/stats),
+                           evaluate.py, services.py (tools/serve/mcp/info), parser.py (argparse wiring), __init__.py (main)
 scripts/                   run_cookbook.py · check_mermaid.py · check_links.py (the CI docs job) · build_cpp · set_api_key
-tests/                     280 pytest tests (fuzz 21 C++ boundary + 7 agentic layer, v0.6 20, EDGAR 11, v0.5 18, agentic 30, adversarial 15, ...)
+tests/                     319 pytest tests (fuzz 21 C++ boundary + 7 agentic layer, v0.7 37, v0.6 20, EDGAR 11, v0.5 19, agentic 30, adversarial 15, ...)
 examples/                  equity, FX, baseline comparison
 ```
 
@@ -294,7 +296,8 @@ print(port.table())
 ## Tests
 
 ```bash
-pytest -q                                   # 280 tests incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
+pytest -q                                   # 319 tests incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
+pytest --cov=agentic_trader --cov-report=term-missing   # 94% line coverage measured in CI (a report, not a gate)
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback
 ctest --test-dir build -C Release           # 14 C++ test groups
 python scripts/run_cookbook.py --offline && python scripts/check_mermaid.py && python scripts/check_links.py   # the docs, as CI runs them

@@ -1,5 +1,87 @@
 # Changelog
 
+## v0.7.0 — Unreleased
+
+A pass through the whole codebase against its own highest-quality bar: risk aggregated
+across the book instead of only per-instrument, two textbook tests of whether the risk
+model's own coverage claim is true, multiple-comparison correction on the cross-instrument
+bootstrap, a stratified variant of it for correlated clusters, solver convergence reported
+rather than assumed, a CLI split into a package, and a locked dependency set to tell
+dependency drift apart from a real result change.
+
+### Risk
+- **Book-level VaR** (`portfolio.book_var_95`, `portfolio.book_var_scale`, `state.Book`).
+  Per-instrument VaR caps do not see correlation across sleeves; `max_book_var_95` (off by
+  default) aggregates the whole book's historical VaR and scales a proposed weight down
+  (never up) to respect it, by grid search over the position size rather than a closed-form
+  or bisected solve, since a new position could be a partial hedge rather than added risk.
+  `TradingGraph.scan()` builds the `Book` from the watchlist's own return history when the
+  cap is configured; `propagate()` alone never builds one.
+- **VaR coverage backtesting** (`stats.rolling_var_forecast`, `stats.var_backtest`,
+  `agentic-trader stats --var-backtest`). Kupiec (1995) unconditional-coverage and
+  Christoffersen (1998) independence likelihood-ratio tests of a walk-forward historical-VaR
+  forecast against realized returns, closed-form against the standard normal CDF (no scipy
+  dependency). Run against the 15-sleeve core portfolio's holdout returns: neither test
+  rejects at either a 120-day or 250-day window — the desk's own risk model is
+  well-calibrated on this data (see
+  [the evaluation's VaR coverage section](docs/evaluation/evaluation.md#var-coverage-is-the-desks-risk-model-calibrated)
+  and [LEARN.md #34](LEARN.md#34-is-the-risk-model-telling-the-truth-var-coverage-backtesting)).
+
+### Execution
+- **Execution-algorithm-aware impact cost** (`algo.algo_cost_ratio`,
+  `costs.execution_algo` / `--execution-algo {twap,vwap,ac}`, `costs.ac_kappa` /
+  `--ac-kappa`). The daily backtester's square-root impact formula
+  (`backtest.impact_coefficients`) implicitly assumed a trade is worked as VWAP -- matching
+  participation to the volume curve, which minimises impact cost for a fixed order size, by
+  the same convexity argument that already justifies VWAP as the execution simulator's
+  default. TWAP (ignores the curve) or Almgren-Chriss (front-loads for urgency, `ac_kappa`)
+  now scale the day's impact by that schedule's own cost relative to VWAP on the same
+  volume curve, so a trade's simulated cost depends on how it would be worked, not only on
+  its size. Off by default (unset == VWAP-equivalent == the existing formula exactly), so
+  every previously published impact number is unchanged; measured on the core universe's
+  $1B holdout portfolio, TWAP pays 2.51% of equity to impact over the period against VWAP's
+  2.37%, and an aggressively front-loaded Almgren-Chriss (kappa=5) pays 3.14% (see
+  [the evaluation's execution-algorithm section](docs/evaluation/evaluation.md#execution-algorithm-aware-impact-v07)).
+
+### Evaluation
+- **Benjamini-Hochberg FDR correction** (`stats.benjamini_hochberg`). The cross-instrument
+  bootstrap's `p` was reported per baseline with no correction for testing several baselines
+  at once; `EvaluationResult.paired_table(fdr_q=0.05)` now flags `significant` at the
+  FDR-corrected threshold, not the raw `p < 0.05`.
+- **Stratified bootstrap** (`stats.paired_bootstrap(groups=...)`). Resamples within each
+  asset-class/universe group rather than pooling, so correlated clusters (e.g. the FX
+  majors) do not masquerade as independent draws; `EvaluationResult.paired(stratify=True)`
+  is the default when the rows carry more than one group.
+- **Deflated-Sharpe caveat** made explicit in `selection_report`'s own output
+  (`DEFLATED_SHARPE_CAVEAT`), not only in the surrounding prose.
+- **Significance-gated diagnostic column** (`alpha.significance_gated_series`,
+  `xalpha.significance_gated_scores`) added to the alpha and cross-sectional alpha reports:
+  the same per-bar t-stat gate the analysts apply, exposed as its own row so a reader can see
+  what passes the gate without re-deriving it from the `ic` column by hand.
+- **Solver convergence reported, not assumed** (`portfolio.Convergence`,
+  `PortfolioWeights.converged`). `min_variance_weights` / `mean_variance_weights` can now
+  report whether their iterative projection actually converged within the iteration budget;
+  `construct()` logs a warning and carries the flag through when it did not.
+- **Per-job timing** (`EvaluationResult.slowest`). `evaluate()` now times every backtest job
+  and `agentic-trader evaluate` prints the slowest, so a hung or unusually slow (period,
+  symbol) is visible without instrumenting a re-run.
+
+### Engineering
+- **`agentic_trader/cli.py` split into a package** (`agentic_trader/cli/`: `common.py`,
+  `decisions.py`, `research.py`, `evaluate.py`, `services.py`, `parser.py`, `__init__.py`),
+  one module per concern instead of one 700-line file. `main`, `build_parser`,
+  `load_dotenv` and `_config` remain importable from `agentic_trader.cli` exactly as before;
+  the `agentic-trader` console script is unchanged.
+- **`requirements-lock.txt`**: the exact dependency versions each published number was
+  measured with, so a re-run that differs can rule out dependency drift before suspecting
+  data drift or a real code change (see Reproducing in
+  [the evaluation](docs/evaluation/evaluation.md#reproducing)).
+- **Coverage reporting in CI** (`pytest-cov`, `--cov-report=xml`/`term-missing`, uploaded as
+  a CI artifact) — report-only, not a merge gate. 94% overall on the numpy backend; weakest
+  are `data/yahoo.py` (50%, mostly network-dependent branches) and `llm.py` (75%, the live
+  Anthropic call path).
+- 319 tests (up from 280), including a new `tests/test_v07.py` covering every item above.
+
 ## v0.6.0 — 2026-09-27
 
 Point-in-time filings for the idle half of the analyst team, statistical power across the
@@ -56,8 +138,8 @@ alpha window. The measured results of every data and rule change are in
   reserve +0.01 / -0.03 — **off by default**: it spoke on 2.6% of sampled decisions (never on
   FX) because no alpha clears the cross-sectional significance gate on most dates.
 - **The multi-year LLM harness**: model tiers, repeats and prompt hashes on the core universe
-  over design and holdout, staged with a dollar cap per stage. See the evaluation for what
-  has been run.
+  over design and holdout, staged with a dollar cap per stage -- built and budgeted, **not
+  yet run**; the evaluation says so explicitly rather than leaving it implied.
 
 ### Engineering
 - **Agentic-layer fuzzing** (`tests/test_fuzz_agentic.py`): hypothesis properties over

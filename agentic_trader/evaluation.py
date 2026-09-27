@@ -141,10 +141,17 @@ class EvaluationResult:
         return pd.DataFrame(out)
 
     def paired(self, baseline: str = "Buy&Hold", metric: str = "Sharpe", period: str | None = None,
-               universe: str | None = None, strategy: str = AGENT, n_boot: int = 10_000, seed: int = 0):
+               universe: str | None = None, strategy: str = AGENT, n_boot: int = 10_000, seed: int = 0,
+               stratify: bool = True):
         """Cross-instrument bootstrap of ``strategy - baseline`` on one metric (see ``stats.paired_bootstrap``).
 
         With repeated agent runs, each instrument contributes its mean over runs.
+        ``stratify`` (default on) resamples within (asset class, universe) groups rather than
+        the whole set at once -- the extended universe mixes clusters of correlated
+        instruments (nine rate/credit/commodity ETFs that mostly move together, next to
+        unrelated equities), and plain resampling treats them as if they moved independently,
+        understating the interval's true width. Pass ``stratify=False`` to reproduce the
+        unstratified v0.6 numbers.
         """
         from .stats import paired_bootstrap
         rows = self.rows
@@ -156,10 +163,25 @@ class EvaluationResult:
         if strategy not in piv or baseline not in piv:
             raise ValueError(f"need both {strategy!r} and {baseline!r} in the rows")
         both = piv[[strategy, baseline]].dropna()
-        return paired_bootstrap(both[strategy].to_numpy(), both[baseline].to_numpy(), n_boot=n_boot, seed=seed)
+        groups = None
+        if stratify and {"asset_class", "universe"} <= set(rows.columns):
+            key = rows.drop_duplicates("symbol").set_index("symbol")
+            key = (key["asset_class"].astype(str) + ":" + key["universe"].astype(str))
+            aligned = key.reindex(both.index)
+            if aligned.notna().all() and aligned.nunique() > 1:
+                groups = aligned.to_numpy()
+        return paired_bootstrap(both[strategy].to_numpy(), both[baseline].to_numpy(), n_boot=n_boot, seed=seed,
+                                groups=groups)
 
-    def paired_table(self, metric: str = "Sharpe", universe: str | None = None, strategy: str = AGENT) -> pd.DataFrame:
-        """Per period and baseline: mean paired difference, 95% CI and two-sided p across instruments."""
+    def paired_table(self, metric: str = "Sharpe", universe: str | None = None, strategy: str = AGENT,
+                     fdr_q: float = 0.05, stratify: bool = True) -> pd.DataFrame:
+        """Per period and baseline: mean paired difference, 95% CI and two-sided p across
+        instruments, plus ``significant`` corrected for the number of rows in *this table*
+        (Benjamini-Hochberg false discovery rate at ``fdr_q``). Printing many paired tests side
+        by side is a multiple-comparisons problem exactly like choosing among rule variants;
+        the raw per-row ``p`` is still reported, but ``significant`` is the one to read when
+        the table has more than a couple of rows.
+        """
         out = []
         rows = self.rows if universe is None or "universe" not in self.rows else self.rows[self.rows.universe == universe]
         for period in sorted(rows.period.unique()):
@@ -167,13 +189,18 @@ class EvaluationResult:
                 if base == strategy:
                     continue
                 try:
-                    pb = self.paired(base, metric, period=period, universe=universe, strategy=strategy)
+                    pb = self.paired(base, metric, period=period, universe=universe, strategy=strategy,
+                                     stratify=stratify)
                 except ValueError:
                     continue
                 out.append({"period": period, "baseline": base, "n": pb.n, f"mean {metric} diff": round(pb.mean_diff, 3),
                             "ci95 low": round(pb.ci_low, 3), "ci95 high": round(pb.ci_high, 3),
                             "p": round(pb.p_value, 3), "wins": pb.wins})
-        return pd.DataFrame(out)
+        df = pd.DataFrame(out)
+        if len(df):
+            from .stats import benjamini_hochberg
+            df["significant"] = benjamini_hochberg(df["p"].to_numpy(), fdr_q)
+        return df
 
     def run_dispersion(self, metric: str = "Sharpe", strategy: str = AGENT) -> pd.DataFrame:
         """With repeated runs: per period, the mean over instruments of the across-run std of ``metric``."""
@@ -184,6 +211,20 @@ class EvaluationResult:
         per = pd.DataFrame({"runs": g.size(), "std": g.std(ddof=1), "range": g.max() - g.min()})
         return per.groupby("period").agg(runs=("runs", "max"), instruments=("std", "size"),
                                          mean_std=("std", "mean"), mean_range=("range", "mean")).round(3)
+
+    def slowest(self, n: int = 10) -> pd.DataFrame:
+        """The ``n`` slowest (period, symbol, run) jobs, from ``meta["timings"]``.
+
+        A full sweep (``evaluate --universe all --periods design,holdout,q1_2024,reserve``)
+        has no other way to tell which symbol or period is the slow one -- an EDGAR
+        fiscal-calendar edge case, a data provider hiccup, or an unusually long LLM debate --
+        without profiling ad hoc; this is exactly that, read from the run that just happened
+        rather than a separate profiling pass.
+        """
+        timings = self.meta.get("timings")
+        if not timings:
+            return pd.DataFrame(columns=["period", "symbol", "run", "seconds", "error"])
+        return pd.DataFrame(timings).sort_values("seconds", ascending=False).head(n).reset_index(drop=True)
 
     def to_json(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -249,12 +290,15 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     def run(job):
         pname, sym, k = job
         start, end = periods[pname]
+        t0j = time.perf_counter()
         try:
             rep = run_agent_backtest(sym, start, end, cfg, rebalance_every, provider, llm)
         except Exception as e:
+            elapsed = time.perf_counter() - t0j
             if progress:
-                progress(f"{pname:<8} {sym:<7} ERROR {e}")
-            return job, None, str(e)
+                progress(f"{pname:<8} {sym:<7} ERROR {e} ({elapsed:.1f}s)")
+            return job, None, str(e), elapsed
+        elapsed = time.perf_counter() - t0j
         if progress:
             t = rep.table()
             a = t.loc[AGENT] if AGENT in t.index else None
@@ -262,8 +306,8 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             share = f"  [llm {src.get('llm', 0)}/{sum(src.values())}]" if llm is not None and src else ""
             progress(f"{pname:<8} {sym:<7} " + (f"run {k} " if repeats > 1 else "") + (
                 f"agent Sharpe {a['Sharpe']:+.2f} vs B&H {t.loc['Buy&Hold', 'Sharpe']:+.2f}{share}"
-                if a is not None else "baselines only"))
-        return job, rep, None
+                if a is not None else "baselines only") + f"  ({elapsed:.1f}s)")
+        return job, rep, None, elapsed
 
     if workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -271,9 +315,11 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     else:
         outcomes = [run(j) for j in jobs]
 
-    rows, errors, sources = [], [], {"llm": 0, "rules": 0}
+    rows, errors, sources, timings = [], [], {"llm": 0, "rules": 0}, []
     baselines_done: set[tuple[str, str]] = set()
-    for (pname, sym, k), rep, err in outcomes:  # job order: deterministic regardless of workers
+    for (pname, sym, k), rep, err, elapsed in outcomes:  # job order: deterministic regardless of workers
+        timings.append({"period": pname, "symbol": sym, "run": k, "seconds": round(elapsed, 3),
+                        "error": err is not None})
         if err is not None:
             errors.append({"period": pname, "symbol": sym, "run": k, "error": err})
             continue
@@ -301,7 +347,7 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             "neutral_weight": cfg["risk"].get("neutral_weight"),
             "use_stops": cfg.get("backtest", {}).get("use_stops"),
             "errors": errors, "seconds": round(time.perf_counter() - t0, 1),
-            "agent_sources": sources}
+            "agent_sources": sources, "timings": timings}
     if llm is not None:
         meta.update(models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
                     effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},

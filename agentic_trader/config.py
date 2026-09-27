@@ -68,6 +68,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_position": 1.0,       # |target weight| cap (1.0 = 100% of equity notional)
         "target_vol": 0.15,        # annualised vol target used by the neutral risk analyst
         "max_var_95": 0.02,        # cap on 1-day 95% historical VaR of the position
+        # Book-level risk aggregation (off by default: None). Per-instrument VaR above is
+        # exactly that -- per instrument; a desk running several sleeves at once (TradingGraph
+        # .scan(), which already threads a positions dict across a watchlist) has no check
+        # that the *book* as a whole stays within a risk budget. Set this to enforce one: the
+        # 1-day 95% historical VaR of the whole book (this instrument's proposed weight plus
+        # every other symbol's current weight from the same scan) is capped, and a breach
+        # scales *this* instrument's weight down (found by search over its own weight, since
+        # book VaR is not assumed monotonic -- a new position could be a partial hedge).
+        "max_book_var_95": None,
         "min_trade_weight": 0.05,  # smaller targets are rounded to flat
         "rebalance_band": 0.10,    # keep the current position if the new target is within this
                                    # distance of it (a no-trade band; 0 disables)
@@ -102,6 +111,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # FX has no exchange volume; set a notional ADV per pair (quote currency) to
         # apply impact to FX sleeves, or leave None for no FX impact.
         "fx_adv_notional": None,
+        # How the day's trade is assumed to be worked, for impact_coeff's cost: None (or
+        # "vwap") matches the formula above exactly (spread across the session in proportion
+        # to volume, which minimises impact under the square-root law); "twap" (equal size
+        # per slice, ignoring the volume curve) or "ac" (Almgren-Chriss, urgency ac_kappa)
+        # scale the day's impact by that schedule's cost relative to VWAP (see
+        # agentic_trader.algo.algo_cost_ratio). Unset by default so every published number
+        # stays reproducible without opting in.
+        "execution_algo": None,
+        "ac_kappa": 3.0,
     },
     "initial_capital": 100_000.0,
     "risk_free_annual": 0.0,

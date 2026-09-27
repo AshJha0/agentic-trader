@@ -99,7 +99,8 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
       <p>Repeated runs (<code>--repeats</code>) measure the model's own variance; a calibration harness runs one frozen
          state n times per anchor for dispersion, anchoring on the book and drift; a prompt registry hashes every prompt
          into each result. The multi-year LLM run (Opus, Sonnet and Haiku tiers on the core universe over design and
-         holdout, repeats, calibration) is staged with a dollar cap per stage; its results are reported the moment it has run.</p></div>
+         holdout, repeats, calibration) is staged with a dollar cap per stage but has not been run yet -- the
+         five-stock, one-quarter result above remains the only measured one.</p></div>
     <div class="card"><h3>Engineering</h3>
       <p>Hypothesis fuzzing of the agentic layer (tool arguments, plans, policy, model replies, untrusted text);
          a bounded task pool with a queue limit (503 when full) and multi-process serving over the task store;
@@ -110,13 +111,13 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 
   <h2>Measured, not claimed</h2>
   <div class="numbers">
-    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 280 pytest tests green — 21 hypothesis fuzz properties on the C++ boundary + 7 on the agentic layer · 20 v0.6 features · 11 EDGAR · 18 v0.5 features · 30 agentic · 15 adversarial · 7 services (FastAPI client + a real MCP stdio round trip) · 19 quant research · 38 quant edge cases · 27 agent · 17 workflow · 13 data · 11 LLM-eval · 26 pipeline/quant · 14 C++ groups (44 checks)<br>
+    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 319 pytest tests green (94% line coverage) — 21 hypothesis fuzz properties on the C++ boundary + 7 on the agentic layer · 37 v0.7 features · 20 v0.6 features · 11 EDGAR · 19 v0.5 features · 30 agentic · 15 adversarial · 7 services (FastAPI client + a real MCP stdio round trip) · 20 quant research · 38 quant edge cases · 27 agent · 17 workflow · 13 data · 11 LLM-eval · 26 pipeline/quant · 14 C++ groups (44 checks)<br>
     One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans · every transition written to SQLite when a task store is configured<br>
     Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 16 tools on 5 servers (market_data · quant incl. cross-sectional alphas · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
     Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → read-only → argument guards → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API · a bounded task pool per process (503 + Retry-After when full) and multi-process serving over the task store<br>
     Knowledge (RAG)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 runbooks and policies · 59 chunks · dependency-free hashed TF-IDF · served as DOCUMENT evidence and shown to the trader and PM<br>
     Quant research&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 9 alphas, time-series and cross-sectional (per-date IC, quantile spreads, breadth) · 4 execution algorithms + intraday simulator · square-root impact inside the backtester · 5 weighting schemes with Ledoit-Wolf covariance, cross-asset risk budgets and attribution · bootstrap, probabilistic and deflated Sharpe · a paired bootstrap across instruments · ALFRED vintages · SEC EDGAR point-in-time fundamentals and filing news<br>
-    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every choice) + 45 never consulted · design 2016–21 · holdout 2022–26 run once · reserve from 2026-07 untouched · 16-variant rule ablation · alpha analyst measured three times and kept off · impact sweep at $100k / $10M / $1B · first LLM run: 5 stocks × Q1 2024, 271 Claude calls, $4 · EDGAR data change and the cross-sectional analyst measured on all 60 names × 4 periods with bootstrap intervals · prompt hashes in every result · a calibration harness · the multi-year LLM run staged with a dollar cap per stage<br>
+    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every choice) + 45 never consulted · design 2016–21 · holdout 2022–26 run once · reserve from 2026-07 untouched · 16-variant rule ablation · alpha analyst measured three times and kept off · impact sweep at $100k / $10M / $1B · first LLM run: 5 stocks × Q1 2024, 271 Claude calls, $4 · EDGAR data change and the cross-sectional analyst measured on all 60 names × 4 periods with bootstrap intervals · prompt hashes in every result · a calibration harness · the multi-year LLM run staged (not yet executed) with a dollar cap per stage<br>
     Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; v0.6 defaults (EDGAR on): 15-sleeve portfolio holdout Sharpe 1.09 vs 1.06 buy &amp; hold vs 1.24 vol-targeted B&amp;H, max drawdown 7.8% vs 20.8% · extended 45 names: mean Sharpe 0.45 vs 0.50 B&amp;H (-0.04 [-0.10, +0.01]), lower drawdown on 42 of 45 · v0.5.1 FX carry rule: chosen on core design, better on every unseen slice<br>
     Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈9.2k lines of Python in <code>agentic_trader</code> (50 files; 2.7k in the agentic layer, 1.1k research, 0.6k EDGAR / prompts / calibration) · ≈1.2k lines of C++17 · ≈3.0k lines of tests · MSVC /W4 and GCC -Wall -Wextra clean · CI on Linux, Windows, macOS, Python 3.10–3.14
   </div>
@@ -140,7 +141,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     holds at $100k and $10M and the desk loses 0.09 of Sharpe at $1B. The LLM desk has been measured once
     (v0.5.1: five stocks, one quarter, Claude Opus, anonymised prompts, $4): the same Sharpe as the
     rules, less than half the exposure, return and drawdown — a single quarter shows what it does, not
-    whether it has an edge; the multi-year run is staged and reported the moment it has run.
+    whether it has an edge; the multi-year run is staged, dollar-capped per stage, and has not been executed.
   </div>
 
   <h2>The architectural boundary</h2>

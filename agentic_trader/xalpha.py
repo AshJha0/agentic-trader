@@ -176,7 +176,7 @@ class XAlphaReport:
     groups: dict[str, str] = field(default_factory=dict)
 
     def best(self, k: int = 3) -> list[str]:
-        t = self.table.drop(index="combined", errors="ignore")
+        t = self.table.drop(index=["combined", "significance_gated"], errors="ignore")
         return list(t.sort_values("mean IC", ascending=False).index[:k])
 
 
@@ -204,24 +204,58 @@ def xalpha_report(frames: dict[str, pd.DataFrame], instruments: dict[str, Instru
     scores["combined"] = combined
     ppy = float(np.mean([instruments[s].periods_per_year for s in frames]))
     rows, decay, spreads = {}, {}, {}
-    for n, sc in scores.items():
+
+    def row_for(n: str, sc: pd.DataFrame) -> dict:
         ic = cross_sectional_ic(sc, fwd, min_names)
         summary = ic_summary(ic, horizon, ppy)
         sp = quantile_spread(sc, fwd, horizon, quantile, min_names)
         spreads[n] = sp
         breadth = float(sc.notna().sum(axis=1).mean()) if not sc.empty else 0.0
-        rows[n] = {**summary, "spread%/period": 100.0 * float(sp.mean()) if sp.size else float("nan"),
-                   "spread t": float(sp.mean() / sp.std(ddof=1) * math.sqrt(sp.size))
-                   if sp.size > 2 and sp.std(ddof=1) > 0 else float("nan"),
-                   "breadth": breadth}
         decay[n] = {h: ic_summary(cross_sectional_ic(sc, forward_return_panel(closes, h), min_names), h, ppy)["mean IC"]
                     for h in decay_horizons}
+        return {**summary, "spread%/period": 100.0 * float(sp.mean()) if sp.size else float("nan"),
+                "spread t": float(sp.mean() / sp.std(ddof=1) * math.sqrt(sp.size))
+                if sp.size > 2 and sp.std(ddof=1) > 0 else float("nan"),
+                "breadth": breadth}
+
+    for n, sc in scores.items():
+        rows[n] = row_for(n, sc)
+    # The row nobody was measuring: the significance-gated combination is what XAlphaAnalyst
+    # actually trades (agents.analysts.significant_alpha_signal, on this same ic/n shape),
+    # not "combined" above, which is an equal-weighted diagnostic over every alpha regardless
+    # of measured quality. A full-sample diagnostic, not a walk-forward backtest -- see
+    # alpha.significance_gated_series, which this mirrors for cross-sectional scores.
+    ic_for_gate = {n: {"IC": v["mean IC"], "t(IC)": v["t(IC)"], "n": v["days"]}
+                  for n, v in rows.items() if n != "combined"}
+    scores["significance_gated"] = significance_gated_scores(scores, ic_for_gate)
+    rows["significance_gated"] = row_for("significance_gated", scores["significance_gated"])
     table = pd.DataFrame(rows).T.round(4)
-    names_only = [n for n in scores if n != "combined"]
+    names_only = [n for n in scores if n not in ("combined", "significance_gated")]
     stacked = pd.DataFrame({n: scores[n].stack(future_stack=True) for n in names_only})
     with np.errstate(invalid="ignore", divide="ignore"):
         corr = stacked.corr().round(3)
     return XAlphaReport(horizon, table, pd.DataFrame(decay).T.round(4), corr, spreads, scores, groups)
+
+
+def significance_gated_scores(scores: dict[str, pd.DataFrame], ic: dict[str, dict],
+                              min_tstat: float = 2.0, min_n: int = 30) -> pd.DataFrame:
+    """The cross-sectional analogue of ``alpha.significance_gated_series``: only the alphas
+    whose cross-sectional IC clears ``min_tstat``/``min_n`` in ``ic`` (the same
+    ``{"IC", "t(IC)", "n"}`` shape ``agents.analysts.significant_alpha_signal`` reads)
+    contribute, IC-magnitude-weighted, exactly like ``XAlphaAnalyst`` actually trades.
+
+    Reuses ``_combine_scores``'s formula (signed weight in the numerator, ``abs(weight)`` in
+    the denominator -- already the same convention ``significant_alpha_signal`` uses) by
+    setting every non-passing alpha's weight to 0, which contributes nothing to either side.
+    """
+    names = [n for n in scores if n not in ("combined", "significance_gated")]
+    weights = {n: 0.0 for n in names}
+    for n in names:
+        v = ic.get(n)
+        if (v and v.get("IC") is not None and v["IC"] == v["IC"]
+                and abs(v.get("t(IC)") or 0.0) >= min_tstat and (v.get("n") or 0) >= min_n):
+            weights[n] = float(v["IC"])
+    return _combine_scores(scores, weights)
 
 
 def _combine_scores(scores: dict[str, pd.DataFrame], weights: dict[str, float] | None) -> pd.DataFrame:

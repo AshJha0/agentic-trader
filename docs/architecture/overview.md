@@ -185,9 +185,11 @@ See `config.py` for the full dictionary.
 | `agentic.use_alpha_tool`, `critic_divergence`, `tool_timeout_s` | True, 0.6, 30 | Canonical plan and executor settings |
 | `agentic.symbol_universe`, `deny_tools`, `api_keys`, `task_db` | None, [], dev keys, None | Policy inputs, API roles (an override replaces the dev keys) and the persistent task store |
 | `costs.impact_coeff`, `costs.fx_adv_notional`, `initial_capital` | 0, None, 100k | Square-root market impact in backtests and the account size trade sizes scale with |
+| `costs.execution_algo`, `costs.ac_kappa` | None (VWAP-equivalent), 3.0 | How the day's trade is worked, for `impact_coeff`'s cost: `twap` or `ac` scale it by that schedule's cost relative to VWAP (`algo.algo_cost_ratio`) |
 | `fred_vintages`, `fred_vintage_step_days`, `fred_cache_dir` | False, 31, None | ALFRED vintages for revised series |
 | `analysts` | asset-class default | Add `"alpha"` for the alpha analyst |
 | `risk.neutral_weight`, `rebalance_band`, `max_position`, `max_var_95`, `min_trade_weight` | equity 1.0 / fx 0.0 (overridden by the carry rule below), 0.10, 1.0, 0.02, 0.05 | Strategic weight, band, firm limits |
+| `risk.max_book_var_95` | None (off) | Book-level (cross-sleeve) 95% historical VaR cap; scales a proposed weight down by grid search over the book's other positions (`portfolio.book_var_scale`) |
 | `rules.fx_carry_neutral`, `risk.fx_carry_neutral_scale`, `fx_carry_neutral_cap` | True, 2.0, 0.5 | FX strategic weight = clip(carry% / scale, ±cap) from the point-in-time rate differential (v0.5.1); `RULES_V03` turns it off |
 | `risk.stop_atr_mult`, `take_profit_atr_mult` | 2.0, 3.0 | Protective levels |
 | `backtest.use_stops`, `costs.*`, `fx_macro_source`, `max_data_staleness_days` | False, bps and pips, `auto`, 7 | Backtest and data behaviour |

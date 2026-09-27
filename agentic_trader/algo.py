@@ -128,6 +128,50 @@ def almgren_chriss_schedule(total: float, n: int, sigma_session: float, eta: flo
     return quant.almgren_chriss(total, n, kappa)
 
 
+# ------------------------------------------------------ cost model by algorithm
+def algo_cost_ratio(algo: str, n: int, kind: str, kappa: float = 3.0) -> float:
+    """Square-root-law impact cost of executing one order under ``algo``, relative to VWAP.
+
+    The simulator charges each slice ``eta * sqrt(q_i / V_i)`` of temporary impact, so a
+    schedule's total cost (for a fixed total quantity) is proportional to
+    ``sum(q_i^1.5 / sqrt(V_i))``. VWAP trades ``q_i`` proportional to the expected volume
+    ``V_i``, which makes every slice's participation rate ``q_i / V_i`` identical and, by the
+    convexity of ``sqrt``, minimises this sum -- so its cost ratio is exactly 1.0 by
+    construction, for any volume curve. This is also the assumption
+    ``backtest.impact_coefficients`` already makes (one shot at the account's ADV
+    participation), so a VWAP execution changes nothing relative to the existing model.
+
+    * **TWAP** ignores the volume curve and trades equal amounts per slice; against
+      equities' U-shaped intraday curve (heavy at the open and close, light at midday) this
+      over-trades the illiquid middle of the session, so its ratio is >= 1.0 (== 1.0 only for
+      a flat curve, i.e. FX).
+    * **Almgren-Chriss** (``kappa``, urgency: 0 = TWAP, larger = more front-loaded) trades a
+      fixed *time* profile regardless of the volume curve. A small kappa can align with an
+      opening volume spike and cost slightly less than TWAP; kappa large enough to front-load
+      past the opening spike costs more, monotonically, as it increasingly concentrates size
+      into a shrinking window.
+    * **POV** is excluded here: unlike the other three it need not complete the order within
+      one session (it trades a fixed participation of *realized* volume and stops if the
+      volume never arrives), which is a fill-risk question this same-session, always-fills
+      cost model does not represent -- see ``simulate_execution`` for POV's own accounting.
+
+    ``n`` and ``kind`` should match the session slicing used elsewhere for the instrument
+    (``plan_execution`` uses 78 equity / 288 FX slices); the ratio is dimensionless and does
+    not depend on the order's size, ``ADV`` or volatility, only on how it is spread across
+    the session relative to where the volume is.
+    """
+    if algo not in ("twap", "vwap", "ac"):
+        raise ValueError(f"algo_cost_ratio: unsupported algo {algo!r} (twap, vwap or ac)")
+    profile = volume_profile(kind, n)
+    if algo == "twap":
+        q = twap_schedule(1.0, n)
+    elif algo == "vwap":
+        q = vwap_schedule(1.0, profile)
+    else:
+        q = quant.almgren_chriss(1.0, n, kappa)
+    return float(np.sum(q ** 1.5 / np.sqrt(profile)))
+
+
 # ------------------------------------------------------------- simulator
 @dataclass
 class Fill:

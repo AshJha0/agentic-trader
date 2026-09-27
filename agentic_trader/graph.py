@@ -27,7 +27,7 @@ from .data import MarketDataProvider, get_provider
 from .instruments import Instrument
 from .llm import LLM, budget_llm, get_llm
 from .memory import DecisionMemory
-from .state import AnalystReport, DebateOutcome, FinalDecision, TradeProposal, TradingState
+from .state import AnalystReport, Book, DebateOutcome, FinalDecision, TradeProposal, TradingState
 
 log = logging.getLogger(__name__)
 
@@ -75,8 +75,14 @@ class TradingGraph:
 
     def prepare(self, symbol: str | Instrument, as_of: date | str, asset_class: str | None = None,
                 current_weight: float | None = None,
-                provider: MarketDataProvider | None = None) -> TradingState:
-        """Load point-in-time data, apply the guards, consult memory; no agent runs yet."""
+                provider: MarketDataProvider | None = None,
+                book: Book | None = None) -> TradingState:
+        """Load point-in-time data, apply the guards, consult memory; no agent runs yet.
+
+        ``book`` is the rest of the current book (other symbols' positions and an aligned
+        return history) for a book-level VaR check; see ``state.Book`` and ``scan()``, which
+        builds one automatically when ``config["risk"]["max_book_var_95"]`` is set.
+        """
         ins = symbol if isinstance(symbol, Instrument) else Instrument.parse(symbol, asset_class)
         as_of = date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
         if current_weight is not None and not math.isfinite(current_weight):
@@ -96,7 +102,7 @@ class TradingGraph:
         if stale > self.config.get("max_data_staleness_days", 7):
             raise ValueError(f"latest {ins.display} bar is {bar_date}, {stale} days before "
                              f"{as_of}: refusing to decide on stale data")
-        state = TradingState(ins, as_of, hist, current_weight=current_weight)
+        state = TradingState(ins, as_of, hist, current_weight=current_weight, book=book)
         if self.llm is not None and self.config.get("llm_anonymize"):
             state.anon = Anonymizer(ins, as_of, state.last_price)
 
@@ -154,14 +160,16 @@ class TradingGraph:
     # ---------------------------------------------------------- pipeline
     def propagate(self, symbol: str | Instrument, as_of: date | str,
                   asset_class: str | None = None,
-                  current_weight: float | None = None) -> tuple[TradingState, FinalDecision]:
+                  current_weight: float | None = None,
+                  book: Book | None = None) -> tuple[TradingState, FinalDecision]:
         """Run the desk once for ``symbol`` with information up to the close of ``as_of``.
 
         ``current_weight`` is the position held going into the decision (portfolio
         context). The trader and PM see it, and the PM's no-trade band keeps it when
-        the new target is close enough.
+        the new target is close enough. ``book`` adds a book-level VaR check across the
+        rest of the current positions (see ``prepare``); ``scan()`` builds it automatically.
         """
-        state = self.prepare(symbol, as_of, asset_class, current_weight)
+        state = self.prepare(symbol, as_of, asset_class, current_weight, book=book)
         for name in self.analyst_names(state.instrument):
             self.run_analyst(state, name)
         self.run_debate(state)
@@ -171,19 +179,46 @@ class TradingGraph:
         return state, dec
 
     def scan(self, symbols: list[str], as_of: date | str,
-             positions: dict[str, float] | None = None) -> pd.DataFrame:
+             positions: dict[str, float] | None = None,
+             book_lookback_days: int = 250) -> pd.DataFrame:
         """Run the desk over a watchlist and return one row per symbol.
 
         A symbol that fails (no data, stale data, bad ticker) gets a row with its
         error instead of stopping the scan. ``positions`` maps symbol -> current weight.
+
+        When ``config["risk"]["max_book_var_95"]`` is set, every decision also sees the
+        rest of the watchlist's current positions and an aligned ``book_lookback_days``
+        return history, and the Portfolio Manager scales this instrument's weight down
+        if the *book's* 1-day 95% historical VaR (this instrument's proposed weight plus
+        every other symbol's current weight from ``positions``) would exceed the limit.
+        Symbols with no position are still part of the book's return history (at zero
+        weight) since a later scan could hold them.
         """
         rows = []
         positions = {k.upper(): v for k, v in (positions or {}).items()}
+        as_of_d = date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
+        book_returns = None
+        if self.config["risk"].get("max_book_var_95"):
+            start = as_of_d - timedelta(days=book_lookback_days)
+            cols = {}
+            for sym in symbols:
+                try:
+                    ins = Instrument.parse(sym)
+                    h = self.provider.history(ins, start, as_of_d)
+                    cols[ins.symbol] = h[h.index <= pd.Timestamp(as_of_d)]["Close"].pct_change()
+                except Exception as e:  # a symbol that can't be fetched just has no book history
+                    log.warning("scan: could not build book history for %s: %s", sym, e)
+            if cols:
+                book_returns = pd.DataFrame(cols)
         for sym in symbols:
             try:
                 ins = Instrument.parse(sym)
+                book = None
+                if book_returns is not None:
+                    others = {s: w for s, w in positions.items() if s != ins.symbol}
+                    book = Book(others, book_returns)
                 state, d = self.propagate(ins, as_of,
-                                          current_weight=positions.get(ins.symbol))
+                                          current_weight=positions.get(ins.symbol), book=book)
                 votes = [r for r in state.reports.values() if not r.abstained]
                 rows.append({
                     "symbol": ins.symbol, "asset_class": ins.asset_class,

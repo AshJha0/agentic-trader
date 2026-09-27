@@ -55,7 +55,9 @@ generated from the saved result files rather than typed. To reproduce them, see
 - **The v0.4 alpha analyst did not help either** on the design period (mean Sharpe 0.65 →
   0.60), so it is off by default.
 - **After correcting for the 16 variants tried, the chosen rule set still clears the bar on
-  the design period** (deflated Sharpe probability 1.00), with the caveats given below.
+  the design period** (deflated Sharpe probability 1.00) — but that number is an *upper
+  bound*, not the real figure: the trials' dispersion is narrower than the true search
+  space (details in [selection statistics](#selection-statistics-for-the-chosen-rules)).
 - **FX is roughly zero** before and after the changes.
 
 ## Protocol
@@ -334,7 +336,7 @@ mean Sharpe ratios as the trials:
 | Probabilistic Sharpe vs 0 | 1.00 |
 | Trials | 16 |
 | Expected maximum Sharpe of 16 null trials | 0.11 |
-| Deflated Sharpe probability | 1.00 |
+| Deflated Sharpe probability | 1.00 (upper bound — see below) |
 | Minimum track record to beat that benchmark at 95% | 389 days |
 
 **How to read it, and why it is not a triumph.**
@@ -517,6 +519,33 @@ paid over the period as a percentage of equity, averaged over the 15 instruments
 FX sleeves get no impact in these runs (no exchange volume; set `costs.fx_adv_notional` to
 model it), so the FX rows are unchanged across the columns and the averages above are
 driven by the equities.
+
+### Execution-algorithm-aware impact (v0.7)
+
+The impact sweep above assumes every trade is worked across the session in proportion to
+volume (VWAP), which minimises square-root-law impact cost for a fixed order size (see
+`agentic_trader.algo.algo_cost_ratio`) -- so it is also what `costs.execution_algo` unset
+means. Setting it to `"twap"` (equal size per slice, ignoring the intraday volume curve) or
+`"ac"` (Almgren-Chriss, trading faster than the volume curve to cut timing risk) scales the
+day's impact by that schedule's cost relative to VWAP, so **the simulated cost of a trade
+now depends on how it would be worked, not only on its size.** Core universe with EDGAR
+fundamentals and news, $1B capital, `impact_coeff` 1.0, holdout period, combined 15-sleeve
+portfolio:
+
+| execution algo | Sharpe | CR % | MDD % | mean sleeve impact paid % |
+|:--|--:|--:|--:|--:|
+| VWAP (default) | 1.009 | 33.0 | 7.84 | 2.37 |
+| TWAP | 1.004 | 32.8 | 7.85 | 2.51 |
+| Almgren-Chriss, kappa=5 | 0.982 | 32.0 | 7.88 | 3.14 |
+
+TWAP costs a little more than VWAP, because equities' U-shaped intraday volume curve (heavy
+at the open and close) means equal-sized slices over-trade the illiquid middle of the
+session; Almgren-Chriss at an aggressive urgency (kappa=5, front-loaded to cut timing risk)
+costs substantially more, because it deliberately trades ahead of the volume curve rather
+than with it. This is a same-session, always-fills cost model -- it does not represent POV's
+own fill risk (see `algo_cost_ratio`'s docstring) -- and the default (unset, VWAP-equivalent)
+is unchanged, so every number in the sweep above and everywhere else on this page is
+unaffected by this feature existing.
 
 ## The FX carry-neutral rule (v0.5.1): the protocol's first use
 
@@ -1048,6 +1077,40 @@ trailing returns) to the portfolio backtest. Those schemes are applied identical
 strategy, so they change the level of every row, not the ranking; the equal-weight table
 above remains the reference.
 
+## VaR coverage: is the desk's risk model calibrated?
+
+Every decision scales down when its 95% historical VaR breaches a configured cap
+(`max_var_95`), and v0.7 extends that to a book-level cap across sleeves
+(`max_book_var_95`, off by default -- see the book-risk paragraph in
+[Limitations](#limitations)). A cap is only useful if the VaR forecast behind it is honest:
+a 95% VaR should be breached on roughly 5% of days, and those breaches should not cluster
+together (clustering means the model is slow to react, not just imprecise on average).
+
+Two standard tests check this, run against the same 15-sleeve equal-capital core portfolio's
+holdout-period daily returns used throughout this page (`agentic-trader stats --var-backtest`,
+which wraps `rolling_var_forecast` + `var_backtest` -- see
+[Reproducing](#reproducing) for the exact command):
+
+- **Kupiec (1995) unconditional coverage**: does the breach rate match the target rate?
+- **Christoffersen (1998) independence**: are breaches spread out in time, or do they cluster?
+
+Both are likelihood-ratio tests against a rolling, walk-forward VaR forecast (each day's
+forecast uses only the trailing window before it, never the day itself or later) at two
+window lengths:
+
+| Window | n | breaches | breach rate | expected | Kupiec LR | Kupiec p | Christoffersen LR | Christoffersen p | conditional coverage p |
+|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| 120 days | 1048 | 60 | 5.73% | 5.00% | 1.111 | 0.292 | 1.801 | 0.180 | 0.233 |
+| 250 days | 918 | 41 | 4.47% | 5.00% | 0.570 | 0.450 | 2.158 | 0.142 | 0.256 |
+
+Neither test rejects at any conventional significance level, at either window length: the
+breach rate is statistically indistinguishable from 5% (Kupiec), and breaches are
+statistically indistinguishable from independent across time (Christoffersen). **The desk's
+own historical-VaR risk model is well-calibrated on this data** -- it is not overconfident
+(too many breaches) or underconfident (needlessly wide, too few breaches), and it does not
+miss regime changes it should have reacted to faster. This is a genuinely favorable result,
+reported the same way an unfavorable one would be: as a p-value, not a claim.
+
 ## Engineering measurements
 
 | Measurement | Value |
@@ -1062,15 +1125,20 @@ above remains the reference.
 | Full v0.6 evaluation with EDGAR fundamentals and news (60 × 4) | ≈ 340 s: the fundamentals are rebuilt once per filing per name (memoised on the last filing date), the filing news is a frame filter per decision |
 | One 45-name cross-section for the `xalpha` analyst (900 days, 9 alphas, IC only) | ≈ 1.4 s, computed once per (universe, date) and shared by every name at that date |
 | EDGAR walk-forward lookups | 300 fundamentals calls ≈ 1.9 s, 300 news calls ≈ 0.2 s (AAPL, after the one-off download of the company facts and filing index) |
-| Tests | 280 pytest tests (C++-boundary fuzz 21 and agentic-layer fuzz 7 property tests, v0.6 features 20, EDGAR 11, v0.5 features 18, agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 19, quant edge cases 38, LLM evaluation 11, plus the v0.3 suites) + 14 C++ test groups (44 checks) |
+| Tests | 319 pytest tests (C++-boundary fuzz 21 and agentic-layer fuzz 7 property tests, v0.7 features 37, v0.6 features 20, EDGAR 11, v0.5 features 19, agentic 30, adversarial 15, services 7 including a real MCP stdio round trip, quant research 20, quant edge cases 38, LLM evaluation 11, plus the v0.3 suites) + 14 C++ test groups (44 checks) |
+| Line coverage (`pytest --cov`, numpy backend, CI report only -- not a merge gate) | 94% overall; weakest are `data/yahoo.py` (50%, mostly network-dependent branches) and `llm.py` (75%, the live Anthropic call path) |
 
 ## Limitations
 
-- **One small LLM result.** The LLM desk has been measured once, on five stocks and one
-  quarter (no Sharpe edge over the rules; smaller positions, lower returns and drawdowns).
-  The multi-year run — model tiers on the core universe over design and holdout, repeated
-  runs for the model's variance, a calibration — is staged in v0.6 with a dollar cap per
-  stage and the full analyst team; its results are reported here the moment it has run.
+- **One small LLM result, and that is still the only one that has actually run.** The LLM
+  desk has been measured exactly once: five stocks, one quarter, $4 (no Sharpe edge over the
+  rules; smaller positions, lower returns and drawdowns). The multi-year harness -- model
+  tiers on the core universe over design and holdout, repeated runs for the model's variance,
+  a calibration -- has existed since v0.6 (staged, with a dollar cap per stage), but **as of
+  this writing it has not been executed**: "staged" here means the code and budget exist, not
+  that a result does. There is no multi-year LLM section below because there is no multi-year
+  LLM result yet; when the staged run is made, its section replaces this bullet, not the other
+  way around, so a reader is never left to infer completion from a code capability.
 - **The social analyst is still idle historically, and the fundamentals and news rules
   were never fitted.** v0.6 gives the fundamentals and news analysts real point-in-time
   data (SEC EDGAR); social media has no free point-in-time archive. The rules that read the
@@ -1099,7 +1167,21 @@ above remains the reference.
   first published; it is off in the published runs, which therefore carry a small revision
   leak in the FX inflation inputs (policy rates are never revised).
 
+Every number on this page and on the landing site is measured, not typed: see
+[docs/GITHUB_PAGES.md "Keeping the landing page honest"](../GITHUB_PAGES.md#keeping-the-landing-page-honest)
+for the process (and the re-measurement command) behind each figure, and the dependency-lock
+note under [Reproducing](#reproducing) below for telling dependency drift apart from a real
+change.
+
 ## Reproducing
+
+To rule out dependency drift as the reason a re-run differs from a published number, install
+the exact versions [requirements-lock.txt](../../requirements-lock.txt) recorded them with
+first (`pip install -r requirements-lock.txt && pip install -e . --no-deps`); with only
+`pyproject.toml`'s lower bounds, `pip install -e ".[all]"` can legitimately resolve a
+different numpy/pandas. A remaining difference is then data drift (Yahoo's occasional
+revision of adjusted history, or an EDGAR cache built at a different time) or a real code
+change, not the dependency resolution.
 
 ```bash
 pip install -e ".[all]"
@@ -1112,7 +1194,17 @@ agentic-trader evaluate --data yahoo --universe core --periods design,holdout,q1
 
 # v0.5: all 60 instruments on every period, and the impact sweep on the core universe
 agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve --out results/eval_v05_all.json
-agentic-trader evaluate --data yahoo --universe core --periods design,holdout --impact 1.0 --capital 1e9 --out results/eval_v05_impact_1e9.json
+agentic-trader portfolio AAPL,NVDA,MSFT,META,GOOGL,AMZN,JPM,XOM,JNJ,SPY,EURUSD,USDJPY,GBPUSD,AUDUSD,USDCAD \
+    --data yahoo --start 2022-01-03 --end 2026-06-30 --impact 1.0 --capital 1e9 --edgar-cache results/edgar_cache \
+    --out results/portfolio_holdout_impact_1e9.csv
+
+# v0.7: the same, worked as TWAP or Almgren-Chriss instead of the default VWAP-equivalent
+agentic-trader portfolio AAPL,NVDA,MSFT,META,GOOGL,AMZN,JPM,XOM,JNJ,SPY,EURUSD,USDJPY,GBPUSD,AUDUSD,USDCAD \
+    --data yahoo --start 2022-01-03 --end 2026-06-30 --impact 1.0 --capital 1e9 --edgar-cache results/edgar_cache \
+    --execution-algo twap --out results/portfolio_holdout_impact_1e9_twap.csv
+agentic-trader portfolio AAPL,NVDA,MSFT,META,GOOGL,AMZN,JPM,XOM,JNJ,SPY,EURUSD,USDJPY,GBPUSD,AUDUSD,USDCAD \
+    --data yahoo --start 2022-01-03 --end 2026-06-30 --impact 1.0 --capital 1e9 --edgar-cache results/edgar_cache \
+    --execution-algo ac --ac-kappa 5.0 --out results/portfolio_holdout_impact_1e9_ac.csv
 
 # the alpha-analyst check (design period only)
 agentic-trader evaluate --data yahoo --periods design --analysts technical,sentiment,macro,fundamentals,news,alpha
@@ -1145,6 +1237,10 @@ agentic-trader portfolio AAPL,NVDA,MSFT,META,GOOGL,AMZN,JPM,XOM,JNJ,SPY,EURUSD,U
 # selection statistics for a returns series against the variants tried
 agentic-trader stats results/portfolio_design.csv --column AgenticTrader \
     --trial-sharpes 0.496,0.465,0.483,0.512,0.496,0.471,0.509,0.511,0.497,0.535,0.577,0.655,0.579,0.583,0.652,0.561
+
+# v0.7: VaR coverage of the same holdout portfolio returns, at both window lengths in the table above
+agentic-trader stats results/portfolio_holdout.csv --column AgenticTrader --var-backtest --var-window 120
+agentic-trader stats results/portfolio_holdout.csv --column AgenticTrader --var-backtest --var-window 250
 ```
 
 The ablation variants are ordinary config overrides (see the tables above). Cookbook recipe

@@ -114,6 +114,22 @@ class FinalDecision:
 
 
 @dataclass
+class Book:
+    """Other current positions and their return history, for a book-level risk check.
+
+    ``positions`` maps symbol -> current weight for every sleeve *other than* the instrument
+    under decision (its own weight is what is being decided, so it is never a key here).
+    ``returns`` is an aligned (T, N) daily-return frame covering every symbol in ``positions``
+    plus the instrument itself, through the decision date with no look-ahead. Built by
+    ``TradingGraph.scan()`` when ``config["risk"]["max_book_var_95"]`` is set; ``None`` on
+    ``TradingState`` for a standalone ``propagate()`` call, which leaves book-level risk
+    checks off exactly as before this existed.
+    """
+    positions: dict[str, float]
+    returns: pd.DataFrame
+
+
+@dataclass
 class TradingState:
     instrument: Instrument
     as_of: date
@@ -132,6 +148,7 @@ class TradingState:
     # and PM, and the alpha snapshot when the quant.alpha tool ran.
     knowledge: list[dict[str, Any]] = field(default_factory=list)
     alpha: dict[str, Any] = field(default_factory=dict)
+    book: "Book | None" = None  # other current positions + returns, for a book-level VaR check
 
     @property
     def last_price(self) -> float:
