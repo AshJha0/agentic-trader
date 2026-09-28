@@ -28,45 +28,109 @@ layer** for alphas, execution algorithms, portfolio construction and backtest st
 
 ## Results in one paragraph
 
-On **real prices**, the rule-based desk was evaluated over 60 instruments: the 15 *core*
+On **real prices**, the rule-based desk is evaluated over 60 instruments: the 15 *core*
 ones every rule choice was made on (10 equities, 5 FX pairs; rules chosen on 2016–2021 only,
 judged once on a 2022–2026 holdout) and 45 *extended* ones (sector equities, rates / credit /
-commodity ETFs, FX crosses) that no choice ever consulted. Since v0.6 the fundamentals and
-news analysts read SEC EDGAR filings point in time, and every difference carries a bootstrap
-interval across instruments.
+commodity ETFs, FX crosses) that no rule was tuned on. v0.8.0 corrected the engine (constant
+units between decisions, a cash leg with Sharpe on excess returns, equity-scaled impact, the
+desk told its true position after a stop) and **re-measured every number**: everything below
+is copied from `results/v08/tables.md`, written by `scripts/measure_v08.py` and rendered by
+`scripts/render_v08_tables.py`; no earlier figure is carried forward. Summary tables quote
+the *median* Sharpe; paired tables the *mean* difference with its 95% bootstrap interval —
+resampling instruments (`scheme=instruments`) on the core and extended slices and a two-stage
+cluster bootstrap over the five asset-class-by-universe groups (core equities, core FX, extended equities, macro ETFs, FX crosses; `scheme=clusters`) on all 60 — its p, and whether
+the Benjamini–Hochberg correction across the table flags it ("BH-significant").
 
-- **Per instrument:** it does **not** beat buy & hold on Sharpe out of sample — core
-  0.46 vs 0.55 (difference -0.08, 95% interval
-  [-0.19, +0.02]); extended 0.45 vs 0.50
-  (-0.04 [-0.10, +0.01]), beating buy & hold on 14 of 45 names.
-- **Drawdown:** **about half of buy & hold's** — core equities 21.9% vs
-  40.2% on the holdout, extended 17.6% vs
-  27.1%, lower on 42 of the 45 extended names.
-- **As a 15-sleeve portfolio:** Sharpe 1.09 on the holdout with a
-  7.8% drawdown, against 1.06 / 20.8% for plain
-  buy & hold and 1.24 for buy & hold scaled to the same volatility. Under the
-  v0.5.1 defaults (no filings) it was 1.16 / 7.0%.
-- **Point-in-time filings (v0.6):** giving the untuned fundamentals and news rules real
-  data changed the core equities' Sharpe by 0.00 (design) and +0.01
-  (holdout), intervals ±0.1, while adding 4–7 points of exposure and 3–4 points of
-  drawdown; on the 22 (of 26) extended equities whose result changed — names the rules never saw — it added +0.02 and
-  +0.07 with intervals that exclude zero. The data stays on; the rules are the
-  next thing for the protocol.
-- **Cross-sectional analyst (v0.6):** measured under the protocol — core design
-  -0.01 [-0.02, 0.00], core holdout 0.00, extended holdout
-  -0.01, reserve -0.03 — so it is **off by default**.
-- **FX carry weight (v0.5.1):** the protocol's first adopted rule change — chosen on the
-  core pairs' design period, it improved every unseen slice without making FX beat buy & hold.
-- **Execution costs:** with square-root market impact on, the desk keeps its Sharpe at $100k
-  and $10M and loses 0.09 at $1B; signal-flipping baselines lose far more.
-- **Alpha analyst:** measured three times on the design period: noise, so it stays off.
+**The headline:** out of sample the desk is **below buy & hold on Sharpe**, per instrument
+and as a portfolio — inside the noise for the portfolio, BH-significant on the 45 names it
+was never tuned on — with **about half of buy & hold's drawdown, which the
+volatility-targeted control achieves too.**
+
+- **Per instrument:** core holdout median Sharpe 0.30 (desk) vs 0.51 (buy & hold) vs 0.52
+  (buy & hold scaled every day to the same 15% volatility target the desk's risk analysts use, from trailing 20-day volatility and capped at the 1.0 position limit — the fair control); mean paired difference
+  desk − B&H −0.10 [−0.21, −0.00] p 0.04 and desk − vol-target −0.11 [−0.21, −0.00] p 0.04,
+  neither BH-significant. Extended holdout 0.25 vs 0.39 vs 0.27: desk − B&H −0.07
+  [−0.12, −0.02] p 0.01 **BH-significant** (the desk beats buy & hold on 12 of 45 names);
+  desk − vol-target −0.03 [−0.09, +0.02] p 0.19, not BH-significant. All 60 (clusters):
+  desk − B&H −0.08 [−0.15, −0.03] p 0.00 BH-significant; desk − vol-target −0.05
+  [−0.15, 0.00] p 0.07, not BH-significant. On the design period the core medians are 0.67 vs
+  0.73 vs 0.69 (desk − B&H +0.06 [−0.06, +0.17] p 0.29, not BH-significant). It beats the
+  signal-flipping baselines on most slices: holdout, desk − SMA(20/50) +0.28 [+0.16, +0.41]
+  p 0.00 BH-significant on the extended names and +0.25 [+0.01, +0.43] p 0.04 (not
+  BH-significant) on all 60.
+- **Drawdown, against the fair control:** core holdout mean max drawdown 17.40% (desk) vs
+  31.64% (buy & hold) vs 18.98% (vol-target): desk − B&H −14.24 points [−20.41, −8.70] p 0.00
+  BH-significant; desk − vol-target −1.58 [−4.33, +1.14] p 0.27, not BH-significant. On the
+  10 core *equities* — the names the rules were tuned on — 22.11% vs 40.24% vs 21.28%, and
+  desk − vol-target is +0.83 [−1.63, +3.21] p 0.50, not BH-significant: not lower than the control's. On the 45
+  extended names 15.46% vs 26.39% vs 19.79%: desk − vol-target −4.33 [−6.10, −2.55] p 0.00
+  BH-significant, desk − B&H −10.93 [−13.41, −8.64] p 0.00 BH-significant. On FX the
+  vol-target control sits at the shared 1.0 position cap most of the time (core FX holdout
+  drawdown 14.40% vs buy & hold's 14.45%), so the FX drawdown comparison has no control.
+- **As a 15-sleeve equal-capital portfolio:** holdout Sharpe 0.80 with a 7.80% drawdown and
+  59.10% exposure, against 0.86 / 20.43% for plain buy & hold and 0.99 / 9.17% for buy & hold
+  at the same volatility; the v0.7 claim that it beat plain buy & hold (1.09 vs 1.06) is
+  **retracted**. Paired block bootstrap over days (block 10, n 1167): desk − B&H −0.06
+  [−0.41, +0.30] p 0.748; desk − vol-target −0.19 [−0.53, +0.16] p 0.297. Design period 1.40
+  vs 1.28 vs 1.43 (desk − B&H +0.12 [−0.16, +0.40] p 0.434; desk − vol-target −0.03
+  [−0.28, +0.23] p 0.898). Shifting the rebalance phase by 0–4 bars moves the desk's holdout
+  Sharpe across 0.80 / 0.85 / 0.86 / 0.80 / 0.84 (spread 0.06): the cadence noise floor is as
+  large as the portfolio differences quoted. *The cash leg:* since v0.8 idle capital earns the
+  3-month bill (FRED DTB3, one-day publication lag) and Sharpe is on excess returns; with the
+  cash leg off (the v0.7 convention) the holdout Sharpes are 1.04 / 1.05 / 1.24, so the order
+  desk < buy & hold < vol-target is the same under either convention.
+- **Point-in-time filings (SEC EDGAR, since v0.6), re-checked:** agent Sharpe with the
+  filings minus without — design core +0.01 [−0.03, +0.04] p 0.72 (better on 4 of 15; the
+  filings reach the 10 equities only), holdout core −0.01 [−0.07, +0.04] p 0.83, holdout
+  extended +0.03 [+0.01, +0.06] p 0.00 (15 of 45), all 60 holdout +0.02 [−0.02, +0.05] p 0.39
+  (clusters); the on/off tables print p without a BH flag. On the core names the filings add
+  exposure and drawdown for about no Sharpe (design mean 0.66 on vs 0.65 off; cumulative
+  return 118.18% vs 110.44%; drawdown 17.59% vs 15.30%; exposure 63.31% vs 60.48%). The data
+  stays on; the untuned rules that read it remain the next protocol item.
+- **Cross-sectional analyst (v0.6):** with minus without — design core −0.01 [−0.02, +0.00]
+  p 0.36, holdout core 0.00 [−0.01, +0.02] p 0.60, holdout extended −0.00 [−0.01, +0.00]
+  p 0.23, reserve extended −0.02 [−0.06, +0.01] p 0.20 — **off by default** stands.
+- **Alpha analyst (corrected gate):** design core −0.00 [−0.05, +0.05] p 0.90, holdout −0.00
+  [−0.04, +0.02] p 0.79: the design period shows nothing, so it stays off; how often the
+  corrected gate speaks was not measured.
+- **FX carry weight (v0.5.1):** the protocol's first adopted rule change, on minus off:
+  design core +0.04 [−0.01, +0.10] p 0.11 (better on 4 of 15 — it touches FX only), holdout
+  core +0.02 [−0.02, +0.07] p 0.37, holdout extended +0.04 [+0.00, +0.08] p 0.04, Q1 2024
+  core +0.49 [+0.12, +0.94] p 0.01, reserve extended +0.14 [+0.03, +0.28] p 0.00, all 60
+  holdout +0.03 [−0.00, +0.12] p 0.23 (clusters): positive on every slice, small, with
+  intervals touching zero on most.
+- **Execution costs:** with equity-scaled square-root impact on (textbook coefficient 1.0,
+  core universe) the desk keeps its Sharpe at $100k and $10M (design 0.66 → 0.66 → 0.66;
+  holdout 0.34 → 0.34 → 0.34) and loses 0.05 on the design period (0.66 → 0.61, 4.24% of
+  equity paid in impact) and 0.03 on the holdout (0.34 → 0.31, 2.53%) at $1B; the
+  vol-targeted control goes 0.64 → 0.57 (design) and 0.45 → 0.41 (holdout), SMA(20/50)
+  0.57 → 0.38 and 0.18 → 0.04, MACD 0.40 → −0.18 and 0.14 → −0.30 (64.71% of equity paid in
+  impact on the design period).
+- **VaR coverage:** the desk's own per-instrument forecast (250-day historical VaR) against
+  next-day returns over the holdout: Kupiec rejects at 5% on 2 of the 15 core instruments
+  (AAPL breach rate 0.0657, p 0.0207; AUDUSD 0.0634, p 0.0432), breach rates run
+  0.0523–0.0657 (every one above 0.05), and the Christoffersen independence test rejects on
+  6 of 15 — breaches cluster; book-level VaR was off in every published run and is untested.
+- **Selection statistics:** 26 trials judged on the design period (24 re-measured under the
+  v0.8 engine, 2 historical); the frozen rules' design-period portfolio: annual Sharpe 1.375,
+  bootstrap 95% CI [0.593, 2.17], expected maximum Sharpe of 26 null trials 0.161, deflated
+  Sharpe probability 0.998, minimum track record 496 periods — an upper bound on the true
+  significance, as the report itself says.
 - **LLM desk:** measured once (v0.5.1: five stocks, Q1 2024, Claude Opus, anonymised prompts,
-  $4): the same Sharpe as the rules with less than half the exposure. The multi-year harness —
-  Opus, Sonnet and Haiku tiers on the core universe over design and holdout, repeated runs
-  for the model's variance, a calibration — exists (staged, dollar-capped per stage) but
-  **has not been run**; this remains the only measured LLM result.
+  $4): the same Sharpe as the rules with less than half the exposure — produced under the
+  v0.7-and-earlier engine and **not re-derived under v0.8**. The multi-year harness — Opus,
+  Sonnet and Haiku tiers on the core universe over design and holdout, repeated runs for the
+  model's variance, a calibration — exists (staged, dollar-capped per stage) but **has not
+  been run**; this remains the only measured LLM result.
+- **Nothing remains unseen.** The reserve period (2026-07-01 → 2026-09-25) and the extended
+  universe were consulted for the v0.5.1 carry rule and the v0.6 decisions, and v0.8
+  re-measured every period; the next unseen data is the future. On its own the three-month
+  reserve says little: core median Sharpe 0.81 (desk) vs 1.05 (both controls), extended
+  −0.11 vs −0.08 (buy & hold) / −0.11 (vol-target); desk − B&H −0.06 [−0.21, +0.12] p 0.44
+  (core) and +0.08 [−0.14, +0.33] p 0.54 (extended), neither BH-significant.
 
-Details: [docs/evaluation](docs/evaluation/evaluation.md).
+Details: [the v0.8 section of the evaluation](docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured);
+the historical sections keep their earlier-engine numbers under a banner saying so.
 
 ## Architecture
 
@@ -171,7 +235,8 @@ agentic_trader/
                            evaluate.py, services.py (tools/serve/mcp/info), parser.py (argparse wiring), __init__.py (main)
 scripts/                   measure_v08.py (re-measures every published table into results/v08/) · render_v08_tables.py (prints the tables from it)
                            run_cookbook.py · check_mermaid.py · check_links.py (the CI docs job) · build_cpp · set_api_key
-tests/                     319 pytest tests (fuzz 21 C++ boundary + 7 agentic layer, v0.7 37, v0.6 20, EDGAR 11, v0.5 19, agentic 30, adversarial 15, ...)
+tests/                     832 pytest tests on both backends (v0.8 fixes 105 + 17 CLI, v0.8 agents 68, fuzz 59 C++ boundary + 7 agentic layer, v0.8 engine 57,
+                           v0.8 data 57, v0.8 execution 41, v0.8 agentic 41, quant edges 38, v0.7 37, agents 35, v0.8 portfolio 30, agentic 30, ...)
 examples/                  equity, FX, baseline comparison
 ```
 
@@ -215,7 +280,7 @@ agentic-trader analyze   AAPL --date 2024-03-01 --position 0.4
 agentic-trader scan      AAPL,NVDA,EURUSD --date 2024-03-01 --positions '{"AAPL": 0.5}' --out orders.csv
 agentic-trader tools                                   # the 16-tool catalogue
 agentic-trader serve --task-db results/tasks.sqlite    # HTTP API at http://127.0.0.1:8000/docs, records kept
-agentic-trader mcp                                     # the same tools as an MCP stdio server
+agentic-trader mcp --approval deny                     # the same tools as an MCP stdio server, locked down: tools that need approval are refused (default: the config's mode; queued is refused on stdio); --role picks the role every call is evaluated for (default trader)
 
 # research
 agentic-trader backtest  NVDA --start 2024-01-02 --end 2024-03-28 --stops on --impact 1.0 --capital 1e8
@@ -223,7 +288,7 @@ agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start 2023-01-02 --end 202
 agentic-trader alpha     USDJPY --start 2021-01-04 --end 2024-03-28 --horizon 10
 agentic-trader xalpha    AAPL,MSFT,NVDA,JPM,XOM --start 2021-01-04 --end 2024-03-28
 agentic-trader execute   AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 5000000   # --capital defaults to config initial_capital; whole shares (FX: whole lots of the base currency); sized at the as-of close, simulated on the next session
-agentic-trader stats     returns.csv --trials 16
+agentic-trader stats     returns.csv --trials 26
 agentic-trader evaluate  AAPL,EURUSD --periods q1_2024
 ```
 
@@ -296,17 +361,20 @@ print(port.table())
   `untrusted_keys`, return `self.abstain(...)` without data, then register it in `ANALYSTS`.
 * **New alpha:** a function `AlphaInputs -> ndarray in [-1, 1]` added to `ALPHAS`.
 * **New rule change:** put it behind a `config["rules"]` switch, choose it on the *core*
-  design period with `evaluate --universe core --periods design`, then judge it on the
-  extended universe and the reserve period (`--universe extended --periods design,holdout,reserve`).
+  design period with `evaluate --data yahoo --universe core --periods design`, then report
+  the extended universe and the reserve period (`evaluate --data yahoo --universe extended
+  --periods design,holdout,reserve`) as information: both were consulted for the v0.5.1 and
+  v0.6 decisions and v0.8 re-measured every period, so no held-out data remains — the next
+  unseen data is the future.
 * **New quant routine:** add it to `cpp/`, bind it in `module.cpp`, mirror it in `pycore.py`,
   add a cross-check test, and add it to `tests/test_fuzz.py` so hypothesis fuzzes it.
 
 ## Tests
 
 ```bash
-pytest -q                                   # 319 tests incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
-pytest --cov=agentic_trader --cov-report=term-missing   # 94% line coverage measured in CI (a report, not a gate)
-AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback
-ctest --test-dir build -C Release           # 22 C++ test groups (cpp/tests/test_core.cpp)
+pytest -q                                   # 832 tests collected on either backend (C++ backend: 832 passed) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
+pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend (a report, not a gate); weakest file data/yahoo.py at 75% (network branches)
+AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 796 passed, 36 skipped (C++-only tests)
+ctest --test-dir build -C Release           # 25 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests
 python scripts/run_cookbook.py --offline && python scripts/check_mermaid.py && python scripts/check_links.py   # the docs, as CI runs them
 ```

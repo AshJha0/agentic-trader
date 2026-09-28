@@ -94,8 +94,38 @@ typed.
 
 ## Findings to date
 
-Out of sample the rule-based desk does not beat buy and hold on Sharpe per instrument. It
-takes about half the drawdown. As a diversified portfolio it beats plain buy and hold but
-not the volatility-targeted control. The language-model mode has one measurement (v0.5.1:
-five stocks, one quarter), not re-derived under the current engine; the multi-year harness
-has not been run.
+Every number below is copied from `results/v08/tables.md`, rendered from `results/v08` by
+`scripts/render_v08_tables.py`: summary tables quote the median Sharpe across instruments,
+paired tables the mean difference with its 95% bootstrap interval (scheme `instruments` on
+core and extended, `clusters` on all 60), its p-value and the Benjamini-Hochberg flag.
+
+Out of sample the rule-based desk is below buy and hold on Sharpe per instrument, and below
+the volatility-targeted control: core holdout median 0.30 against 0.51 (buy and hold) and
+0.52 (vol-target); paired desk minus buy and hold -0.10 [-0.21, -0.00] p 0.04, not
+BH-significant; on the extended universe -0.07 [-0.12, -0.02] p 0.01, BH-significant; on all
+60 -0.08 [-0.15, -0.03] p 0.00, BH-significant (clusters). Its drawdown is about half of
+plain buy and hold's (core holdout mean 17.40% against 31.64%; paired -14.24 points [-20.41,
+-8.70] p 0.00, BH-significant) but not below the fair control's on the core names: against
+the vol-targeted control -1.58 [-4.33, +1.14] p 0.27 on core, not BH-significant, and
++0.83 [-1.63, +3.21] p 0.50, not BH-significant, on the ten core equities, the names it was tuned on; on the
+extended universe it is below it, -4.33 [-6.10, -2.55] p 0.00, BH-significant; on FX the
+control coincides with buy and hold. As a 15-sleeve equal-capital portfolio it beats
+neither: holdout Sharpe 0.80 against 0.86 (buy and hold) and 0.99
+(vol-target); paired block bootstrap over days, desk minus buy and hold -0.06 [-0.41,
++0.30] p 0.748 and desk minus vol-target -0.19 [-0.53, +0.16] p 0.297; the rebalance-phase
+sweep moves the desk's own Sharpe across 0.80 to 0.86, the size of those differences. The
+cash leg lowered every strategy's holdout Sharpe (with the leg off then on: desk 1.04 to
+0.80, buy and hold 1.05 to 0.86, vol-target 1.24 to 0.99) and leaves the desk below both
+controls under either convention (desk < buy and hold < vol-target). EDGAR filings on
+against off (the on/off tables print p without a BH flag) cannot be told apart on the core
+design period (+0.01 [-0.03, +0.04] p 0.72) and show a small gain on the extended universe,
+whose equities are the only names the filings reach (holdout +0.03 [+0.01, +0.06] p 0.00,
+15 / 45 wins; all 60 +0.02 [-0.02, +0.05] p 0.39, clusters), so the data stays on. The
+track-record cut off against on is +0.00 [-0.00, +0.01] p 0.51 on the core design period,
+which is why the default stays on, and about +0.01 on nearly every other slice, recorded as
+information. The desk's own per-instrument 250-day VaR forecast, tested on the holdout,
+breached on 5.23% to 6.57% of days, every instrument above the nominal 5%: Kupiec rejects
+coverage on 2 of 15 instruments and Christoffersen rejects independence on 6 of 15, so
+breaches cluster; book-level VaR is untested. No held-out data remains. The language-model
+mode has one measurement (v0.5.1: five stocks, one quarter), not re-derived under the
+current engine; the multi-year harness has not been run.

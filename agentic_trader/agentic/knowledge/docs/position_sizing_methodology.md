@@ -62,6 +62,12 @@ instrument, at least five of them, recorded on the same data provider, the trade
 target by 25%. Recent poor calls reduce size; they do not change direction. The cut is a
 rule switch (`rules.track_record_cut`, on by default and on in every published backtest)
 so that it can be measured on and off. The v0.8 evaluation measures it both ways on the
-2016 to 2021 design period under the protocol (`eval_no_trackrecord_cut` in
-`results/v08`), and the default rests on that measurement; the other periods are reported
-as information, not as a basis for the choice.
+2016 to 2021 design period under the protocol (`eval_no_trackrecord_cut` in `results/v08`,
+rendered in `results/v08/tables.md` as "track-record size cut off (a) vs on (b)", a paired
+table whose intervals and p come from a bootstrap over instruments (`scheme=instruments`
+on the rows quoted here) and which prints no Benjamini-Hochberg flag): on the core design
+period the mean Sharpe is 0.66 with the cut and 0.66 without, a difference of
++0.00 [-0.00, +0.01] p 0.51, so the design period cannot tell the two apart and the default
+stays on; on the extended universe's design period the difference is +0.01 [+0.00, +0.01]
+p 0.01, and removing the cut is worth about +0.01 on nearly every other slice, recorded as
+information for the next rule change, not as a basis for this one.

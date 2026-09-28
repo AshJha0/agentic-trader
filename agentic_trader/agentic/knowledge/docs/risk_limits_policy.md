@@ -23,7 +23,12 @@ long loses on the left tail of the return distribution, a short on the right, so
 sized on the VaR of the negated returns (`var_95_1d_short`), which differs from the
 long-side figure on a skewed history. When the proposed weight would breach the cap, the
 weight is scaled down to the largest size that satisfies it. A flat return history (zero
-VaR) does not trigger scaling.
+VaR) does not trigger scaling. Tested on the holdout period against each core instrument's
+next-day return (`results/v08/tables.md`, VaR coverage of the desk's own per-instrument
+forecast), this forecast breached on 5.23% to 6.57% of days, every instrument above the
+nominal 5%: Kupiec rejects coverage at 5% on 2 of 15 instruments and Christoffersen rejects
+independence on 6 of 15, so breaches cluster; the book-level cap below was off in every
+published run and its coverage is untested.
 
 ## Book-level VaR cap
 

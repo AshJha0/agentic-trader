@@ -561,8 +561,11 @@ print(rep.table().loc[["AgenticTrader", "Buy&Hold"], ["CR%", "Sharpe", "MDD%", "
 ```
 
 `agentic-trader backtest NVDA --start 2023-01-02 --end 2023-12-29 --stops on` does the same.
-On real 2016–2021 data, stops lowered returns at a similar Sharpe, which is why they are
-off by default.
+On the real 2016–2021 design period (core universe, re-measured under the v0.8 engine:
+`results/v08/tables.md`, trials registry), the "+ intraday stops" trial gave a design mean
+Sharpe of 0.45 against the control's 0.47, a mean cumulative return of 44.10% against
+58.24%, a mean MDD of 12.67% against 13.31% and 292.20 trades per instrument against 254.20:
+a similar Sharpe for about a quarter less return, which is why stops are off by default.
 
 ### 31. Backtest a multi-asset portfolio
 
@@ -1084,9 +1087,13 @@ print(state.reports["alpha"].summary)
 print(state.reports["alpha"].key_points)
 ```
 
-The alpha analyst is off by default because it measured as noise on the design period
-(see the evaluation). Adding a new alpha changes the composite, so re-run `evaluate` on the
-design period before adopting it.
+The alpha analyst is off by default because, with the corrected gate, it measures as nothing
+on the core design period: agent mean Sharpe with it minus without −0.00 [−0.05, +0.05]
+p 0.90, and on the holdout −0.00 [−0.04, +0.02] p 0.79 (`results/v08/tables.md`, "with the
+alpha analyst, corrected gate (a) vs default (b)"; a paired bootstrap over instruments,
+`scheme=instruments`, recipe 67, printed with p and no BH flag; how often the gate speaks on
+real data was not recorded). Adding a new alpha changes the composite, so re-run `evaluate`
+on the design period before adopting it.
 
 ### 53. Plan and simulate an execution
 
@@ -1276,6 +1283,10 @@ does the same from a CSV. The evaluation applies this to the desk's own rule sea
 `agentic_trader.evaluation.TRIALS` lists every variant judged on the design period (26 as of
 v0.8: 24 re-measured under the current engine by `scripts/measure_v08.py`, 2 historical), and
 the design-period mean Sharpes of those trials are the `trial_sharpes` of the published report.
+That report (`results/v08/tables.md`, "selection statistics for the frozen rules", rendered
+from `results/v08/trials.json` and `portfolio_design.csv`) gives, for 26 trials, an expected
+maximum null Sharpe of 0.161 and a deflated Sharpe probability of 0.998 — an upper bound, as
+the report's own caveat says, because the trial Sharpes' dispersion understates the search.
 
 ## v0.5: execution-aware evaluation, cross-sectional research, operations
 

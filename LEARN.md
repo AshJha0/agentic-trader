@@ -5,8 +5,13 @@ the idea, where the repository implements it, the real numbers it produces, and 
 test your understanding. Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
 [docs/architecture/overview.md](docs/architecture/overview.md); the measured results are in
 [docs/evaluation/evaluation.md](docs/evaluation/evaluation.md). Numbers from the synthetic
-provider or a local command were regenerated for v0.8; a real-data figure carries the release
-that measured it, and v0.8 re-measured every one of them under a corrected engine (concept 35).
+provider or a local command were regenerated for v0.8. Every real-data figure is copied from
+`results/v08/tables.md`, which `scripts/render_v08_tables.py` renders from the files
+`scripts/measure_v08.py` wrote under `results/v08/` (each carries the commit that produced
+it); a figure kept from an earlier release says so, and concept 35 explains why v0.8
+re-measured every one of them under a corrected engine. The measured section of the
+evaluation is
+[v0.8: engine and protocol corrections, and every number re-measured](docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured).
 
 **Part I — the trading desk**
 
@@ -124,11 +129,19 @@ in [0, 1], or abstains when it has no data.
 
 An abstaining analyst makes no LLM call: an empty input invites the model to invent a view.
 
-**Numbers.** On the 2016–2021 design period, adding the alpha analyst changed mean Sharpe from
-0.65 to 0.60 and median from 0.55 to 0.60. That is noise across 15 instruments, so it is off
-by default (section 24). Those figures were measured with a significance gate that passed
-noise (section 20); v0.8 corrected the gate and re-measured the analyst, so read the
-evaluation's v0.8 section for the current number.
+**Numbers** (v0.8; `results/v08/tables.md`, "with the alpha analyst, corrected gate (a) vs
+default (b)"). On the 2016–2021 design period, core 15, the desk with the alpha analyst
+behind the corrected gate against the default desk: mean Sharpe 0.66 vs 0.66, mean
+difference −0.00 [−0.05, +0.05], p 0.90, better on 5 of 15. The interval is a paired
+bootstrap over instruments (`scheme=instruments`, section 33; the on-vs-off tables print p
+without a Benjamini-Hochberg flag). That is noise across 15 instruments, so it is off by
+default (section 24). The holdout says the same (−0.00 [−0.04, +0.02], p 0.79); the two
+short windows favour it (q1_2024 +0.10 [+0.01, +0.23], p 0.01; reserve +0.07 [−0.00, +0.20],
+p 0.21) and are information, not a choice basis (section 27). How often the corrected gate
+speaks in these runs was not measured: the driver recorded no abstention tally. The v0.4
+analyst was measured with a gate that passed noise (section 20) and under the v0.3 engine;
+its two variants survive only as the recorded entries of the trials registry (0.60 and
+0.58 against the frozen rules' recorded 0.65; section 25).
 
 **Questions.**
 - Why use `tanh` to squash terms instead of clipping them?
@@ -166,13 +179,26 @@ the same logic as the equity benchmark, with the same "hold the premium" prior. 
 side are replaced (`sane_levels`). Retrieved policy passages (section 16) are shown to the
 trader when the harness ran `knowledge.search`.
 
-**Numbers.** Raising the equity neutral weight from 0 to 0.25, 0.5 and 1.0 moved equity median
-Sharpe on the design period from 0.68 to 0.79, 0.87 and 1.06. It was the only change that
-clearly helped, and it helps by collecting the premium, not by forecasting. The FX carry
-weight repeated the pattern: core-pair design mean Sharpe −0.03 → +0.11, then better on every
-unseen slice (the 10 crosses' holdout +0.12 → +0.31), still short of buy & hold on crosses.
-Both were measured under the v0.7 engine; section 27 says what judging the carry rule on
-those slices spent, and section 35 why every such number was re-measured in v0.8.
+**Numbers** (v0.8; `results/v08/tables.md`, "trials registry" and "FX carry rule on (a) vs
+off (b)"). Raising the equity neutral weight from 0 to 0.25, 0.50 and 1.00 moved the
+design-period mean Sharpe over the core 15 from the v0.2 control's 0.47 to 0.54, 0.58 and
+0.63, cumulative return from 58.24% to 82.41%, 100.26% and 121.95%, and exposure from
+43.99% to 50.55%, 54.86% and 60.37% (the trials table prints means without intervals; the
+ordering is the reading, not the second decimal). It was the one change of the 16-variant
+ablation that clearly helped — the signal tweaks leave the mean at 0.45–0.48 around the
+control's 0.47 — and it helps by collecting the premium, not by forecasting. The FX carry
+weight repeated the pattern at a smaller scale. Agent mean Sharpe with the rule on minus off
+(a paired bootstrap over instruments, `scheme=instruments`; the rule touches only the
+currency pairs, so most names tie): design core 0.66 vs 0.62, +0.04 [−0.01, +0.10], p 0.11,
+4 of 15 wins; holdout core +0.02 [−0.02, +0.07], p 0.37; holdout extended (means over all
+45; only its 10 crosses can differ) 0.26 vs 0.23, +0.04 [+0.00, +0.08], p 0.04, 7 of 45
+wins; q1_2024 core +0.49 [+0.12, +0.94], p 0.01; reserve extended +0.14 [+0.03, +0.28], p
+0.00; all 60 under the cluster scheme, holdout +0.03 [−0.00, +0.12], p 0.23. Positive on
+every slice, small, with most intervals touching zero. On the crosses the desk is still
+short of buy & hold: extended FX (10) holdout median Sharpe 0.26 against 0.28, paired −0.11
+[−0.25, +0.04], p 0.14, not BH-significant ("paired Sharpe by asset class ... extended (45)
+fx (10)"). Section 27 says what judging the carry rule on those slices spent, and section 35
+why every such number was re-measured in v0.8.
 
 **Questions.**
 - With a 2-ATR stop and a 3-ATR target, what hit rate breaks even before costs?
@@ -406,7 +432,7 @@ readable by the agents at decision time, and a passage that shaped a decision sh
 evidence.
 
 **In the repo** (`agentic/rag.py`, `agentic/knowledge/docs`). Eleven Markdown documents are
-split by heading into 59 chunks and embedded with a hashed TF-IDF (unigrams and bigrams into
+split by heading into 76 chunks and embedded with a hashed TF-IDF (unigrams and bigrams into
 4,096 buckets, log-tf × idf, L2-normalised), so retrieval is a cosine with no model download.
 `knowledge.search` returns passages as DOCUMENT evidence; the harness puts them in
 `state.knowledge`, and the trader's and PM's prompts include them.
@@ -474,11 +500,17 @@ desk the position it actually holds, so the band cannot "keep" a position a stop
 closed. The no-trade band keeps a position within 0.10 of the target, only if that position
 still passes every limit today.
 
-**Numbers.** On 2016–2021 real data the band gave the same Sharpe with 44% fewer trades; stops
-lowered mean return by about 30% at similar Sharpe, so they are off by default. Both figures
-come from the v0.7 engine, and the stop figure was measured while the desk was still told it
-held the pre-stop position after every exit (so it measured stops plus a forced re-entry);
-v0.8 re-measured the ablation, see the evaluation's v0.8 section.
+**Numbers** (v0.8 engine, 2016–2021 design period, core 15; `results/v08/tables.md`,
+"trials registry"). The no-trade band gave the same design mean Sharpe as the v0.2 control
+(0.47 vs 0.47; cumulative return 58.11% vs 58.24%) with 47% fewer trades per instrument
+(135.20 vs 254.20). Intraday stops: Sharpe 0.45 vs 0.47, cumulative return 44.10% vs
+58.24%, drawdown 12.67% vs 13.31%, 292.20 trades — about a quarter less cumulative return
+at a similar Sharpe, so they are off by default. The trials table prints means without
+intervals. The earlier record (the table's recorded column: 0.50 for the control and the
+band, 0.47 for stops, v0.3 engine) measured stops while the desk was still told it held
+the pre-stop position after every exit, so it measured stops plus a forced re-entry; the
+v0.8 figures are with the desk told its true position. The whole ablation is in
+[the evaluation's v0.8 section](docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured).
 
 **Questions.**
 - Why is "stop first when both trade" the right default with daily bars?
@@ -556,21 +588,23 @@ law the daily backtester charges (section 28): a VWAP schedule reproduces
 came out about eight times cheaper than the backtester for the same order, and ranked TWAP
 below VWAP; one model now serves both.
 
-**Numbers.** `agentic-trader execute AAPL --date 2024-03-01 --target 1.0` on the synthetic
-provider, capital from the config (100,000 USD):
+**Numbers.** `agentic-trader execute AAPL --date 2024-03-01 --target 0.6 --current 0.1` on
+the synthetic provider, capital from the config (100,000 USD); the transcript is copied from
+cookbook recipe 53, which is where it is regenerated:
 
 ```
-BUY 447 shares (notional 99,779 USD at 223.22) via VWAP in 78 slices; weight +0.00 -> +1.00; intent open_long; PLAN-7433f965648e
+BUY 223 shares (notional 49,778 USD at 223.22) via VWAP in 78 slices; weight +0.10 -> +0.60; intent add_long; PLAN-064e3ec3a337
 order is 0.00% of 20-day ADV
-executed 447 of 447 shares (100%) on 2024-03-04; arrival 223.16, avg fill 224.57, session VWAP 224.53, close 228.44
-implementation shortfall +63.3 bps, vs VWAP +1.7 bps (spread 1.0 bps, impact 0.7 bps), max slice participation 0.0%
+executed 223 of 223 shares (100%) on 2024-03-04; arrival 223.16, avg fill 224.57, session VWAP 224.53, close 228.44
+implementation shortfall +63.0 bps, vs VWAP +1.5 bps (spread 1.0 bps, impact 0.5 bps), max slice participation 0.0%
 ```
 
-Read the last line carefully: the order cost 1.7 bps against the session's VWAP (half the
-2 bps quoted spread plus 0.7 bps of impact), and 63 bps against arrival, nearly all of which
+Read the last line carefully: the order cost 1.5 bps against the session's VWAP (half the
+2 bps quoted spread plus 0.5 bps of impact), and 63 bps against arrival, nearly all of which
 is Monday's own rise from the open — timing, not cost. The same buy at $50 million
-(`--capital 50000000 --target 0.6 --current 0.1`, 0.27% of ADV) pays 11.6 bps of impact and
-12.6 bps against VWAP.
+(`--capital 50000000`, 0.27% of ADV; the transcript just before it in recipe 53) pays 11.6
+bps of impact and 12.6 bps against VWAP, and the recipe's $1B NVDA order shows a partial
+fill with its unfilled remainder priced as opportunity cost.
 
 **The daily backtest's cost model, and closing the loop (v0.7).** The one-shot square-root
 formula in `backtest.impact_coefficients` (used for the walk-forward backtests throughout
@@ -580,14 +614,19 @@ a trade is *worked* as VWAP -- matching participation to the volume curve, which
 the same convexity argument as the questions below. `costs.execution_algo` makes that
 assumption explicit and, when set to `"twap"` or `"ac"`, scales the day's impact by that
 schedule's cost relative to VWAP on the same volume curve -- so the backtest's simulated cost
-depends on *how* a trade would be worked, not only its size. v0.7 measured it on the core
-universe's holdout portfolio at $1B: TWAP cost a little more than VWAP (2.51% vs 2.37% of
-equity paid in impact over the period) because it ignores equities' U-shaped intraday curve,
-and an aggressively front-loaded Almgren-Chriss (kappa=5) more again (3.14%), for trading
-ahead of the volume rather than with it. **Those magnitudes are retracted**: every sleeve of
-that portfolio was charged impact as if it traded the whole $1B rather than its fifteenth,
-which is sqrt(15) ≈ 3.9 times too much (section 35); the VWAP < TWAP < AC ordering survives
-and the table was re-measured at the sleeve's real capital in v0.8. `ac_kappa` above about
+depends on *how* a trade would be worked, not only its size. v0.8 measured it on the core
+universe's holdout portfolio at $1B with every sleeve charged at its own capital
+(`results/v08/tables.md`, "execution algorithm, $1B holdout portfolio"): VWAP Sharpe 0.78,
+cumulative return 49.62%, drawdown 7.83%, mean sleeve impact paid 0.66% of equity; TWAP
+0.78 / 49.56% / 7.83% / 0.70%, a little dearer because it ignores equities' U-shaped
+intraday curve; an aggressively front-loaded Almgren-Chriss (kappa=5) 0.77 / 49.30% / 7.84%
+/ 0.87%, for trading ahead of the volume rather than with it. These are three point
+estimates from one portfolio path with no interval printed on their differences; the
+rebalance-phase spread of 0.06 in section 35 is the noise floor to read them against. The
+v0.7 table (2.51% for TWAP against 2.37% for VWAP, 3.14% for Almgren-Chriss) **is retracted
+in magnitude**: every sleeve of that portfolio was charged impact as if it traded the whole
+$1B rather than its fifteenth, which is sqrt(15) ≈ 3.9 times too much (section 35); the
+VWAP < TWAP < AC ordering survives. `ac_kappa` above about
 710 used to overflow `sinh`, turn the ratio into NaN and silently switch impact *off*; the
 schedule is now computed in a form that is finite for any kappa and a non-finite ratio is an
 error.
@@ -652,7 +691,10 @@ resolution under a lock, so threads and separate `serve` processes sharing one f
 overwrite each other) that skips corrupt lines; an entry is valued on the recording
 provider's own price series, `horizon_days` trading bars after the entry, and is expired
 without a verdict when no series can value it (a provider switch, a split on another
-source), rather than settled against whatever price the next visit happens to see. Weekends
+source), rather than settled against whatever price the next visit happens to see; an entry
+written before v0.8 names no provider, is never valued, and is expired by any named
+provider's visit once twice its horizon has passed (`DecisionMemory(path,
+max_staleness_days=7)`; `resolve` takes the same tolerance). Weekends
 use the last close; feeds older than 7 days are refused; mistyped pairs and invalid tickers
 are refused; CSVs are put on one price basis and cleaned; flat prices, NaN weights and
 non-finite positions are handled; a model reply whose number is `inf`, `nan`, `null` or a
@@ -688,12 +730,24 @@ the point-in-time 3-month bill rate, and idle cash earns that rate inside the ba
 (`cash_leg: auto` — FRED DTB3 with a one-day publication lag on real data, the constant
 `risk_free_annual` on synthetic data, where it is 0 so synthetic numbers did not move).
 Before v0.8 Sharpe was mean over standard deviation of raw returns with cash earning
-nothing, which over 2022–2026, when bills paid 4–5%, compared a half-invested desk to a
+nothing, which over 2022–2026, when bills averaged 3.99% a year (the `rf` column of
+`results/v08/portfolio_holdout.csv`), compared a half-invested desk to a
 fully invested benchmark on different footings. Section 35 has the mechanism.
 
+**Numbers** (v0.8; `results/v08/tables.md`, "v0.3+ rules (a) vs v0.2 rules (b), core";
+paired over instruments, `scheme=instruments`). The rules chosen in v0.3 against the v0.2
+rules they replaced, agent mean Sharpe on the core 15: design 0.66 vs 0.47, +0.19 [+0.10,
++0.28], p 0.00, 12 of 15 wins; holdout 0.34 vs 0.34, −0.00 [−0.11, +0.09], p 0.99, 8 of 15;
+q1_2024 +0.72 [+0.29, +1.17], p 0.00; reserve +0.95 [+0.45, +1.47], p 0.00. The
+design-period gain did not carry to the holdout at all (v0.7 said it shrank); the two short
+windows favour v0.3. Cumulative return is where the strategic weight shows: on the design
+period the frozen v0.3 rules' 116.52% (the current rules' 118.18%) against the control's
+58.24% (trials table).
+
 **Questions.**
-- The design-period Sharpe gain mostly vanished out of sample while the return gain survived.
-  Explain why, using section 5.
+- The v0.3 rules' design-period Sharpe gain over the v0.2 rules did not carry to the holdout
+  at all. Using section 5, say what the strategic weight collects and why that need not show
+  up as a Sharpe gain out of sample.
 - Having seen the holdout, may you tune against it? What would you need instead?
 - A strategy is 55% invested and bills pay 4%. Its raw-return Sharpe and its excess-return
   Sharpe with idle cash credited answer different questions. State both questions.
@@ -718,8 +772,25 @@ carry settings, the cross-sectional analyst, the EDGAR toggle and the track-reco
 deflation counts what was actually tried. The count is still a lower bound on the trials a
 researcher ran in their head.
 
-**Numbers.** See the evaluation's "selection" section for the chosen variant's bootstrap
-interval, PSR and DSR, and the dispersion of the 26 trials' design-period mean Sharpes.
+**Numbers** (v0.8; `results/v08/tables.md`, "selection statistics for the frozen rules" and
+"trials registry"). The frozen rules' design-period 15-sleeve portfolio: n 1564 days, annual
+Sharpe 1.375 (annualised at 252 periods a year by `selection_report`; the portfolio tables
+of sections 26 and 35 print 1.40 for the same daily series because portfolio metrics
+annualise at 260, the FX sleeves' count: 1.375 × √(260/252) ≈ 1.40), t 3.42, skew −0.635,
+kurtosis 8.41, bootstrap 95% interval [0.593, 2.17], PSR against zero 1.00; with 26 trials
+the expected maximum Sharpe of that many null trials is 0.161, the deflated Sharpe
+probability 0.998 and the minimum track record 496 periods. The table's caveat, verbatim:
+"an upper bound on the true significance: the benchmark is built from the dispersion of
+trial_sharpes_annual, which is usually narrower than the dispersion of the full return
+series each trial would have produced, so the true search space is wider than this reports
+and the real probability is no higher than the number given." The dispersion itself:
+re-measured under the v0.8 engine the v0.2 control is 0.47 (recorded 0.50 under the v0.3
+engine), the strategic equity weight 0.25 / 0.50 / 1.00 is 0.54 / 0.58 / 0.63 (recorded 0.54
+/ 0.58 / 0.66), the frozen v0.3 rules 0.62 (0.65); the ordering of the 16-variant ablation
+is unchanged. Trials added since v0.3: the gated alpha analyst of v0.5 (0.66), the four
+carry settings of v0.5.1 (0.65, 0.66 adopted, 0.65, 0.64), the cross-sectional analyst
+(0.66) and EDGAR off (0.65) from v0.6, and the track-record cut off (0.66) from v0.8 — all
+between 0.64 and 0.66 on the design period, which is why the deflation moves so little.
 
 **Questions.**
 - Why does negative skew lower the probabilistic Sharpe for the same Sharpe ratio?
@@ -730,31 +801,71 @@ interval, PSR and DSR, and the dispersion of the 26 trials' design-period mean S
 
 ## 26. Reading the results honestly
 
-**What was measured** (rule-based desk, real prices, frozen rules). Every figure in this
-list is the v0.7-engine record: raw-return Sharpe with idle cash earning nothing, constant
-weight between decisions, and plain buy & hold as the drawdown control. v0.8 re-measured
-all of them under the conventions of section 35; the evaluation's v0.8 section has the
-current values and this list is read as history.
+**What was measured** (rule-based desk, real prices, frozen rules; v0.8 engine and
+conventions, section 35). Every figure below is copied from `results/v08/tables.md` and is
+current — the same story as
+[the evaluation's v0.8 section](docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured);
+the v0.7-engine record it replaces (raw-return Sharpe with idle cash earning nothing,
+constant weight between decisions, plain buy & hold as the drawdown control) is kept in the
+evaluation's earlier sections under a banner. "Median Sharpe" is the summary tables'
+per-instrument median; a difference is the paired tables' mean difference with its 95%
+interval, p and Benjamini-Hochberg flag; the bootstrap resamples instruments
+(`scheme=instruments`) on core and extended and whole asset-class-by-universe groups
+first (`scheme=clusters`, 5 groups: core equities, core FX, extended equities, macro ETFs,
+FX crosses) on all 60 (section 33).
 
-- **Per instrument, out of sample:** mean Sharpe 0.46 against 0.55 for buy & hold on the core
-  universe, 0.42 against 0.50 on the 45 unseen names. No edge on risk-adjusted return.
-- **Drawdown:** lower than plain buy & hold's on 14 of 15 core and 40 of 45 extended
-  instruments — measured against the wrong control. A desk that is about half invested
-  draws down less than a fully invested benchmark by holding less; the fair control is the
-  vol-targeted buy & hold, against which the gap is small and was never tested with a
-  paired interval before v0.8. On FX there is no such control at all: the vol-target weight
-  is capped at 1.0 and FX volatility sits below the 15% target, so the "control" is buy &
-  hold itself.
-- **As a portfolio:** 1.16 against 1.06 for plain buy & hold, but below the vol-targeted control
-  at 1.24 — three point estimates with no interval on any difference, on raw returns over
-  years when bills paid 4–5%. v0.8 credits idle cash, computes Sharpe on excess returns and
-  puts a block-bootstrap interval on the portfolio-level difference (section 35), and the
-  README's headline is whatever that interval supports.
-- **Alpha analyst:** noise on the design period, three times; not adopted. Its significance
-  gate was passing noise until v0.8 (section 20), so the analyst that was measured spoke
-  far more often than the corrected one does.
-- **FX:** close to zero; the carry weight (v0.5.1) lifts it on every unseen slice without
-  reaching buy & hold on the crosses. Judging it on those slices spent them (section 27).
+- **Per instrument, out of sample, the desk is below buy & hold on Sharpe, and below the
+  vol-targeted control too.** Core 15 holdout median Sharpe 0.30 (desk) against 0.51 (buy &
+  hold) and 0.52 (vol-target); desk minus buy & hold −0.10 [−0.21, −0.00], p 0.04, not
+  BH-significant; desk minus vol-target −0.11 [−0.21, −0.00], p 0.04, not BH-significant.
+  Extended 45 holdout 0.25 against 0.39 and 0.27; desk minus buy & hold −0.07 [−0.12,
+  −0.02], p 0.01, BH-significant; desk minus vol-target −0.03 [−0.09, +0.02], p 0.19, not
+  BH-significant. All 60 (clusters): desk minus buy & hold −0.08 [−0.15, −0.03], p 0.00,
+  BH-significant; desk minus vol-target −0.05 [−0.15, 0.00], p 0.07, not BH-significant.
+  Design period, core: 0.67 against 0.73 and 0.69; desk minus buy & hold +0.06 [−0.06,
+  +0.17], p 0.29, not BH-significant. On the extended names, which no rule was tuned on, the Sharpe deficit against buy &
+  hold clears the BH bar, which is more than v0.7's "noise either way". The desk does beat
+  the signal-flipping baselines on most slices (holdout, all 60, desk minus SMA +0.25
+  [+0.01, +0.43], p 0.04, not BH-flagged; extended +0.28 [+0.16, +0.41], p 0.00,
+  BH-significant).
+- **Drawdown: lower than plain buy & hold's, and almost all of it is volatility scaling.**
+  Core holdout mean maximum drawdown 17.40% (desk) against 31.64% (buy & hold) and 18.98%
+  (vol-target); paired desk minus buy & hold −14.24 points [−20.41, −8.70], p 0.00,
+  BH-significant; desk minus vol-target −1.58 [−4.33, +1.14], p 0.27, not significant. On
+  the core equities (10), the names the desk was tuned on, holdout 22.11% against 40.24%
+  and 21.28%, desk minus vol-target +0.83 [−1.63, +3.21], p 0.50, not BH-significant: no
+  lower than the fair control's. On the extended 45 the gap against the fair control is real
+  but a fraction of the gap against buy & hold: 15.46% against 26.39% and 19.79%; desk minus
+  vol-target −4.33 [−6.10, −2.55], p 0.00, BH-significant; desk minus buy & hold −10.93
+  [−13.41, −8.64], p 0.00, BH-significant. On FX there is essentially no control: the
+  vol-target weight is capped at 1.0 and FX volatility sits below the 15% target nearly
+  always, so the core FX (5) rows against vol-target and against buy & hold differ only in
+  the second decimal (holdout −6.40 [−10.32, −2.09] against vol-target and −6.46 [−10.34,
+  −2.14] against buy & hold, both p 0.00, BH-significant; the q1_2024 and reserve rows are
+  identical). Calmar on the extended holdout: desk minus buy & hold +0.11 [+0.03, +0.19], p
+  0.00, BH-significant; desk minus vol-target +0.07 [0.00, +0.14], p 0.05, not flagged — a
+  lower bound printed as 0.00 does not exclude zero.
+- **As a 15-sleeve equal-capital portfolio the desk no longer beats plain buy & hold on
+  Sharpe; the v0.7 claim (1.09 against 1.06) is retracted.** Holdout, idle cash credited and
+  Sharpe on excess returns: desk 0.80 (cumulative return 50.62%, drawdown 7.80%, exposure
+  59.10%), buy & hold 0.86 (96.91%, 20.43%), vol-target 0.99 (61.48%, 9.17%). The
+  portfolio-level difference now carries a paired block-bootstrap interval over days (block
+  10, n 1167): desk minus buy & hold −0.06 [−0.41, +0.30], p 0.748; desk minus vol-target
+  −0.19 [−0.53, +0.16], p 0.297. Design: 1.40 against 1.28 and 1.43; +0.12 [−0.16, +0.40], p
+  0.434 and −0.03 [−0.28, +0.23], p 0.898. The rebalance-phase sweep (holdout, offsets 0–4)
+  gives the desk 0.80 / 0.85 / 0.86 / 0.80 / 0.84 — a spread of 0.06 — against a fixed 0.99
+  and 0.86, so the cadence noise floor is the size of the differences quoted. The README
+  headline follows these cash-leg-on numbers and says the convention in one clause; section
+  35 has the cash leg's own effect.
+- **Alpha analyst:** noise on the design period, three times; not adopted. With the
+  corrected gate (section 20) it is −0.00 [−0.05, +0.05], p 0.90 on the core design period
+  (section 3); the v0.4 analyst that was measured spoke far more often, and how often the
+  corrected one speaks was not recorded.
+- **FX:** close to zero. Core FX (5) holdout median Sharpe 0.06 (desk) against −0.05 (buy &
+  hold); extended FX (10) holdout 0.26 against 0.28. The carry weight (v0.5.1) is positive
+  on every slice and small — design core +0.04 [−0.01, +0.10], p 0.11; holdout extended
+  +0.04 [+0.00, +0.08], p 0.04 (section 5) — without reaching buy & hold on the crosses.
+  Judging it on those slices spent them (section 27).
 
 **What was measured once, small (v0.5.1):** the LLM desk — Claude Opus in every reasoning
 role, anonymised prompts, five stocks, one quarter, 271 calls, $4. Same Sharpe as the rules
@@ -805,20 +916,30 @@ the evaluation kept calling the reserve "untouched" for two releases; that wordi
 Then v0.8 corrected the engine and re-measured every period on every universe (section 35),
 so there is no slice left that has not been looked at. The next unseen data is the future:
 bars after the v0.8 measurement date, and instruments the desk has never traded. Two more
-honest notes on the carry decision: the design-period signal (−0.03 → +0.11 on five pairs)
-sits inside the evaluation's own noise floor scaled to five instruments, and a three-month
-reserve slice — where the standard error of a per-instrument annualised Sharpe is about 2 —
-carries no evidential weight, yet counted as two of the four confirmations. The rule stays
-because it was adopted under the protocol as it stood; what changed is what the record says
-about how much it proved.
+honest notes on the carry decision: the design-period signal (re-measured in v0.8 as +0.04
+[−0.01, +0.10], p 0.11 over the core 15, with only the five pairs able to differ; section 5)
+sits inside the evaluation's own noise floor, and a three-month reserve slice — where the
+standard error of a per-instrument annualised Sharpe is about 2 — carries no evidential
+weight, yet counted as two of the four confirmations. The rule stays because it was adopted
+under the protocol as it stood; what changed is what the record says about how much it
+proved.
 
-**Numbers** (v0.7 engine; re-measured in v0.8). The extended universe is a harder test: on
-its holdout the desk's mean Sharpe is 0.42 against 0.50 for buy & hold (core: 0.46 vs
-0.55; 0.37 and 0.44 under the v0.3 rules), it beats buy & hold on 15 of 45 names, and its
-drawdown is 17.7% against 27.2% — against plain buy & hold, the control that section 26
-explains is automatic to beat on drawdown. The story from the core universe (no Sharpe
-edge per instrument, a lower drawdown that has yet to be shown against the fair control)
-survives; it does not get better.
+**Numbers** (v0.8; `results/v08/tables.md`, "summary: extended (45), holdout", the paired
+Sharpe and MDD% tables and "summary: extended (45), reserve"; `scheme=instruments`). The
+extended universe is a harder test: on its holdout the desk's median Sharpe is 0.25
+against 0.39 for buy & hold and 0.27 for the vol-targeted control (core: 0.30 against 0.51
+and 0.52), the paired mean difference against buy & hold is −0.07 [−0.12, −0.02], p 0.01,
+BH-significant, and against vol-target −0.03 [−0.09, +0.02], p 0.19, not BH-significant; it
+beats buy & hold on 12 of 45 names. Its mean drawdown is 15.46% against 26.39% for plain buy
+& hold — the control section 26 explains is automatic to beat — and 19.79% for the fair
+control, a paired −4.33 points [−6.10, −2.55], p 0.00, BH-significant, against −10.93
+[−13.41, −8.64] for buy & hold. The reserve period says little: core median 0.81 against
+1.05 for both controls, extended −0.11 against −0.08 and −0.11, with paired differences
+whose intervals cover zero (core desk minus buy & hold −0.06 [−0.21, +0.12], p 0.44;
+extended +0.08 [−0.14, +0.33], p 0.54; neither BH-significant). The story from the core
+universe (no Sharpe edge per instrument, a drawdown that is mostly volatility scaling)
+survives on the extended names, which no rule was tuned on, and gets one notch worse: there the Sharpe deficit against buy
+& hold clears the BH bar.
 
 **Questions.**
 - The reserve period grows every month, but every bar of it up to 2026-09-25 has been
@@ -854,27 +975,39 @@ wrong before). FX has no exchange volume and gets no impact unless `costs.fx_adv
 is set. `--impact 1.0 --capital 1e9` on the backtest, portfolio and evaluate commands
 (`evaluate` did not accept the flags until v0.8, although the README had said so).
 
-**Numbers** (v0.7 engine, constant-capital impact; re-measured in v0.8). On the core
-universe with the textbook coefficient, impact over the six-year design period was 0.08%
-of equity at $100k, 0.8% at $10M and 7.7% at $1B for the desk (mean Sharpe 0.65 → 0.64 →
-0.56). The direction of the ranking is the durable lesson: the daily volatility-target
-baseline, with ~1,100 trades, pays *less* (5.7% at $1B) than the desk with ~106, because a
-square-root law makes many tiny adjustments cheap and a few large jumps dear. The v0.7
-claim that MACD "loses 75% to impact at $1B" is retracted: it read `impact_paid`, a sum of
-per-bar fractions that can exceed 100%, as an equity loss, and it charged a strategy that
-had already lost most of its equity as if it still traded a full $1B. Measured now:
+**Numbers** (v0.8, equity-scaled impact, textbook coefficient 1.0, core 15;
+`results/v08/tables.md`, "impact sweep, core universe"). The desk keeps its mean Sharpe at
+$100k and $10M — design 0.66 → 0.66 → 0.66 paying 0.04% and 0.43% of equity in impact,
+holdout 0.34 → 0.34 → 0.34 paying 0.03% and 0.26% — and at $1B loses 0.05 on the design
+period (0.61, impact paid 4.24%) and 0.03 on the holdout (0.31, 2.53%). The vol-target
+baseline, which adjusts every day, loses 0.07 and 0.04 at $1B (0.64 → 0.57 paying 6.92%;
+0.45 → 0.41 paying 3.57%): under the equity-scaled law it pays *more* than the desk, not
+less. The v0.7 reading — that its ~1,100 small trades cost less (5.7% at $1B) than the
+desk's ~106 (7.7%), so many tiny adjustments were cheap and a few large jumps dear — was
+measured with impact charged at constant starting capital and does not survive; the v0.8
+renderer prints no trade counts for the sweep, so that comparison is not restated. Where
+size decides everything is the signal-flippers: SMA loses 0.19 and 0.14 at $1B (design
+0.57 → 0.38 paying 24.63%; holdout 0.18 → 0.04, 12.99%) and MACD 0.58 and 0.44 (0.40 →
+−0.18 paying 64.71% of equity in impact; 0.14 → −0.30, 39.01%), while buy & hold barely
+notices (0.60 → 0.59, 0.97%; 0.45 → 0.44, 0.48%). The v0.7 claim that MACD "loses 75% to
+impact at $1B" is retracted: it read `impact_paid`, a sum of per-bar fractions that can
+exceed 100%, as an equity loss, and it charged a strategy that had already lost most of its
+equity as if it still traded a full $1B. Measured now on the synthetic provider (a local
+command, not real data):
 `agentic-trader baselines NVDA --start 2016-01-04 --end 2021-12-31 --impact 1.0 --capital 1e9`
-on the synthetic provider prints MACD `Impact% 92.15` with `CR% -91.26` (the review's
-reproduction of the same run under the constant-capital engine, finding 23, charged 167%);
+prints MACD `Impact% 92.15` with `CR% -91.26` (the review's reproduction of the same run
+under the constant-capital engine, finding 23, charged 167%);
 `tests/test_v08_engine.py::test_23_impact_coefficient_scales_with_sqrt_equity` pins the
-rule. MACD still pays the most of the trend baselines and its Sharpe still goes negative at
-$1B; the real-data magnitudes are the evaluation's v0.8 impact table.
+rule. On real data MACD still pays the most of the baselines and its Sharpe goes negative
+at $1B; the table is in
+[the evaluation's v0.8 section](docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured).
 
 **Questions.**
 - Why does impact per trade scale with `|dw|^1.5`, and what does that imply for a strategy
   that rebalances rarely but in big steps?
-- At which account size does the desk's ranking against the vol-target control change,
-  and what does that say about quoting a Sharpe ratio without a capital figure?
+- The sweep changes no ranking between the desk and the vol-target control, but it turns
+  MACD's Sharpe negative at $1B. What does that say about quoting a Sharpe ratio without a
+  capital figure, and for which kind of strategy does the capital figure matter most?
 
 ## 29. Cross-sectional alphas: rank the room, not the stock
 
@@ -961,19 +1094,33 @@ one tag minus nine months under a different one — a negative quarter, and a �
 for Mastercard. Now every tag is reconstructed on its own, each trailing-year window is
 taken whole from the highest-ranked tag that covers it (with a preference for staying on
 the tag of the most recent window), and growth needs the same tag for both years, so a
-rename costs one year of growth rather than inventing one. Second, "first print wins" was
-the wrong rule for restated comparatives. Prints are replayed filing by filing, and a
-filing that re-prints a past span at a materially different value (more than 5%) opens a
-new *reporting basis*; the latest print within a basis wins, every difference is taken
-within one basis, and a trailing year is one tag on one basis — so a desk on the date
-between a 10-Q and the 10-K that recasts the year sees the latest single-basis year, never
-a mix of old and new bases (Johnson & Johnson's 2023 recast). Around it sit recency guards
-— a share count or balance-sheet instant older than 400 days, or a flow series that ended
-more than a quarter before the report period, yields no ratio rather than a stale one — a
-share-class ratio for Berkshire's B shares, and two sanity checks (market cap below 1% of
-revenue, EPS above half the price) that drop a ratio and log why. Under v0.6, Berkshire's
-P/E was 0.03 and its FCF yield 12,000%, and the analyst tilted +0.45 on it in every
-decision; it now reports no per-share ratio for that ticker at any date. What EDGAR does
+rename costs one year of growth rather than inventing one (two tags whose prints agree
+within 1% are one concept). Second, "first print wins" was the wrong rule for restated
+comparatives, and "any re-print opens a new basis" turned out to be wrong too. Prints are
+replayed filing by filing. A filing that re-prints a past span at a materially different
+value (more than 5%) is not believed on its own: a lone re-print is ignored and remembered,
+and a later filing that repeats it within 5% confirms it as a *correction*, taken in place
+of the held value and never a basis change. A recast opens a new *reporting basis* only on
+spans no ignored print anticipated, only when corroborated — two re-printed spans, or a
+first-print comparative — and only when the recast year reconciles with its quarters
+(within 2% of the larger of the annual value and the sum of the quarters; per-share values
+within 15%); a re-print whose spans look mis-tagged is rejected rather than opened as a
+basis. Within a basis the latest print wins, every difference is taken within one basis,
+and a trailing year is one tag on one basis — so a desk on the date between a 10-Q and the
+10-K that recasts the year sees the latest single-basis year, never a mix of old and new
+bases (Johnson & Johnson's 2023 recast). The fourth quarter is cross-checked directly
+against the annual only for additive flows. Around it sit recency guards: a share count or
+balance-sheet instant older than 400 days yields no ratio; a flow series is declared dead
+only after 120 filing days without a print, and until then a window that lags the report
+period is served with a flag (`revenue_period_end`, `net_income_period_end`,
+`eps_period_end`, `ocf_period_end`) that the fundamentals analyst reads — it skips a term
+whose window lags by more than 100 days and abstains when the report itself is more than
+120 days stale — while free-cash-flow yield is computed only when the operating-cash-flow
+and capex windows end together. A share-class ratio handles Berkshire's B shares, and two
+sanity checks (market cap below 1% of revenue, EPS above half the price) drop a ratio and
+log why. Under v0.6, Berkshire's P/E was 0.03 and its FCF yield 12,000%, and the analyst
+tilted +0.45 on it in every decision; it now reports no per-share ratio for that ticker at
+any date. What EDGAR does
 not have — consensus estimates, so the EPS surprise — is reported as `None`, and funds and
 index ETFs, whose "facts" are not fundamentals, return nothing. The filing stream doubles
 as a news feed: an 8-K item 2.02 is an earnings release, 4.02 a restatement, 1.03 a
@@ -982,20 +1129,30 @@ are dropped. Coverage was checked for every equity in the 60-name universe at tw
 The SEC asks for a contact in the User-Agent, so the client refuses to run without
 `EDGAR_USER_AGENT` rather than sending a fake one.
 
-**What it measured** (v0.6, under the v0.7 engine and the v0.6 EDGAR reconstruction;
-re-measured in v0.8 with the rules above, with the fundamentals analyst no longer scoring
-P/E against a sector multiple it does not have on real data, and with Sharpe on excess
-returns). With real fundamentals and news, the rule-based fundamentals and news analysts
-stopped abstaining — and the result is a lesson about rules written against synthetic
-data. On the core equities the per-instrument Sharpe did not move (0.00 on design, +0.01
-on holdout, intervals about ±0.1) while exposure rose 4–7 points and drawdown 3–4 points;
-the 15-sleeve portfolio's holdout Sharpe went from 1.16 to 1.09, still above plain buy &
-hold (1.06) on the raw-return convention of the time. On the 22 extended equities the
-rules never saw, the same data added +0.02 (design) and +0.07 (holdout) of Sharpe, with
-intervals whose lower bound printed as 0.00 — which is not an interval that excludes zero,
-whatever v0.6 called it. The data stays on — a desk that hides filings from itself to
-protect a headline is not a desk — and the rules that read it are the next thing to put
-through the protocol.
+**What it measured** (v0.8, under the reconstruction above, with the fundamentals analyst
+no longer scoring P/E against a sector multiple it does not have on real data, and with
+Sharpe on excess returns; every earlier EDGAR figure is superseded. `results/v08/tables.md`,
+"EDGAR on (a) vs off (b)": agent mean Sharpe with the filings minus without, paired over
+instruments on core and extended and over the five asset-class-by-universe groups on all
+60 — the on-vs-off
+tables print p without a BH flag). With real fundamentals and news, the rule-based
+fundamentals and news analysts stopped abstaining — and the result is a lesson about rules
+written against synthetic data. The filings reach only the equities, so on the core 15 the
+design period cannot tell on from off: +0.01 [−0.03, +0.04], p 0.72, 4 of 15 better; the
+holdout says the same, −0.01 [−0.07, +0.04], p 0.83. On the core names the filings add
+exposure and drawdown for about no Sharpe: the trials table's "EDGAR filings off" row has
+design mean Sharpe 0.65 against 0.66 with them, cumulative return 110.44% against 118.18%,
+drawdown 15.30% against 17.59%, exposure 60.48% against 63.31%. On the extended 45 the
+rules never saw, the same data adds +0.01 [+0.00, +0.02], p 0.02 on the design period (16 of
+45) and +0.03 [+0.01, +0.06], p 0.00 on the holdout (15 of 45) — a lower bound printed as
++0.00 is not an interval that excludes zero, whatever v0.6 called it, and under the cluster
+scheme on all 60 the interval covers zero on both periods (design +0.01 [−0.01, +0.02], p
+0.19; holdout +0.02 [−0.02, +0.05], p 0.39). The short windows lean the same way (q1_2024
+core +0.09 [+0.00, +0.21], p 0.02; reserve core +0.11 [+0.00, +0.23], p 0.04; reserve
+extended +0.03 [−0.04, +0.10], p 0.45). The data stays on — it is a data source, not a
+rule, the design period shows no harm, and a desk that hides filings from itself to
+protect a headline is not a desk — and the untuned rules that read it are the next thing
+to put through the protocol.
 
 **Questions.**
 - Why is a restated comparative the right value for a backtest once it was public, and
@@ -1022,10 +1179,20 @@ computed once per (universe, date) and cached, so an evaluation over the whole u
 pays for it once per decision date, and the analyst computes only the IC it needs rather
 than the full report's decay curves and spreads.
 
-**What it measured.** Put through the protocol on top of the EDGAR data, the analyst changed the core
-design period's per-instrument Sharpe by -0.01 [-0.02, 0.00] (better on 5 of
-15); on the unseen slices, core holdout 0.00, extended holdout -0.01
-[-0.01, 0.00], reserve +0.01 / -0.03. The design-period interval does not clear zero, so it is off by default — the third analyst in this repository to be measured and kept out, which is what the protocol is for. The mechanism is plain: sampled every 60 bars over the design period on the 15 core names (390 decisions), the analyst spoke on 2.6% of them — 3.8% of the equity decisions, never on FX — with a mean |signal| of 0.30 when it did, because over a 900-day window no alpha clears the cross-sectional |t(IC)| ≥ 2 gate on most dates.
+**What it measured** (v0.8; `results/v08/tables.md`, "with the cross-sectional analyst (a)
+vs default (b)"; paired over instruments, `scheme=instruments`, p without a BH flag). Put
+through the protocol on top of the EDGAR data, the analyst changed the core design
+period's per-instrument mean Sharpe by −0.01 [−0.02, +0.00], p 0.36 (better on 5 of 15); on
+the slices no rule was tuned on, core holdout 0.00 [−0.01, +0.02], p 0.60, extended holdout −0.00 [−0.01,
++0.00], p 0.23, reserve core +0.01 [−0.00, +0.04], p 0.28 and reserve extended −0.02 [−0.06,
++0.01], p 0.20; the one slice that moves is q1_2024 core, +0.09 [+0.00, +0.20], p 0.04, a
+lower bound printed as +0.00. The design period shows nothing, so it is off by default —
+the third analyst in this repository to be measured and kept out, which is what the
+protocol is for. The mechanism is plain, on the v0.6 measurement (not re-run in v0.8):
+sampled every 60 bars over the design period on the 15 core names (390 decisions), the
+analyst spoke on 2.6% of them — 3.8% of the equity decisions, never on FX — with a mean
+|signal| of 0.30 when it did, because over a 900-day window no alpha clears the
+cross-sectional |t(IC)| ≥ 2 gate on most dates.
 
 **Questions.**
 - The peer set for the published run was the whole 60-name universe, filtered by asset
@@ -1050,10 +1217,12 @@ and `paired_table` apply it to any metric against any baseline, and the CLI prin
 table after every evaluation with a `scheme` and `groups` column and a Benjamini-Hochberg
 `significant` flag computed on the unrounded p (rows with fewer than three paired
 instruments print p as NaN and do not count toward the correction). Read against the core
-universe (`scheme=instruments`, v0.6 measurement under the v0.7 engine; re-measured in
-v0.8): the desk's per-instrument Sharpe minus buy & hold's is +0.07 [−0.05, +0.19] on the
-design period and −0.10 [−0.20, 0.00] on the holdout — the noise floor the earlier concepts
-estimated, now measured.
+universe (v0.8; `results/v08/tables.md`, "paired Sharpe, agent minus baseline: core (15)";
+`scheme=instruments`, groups 2): the desk's per-instrument mean Sharpe minus buy & hold's
+is +0.06 [−0.06, +0.17], p 0.29, on the design period and −0.10 [−0.21, −0.00], p 0.04, on
+the holdout, neither BH-significant — the noise floor the earlier concepts estimated, now
+measured. The contrast is the same comparison over all 60 under the cluster scheme (5
+groups): holdout desk minus buy & hold −0.08 [−0.15, −0.03], p 0.00, BH-significant.
 
 **Instruments are not exchangeable, and the v0.7 fix made it worse.** The plain bootstrap
 assumes the instruments are independent draws. Nine rate, credit and commodity ETFs that
@@ -1075,8 +1244,8 @@ independent (`tests/test_v08_stats.py`). It engages only with at least
 `MIN_CLUSTER_GROUPS = 5` distinct labels, which the core (equity, FX: 2) and extended (3)
 universes do not have — there it falls back to the plain instrument scheme and the table
 says so — and `--universe all` has five (equity and FX, core and extended, and the macro
-ETFs), where the intervals come out materially wider and fewer rows are flagged. A
-plain-scheme interval over a clustered universe should still be read as too narrow.
+ETFs), where the table prints `clusters`. A plain-scheme interval over a clustered
+universe should still be read as too narrow.
 `evaluate(repeats=N)` runs the agent N times per (period, symbol) and `run_dispersion`
 reports the across-run spread, which is zero for the rules and the first number to read for
 a model. `calibration.calibrate` freezes one state and runs it n times at each of several
@@ -1134,18 +1303,25 @@ and checked against the 2% cap in `PortfolioManager.guardrails`. The 120-day win
 not used anywhere by the desk, no per-instrument forecast was ever compared with a
 realised instrument return, and a book-return series that the caps themselves produced is
 the least demanding input a historical-simulation forecast can be given. So v0.8 reports
-two things and labels each: (a) *a rolling historical VaR of the portfolio's own returns*
-at 120 and 250 days, which is what v0.7 measured (under the v0.7 engine: breach rate 5.7%
-and 4.5% respectively, neither test rejecting; re-measured in v0.8), and (b) *the desk's
-per-instrument forecast* — the 250-day historical VaR from `risk_facts`, walked forward
-over the holdout for each of the 15 core instruments and tested against that instrument's
-next-day return, one row per instrument with n, breaches, breach rate, Kupiec p and
-Christoffersen p, and a count of how many instruments reject at 5%
-(`scripts/measure_v08.py`, `results/v08/var_coverage.json` → `instruments`). Only (b)
-speaks to the model the desk trades on; the evaluation's v0.8 section has the table.
-Book-level VaR (`risk.max_book_var_95`) was off in every published run and is not covered
-by either test. What makes any of this usable is that a p-value that had rejected would
-have been reported exactly the same way.
+two things and labels each (`results/v08/tables.md`, the two "VaR coverage" tables, from
+`results/v08/var_coverage.json`): (a) *a rolling historical VaR of the 15-sleeve
+portfolio's own holdout returns*, which is what v0.7 measured — 120-day window: n 1048, 65
+breaches, breach rate 6.20%, Kupiec p 0.0847, Christoffersen p 0.1488, conditional
+coverage p 0.0798, not rejected at 5% but close; 250-day window: n 918, 42 breaches, 4.58%,
+Kupiec p 0.5493, Christoffersen p 0.1650, conditional coverage p 0.3188 — and (b) *the desk's
+per-instrument forecast*: the 250-day historical VaR from `risk_facts`, walked forward over
+the holdout for each of the 15 core instruments and tested against that instrument's
+next-day return (n 1126 for the equities, 1167 for the pairs). Every breach rate is above
+5% (5.23% to 6.57%); Kupiec rejects at 5% on 2 of 15 (AAPL 6.57%, p 0.0207; AUDUSD 6.34%,
+p 0.0432); Christoffersen independence rejects on 6 of 15 (AAPL 0.0027, SPY 0.0121, JPM
+0.0158, GBPUSD 0.0182, META 0.0274, USDCAD 0.0441): breaches cluster. Only (b) speaks to
+the model the desk trades on, and what it says is that the instrument forecast is a little
+thin and slow to react;
+[the evaluation's v0.8 section](docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured)
+has the 15-row table. Book-level VaR (`risk.max_book_var_95`) was off in every published run
+and is not covered by either test. What makes any of this usable is that a p-value that had
+rejected would have been reported exactly the same way — and eight of them did (two Kupiec,
+six Christoffersen).
 
 **Questions.**
 - Kupiec and Christoffersen both look backward at realized breaches. What kind of risk-model
@@ -1224,8 +1400,9 @@ the numpy twin is held to the C++ core by the parity tests in `tests/test_v08_en
 **Idle cash, and what a Sharpe ratio is a ratio of.** The engine had no cash leg: a desk
 that was 55% invested earned nothing on the other 45%, and every published Sharpe was
 mean over standard deviation of raw returns with the risk-free rate set to 0. Over
-2022–2026, when three-month bills paid 4–5%, that compared a half-invested desk with a
-fully invested benchmark on different footings, and the portfolio headline — desk 1.16
+2022–2026, when three-month bills averaged 3.99% a year (the `rf` column of
+`results/v08/portfolio_holdout.csv`), that compared a half-invested desk with a
+fully invested benchmark on different footings, and the v0.7 portfolio headline — desk 1.09
 against plain buy & hold 1.06 — was the kind of number that convention produces. v0.8 adds
 the cash leg and changes the metric together, because neither alone is right: subtracting
 the bill rate without crediting cash penalises a half-invested book twice, which is what
@@ -1257,10 +1434,31 @@ scale-invariant, but it answers a different question: return per unit of risk *o
 zero*. When cash pays 4%, zero is not the alternative an investor faced, and a strategy
 that earned a few points a year at low volatility has beaten cash by less, per unit of
 risk, than its raw Sharpe suggests — while the idle-cash credit gives some of that back.
-Which effect wins is an empirical matter that the evaluation's v0.8 section settles for
-the real portfolio; the review's arithmetic on the published figures put the desk, buy &
-hold and the vol-targeted control within a few hundredths of one another, and the README
-headline is whatever the measured interval supports, not the old ordering.
+Which effect wins is an empirical matter, and the measurement settles it
+(`results/v08/tables.md`, "cash leg on vs off: holdout" and "cash leg off (a) vs on (b)"):
+the cash leg lowered every strategy's holdout Sharpe and decided nothing about the
+ranking. Holdout 15-sleeve portfolio, cash leg on → off: desk 0.80 → 1.04 (cumulative
+return 50.62% → 35.17%, drawdown 7.80% → 8.01%), buy & hold 0.86 → 1.05 (96.91% → 86.23%),
+vol-target 0.99 → 1.24 (61.48% → 46.21%), SMA 0.64 → 0.85, MACD 0.38 → 0.54; design
+portfolio: desk 1.40 → 1.46 (93.64% → 87.97%), buy & hold 1.28 → 1.32, vol-target 1.43 →
+1.49. Per instrument, agent Sharpe with the cash leg off minus on: holdout core +0.10
+[+0.06, +0.15], p 0.00; extended +0.17 [+0.13, +0.21], p 0.00; all 60 +0.15 [+0.04, +0.23],
+p 0.02 under the cluster scheme; design core +0.03 [+0.02, +0.04], p 0.00, all 60 +0.04
+[+0.01, +0.06], p 0.01. The reading: 2022–2026 bills averaged 3.99% a year (the `rf` column of
+`results/v08/portfolio_holdout.csv`), so an
+excess-return Sharpe is lower for everyone; crediting the desk's idle capital raises its
+cumulative return (35% → 51%) but not its excess-return Sharpe by as much as the bill takes
+from a low-volatility strategy, and buy & hold holds almost no cash; 2016–2021 bills were
+near zero, so the design period barely moves. Under either convention the holdout order is
+desk < buy & hold < vol-target (1.04 / 1.05 / 1.24 off; 0.80 / 0.86 / 0.99 on), so the v0.7
+"beats plain buy & hold" was already inside the noise and is retracted regardless of the
+cash leg. Decomposing the v0.7 → v0.8 holdout portfolio move from 1.09 to 0.80: the
+cash-leg convention accounts for 1.04 → 0.80 (−0.24, measured here on one engine); the
+other engine corrections above, plus any data drift since 2026-09-25, account for 1.09 →
+1.04 — a difference between two records made on two engines, not a measured effect. The
+README headline follows the cash-leg-on numbers and says the convention in one clause.
+Portfolio metrics annualise with the largest periods-per-year among the sleeves, 260 when
+a currency pair is present.
 
 **The fair comparison, at portfolio level.** Three more things the review found the
 portfolio comparison lacked, all added in v0.8.
@@ -1271,23 +1469,43 @@ portfolio comparison lacked, all added in v0.8.
   `stats.paired_sharpe_block_bootstrap` (`PortfolioReport.sharpe_difference`) resamples
   both daily return series with the same circular blocks, takes each replicate's Sharpe on
   excess returns and reports the interval and p of the difference — desk minus vol-target
-  and desk minus buy & hold — printed next to every portfolio Sharpe.
+  and desk minus buy & hold — printed next to every portfolio Sharpe. Measured on the
+  holdout (block 10, n 1167 days): desk minus vol-target −0.19 [−0.53, +0.16], p 0.297;
+  desk minus buy & hold −0.06 [−0.41, +0.30], p 0.748; on the design period (n 1564 days)
+  −0.03 [−0.28, +0.23], p 0.898 and +0.12 [−0.16, +0.40], p 0.434 (`results/v08/tables.md`,
+  "portfolio Sharpe difference").
 - *The cadence's phase.* Every published number was decision bar 0 of a five-bar cadence.
   `rebalance_offset` runs the same backtest starting on bars 1 to 4; the spread across the
   five is the noise floor a portfolio difference has to clear before it means anything, and
-  it is reported alongside.
+  it is reported alongside. Measured on the holdout ("rebalance-phase sweep"): the desk's
+  Sharpe is 0.80, 0.85, 0.86, 0.80 and 0.84 on offsets 0 to 4, a spread of 0.06, against a
+  fixed 0.99 for vol-target and 0.86 for buy & hold; every offset's difference against
+  either control has an interval covering zero (offset 2, desk minus buy & hold +0.00
+  [−0.35, +0.38], p 0.981).
 - *Drawdown against the fair control.* Section 26 explains why plain buy & hold is the
   wrong drawdown control. `paired_table(metric="MDD%")` against the vol-targeted control,
   with the Benjamini-Hochberg flag, is now part of the record — and where the control does
   not exist it says so: on FX the vol-target weight `min(1.0, 0.15 / vol)` is 1.0 whenever
   trailing volatility is below 15%, which for the major pairs is nearly always, so the
   "control" row equals buy & hold and the drawdown comparison has no control there.
+  Measured ("paired MDD%, agent minus control"): core 15 holdout desk minus vol-target
+  −1.58 [−4.33, +1.14], p 0.27, not BH-significant, against −14.24 [−20.41, −8.70] for buy
+  & hold; extended 45 holdout −4.33 [−6.10, −2.55], p 0.00, BH-significant; on the core
+  equities (10) alone +0.83 [−1.63, +3.21], p 0.50, not BH-significant — the desk draws down no less than the
+  fair control on the names it was tuned on (section 26).
 
 **What did not change.** The rules. No parameter of the desk was re-fitted to the new
-engine; the same frozen rules were re-measured under the corrected conventions, and the
-evaluation's v0.8 section reports each earlier decision re-checked under them — EDGAR on
-or off, the carry rule, the v0.2 rules, the alpha analysts, the track-record cut — as
-information, with the design period as the only basis for a choice. The v0.5.1 LLM result
+engine; the same frozen rules were re-measured under the corrected conventions, and
+[the evaluation's v0.8 section](docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured)
+reports each earlier decision re-checked under them — EDGAR on or off (section 31), the
+carry rule (section 5), the v0.2 rules (section 24), the alpha analysts (sections 3 and 32),
+the track-record cut — as information, with the design period as the only basis for a
+choice. The track-record cut, the one new toggle: removing it is worth about +0.01 on nearly
+every slice (design extended +0.01 [+0.00, +0.01], p 0.01; holdout extended +0.01 [+0.00,
++0.02], p 0.02; reserve core +0.04 [+0.00, +0.09], p 0.04), and the core design period —
+the only basis the protocol accepts — cannot tell the two apart (+0.00 [−0.00, +0.01], p
+0.51), so the default stays on (`rules.track_record_cut: True`; "track-record size cut off
+(a) vs on (b)"). The v0.5.1 LLM result
 was not re-derived and remains the only LLM measurement.
 
 **Questions.**

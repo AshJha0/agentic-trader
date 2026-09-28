@@ -32,6 +32,10 @@ a position that no longer exists.
 
 ## Evaluation finding
 
-On the 2016 to 2021 design period, enforcing stops lowered mean return by about 30% at a
-similar Sharpe ratio, so stops are off by default in backtests. They remain available for
-mandates that require them.
+On the 2016 to 2021 design period, core universe, re-measured under the v0.8 engine
+(`results/v08/tables.md`, trials registry, from `results/v08/trials.json`), enforcing
+intraday stops gave a design mean Sharpe of 0.45 against the control's 0.47, a mean
+cumulative return of 44.10% against 58.24%, a mean maximum drawdown of 12.67% against
+13.31% and 292.20 trades per instrument against 254.20: stops cut the cumulative return by
+about a quarter at a similar Sharpe ratio, so they are off by default in backtests. They
+remain available for mandates that require them.

@@ -712,7 +712,7 @@ line stays in the open.
 `KnowledgeBase.from_dir(path=DOCS_DIR)`, `from_texts({id: text})`, `search(query, k=3,
 min_score=0.05) -> list[Passage]`, `get(chunk_id)`, `documents`, `chunks`; `Passage`:
 `chunk_id`, `doc_id`, `title`, `text`, `score`, `to_dict()`. `default_knowledge_base()` is
-cached (11 documents, 75 chunks at v0.8.0). The embedder is a hashed TF-IDF (`HashedTfidf`),
+cached (11 documents, 76 chunks at v0.8.0). The embedder is a hashed TF-IDF (`HashedTfidf`),
 so no network or model is needed.
 
 ### Tracing (`tracing.py`)

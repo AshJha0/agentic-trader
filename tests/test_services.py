@@ -129,7 +129,8 @@ def test_mcp_stdio_round_trip_and_remote_registry():
     assert ex.evidence.resolve(list(ex.evidence)[0].id)
     # Policy applies to remote tools too: the order needs approval (auto-granted here) and
     # the approval itself becomes evidence before the remote call runs. v0.8: the ticket is
-    # the remote plan's own fields; its plan reference verifies across processes.
+    # the remote plan's own fields; the server's desk checks plan_id against those fields and
+    # against the plan it produced itself (kept by the one live stdio session), not across processes.
     from agentic_trader.agentic.servers import ticket_from_plan
     plan = ex.call("execution.plan", symbol="AAPL", as_of="2024-03-01", target_weight=0.1)
     assert plan.ok and plan.payload["quantity_unit"] == "shares"
