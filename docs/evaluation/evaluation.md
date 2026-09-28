@@ -24,6 +24,11 @@ reproduce anything, see [Reproducing](#reproducing).
 
 ## Summary
 
+> v0.9 research (after this release): the attribution, the multi-asset / trend / carry
+> candidates, the pre-registered holdout report and the forward paper-trading test are in
+> [v09_research.md](v09_research.md) and [v09_preregistration.md](v09_preregistration.md).
+> Nothing there changes a rule, a universe or a number below.
+
 The v0.8 re-measurement is the current record: every number in this summary is from
 [the v0.8 section](#v08-engine-and-protocol-corrections-and-every-number-re-measured) (`results/v08`, measured
 2026-09-28 under the corrected engine, Sharpe on returns in excess of the credited 3-month

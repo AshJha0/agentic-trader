@@ -16,6 +16,13 @@ ZMR) plus ``B&H vol-target``: buy & hold scaled every day to the same volatility
 risk team uses, from trailing (ex-ante) volatility. It is the fair control for a
 risk-managed strategy: beating plain buy & hold on drawdown is automatic when you
 hold less; beating the vol-targeted version requires good directional calls.
+
+v0.9 adds two return streams as baselines, so that every sleeve carries them fully costed
+and the portfolio machinery can combine them: ``TSMOM(12-1)``, the sign of the trailing
+12-month return skipping the last month, at the vol-target size (long-only where shorts
+are not allowed), and ``Carry``, the FX carry premium held at the desk's own strategic
+size (point-in-time rate differential / ``fx_carry_neutral_scale``, capped at
+``fx_carry_neutral_cap``); ``Carry`` is flat on equities.
 """
 from __future__ import annotations
 
@@ -179,20 +186,54 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
     return np.where(np.isfinite(k), k, np.nan)
 
 
+TSMOM_LOOKBACK, TSMOM_SKIP = 252, 21   # 12-1 month time-series momentum, in trading days
+
+
+def tsmom_weights(close: np.ndarray, vol_target_weight: np.ndarray, allow_short: bool,
+                  lookback: int = TSMOM_LOOKBACK, skip: int = TSMOM_SKIP) -> np.ndarray:
+    """Time-series momentum at the vol-target size: sign(close[t-skip] / close[t-lookback] - 1)
+    times the vol-target weight, 0 until ``lookback`` bars exist, long-only when shorts are
+    not allowed (a negative signal goes flat, not short)."""
+    c = np.asarray(close, dtype=float)
+    w = np.zeros_like(c)
+    if c.size > lookback:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            mom = c[lookback - skip:-skip] / c[:-lookback] - 1.0
+        sign = np.sign(np.nan_to_num(mom, nan=0.0))
+        if not allow_short:
+            sign = np.maximum(sign, 0.0)
+        w[lookback:] = sign * vol_target_weight[lookback:]
+    return w
+
+
+def carry_weights(carry_annual: np.ndarray | None, n: int, scale: float, cap: float) -> np.ndarray:
+    """The FX carry premium at the desk's strategic size: the point-in-time annual carry (a
+    fraction, from ``provider.carry_series``) in percent divided by ``scale``, clipped to
+    ``[-cap, cap]``; 0 where the carry is unknown, and 0 everywhere on equities (``None``)."""
+    if carry_annual is None:
+        return np.zeros(n)
+    rd = np.nan_to_num(np.asarray(carry_annual, dtype=float), nan=0.0) * 100.0
+    return np.clip(rd / scale, -cap, cap)
+
+
 def baseline_weights(full: pd.DataFrame, allow_short: bool, target_vol: float = 0.15,
                      max_position: float = 1.0,
-                     periods_per_year: float = 252.0) -> dict[str, np.ndarray]:
+                     periods_per_year: float = 252.0, carry_annual: np.ndarray | None = None,
+                     carry_scale: float = 2.0, carry_cap: float = 0.5) -> dict[str, np.ndarray]:
     c, h, l = (full[k].to_numpy() for k in ("Close", "High", "Low"))
     rv = quant.realized_vol(c, 20, periods_per_year)
     with np.errstate(divide="ignore", invalid="ignore"):
         vt = np.where(rv > 0, np.minimum(max_position, target_vol / rv), 0.0)
+    vt = np.nan_to_num(vt, nan=0.0)
     return {
         "Buy&Hold": quant.strat_buy_hold(c),
-        "B&H vol-target": np.nan_to_num(vt, nan=0.0),
+        "B&H vol-target": vt,
         "SMA(20/50)": quant.strat_sma_cross(c, 20, 50, allow_short),
         "MACD": quant.strat_macd(c, 12, 26, 9, allow_short),
         "KDJ+RSI": quant.strat_kdj_rsi(h, l, c, 9, 14, 30.0, 70.0, allow_short),
         "ZMR": quant.strat_zmr(c, 20, 1.0, 0.0, allow_short),
+        "TSMOM(12-1)": tsmom_weights(c, vt, allow_short),
+        "Carry": carry_weights(carry_annual, len(c), carry_scale, carry_cap),
     }
 
 
@@ -240,7 +281,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
         raise ValueError(f"backtest window {start}..{end} has fewer than 2 bars for {ins.display}")
     prices = window["Close"].to_numpy()
     bt = backtest_config_for(ins, cfg, prices, provider, start)
-    carry = provider.carry_series(ins, window.index) if ins.is_fx else None
+    carry_full = provider.carry_series(ins, full.index) if ins.is_fx else None
+    carry = None if carry_full is None else np.asarray(carry_full, dtype=float)[np.asarray(mask, dtype=bool)]
     rf = risk_free_series(provider, window.index, cfg)
     cash = _cash_rate(rf)
     ohlc = dict(open=window["Open"].to_numpy(), high=window["High"].to_numpy(),
@@ -294,8 +336,10 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
         results[AGENT] = quant.run_backtest(prices, w, bt, **extras)
 
     for name, weights in baseline_weights(full, bt.allow_short, cfg["risk"]["target_vol"],
-                                          cfg["risk"]["max_position"],
-                                          ins.periods_per_year).items():
+                                          cfg["risk"]["max_position"], ins.periods_per_year,
+                                          carry_annual=carry_full,
+                                          carry_scale=float(cfg["risk"].get("fx_carry_neutral_scale", 2.0)),
+                                          carry_cap=float(cfg["risk"].get("fx_carry_neutral_cap", 0.5))).items():
         results[name] = quant.run_backtest(prices, weights[mask], bt, carry=carry, impact=impact,
                                            cash_rate=cash)
     return ComparisonReport(ins, window.index, results, decisions, bt, carry,

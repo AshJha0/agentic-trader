@@ -83,6 +83,8 @@ def test_market_impact_scales_with_account_size_and_is_off_by_default():
     rb = run_agent_backtest("AAPL", "2024-01-02", "2024-02-29", big, rebalance_every=10)
     for name in base.results:
         assert rs.results[name].impact_paid >= 0.0
+        if rb.results[name].metrics.num_trades == 0:      # v0.9: Carry is flat on equities and pays nothing
+            continue
         assert rb.results[name].impact_paid > rs.results[name].impact_paid          # sqrt(capital)
         assert rb.results[name].metrics.cumulative_return < base.results[name].metrics.cumulative_return
     assert "Impact%" in rb.table().columns and rb.table().loc[AGENT, "Impact%"] > 0

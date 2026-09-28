@@ -28,6 +28,13 @@ layer** for alphas, execution algorithms, portfolio construction and backtest st
 
 ## Results in one paragraph
 
+*v0.9 research (unreleased, [docs/evaluation/v09_research.md](docs/evaluation/v09_research.md)):
+attribution shows the desk's active tilts add nothing over the vol-targeted control (alpha
++0.41%/yr on design, −0.80%/yr on holdout, both inside noise); a multi-asset base, trend and
+carry streams were tried on the design period and none beat its control, so nothing was
+adopted; the [pre-registered](docs/evaluation/v09_preregistration.md) holdout report is
+published as a report, and a daily paper-trading job from 2026-09-29 is the forward test.*
+
 On **real prices**, the rule-based desk is evaluated over 60 instruments: the 15 *core*
 ones every rule choice was made on (10 equities, 5 FX pairs; rules chosen on 2016–2021 only,
 judged once on a 2022–2026 holdout) and 45 *extended* ones (sector equities, rates / credit /
