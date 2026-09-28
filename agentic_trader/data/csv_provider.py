@@ -6,9 +6,11 @@ are always served on one basis:
 
 * ``Close`` and ``Adj Close`` both present: every price column is put on the adjusted
   (total-return, split-adjusted) basis by the row's ``Adj Close / Close`` factor, the
-  same basis the Yahoo provider serves, so a split is not a -75% day; a row whose
-  ``Adj Close`` is blank keeps its ``Close`` and takes the factor of the nearest dated
-  row that has one (with a warning), so a missing cell is not a missing bar;
+  same basis the Yahoo provider serves, so a split is not a -75% day, and ``Volume`` is
+  divided by the same factor so that ``Close * Volume`` (the dollar volume, and the ADV
+  the impact model and the execution planner read) stays as traded across a split; a
+  row whose ``Adj Close`` is blank keeps its ``Close`` and takes the factor of the nearest
+  dated row that has one (with a warning), so a missing cell is not a missing bar;
 * only ``Adj Close``: it becomes ``Close`` and any raw ``Open``/``High``/``Low`` are
   dropped (they cannot be rescaled without the raw close) and filled from ``Close``
   by ``clean_ohlcv``, with a warning that intraday levels are unavailable for the file;
@@ -34,7 +36,8 @@ log = logging.getLogger(__name__)
 
 
 def one_basis(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
-    """Put Open/High/Low/Close on the basis of ``Adj Close`` when that column exists."""
+    """Put Open/High/Low/Close on the basis of ``Adj Close`` when that column exists; ``Volume``
+    is rescaled by the inverse factor so the dollar volume of every bar stays as traded."""
     if "Adj Close" not in df:
         return df
     df = df.copy()
@@ -62,6 +65,8 @@ def one_basis(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
             if col in df:
                 df[col] = pd.to_numeric(df[col], errors="coerce") * factor
         df["Close"] = adj.where(~gap, close * factor)
+        if "Volume" in df:
+            df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce") / factor.where(factor > 0, 1.0)
     else:
         dropped = [c for c in ("Open", "High", "Low") if c in df]
         if dropped:

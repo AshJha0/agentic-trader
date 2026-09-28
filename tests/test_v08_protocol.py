@@ -5,6 +5,7 @@ import pytest
 
 from agentic_trader import make_config
 from agentic_trader.backtest import AGENT, run_agent_backtest, run_portfolio_backtest
+from agentic_trader.data import SyntheticProvider
 from agentic_trader.evaluation import TRIALS, reproducible_trials, trial_slug
 from agentic_trader.stats import SharpeDifference, paired_sharpe_block_bootstrap
 
@@ -86,3 +87,27 @@ def test_trials_registry_is_complete_and_every_reproducible_trial_builds_a_confi
     assert cfg["risk"]["neutral_weight"] == {"equity": 0.0, "fx": 0.0} and cfg["risk"]["rebalance_band"] == 0.0
     assert not cfg["rules"]["fx_carry_neutral"] and not cfg["backtest"]["use_stops"]
     assert len({trial_slug(t.name) for t in TRIALS}) == len(TRIALS)
+
+
+# v0.8 regression review (d): the bootstrap pairs the return over (t-1, t] with rf[t-1], as the metrics do.
+class _RampRF(SyntheticProvider):
+    """A per-bar risk-free rate that varies with the date (the synthetic default is constant, which
+    cannot see a one-bar shift in the rf alignment)."""
+
+    def risk_free_series(self, dates):
+        return np.array([0.01 + 0.0002 * (d.dayofyear % 40) + 0.03 * (d.day % 3 == 0) for d in dates])
+
+
+def test_portfolio_report_sharpe_difference_pairs_a_varying_rf_like_the_metrics():
+    syms = ["AAPL", "MSFT", "EURUSD"]
+    rep = run_portfolio_backtest(syms, "2024-01-02", "2024-03-28", CFG, rebalance_every=10, provider=_RampRF(CFG))
+    assert isinstance(rep.rf, np.ndarray) and np.std(rep.rf) > 0.005
+    d = rep.sharpe_difference(AGENT, "Buy&Hold")
+    assert d.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)          # was off by one bar of rf
+    assert d.sharpe_b == pytest.approx(rep.metrics["Buy&Hold"].sharpe, abs=1e-9)
+    a, b = (rep.returns[s].to_numpy(dtype=float)[1:] for s in (AGENT, "Buy&Hold"))
+    ppy = max(r.instrument.periods_per_year for r in rep.sleeves.values())
+    shifted = paired_sharpe_block_bootstrap(a, b, ppy, rf=rep.rf[1:], n_boot=50)       # the pre-fix pairing
+    aligned = paired_sharpe_block_bootstrap(a, b, ppy, rf=rep.rf[:-1], n_boot=50)
+    assert abs(shifted.sharpe_a - rep.metrics[AGENT].sharpe) > 1e-6                    # the test can see the shift
+    assert aligned.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)

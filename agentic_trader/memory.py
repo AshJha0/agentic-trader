@@ -9,10 +9,10 @@ current as-of date, which stops at that date -- from the entry bar to the bar
 ``horizon_days`` trading days later. Nothing is compared against the absolute price
 stored at decision time, so a split or dividend rebase between sessions, or a
 different data provider, cannot turn a right call into a "was wrong" verdict; an
-entry is only ever resolved by the provider that recorded it, and one whose exit bar
-has fallen out of the window is expired without a verdict rather than booked with a
-multi-year return. A backtest never sees the future through memory because the
-series it resolves on ends at as-of.
+entry is only ever resolved -- or expired -- by the provider that recorded it, on the
+same price basis, and one whose exit bar has fallen out of the window is expired
+without a verdict rather than booked with a multi-year return. A backtest never sees
+the future through memory because the series it resolves on ends at as-of.
 
 The log on disk is append-only: one line per decision and one per resolution, each
 written with a single ``write`` and ``fsync`` under an in-process lock and a file lock
@@ -112,8 +112,9 @@ def _closes(history: Any) -> pd.Series:
 
 
 class DecisionMemory:
-    def __init__(self, path: str | Path | None = None):
+    def __init__(self, path: str | Path | None = None, max_staleness_days: int = 7):
         self.path = Path(path) if path else None
+        self.max_staleness_days = int(max_staleness_days)
         self.entries: list[MemoryEntry] = []
         self._by_key: dict[str, MemoryEntry] = {}
         self.skipped_lines = 0
@@ -179,27 +180,32 @@ class DecisionMemory:
             self._append(asdict(e))
 
     def resolve(self, symbol: str, as_of: date, history: Any, provider: str = "",
-                price_basis: str = "") -> int:
+                price_basis: str = "", max_staleness_days: int | None = None) -> int:
         """Attach outcomes to entries whose horizon bar lies within ``history``.
 
         ``history`` is the price series the desk sees at ``as_of`` (a frame with a ``Close``
-        column, or a series), which must not extend past ``as_of``. An entry made on another
-        provider or basis is never valued on this series; one that this series cannot value
-        (its entry bar predates the window, or its exit bar never arrives) is expired once
-        more than twice its horizon has elapsed. Returns the number of entries closed
-        (resolved or expired).
+        column, or a series), which must not extend past ``as_of``. Only entries recorded by
+        this ``provider`` on this ``price_basis`` are touched: another provider's entries are
+        neither valued on this series nor expired by this visit. An entry this series cannot
+        value (its entry bar predates the window, or its exit bar never arrives) is expired
+        once more than twice its horizon has elapsed. ``max_staleness_days`` is how far the
+        decision day may sit after its entry bar -- the desk's ``max_data_staleness_days``,
+        under which the decision was allowed at all (the instance's setting when omitted).
+        Returns the number of entries closed (resolved or expired).
         """
         closes = _closes(history)
         last_pos = len(closes) - 1
+        tolerance = self.max_staleness_days if max_staleness_days is None else int(max_staleness_days)
         n = 0
         with self._lock:
             for e in self.entries:
                 if e.symbol != symbol or e.resolved_on is not None:
                     continue
+                if (e.provider, e.price_basis) != (provider, price_basis):
+                    continue
                 entry_day = date.fromisoformat(e.as_of)
-                same_series = (e.provider, e.price_basis) == (provider, price_basis) and last_pos >= 0
-                pos = int(closes.index.searchsorted(pd.Timestamp(entry_day), side="right")) - 1 if same_series else -1
-                if pos >= 0 and (entry_day - closes.index[pos].date()).days <= 7:
+                pos = int(closes.index.searchsorted(pd.Timestamp(entry_day), side="right")) - 1 if last_pos >= 0 else -1
+                if pos >= 0 and (entry_day - closes.index[pos].date()).days <= tolerance:
                     exit_pos = pos + e.horizon_days
                     if exit_pos <= last_pos:
                         self._settle(e, float(closes.iloc[pos]), float(closes.iloc[exit_pos]),

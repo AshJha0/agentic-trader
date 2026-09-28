@@ -178,15 +178,25 @@ def compute_metrics(equity, positions, periods_per_year: float,
     """Metrics of an equity curve (see ``pycore.compute_metrics``).
 
     ``risk_free_annual`` is a constant or a per-bar array of the same length as ``equity``
-    (NaN -> 0); Sharpe, Sortino and the t-stat use excess returns ``r_t - rf_t / ppy``.
-    ``traded`` (|dw| per bar) gives turnover and the trade count exactly; without it both
-    are inferred from changes in ``positions``. ``positions`` must match ``equity`` in length.
+    (NaN -> 0); Sharpe, Sortino and the t-stat use excess returns ``r_t - rf_t / ppy``, and
+    are 0 (with ``annualized_vol``) when the excess return is constant to rounding, on both
+    backends. ``traded`` (|dw| per bar) gives turnover and the trade count exactly; without
+    it both are inferred from changes in ``positions`` (which drift every bar under constant
+    units) and a ``RuntimeWarning`` says so. An empty ``risk_free_annual`` or ``traded``
+    array means absent (rf 0 / inferred trades) on both backends. ``positions`` must match
+    ``equity`` in length.
     """
     if _cpp is None:
         return pycore.compute_metrics(equity, positions, periods_per_year, risk_free_annual, traded)
-    tr = [] if traded is None else _l(traded)
-    if np.ndim(risk_free_annual) > 0:
+    if traded is None or np.size(traded) == 0:
+        pycore._warn_inferred_trades()
+        tr = []
+    else:
+        tr = _l(traded)
+    if np.ndim(risk_free_annual) > 0 and np.size(risk_free_annual) > 0:
         m = _cpp.compute_metrics_rf(_l(equity), _l(positions), periods_per_year, _l(risk_free_annual), tr)
+    elif np.ndim(risk_free_annual) > 0:
+        m = _cpp.compute_metrics(_l(equity), _l(positions), periods_per_year, 0.0, tr)
     else:
         m = _cpp.compute_metrics(_l(equity), _l(positions), periods_per_year, float(risk_free_annual), tr)
     return _metrics_from_cpp(m)
@@ -199,8 +209,11 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
 
     A target is executed on a decision bar (the target changes, or ``rebalance`` is set);
     between decisions the units are held and the weight drifts with the market, with no
-    trade and no cost. The leverage cap applies to targets. Equity is floored at 0 (ruin:
-    any one leg of a bar -- entry cost, move or exit cost -- consuming the whole account).
+    trade and no cost. The leverage cap applies to targets; a target equal to the weight
+    currently held is a decision to keep the position and is executed as no trade even when
+    drift has carried that weight outside the cap (the cap binds on new targets, not on
+    drift). Equity is floored at 0 (ruin: any one leg of a bar -- entry cost, move or exit
+    cost -- consuming the whole account).
 
     Optional per-bar arrays (same length as ``prices``):
       carry      annual carry rate per bar (overrides ``config.carry_annual``)

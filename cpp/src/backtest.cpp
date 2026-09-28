@@ -73,8 +73,9 @@ Metrics compute_metrics_rf(const Series& equity, const Series& positions, double
         const double d = std::min(v, 0.0);
         down += d * d;
     }
-    const double sd = live > 1 ? std::sqrt(var / (live - 1)) : 0.0;
-    const double dd = live > 0 ? std::sqrt(down / live) : 0.0;
+    double sd = live > 1 ? std::sqrt(var / (live - 1)) : 0.0;
+    double dd = live > 0 ? std::sqrt(down / live) : 0.0;
+    if (sd <= kZeroVarianceTol * std::max(1.0, std::fabs(mean))) sd = dd = 0.0;
     const double ann = std::sqrt(periods_per_year);
     m.annualized_vol = sd * ann;
     m.sharpe = sd > 0.0 ? mean / sd * ann : 0.0;
@@ -193,14 +194,15 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
     double prev_target = nan;  // last target seen (a change is a decision)
     bool stopped = false, ruined = false;
     for (std::size_t t = 0; t + 1 < T; ++t) {
-        double target = target_weights[t];
-        if (std::isnan(target)) target = 0.0;
-        target = std::clamp(target, lo, hi);
+        double raw = target_weights[t];
+        if (std::isnan(raw)) raw = 0.0;
+        const double clamped = std::clamp(raw, lo, hi);
+        const double target = raw == prev ? raw : clamped;  // a keep is not trimmed to the cap
 
-        const bool rearm = in.rebalance.empty() ? target != prev_target : in.rebalance[t] != 0.0;
-        const bool decide = rearm || target != prev_target;
+        const bool rearm = in.rebalance.empty() ? clamped != prev_target : in.rebalance[t] != 0.0;
+        const bool decide = rearm || clamped != prev_target;
         if (rearm) stopped = false;
-        prev_target = target;
+        prev_target = clamped;
         const double w = (ruined || stopped) ? 0.0 : (decide ? target : prev);
 
         const double trade = w - prev;

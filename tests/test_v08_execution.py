@@ -389,15 +389,71 @@ def test_plan_reads_the_desk_position_book():
     assert tools.plan("AAPL", AS_OF, 0.4) == {"trade": False, "reason": "target equals current position"}
 
 
-def test_validate_plan_pins_current_weight_to_the_task():
+def test_validate_plan_leaves_a_declared_current_weight_to_the_runs_book():
+    # v0.8 regression (h): this test asserted the argument was pinned to the task's value, which
+    # sent a declared position above the cap into the argument guard; the run's book carries the
+    # declared fact now and the plan step does not repeat it.
     reg = build_registry(DeskTools(SyntheticProvider(CFG), CFG))
     raw = [{"type": "tool", "name": "execution.plan",
             "arguments": {"symbol": "AAPL", "as_of": "2024-03-01", "target_weight": 0.5, "current_weight": 0.0}}]
     plan = validate_plan(raw, Task("AAPL", AS_OF, current_weight=0.4), Instrument.parse("AAPL"), ["technical"], reg)
     step = next(s for s in plan.steps if s.name == "execution.plan")
-    assert step.arguments["current_weight"] == 0.4 and any("current_weight pinned" in n for n in plan.notes)
+    assert "current_weight" not in step.arguments
+    assert any("current_weight" in n and "+0.4000" in n and "book" in n for n in plan.notes)
     plan2 = validate_plan(raw, Task("AAPL", AS_OF), Instrument.parse("AAPL"), ["technical"], reg)
     assert next(s for s in plan2.steps if s.name == "execution.plan").arguments["current_weight"] == 0.0
+    # the run's book is what the step then plans from
+    tools = DeskTools(SyntheticProvider(CFG), CFG, capital=100_000.0)
+    view = tools.for_book({"AAPL": 0.4})
+    p = view.plan("AAPL", AS_OF, 0.5)
+    assert p["current_weight"] == 0.4 and p["intent"] == "add_long" and p["plan_id"] in tools.plans
+    assert tools.positions == {} and tools.plan("AAPL", AS_OF, 0.5)["intent"] == "open_long"
+
+
+# ------------------------------------------------- v0.8 regression (j): the plan says when it is not ticketable
+def test_plan_flags_a_notional_over_the_desk_cap_as_unticketable():
+    tools = DeskTools(SyntheticProvider(CFG), CFG, positions={"EURUSD": -0.6}, capital=100_000.0)
+    assert tools.order_cap == 100_000.0
+    p = tools.plan("EURUSD", AS_OF, 0.6)
+    assert p["trade"] and p["intent"] == "reverse_to_long" and p["notional"] > 100_000.0
+    assert p["ticketable"] is False and p["order_cap"] == 100_000.0 and "per-order cap" in p["note"]
+    assert p["plan_id"] not in tools.plans and p["simulated"] is True
+    with pytest.raises(ValueError, match="per-order cap"):
+        ticket_from_plan(p)
+    ok = tools.plan("EURUSD", AS_OF, 0.0)
+    assert ok["ticketable"] is True and ok["order_cap"] == 100_000.0 and ok["plan_id"] in tools.plans and "note" not in ok
+    assert tools.submit_order(**ticket_from_plan(ok))["intent"] == "buy_to_cover"
+    # through the executor a flagged plan is evidence, never a submittable ticket
+    ex = _executor(tools, max_order_notional=tools.order_cap)
+    res = ex.call("execution.plan", symbol="EURUSD", as_of=AS_OF.isoformat(), target_weight=0.6)
+    assert res.ok and res.payload["ticketable"] is False and res.payload["order_cap"] == 100_000.0
+    # a cap of zero flags every plan, and the no-session note still travels with the cap note
+    frozen = DeskTools(StubProvider({"AAPL": _history(100.0)}), make_config(CFG, execution={"max_order_notional": 0}),
+                       capital=100_000.0)
+    fp = frozen.plan("AAPL", AS_OF, 0.1)
+    assert fp["ticketable"] is False and fp["order_cap"] == 0.0 and fp["simulated"] is False
+    assert "per-order cap 0" in fp["note"] and "no session after 2024-03-01" in fp["note"]
+
+
+# ------------------------------------------------- v0.8 regression (m): below one lot is a no-trade, not an error
+def test_plan_returns_no_trade_for_a_change_below_one_lot():
+    tools = DeskTools(SyntheticProvider(CFG), CFG, capital=100_000.0)
+    p = tools.plan("AAPL", AS_OF, 0.25, current_weight=0.2499)
+    assert set(p) == {"trade", "reason"} and p["trade"] is False
+    assert "below one share" in p["reason"] and "nothing to trade" in p["reason"] and "+0.2499 -> +0.2500" in p["reason"]
+    assert tools.plan("AAPL", AS_OF, 0.25, current_weight=0.25) == {"trade": False, "reason": "target equals current position"}
+    fx = tools.plan("USDJPY", AS_OF, 0.005)                          # 500 USD is below one 1,000-unit lot
+    assert fx["trade"] is False and "below one lot of 1000 USD" in fx["reason"]
+    res = _executor(tools).call("execution.plan", symbol="AAPL", as_of=AS_OF.isoformat(), target_weight=0.25,
+                                current_weight=0.2499)
+    assert res.ok and res.payload["trade"] is False and tools.plans == {}
+    # the long-only truncation note still travels with it
+    held = DeskTools(SyntheticProvider(CFG), CFG, positions={"AAPL": 0.0001}, capital=100_000.0)
+    t = held.plan("AAPL", AS_OF, -0.3)
+    assert t["trade"] is False and "truncated to flat" in t["reason"] and "below one share" in t["reason"]
+    # invalid inputs are still errors
+    with pytest.raises(ValueError, match="unknown execution algo"):
+        tools.plan("AAPL", AS_OF, 0.5, algo="vwip")
 
 
 def test_position_reports_tickets_recorded_against_the_symbol():
@@ -510,7 +566,7 @@ def test_quantities_are_rounded_once_at_plan_time_and_used_everywhere(capsys):
     assert main(["execute", "AAPL", "--date", "2024-03-01", "--target", "0.5", "--capital", "100000"]) == 0
     out = capsys.readouterr().out
     assert f"BUY {payload['quantity']:,.0f} shares" in out and f"executed {payload['quantity']:,.0f} of" in out
-    with pytest.raises(ValueError, match="below one lot"):
-        plan_execution(_decision("AAPL", 0.001), ins, 0.0, 100_000.0, 223.219)
+    # a change below one share is a no-op, not an error (v0.8 regression (m): this asserted a ValueError)
+    assert plan_execution(_decision("AAPL", 0.001), ins, 0.0, 100_000.0, 223.219) is None
     with pytest.raises(ValueError, match="unknown execution algo"):
         plan_execution(_decision("AAPL", 0.5), ins, 0.0, 100_000.0, 223.219, algo="vwip")

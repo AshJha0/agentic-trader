@@ -12,14 +12,35 @@ import json
 import logging
 import math
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .. import quant
 from ..config import RULES_V02, RULES_V03, make_config
 from ..provenance import provenance
 
 log = logging.getLogger("agentic_trader.cli")
+
+EXCHANGE_TZ = ZoneInfo("America/New_York")
+
+
+def _now() -> datetime:
+    """The clock, as an aware instant (patched by tests)."""
+    return datetime.now(timezone.utc)
+
+
+def exchange_today() -> date:
+    """The exchange's calendar date now (New York), whatever the host's timezone."""
+    return _now().astimezone(EXCHANGE_TZ).date()
+
+
+def default_as_of() -> date:
+    """The default decision date: New York's yesterday, the last date whose daily bar is
+    complete under the Yahoo provider's rule (a bar dated D is complete once the New York
+    date is D+1), so a host east of New York does not lose the last session after its own
+    midnight, and one west of it does not ask for a bar that is not there yet."""
+    return exchange_today() - timedelta(days=1)
 
 
 def _section(over: dict, name: str, **values) -> None:
@@ -112,7 +133,7 @@ def _print_event(stage: str, msg: str) -> None:
 
 
 def _as_of(args) -> date:
-    return date.fromisoformat(args.date) if args.date else date.today() - timedelta(days=1)
+    return date.fromisoformat(args.date) if args.date else default_as_of()
 
 
 def _symbols(text: str) -> list[str]:

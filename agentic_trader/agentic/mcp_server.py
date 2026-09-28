@@ -237,15 +237,18 @@ class StdioSession:
 
     The session runs on its own thread inside a single coroutine (the SDK's context
     managers are entered and left by the same task), and every ``call`` is handed to
-    it through a queue. The desk behind the server therefore keeps its book, the plans
-    it produced and the tickets it wrote across calls, which a fresh process per call
-    would forget before the order citing a plan arrives.
+    it through a queue and served as its own task: calls run concurrently over the one
+    session (MCP multiplexes by request id), so a call the executor abandons at its
+    deadline never delays the next one. The desk behind the server keeps its book, the
+    plans it produced and the tickets it wrote across calls, which a fresh process per
+    call would forget before the order citing a plan arrives.
     """
 
     def __init__(self, params: Any, start_timeout_s: float = 60.0):
         self._params = params
         self._loop: asyncio.AbstractEventLoop | None = None
         self._queue: asyncio.Queue | None = None
+        self._tasks: set[asyncio.Task] = set()
         self._ready: concurrent.futures.Future = concurrent.futures.Future()
         self._closed = False
         self._thread = threading.Thread(target=self._main, name="mcp-stdio-session", daemon=True)
@@ -280,12 +283,28 @@ class StdioSession:
                 while True:
                     item = await self._queue.get()
                     if item is None:
-                        return
+                        break
                     request, fut = item
-                    try:
-                        fut.set_result(await request(s))
-                    except BaseException as e:  # noqa: BLE001 - re-raised on the calling thread
-                        fut.set_exception(_leaf(e))
+                    task = asyncio.create_task(self._handle(request, fut, s))
+                    self._tasks.add(task)
+                    task.add_done_callback(self._tasks.discard)
+                for task in list(self._tasks):
+                    task.cancel()
+                await asyncio.gather(*self._tasks, return_exceptions=True)
+
+    @staticmethod
+    async def _handle(request, fut: concurrent.futures.Future, session) -> None:
+        try:
+            result = await request(session)
+        except asyncio.CancelledError:
+            if not fut.done():
+                fut.set_exception(RuntimeError("stdio session is closed"))
+        except BaseException as e:  # noqa: BLE001 - re-raised on the calling thread
+            if not fut.done():
+                fut.set_exception(_leaf(e))
+        else:
+            if not fut.done():
+                fut.set_result(result)
 
     def _drain(self, error: Exception) -> None:
         q = self._queue
@@ -315,9 +334,11 @@ class StdioSession:
     def list_tools(self) -> list[Any]:
         return self._submit(lambda s: s.list_tools()).tools
 
-    def call(self, name: str, arguments: dict[str, Any]) -> Any:
+    def call(self, name: str, arguments: dict[str, Any], timeout_s: float | None = None) -> Any:
+        """One remote call; ``timeout_s`` bounds the wait for its result on the server side
+        too, so a request the caller has given up on is cancelled rather than left running."""
         args = _json_arguments(arguments)
-        return _payload(self._submit(lambda s: s.call_tool(name, args)))
+        return _payload(self._submit(lambda s: s.call_tool(name, args, read_timeout_seconds=timeout_s)))
 
     def close(self) -> None:
         """End the session and the server process; pending calls fail."""
@@ -375,7 +396,8 @@ def classify_remote_tool(tool: dict[str, Any], override: dict[str, Any] | None =
 
 
 def registry_from_stdio(server_args: list[str] | None = None,
-                        overrides: dict[str, dict[str, Any]] | None = None) -> ToolRegistry:
+                        overrides: dict[str, dict[str, Any]] | None = None,
+                        call_timeout_s: float | None = None) -> ToolRegistry:
     """A local registry whose tools forward to one stdio server session.
 
     Descriptors come from discovery, so the executor validates arguments against
@@ -383,8 +405,10 @@ def registry_from_stdio(server_args: list[str] | None = None,
     classification is ``classify_remote_tool`` (fail closed) relaxed only by
     ``overrides``, keyed by the local ``server.tool`` name. ``None`` means the desk's
     own catalogue (``desk_overrides``: the server this client launches is this
-    package's own module); pass ``{}`` to relax nothing. The session lives with the
-    registry (``registry.session.close()`` ends it early).
+    package's own module); pass ``{}`` to relax nothing. ``call_timeout_s`` is the
+    per-call server-side deadline (give it the executor's ``tool_timeout_s`` so an
+    abandoned call is cancelled on the server too; ``None`` waits). The session lives
+    with the registry (``registry.session.close()`` ends it early).
     """
     _require_mcp()
     if overrides is None:
@@ -406,7 +430,7 @@ def registry_from_stdio(server_args: list[str] | None = None,
         remote_name = raw["name"]
 
         def forward(_name=remote_name, **kwargs):
-            return session.call(_name, kwargs)
+            return session.call(_name, kwargs, call_timeout_s)
         reg.register_descriptor(ToolDescriptor(local, server, raw["description"], schema, ann), forward)
     reg.session = session   # type: ignore[attr-defined]
     weakref.finalize(reg, session.close)

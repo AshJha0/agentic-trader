@@ -67,11 +67,21 @@ class AnalystReport:
     evidence_ids: tuple[str, ...] = ()
 
 
+def fenced(label: str, lines: list[str], untrusted: bool) -> str:
+    """``lines`` for a prompt: inside an ``untrusted_block`` when they descend from
+    third-party text, plain otherwise."""
+    return untrusted_block(label, lines) if untrusted else "\n".join(lines)
+
+
+# ``untrusted`` on the documents below: the text was written (by a model or a rule) from a
+# prompt that carried fenced third-party material, so it may quote that material and is shown
+# inside an ``<untrusted_data>`` block in every later prompt, whoever wrote it.
 @dataclass
 class DebateTurn:
     speaker: str
     round: int
     argument: str
+    untrusted: bool = False
 
 
 @dataclass
@@ -83,6 +93,7 @@ class DebateOutcome:
     turns: list[DebateTurn] = field(default_factory=list)
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
+    untrusted: bool = False
 
 
 @dataclass
@@ -97,6 +108,7 @@ class TradeProposal:
     rationale: str
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
+    untrusted: bool = False
 
 
 @dataclass
@@ -107,6 +119,7 @@ class RiskView:
     round: int = 1
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
+    untrusted: bool = False
 
 
 @dataclass
@@ -223,6 +236,42 @@ class TradingState:
         return ("\nLessons from past decisions:\n"
                 + untrusted_block("memory lessons (earlier decisions on this instrument)", self.lessons)
                 + "\n")
+
+    @property
+    def untrusted_inputs(self) -> bool:
+        """True when a prompt built from this state carries fenced text: a report written from
+        third-party material, or memory lessons (earlier model-written text). Whatever is then
+        written from that prompt -- a debate turn, the verdict, the proposal's rationale, a
+        risk argument -- may quote it, so the document is marked ``untrusted`` and every later
+        prompt shows it fenced too."""
+        return bool(self.lessons) or any(r.untrusted and not r.abstained for r in self.reports.values())
+
+    def debate_block(self, turns: list[DebateTurn], rounds: bool = False) -> str:
+        """The debate turns for a prompt, fenced as one block when any of them is untrusted."""
+        lines = [f"{t.speaker} (round {t.round}): {t.argument}" if rounds else f"{t.speaker}: {t.argument}"
+                 for t in turns]
+        return fenced("debate turns (written from third-party material)", lines, any(t.untrusted for t in turns))
+
+    def verdict_block(self) -> str:
+        d = self.debate
+        return "Debate verdict: " + fenced("debate verdict (written from third-party material)", [d.summary],
+                                           d.untrusted)
+
+    def proposal_block(self) -> str:
+        """The trader's proposal for a prompt: its numbers in the open, its rationale fenced
+        when it descends from third-party text."""
+        p = self.proposal
+        return (f"Trader proposal: {p.action.value} weight {p.target_weight:+.2f}; "
+                + fenced("trader rationale (written from third-party material)", [p.rationale], p.untrusted))
+
+    def risk_views_block(self, views: list[RiskView]) -> str:
+        """The risk team's views for a prompt: when any argument is untrusted the recommended
+        sizes stay in the open and the arguments go inside one fenced block."""
+        if not any(v.untrusted for v in views):
+            return "\n".join(f"{v.stance} (round {v.round}, {v.recommended_weight:+.2f}): {v.argument}" for v in views)
+        sizes = "\n".join(f"{v.stance} (round {v.round}) recommends {v.recommended_weight:+.2f}" for v in views)
+        return sizes + "\n" + untrusted_block("risk analysts' arguments (written from third-party material)",
+                                              [f"{v.stance} (round {v.round}): {v.argument}" for v in views])
 
     def to_markdown(self) -> str:
         ins = self.instrument

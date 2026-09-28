@@ -8,7 +8,8 @@ and the role decides what the task and the approval endpoints may do.
 | method | path                       | role         | what                                   |
 |--------|----------------------------|--------------|----------------------------------------|
 | POST   | /tasks                     | analyst+     | start a task (202 + task id); the body |
-|        |                            |              | may declare ``positions`` on the book  |
+|        |                            |              | may declare ``positions`` on the run's |
+|        |                            |              | own book (never on the desk's)         |
 | GET    | /tasks/{id}                | viewer+      | state, plan, decision, findings, critic|
 | GET    | /tasks/{id}/report         | viewer+      | the audited report (JSON or markdown)  |
 | GET    | /tasks/{id}/trace          | viewer+      | spans                                  |
@@ -116,7 +117,8 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
         current_weight: float | None = None
         question: str = ""
         positions: dict[str, float] | None = Field(default=None, examples=[{"AAPL": 0.4, "MSFT": 0.1}],
-                                                   description="weights to declare on the desk's book")
+                                                   description="weights to declare on this run's book (the desk's "
+                                                               "positions overlaid; other runs never see them)")
 
     class ApprovalIn(BaseModel):
         approve: bool
@@ -178,7 +180,7 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
             try:
                 run = harness.submit(task, body.positions)
             except ValueError as e:
-                raise HTTPException(422, f"positions: {e}")
+                raise HTTPException(422, str(e))
             schedule(task.id, run)
         return {"task_id": task.id, "state": run.state.value}
 

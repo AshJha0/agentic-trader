@@ -8,6 +8,7 @@ floor, NaN rule) are documented in cpp/include/at/backtest.hpp and indicators.hp
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -420,27 +421,46 @@ def max_drawdown(equity) -> float:
     return float(max(dd.max(), 0.0))
 
 
+ZERO_VARIANCE_TOL = 1e-12  # sd <= tol * max(1, |mean|) is rounding noise, not dispersion (both backends)
+
+
+def _warn_inferred_trades() -> None:
+    warnings.warn(
+        "compute_metrics: without `traded`, trades are inferred from changes in `positions`, which "
+        "drift every bar under constant units; pass the engine's `traded` array for exact counts",
+        RuntimeWarning, stacklevel=3)
+
+
 def compute_metrics(equity, positions, periods_per_year: float,
                     risk_free_annual=0.0, traded=None) -> Metrics:
     """Metrics of an equity curve (see cpp/include/at/backtest.hpp).
 
-    ``risk_free_annual`` is a constant or a per-bar series (NaN -> 0); Sharpe, Sortino and
-    the t-stat are computed on the excess return ``r_t - rf_t / ppy``. ``traded`` (|dw| per
-    bar) gives turnover and the trade count; without it both are inferred from changes in
-    ``positions``. Statistics stop at the ruin bar (the first equity <= 0).
+    ``risk_free_annual`` is a constant or a per-bar series (NaN -> 0; an empty array means
+    absent, i.e. rf = 0); Sharpe, Sortino and the t-stat are computed on the excess return
+    ``r_t - rf_t / ppy``. An excess-return series that is constant to rounding (its sample
+    standard deviation is at most ``ZERO_VARIANCE_TOL * max(1, |mean|)``) has no dispersion
+    to divide by: Sharpe, Sortino, the t-stat and ``annualized_vol`` are 0, on both backends,
+    rather than noise over noise (a flat book, or one earning exactly rf). ``traded`` (|dw|
+    per bar) gives turnover and the trade count; without it (``None`` or empty) both are
+    inferred from changes in ``positions``, which drift every bar under constant units, and
+    a ``RuntimeWarning`` says so once. Statistics stop at the ruin bar (the first equity <= 0).
     """
     e, pos = _arr(equity), _arr(positions)
     if pos.shape != e.shape:
         raise ValueError("compute_metrics: positions and equity length mismatch")
     rf_series = None
-    if np.ndim(risk_free_annual) > 0:
+    if np.ndim(risk_free_annual) > 0 and np.size(risk_free_annual) > 0:
         rf_series = _arr(risk_free_annual)
         if rf_series.shape != e.shape:
             raise ValueError("compute_metrics: risk_free_annual length does not match equity")
+    if traded is not None and np.size(traded) == 0:
+        traded = None
     if traded is not None:
         traded = _arr(traded)
         if traded.shape != e.shape:
             raise ValueError("compute_metrics: traded length does not match equity")
+    else:
+        _warn_inferred_trades()
     m = Metrics()
     if e.size < 2:
         return m
@@ -462,13 +482,15 @@ def compute_metrics(equity, positions, periods_per_year: float,
             if m.cumulative_return > -1.0 else -1.0
         )
     if rf_series is None:
-        rf = np.full(n, float(risk_free_annual))
+        rf = np.full(n, float(risk_free_annual) if np.ndim(risk_free_annual) == 0 else 0.0)
     else:
         rf = np.where(np.isnan(rf_series[:n]), 0.0, rf_series[:n])
     ex = r[:live] - rf[:live] / periods_per_year
     mean = float(ex.mean()) if live else 0.0
     sd = float(ex.std(ddof=1)) if live > 1 else 0.0
     dd = float(np.sqrt(np.mean(np.minimum(ex, 0.0) ** 2))) if live else 0.0
+    if sd <= ZERO_VARIANCE_TOL * max(1.0, abs(mean)):
+        sd, dd = 0.0, 0.0
     ann = np.sqrt(periods_per_year)
     m.annualized_vol = sd * ann
     m.sharpe = float(mean / sd * ann) if sd > 0 else 0.0
@@ -585,7 +607,7 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
     T = p.size
     has_levels = extras["stop"] is not None or extras["take"] is not None
 
-    equity = np.full(T, config.initial_capital)
+    equity = np.full(T, float(config.initial_capital), dtype=float)
     returns = np.zeros(T)
     positions = np.zeros(T)
     traded = np.zeros(T)
@@ -600,7 +622,7 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
     ppy = config.periods_per_year
     stop_a, take_a, reb = extras["stop"], extras["take"], extras["rebalance"]
     imp, cash_a = extras["impact"], extras["cash_rate"]
-    E0 = config.initial_capital
+    E0 = float(config.initial_capital)
 
     def impact_k(i: int) -> float:
         return 0.0 if imp is None or np.isnan(imp[i]) else float(imp[i])
@@ -608,12 +630,14 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
     prev, prev_target, stopped, ruined = 0.0, NaN, False, False
     exits, impact_paid, ruined_at = 0, 0.0, -1
     for t in range(T - 1):
-        target = 0.0 if np.isnan(w_in[t]) else float(min(max(w_in[t], lo), hi))
-        rearm = (target != prev_target) if reb is None else (reb[t] != 0.0)
-        decide = rearm or target != prev_target
+        raw = 0.0 if np.isnan(w_in[t]) else float(w_in[t])
+        clamped = float(min(max(raw, lo), hi))
+        target = raw if raw == prev else clamped
+        rearm = (clamped != prev_target) if reb is None else (reb[t] != 0.0)
+        decide = rearm or clamped != prev_target
         if rearm:
             stopped = False
-        prev_target = target
+        prev_target = clamped
         w = 0.0 if (ruined or stopped) else (target if decide else prev)
 
         trade = w - prev

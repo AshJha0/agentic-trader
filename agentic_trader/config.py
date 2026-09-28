@@ -17,9 +17,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Server-side refusal fallback for claude-opus-5 / claude-fable-5-1 (beta).
     "use_refusal_fallback": True,
     "llm_timeout_s": 300,   # per request; adaptive thinking on the deep tier can take minutes
-    # SDK retries per request (the SDK default). A request that times out is billed at its
-    # estimated maximum once per attempt, since the server may have served every one of them.
+    # Attempts after the first for a request that timed out, was rate limited, hit a 5xx or lost
+    # its connection. AnthropicLLM runs the retry loop itself (the SDK client makes none), so a
+    # timed-out attempt is billed at its estimated maximum whether or not a later attempt succeeds.
     "llm_max_retries": 2,
+    "llm_retry_backoff_s": 0.5,   # delay before the first retry; doubles per attempt, capped at 8 s, jittered
+    # Output tokens reserved per call before it is dispatched under max_llm_cost_usd: a realistic
+    # reply, not the max_tokens ceiling (a timed-out attempt is still billed at max_tokens).
+    "llm_reserve_output_tokens": 2000,
     "max_llm_calls": None,  # hard cap per TradingGraph (None = unlimited); beyond it agents use rules
     "max_llm_cost_usd": None,  # hard cap on estimated spend (list prices); beyond it agents use rules
     # Hide ticker, calendar and price level from the model (anonymize.py). Use it for

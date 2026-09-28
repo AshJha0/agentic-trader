@@ -456,6 +456,69 @@ void test_risk() {
     check(near(at::position_units(100000, 0.01, 50, 48), 500), "units");
 }
 
+// v0.8 regression review (a): a constant excess return has no dispersion to divide by.
+void test_zero_variance_metrics() {
+    const at::Series flat(250, 100.0);
+    at::BacktestConfig cfg = no_cost();
+    cfg.periods_per_year = 252;
+    cfg.risk_free_annual = 0.03;
+    auto r = at::run_backtest(flat, at::Series(250, 0.0), cfg);
+    check(r.metrics.sharpe == 0.0 && r.metrics.sharpe_tstat == 0.0 && r.metrics.sortino == 0.0 &&
+              r.metrics.annualized_vol == 0.0,
+          "flat book with a constant rf: Sharpe, Sortino, t-stat and vol are 0, not -8e15");
+    at::BacktestInputs in;
+    in.cash_rate.resize(250);
+    for (int i = 0; i < 250; ++i) in.cash_rate[i] = 0.03 + 0.004 * std::sin(i * 0.37);
+    cfg.risk_free_annual = 0.0;
+    r = at::run_backtest_ex(flat, at::Series(250, 0.0), cfg, in);
+    check(r.metrics.sharpe == 0.0 && r.metrics.sharpe_tstat == 0.0 && r.metrics.sortino == 0.0 &&
+              r.metrics.annualized_vol == 0.0,
+          "flat book earning exactly a varying rf: 0/0/0, not rounding noise over rounding noise");
+    // an equity curve compounding at exactly rf (the portfolio path)
+    at::Series e(400), rf(400);
+    e[0] = 100000.0;
+    for (int i = 0; i < 400; ++i) rf[i] = 0.02 + 0.03 * i / 399.0;
+    for (int i = 0; i + 1 < 400; ++i) e[i + 1] = e[i] * (1.0 + rf[i] / 252.0);
+    const auto z = at::compute_metrics_rf(e, at::Series(400, 1.0), 252, rf, at::Series(400, 0.0));
+    check(z.sharpe == 0.0 && z.sharpe_tstat == 0.0 && z.sortino == 0.0 && z.annualized_vol == 0.0,
+          "curve at exactly rf: 0/0/0");
+    // genuine dispersion, however small, is untouched
+    at::Series e2(6);
+    e2[0] = 100000.0;
+    const double rr[5] = {1e-4, 1.1e-4, 0.9e-4, 1.05e-4, 0.95e-4};
+    for (int i = 0; i < 5; ++i) e2[i + 1] = e2[i] * (1.0 + rr[i]);
+    const auto m = at::compute_metrics(e2, at::Series(6, 1.0), 252, 0.0, at::Series(6, 0.0));
+    check(m.sharpe > 10.0 && m.annualized_vol > 0.0, "a series with real dispersion keeps its Sharpe");
+}
+
+// v0.8 regression review (e): a target equal to the held weight is a keep, not clamped.
+void test_keep_at_cap_is_no_trade() {
+    const at::Series p(12, 100.0);
+    at::BacktestConfig cfg = no_cost();
+    cfg.borrow_annual = 0.05;
+    cfg.max_leverage = 1.0;
+    at::BacktestInputs in;
+    in.rebalance.assign(12, 0.0);
+    in.rebalance[0] = in.rebalance[5] = 1.0;
+    at::BacktestInputs pre;
+    pre.rebalance.assign(in.rebalance.begin(), in.rebalance.begin() + 6);
+    const double held = at::run_backtest_ex(at::Series(6, 100.0), at::Series(6, -1.0), cfg, pre).positions[5];
+    check(held < -1.0, "borrow de-levers a capped short past the cap");
+    at::Series keep(12, -1.0);
+    for (int i = 5; i < 12; ++i) keep[i] = held;
+    const auto r = at::run_backtest_ex(p, keep, cfg, in);
+    check(r.trades.size() == 1 && r.traded[5] == 0.0 && r.metrics.num_trades == 1,
+          "a keep at the cap books no cap-enforcement trade (was a +0.00099 trim)");
+    check(r.positions[5] == held && r.positions[6] < held, "the held weight is kept and keeps drifting");
+    at::Series trim(12, -1.0);
+    for (int i = 5; i < 12; ++i) trim[i] = -1.5;
+    const auto t = at::run_backtest_ex(p, trim, cfg, in);
+    check(t.trades.size() == 2 && t.positions[5] == -1.0 && near(t.traded[5], -held - 1.0),
+          "a new target outside the cap is still clamped");
+    const auto t2 = at::run_backtest_ex(p, at::Series(12, -1.0), cfg, in);
+    check(t2.trades.size() == 2 && t2.positions[5] == -1.0, "a new target at the cap while held past it is a trim");
+}
+
 }  // namespace
 
 int main() {
@@ -482,6 +545,8 @@ int main() {
     test_crossover_dead_band();
     test_nan_recovery();
     test_almgren_chriss_stable();
+    test_zero_variance_metrics();
+    test_keep_at_cap_is_no_trade();
     if (failures == 0) std::printf("all C++ core tests passed\n");
     return failures == 0 ? 0 : 1;
 }

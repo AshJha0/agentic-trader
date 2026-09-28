@@ -18,9 +18,15 @@ boundary unchanged.
 ``RecordingProvider`` wraps a provider so that the desk's agents reach data only
 through these tools: every provider call the analysts make becomes a policy
 check and an evidence record.
+
+The position book is per run: ``DeskTools.for_book`` gives a view of the desk that
+reads and checks positions in one run's book (the desk's positions overlaid with the
+task's declared facts) while sharing the provider, the plans it produced and the
+tickets it wrote, so concurrent tasks on one symbol never see each other's facts.
 """
 from __future__ import annotations
 
+import copy
 import math
 from datetime import date, timedelta
 from typing import Any
@@ -33,6 +39,7 @@ from ..alpha import alpha_report, alpha_snapshot
 from ..backtest import baseline_weights
 from ..data.base import MarketDataProvider, NewsItem
 from ..instruments import Instrument
+from ..memory import series_basis
 from ..portfolio import METHODS, construct
 from .domain import Capability, EvidenceType, RiskLevel, ToolAnnotations
 from .rag import KnowledgeBase, default_knowledge_base
@@ -107,6 +114,14 @@ class DeskTools:
     def order_cap(self) -> float:
         """Largest notional one ticket may carry, in the account currency."""
         return default_order_cap(self.config, self.capital)
+
+    def for_book(self, positions: dict[str, float]) -> "DeskTools":
+        """A view of this desk whose position book is ``positions`` (one run's book, read live)
+        and that shares everything else: provider, knowledge, capital, the plans it produced
+        and the tickets it wrote."""
+        view = copy.copy(self)
+        view.positions = positions
+        return view
 
     def _history(self, symbol: str, as_of: date, lookback_days: int | None,
                  alpha: bool = False) -> tuple[Instrument, pd.DataFrame]:
@@ -282,10 +297,13 @@ class DeskTools:
         book is refused), in whole shares or whole FX lots, with the notional in the account
         currency and the quantity in shares or the base currency (``quantity_unit``). A negative
         equity target under the long-only policy is truncated to flat (``intent`` says reduce vs
-        short). Fills are simulated on the NEXT session's bars, the first a decision at the
-        as-of close can trade in; when the provider has no such session yet the plan is returned
-        with ``simulated: false`` instead of a fill on the as-of day. ``plan_id`` is what
-        ``submit_order`` requires."""
+        short). A change below one share or one lot, like an unchanged target, is returned as
+        ``trade: false`` with the reason. Fills are simulated on the NEXT session's bars, the
+        first a decision at the as-of close can trade in; when the provider has no such session
+        yet the plan is returned with ``simulated: false`` instead of a fill on the as-of day.
+        ``plan_id`` is what ``submit_order`` requires; ``ticketable`` says whether the notional
+        fits the desk's per-order cap (``order_cap``) -- a plan over it is returned with the cap
+        and a note so the caller can reduce or split, and is not one ``submit_order`` accepts."""
         from ..algo import base_to_account_rate, plan_execution, simulate_execution, synthetic_intraday_bars
         from ..state import Action, FinalDecision
         d = _as_date(as_of)
@@ -308,24 +326,38 @@ class DeskTools:
         if ins.is_fx and self.account_currency not in (ins.base, ins.quote):
             rate = base_to_account_rate(self.provider, ins.base, self.account_currency, d)
         target = float(target_weight)
+        lot = float(self.config.get("execution", {}).get("fx_lot_size", 1000.0) or 1.0)
         dec = FinalDecision(ins.symbol, d, Action.HOLD, target, 0.0, None, None, "")
         plan = plan_execution(dec, ins, cw, self.capital, last, adv, algo,  # type: ignore[arg-type]
                               account_currency=self.account_currency, base_to_account=rate,
-                              allow_short=allow_short,
-                              lot_size=self.config.get("execution", {}).get("fx_lot_size", 1000.0),
+                              allow_short=allow_short, lot_size=lot,
                               ac_kappa=3.0 if self.config["costs"].get("ac_kappa") is None
                               else float(self.config["costs"]["ac_kappa"]))
+        effective = target if (allow_short or target >= 0) else 0.0
+        truncated = "" if effective == target else \
+            f" (target {target:+.2f} truncated to flat: shorting {ins.display} is not allowed)"
         if plan is None:
-            effective = target if (allow_short or target >= 0) else 0.0
-            note = "" if effective == target else \
-                f" (target {target:+.2f} truncated to flat: shorting {ins.display} is not allowed)"
-            return {"trade": False, "reason": "target equals current position" + note}
-        self.plans[plan.id] = plan.to_dict()
-        out: dict[str, Any] = {"trade": True, **plan.to_dict(), "as_of": d.isoformat()}
+            if abs(effective - cw) < 1e-9:
+                reason = "target equals current position"
+            else:
+                unit = f"one lot of {lot:g} {ins.base}" if ins.is_fx else "one share"
+                reason = f"weight change {cw:+.4f} -> {effective:+.4f} is below {unit}; nothing to trade"
+            return {"trade": False, "reason": reason + truncated}
+        cap = self.order_cap
+        ticketable = plan.notional <= cap
+        if ticketable:
+            self.plans[plan.id] = plan.to_dict()
+        out: dict[str, Any] = {"trade": True, **plan.to_dict(), "as_of": d.isoformat(), "ticketable": ticketable,
+                               "order_cap": cap}
+        notes = []
+        if not ticketable:
+            notes.append(f"notional {plan.notional:,.0f} {self.account_currency} exceeds the per-order cap "
+                         f"{cap:,.0f}: not ticketable as one order; reduce the change or split it")
         nxt = self._next_session(ins, d)
         if nxt is None:
-            out.update(simulated=False, note=f"no session after {d} is available yet: the order executes on the "
-                                             "next session, so no fill was simulated")
+            notes.append(f"no session after {d} is available yet: the order executes on the next session, "
+                         "so no fill was simulated")
+            out.update(simulated=False, note="; ".join(notes))
             return _clean(out)
         bars = synthetic_intraday_bars(nxt, plan.slices, "fx" if ins.is_fx else "equity")
         daily_vol = _daily_vol(df)
@@ -333,6 +365,8 @@ class DeskTools:
         rep = simulate_execution(plan.schedule(bars), bars, plan.side, plan.algo, spread, 1.0, daily_vol, adv,
                                  requested=plan.quantity)
         out.update(simulated=True, execution_date=pd.Timestamp(nxt.name).date().isoformat(), **rep.to_dict())
+        if notes:
+            out["note"] = "; ".join(notes)
         return _clean(out)
 
     def submit_order(self, symbol: str, side: str, quantity: float, quantity_unit: str, notional: float,
@@ -416,6 +450,9 @@ def ticket_from_plan(plan: dict[str, Any], note: str = "") -> dict[str, Any]:
     """The ``execution.submit_order`` arguments for a plan payload returned by ``execution.plan``."""
     if not plan.get("trade"):
         raise ValueError("the plan has nothing to trade")
+    if plan.get("ticketable") is False:
+        raise ValueError(f"the plan's notional {plan['notional']:,.0f} {plan['notional_currency']} exceeds the "
+                         f"per-order cap {plan['order_cap']:,.0f}: it cannot be ticketed as one order")
     return {"symbol": plan["symbol"], "side": plan["side"], "quantity": plan["quantity"],
             "quantity_unit": plan["quantity_unit"], "notional": plan["notional"],
             "notional_currency": plan["notional_currency"], "price": plan["price"], "plan_id": plan["plan_id"],
@@ -448,14 +485,17 @@ class RecordingProvider(MarketDataProvider):
     The desk's analysts keep calling ``provider.news(...)`` as before; here each
     call is a policy-checked ``market_data.*`` tool call that leaves an evidence
     record. A denied or failed call returns "no data", so an analyst abstains
-    instead of seeing something it was not allowed to see.
+    instead of seeing something it was not allowed to see. The wrapper is
+    transparent for memory: it carries the inner provider's ``name`` and price
+    basis, so a decision made through the desk's tools is stamped, and later
+    valued, exactly like one made on the provider directly.
     """
-
-    name = "recording"
 
     def __init__(self, executor: ToolExecutor, inner: MarketDataProvider, correlation_id: str):
         super().__init__(inner.config)
         self.executor, self.inner, self.cid = executor, inner, correlation_id
+        self.name = inner.name
+        self.price_basis = series_basis(inner)
         self.real_world = inner.real_world
 
     def _call(self, name: str, **args: Any) -> Any:

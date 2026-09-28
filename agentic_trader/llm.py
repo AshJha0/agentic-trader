@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import logging
 import math
+import random
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -75,6 +77,11 @@ MODEL_CAPABILITIES: dict[str, tuple[str | None, tuple[str, ...]]] = {
 # Input size assumed when a call has to be priced before (or without) a usage record:
 # the deep-tier prompts carry the analyst digest, debate and facts, a few thousand tokens.
 ESTIMATED_INPUT_TOKENS = 8000
+# Reply size reserved per call under a dollar cap when the config does not say (llm_reserve_output_tokens).
+DEFAULT_RESERVE_OUTPUT_TOKENS = 2000
+# Status codes retried besides rate limits and every 5xx (what the SDK's own loop retries).
+_RETRY_STATUS = frozenset({408, 409, 429})
+MAX_RETRY_DELAY_S = 8.0
 
 _warned: set[str] = set()
 _warned_lock = threading.Lock()
@@ -141,15 +148,22 @@ def request_shape(model: str, effort: str, max_tokens: int) -> dict[str, Any]:
     return kwargs
 
 
-def estimate_call_cost(model: str, max_tokens: int,
+def estimate_call_cost(model: str, output_tokens: int,
                        input_tokens: int = ESTIMATED_INPUT_TOKENS) -> float:
-    """Conservative list-price cost of one call: a typical prompt plus a full ``max_tokens``
-    reply. ``inf`` for an unpriced id, so a budget that reserves it fails closed."""
+    """List-price cost of one call with a typical prompt and ``output_tokens`` of reply.
+    ``inf`` for an unpriced id, so a budget that reserves it fails closed."""
     price = price_for(model)
     if price is None:
         return math.inf
     pin, pout = price
-    return (input_tokens * pin + max_tokens * pout) / 1e6
+    return (input_tokens * pin + output_tokens * pout) / 1e6
+
+
+def _whole_number(config: dict, key: str, default: int, minimum: int) -> int:
+    v = config.get(key, default)
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or v < minimum:
+        raise ValueError(f"{key} must be a whole number >= {minimum}, got {v!r}")
+    return int(v)
 
 
 class LLM(Protocol):
@@ -256,10 +270,13 @@ class AnthropicLLM:
                 check_effort(config[key])
             except ValueError as e:
                 raise ValueError(f"{key}: {e}") from None
-        self.max_retries = int(config.get("llm_max_retries", 2))
-        # Credentials: ANTHROPIC_API_KEY or an `ant auth login` profile.
-        self.client = anthropic.Anthropic(timeout=float(config.get("llm_timeout_s", 300)),
-                                          max_retries=self.max_retries)
+        self.max_retries = _whole_number(config, "llm_max_retries", 2, 0)
+        self.retry_backoff_s = float(config.get("llm_retry_backoff_s", 0.5))
+        self.reserve_output_tokens = _whole_number(config, "llm_reserve_output_tokens",
+                                                   DEFAULT_RESERVE_OUTPUT_TOKENS, 1)
+        # Credentials: ANTHROPIC_API_KEY or an `ant auth login` profile. The client makes no
+        # retries of its own: ``complete`` runs the loop, so every attempt is observed and billed.
+        self.client = anthropic.Anthropic(timeout=float(config.get("llm_timeout_s", 300)), max_retries=0)
         self.config = config
         self.usage = UsageTracker()
 
@@ -276,40 +293,49 @@ class AnthropicLLM:
                              self.config["max_tokens"])
 
     def estimate_cost(self, deep: bool) -> float:
-        """What one call on this tier can cost at most (a full max_tokens reply)."""
-        return estimate_call_cost(self.model_for(deep), int(self.config["max_tokens"]))
+        """What one call on this tier is reserved at before it is dispatched: a typical prompt
+        plus ``llm_reserve_output_tokens`` of reply (a realistic size; the ``max_tokens`` ceiling
+        would reserve roughly ten times a real call and starve parallel workers)."""
+        return estimate_call_cost(self.model_for(deep), self.reserve_output_tokens)
+
+    def _create(self, kwargs: dict[str, Any]) -> Any:
+        if self.config.get("use_refusal_fallback") and kwargs["model"] in _FALLBACK_MODELS:
+            return self.client.beta.messages.create(betas=[_FALLBACK_BETA], extra_body={"fallbacks": "default"},
+                                                    **kwargs)
+        return self.client.messages.create(**kwargs)
+
+    def _retry_delay(self, attempt: int) -> float:
+        return min(self.retry_backoff_s * 2 ** (attempt - 1), MAX_RETRY_DELAY_S) * (1.0 - 0.25 * random.random())
 
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
         a = self._anthropic
         kwargs = self._request(deep)
         kwargs.update(system=system, messages=[{"role": "user", "content": prompt}])
-        try:
-            if self.config.get("use_refusal_fallback") and kwargs["model"] in _FALLBACK_MODELS:
-                resp = self.client.beta.messages.create(
-                    betas=[_FALLBACK_BETA], extra_body={"fallbacks": "default"}, **kwargs)
-            else:
-                resp = self.client.messages.create(**kwargs)
-        except a.RateLimitError as e:
-            log.warning("rate limited after SDK retries: %s", e)
-            self.usage.count("errors")
-            return None
-        except a.APIStatusError as e:
-            log.warning("Claude API error %s: %s", e.status_code, e.message)
-            self.usage.count("errors")
-            return None
-        except a.APIConnectionError as e:
-            if isinstance(e, a.APITimeoutError):
-                # The server can finish (and bill) a request the client abandoned, once per
-                # attempt the SDK made; an unknown charge is booked at its maximum, not at $0.
-                self.usage.add_estimate(kwargs["model"], ESTIMATED_INPUT_TOKENS, kwargs["max_tokens"],
-                                        attempts=self.max_retries + 1)
-                self.usage.count("timeouts")
-                log.warning("Claude API request timed out after %d attempt(s); billed at the "
-                            "estimated maximum: %s", self.max_retries + 1, e)
-            else:
-                log.warning("cannot reach Claude API: %s", e)
-            self.usage.count("errors")
-            return None
+        for attempt in range(1, self.max_retries + 2):
+            try:
+                resp = self._create(kwargs)
+                break
+            except a.RateLimitError as e:
+                problem, retry = f"rate limited: {e}", True
+            except a.APIStatusError as e:
+                problem = f"Claude API error {e.status_code}: {e.message}"
+                retry = e.status_code in _RETRY_STATUS or e.status_code >= 500
+            except a.APIConnectionError as e:
+                if isinstance(e, a.APITimeoutError):
+                    # The server can finish (and bill) a request the client abandoned; an unknown
+                    # charge is booked at its maximum, per attempt, whatever a later attempt does.
+                    self.usage.add_estimate(kwargs["model"], ESTIMATED_INPUT_TOKENS, kwargs["max_tokens"])
+                    self.usage.count("timeouts")
+                    problem = f"Claude API request timed out (attempt {attempt}, billed at the estimated maximum): {e}"
+                else:
+                    problem = f"cannot reach Claude API: {e}"
+                retry = True
+            if not retry or attempt > self.max_retries:
+                log.warning("%s; giving up after %d attempt(s)", problem, attempt)
+                self.usage.count("errors")
+                return None
+            log.warning("%s; retry %d of %d", problem, attempt, self.max_retries)
+            time.sleep(self._retry_delay(attempt))
         self.usage.add(getattr(resp, "model", kwargs["model"]), getattr(resp, "usage", None))
         if resp.stop_reason == "refusal":
             log.warning("model declined the request; using rule-based fallback")
@@ -330,11 +356,13 @@ class BudgetedLLM:
     14 calls, so a 1-year weekly backtest of one instrument is ~730 calls, and an
     Opus call costs roughly 15x a Haiku call, so a call count alone does not bound
     the bill. The dollar cap uses the inner model's ``UsageTracker`` (list prices,
-    cache-aware). Before a call is dispatched its maximum cost (``inner.estimate_cost``,
-    a full ``max_tokens`` reply) is reserved under the lock, and calls in flight count
-    against the cap, so parallel workers sharing one budget cannot each slip one more
-    call past it. A served model with no list price makes the spend unknowable and the
-    budget treats it as exhausted (fail closed) rather than as free.
+    cache-aware). Before a call is dispatched its expected cost (``inner.estimate_cost``:
+    a typical prompt plus ``llm_reserve_output_tokens`` of reply) is reserved under the
+    lock, and calls in flight count against the cap, so parallel workers sharing one
+    budget cannot each slip one more call past it; a cap below one reservation refuses
+    every call on that tier, before any spend. A served model with no list price makes
+    the spend unknowable and the budget treats it as exhausted (fail closed) rather than
+    as free.
     """
 
     def __init__(self, inner: LLM, max_calls: int | None = None, max_cost_usd: float | None = None):

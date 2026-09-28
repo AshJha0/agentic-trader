@@ -104,8 +104,9 @@ class Trader(Agent):
                      + f". Stops at {risk['stop_atr_mult']}x ATR (ATR = {atr / price:.2%} of price).")
         if hit is not None:
             rationale += f" Track record hit rate {hit:.0%} over {int(state.track_record['n'])} calls."
+        untrusted = state.untrusted_inputs or debate.untrusted
         proposal = TradeProposal(action_for(w, score, thr), w, debate.conviction, price, stop, tp,
-                                 10, rationale)
+                                 10, rationale, untrusted=untrusted)
 
         facts = {"last_close": state.px(price), "atr14": state.px(atr), "short_selling_allowed": shorts,
                  "max_position": risk["max_position"], "debate_winner": debate.winner,
@@ -116,7 +117,7 @@ class Trader(Agent):
         prompt = (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}), as of "
             f"{state.as_of.isoformat()}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
-            f"Debate verdict: {debate.summary}\n\nTrading facts:\n{fmt_facts(facts)}\n"
+            f"{state.verdict_block()}\n\nTrading facts:\n{fmt_facts(facts)}\n"
             + state.lessons_block()
             + policy_passages(state)
             + '\nJSON keys: "action" ("BUY", "SELL" or "HOLD"), "target_weight" (signed '
@@ -141,7 +142,7 @@ class Trader(Agent):
                 Action(act) if act in Action.__members__ else action_for(w, score, thr),
                 w, clip(data.get("confidence"), 0, 1, debate.conviction), price, stop, tp,
                 int(clip(data.get("horizon_days"), 1, 90, 10)), str(data["rationale"]),
-                source="llm")
+                source="llm", untrusted=untrusted)
         state.proposal = proposal
         return proposal
 

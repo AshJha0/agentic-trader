@@ -16,7 +16,10 @@
 // carry-earning FX position de-levers as cash accrues. No trade and no cost is
 // charged on a hold bar. The leverage cap and the short-sale flag apply to targets;
 // a held position is not trimmed between decisions (the desk re-decides at every
-// rebalance and the protective levels are the intrabar risk control).
+// rebalance and the protective levels are the intrabar risk control). A target equal
+// to the weight currently held is a decision to keep the position and is executed as
+// no trade even when drift has carried that weight outside the cap: the cap binds on
+// new targets, not on drift (run_agent_backtest passes the held weight for a keep).
 // ``positions[t]`` is the weight actually held over (t, t+1], drifted.
 //
 // Cash leg: idle capital earns ``cash_rate[t]`` (annual, per bar). For funded
@@ -129,9 +132,14 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
 
 // Metrics of an equity curve. ``positions`` must have the same length as ``equity``
 // (invalid_argument otherwise). ``risk_free_annual`` is a constant, or a per-bar
-// series of the same length (NaN -> 0); Sharpe, Sortino and the t-stat use the excess
-// return r_t - rf_t / ppy. ``traded`` (|dw| per bar) gives the turnover and trade
-// count; without it both are inferred from changes in ``positions``.
+// series of the same length (NaN -> 0; empty = absent, rf 0); Sharpe, Sortino and the
+// t-stat use the excess return r_t - rf_t / ppy. An excess-return series that is
+// constant to rounding (sample sd <= kZeroVarianceTol * max(1, |mean|)) has no
+// dispersion to divide by: Sharpe, Sortino, the t-stat and annualized_vol are 0
+// rather than noise over noise (a flat book, or one earning exactly rf). ``traded``
+// (|dw| per bar) gives the turnover and trade count; without it both are inferred
+// from changes in ``positions``, which drift every bar under constant units.
+constexpr double kZeroVarianceTol = 1e-12;
 Metrics compute_metrics(const Series& equity, const Series& positions,
                         double periods_per_year, double risk_free_annual = 0.0,
                         const Series& traded = Series{});

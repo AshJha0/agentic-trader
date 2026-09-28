@@ -116,16 +116,14 @@ class RiskAnalyst(Agent):
                 f"{position_var(f, f['proposed_weight']):.2%}, "
                 f"CVaR95 {position_cvar(f, f['proposed_weight']):.2%}, drawdown from 60d high "
                 f"{f['drawdown_from_60d_high']:.1%}.")
-        view = RiskView(self.stance, w, text, rnd)
+        untrusted = state.untrusted_inputs or state.proposal.untrusted or any(v.untrusted for v in history)
+        view = RiskView(self.stance, w, text, rnd, untrusted=untrusted)
 
-        p = state.proposal
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}.\n"
-            f"Trader proposal: {p.action.value} weight {p.target_weight:+.2f}; {p.rationale}\n\n"
+            f"{state.proposal_block()}\n\n"
             f"Risk facts:\n{fmt_facts(state.prompt_facts(f))}\n"
-            + ("\nDiscussion so far:\n" + "\n".join(
-                f"{v.stance} (round {v.round}, {v.recommended_weight:+.2f}): {v.argument}"
-                for v in history) if history else "")
+            + ("\nDiscussion so far:\n" + state.risk_views_block(history) if history else "")
             + f'\n\nRound {rnd}. JSON keys: "recommended_weight" (signed fraction of capital), '
               '"argument" (<= 120 words, respond to the other analysts).'
         )
@@ -134,7 +132,7 @@ class RiskAnalyst(Agent):
         if data:
             mx = f["max_position"]
             view = RiskView(self.stance, clip(data["recommended_weight"], -mx, mx),
-                            str(data["argument"]), rnd, source="llm")
+                            str(data["argument"]), rnd, source="llm", untrusted=untrusted)
         return view
 
 
@@ -190,10 +188,8 @@ class PortfolioManager(Agent):
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}, last "
             f"close {state.fmt_px(state.last_price)}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
-            f"Debate verdict: {state.debate.summary}\n\nTrader proposal: {p.action.value} "
-            f"{p.target_weight:+.2f}. {p.rationale}\n\nRisk discussion:\n"
-            + "\n".join(f"{v.stance} (round {v.round}, {v.recommended_weight:+.2f}): {v.argument}"
-                        for v in state.risk_views)
+            f"{state.verdict_block()}\n\n{state.proposal_block()}\n\nRisk discussion:\n"
+            + state.risk_views_block(state.risk_views)
             + f"\n\nRisk facts and firm limits:\n{fmt_facts(state.prompt_facts(f))}\n"
             + state.lessons_block()
             + policy_passages(state)

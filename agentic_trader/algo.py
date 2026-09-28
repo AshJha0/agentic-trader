@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -35,6 +36,8 @@ import pandas as pd
 from . import quant
 from .instruments import Instrument
 from .state import FinalDecision
+
+log = logging.getLogger(__name__)
 
 Side = Literal["buy", "sell"]
 Algo = Literal["twap", "vwap", "pov", "ac"]
@@ -412,12 +415,16 @@ def plan_execution(decision: FinalDecision, instrument: Instrument, current_weig
                    max_adv_participation: float = 0.10, *, account_currency: str = "USD",
                    base_to_account: float | None = None, allow_short: bool | None = None,
                    lot_size: float | None = None, ac_kappa: float = 3.0) -> ExecutionPlan | None:
-    """Turn a weight change into a parent order. ``None`` when nothing needs trading.
+    """Turn a weight change into a parent order. ``None`` when nothing needs trading: the
+    target equals the current position, a truncated short leaves a flat book flat, or the
+    change rounds down to zero lots. ``ValueError`` is reserved for invalid inputs.
 
     Sizing: ``notional = |target - current| * capital`` in the account currency; the quantity
     is that notional divided by the price of one unit in the account currency and rounded
     *down* once, here, to whole shares (equity) or to ``lot_size`` base-currency units (FX,
-    default one unit). The notional reported is that of the rounded quantity. Equities are
+    default one unit); a change below one lot is ``None``, not an error, so a rebalance
+    residual is a no-op for the CLI and the desk tools. The notional reported is that of the
+    rounded quantity. Equities are
     assumed quoted in the account currency. For FX the unit is the base currency: when the
     base is the account currency the quantity equals the notional (USDJPY on a USD account);
     when the quote is, it is ``notional / last_price`` (EURUSD); for a cross the caller
@@ -465,8 +472,9 @@ def plan_execution(decision: FinalDecision, instrument: Instrument, current_weig
     raw = abs(delta) * capital / unit_price
     qty = math.floor(raw / lot + 1e-9) * lot
     if qty <= 0:
-        raise ValueError(f"{instrument.display}: an order of {raw:.4g} {unit} is below one lot of {lot:g}; "
-                         "nothing to ticket")
+        log.info("%s: a change of %.4g %s is below one lot of %g; nothing to trade", instrument.display, raw,
+                 unit, lot)
+        return None
     notional = qty * unit_price
     side: Side = "buy" if delta > 0 else "sell"
     part = qty / adv if adv else None

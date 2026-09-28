@@ -68,7 +68,8 @@ class _APITimeoutError(_APIConnectionError):
 def fake_anthropic(monkeypatch, served="claude-opus-5-20260101", fail=None, text='{"signal": 0.5}',
                    stop_reason="end_turn", usage=None, delay=0.0):
     """Install a stand-in ``anthropic`` module; returns the list of recorded request kwargs
-    and the list of constructed clients."""
+    and the list of constructed clients. ``fail`` is one exception raised on every call, or a
+    list consumed one entry per call (``None`` entries succeed)."""
     recorded, clients = [], []
     usage = usage or SimpleNamespace(input_tokens=1000, output_tokens=200, cache_read_input_tokens=50,
                                      cache_creation_input_tokens=0)
@@ -78,8 +79,9 @@ def fake_anthropic(monkeypatch, served="claude-opus-5-20260101", fail=None, text
             recorded.append(kw)
             if delay:
                 time.sleep(delay)
-            if fail is not None:
-                raise fail
+            exc = fail.pop(0) if isinstance(fail, list) and fail else fail
+            if exc is not None and not isinstance(exc, list):
+                raise exc
             content = [SimpleNamespace(type="text", text=text)] if text is not None else []
             return SimpleNamespace(model=served, stop_reason=stop_reason, usage=usage, content=content)
 
@@ -120,9 +122,12 @@ def test_request_shape_only_sends_parameters_the_model_family_accepts(model, eff
 
 def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, caplog):
     recorded, clients = fake_anthropic(monkeypatch)
-    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, llm_timeout_s=42, llm_max_retries=1)
+    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, llm_timeout_s=42, llm_max_retries=1,
+                      llm_retry_backoff_s=0.0)
     llm = AnthropicLLM(cfg)
-    assert clients[-1] == {"timeout": 42.0, "max_retries": 1}
+    # v0.8 regression (g): the SDK makes no retries of its own; AnthropicLLM runs the loop so every
+    # attempt is observed (this line asserted max_retries=1 before, the enshrined defect)
+    assert clients[-1] == {"timeout": 42.0, "max_retries": 0} and llm.max_retries == 1
     assert llm.complete("sys", "hello", deep=True) == '{"signal": 0.5}'
     assert llm.complete("sys", "hello", deep=False) == '{"signal": 0.5}'
     deep, quick = recorded
@@ -135,7 +140,9 @@ def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, cap
     assert list(s["by_model"]) == ["claude-opus-5-20260101"] and s["calls"] == 2
     assert s["by_model"]["claude-opus-5-20260101"]["input_tokens"] == 2000
     assert llm.usage.cost_usd == pytest.approx((2000 * 5 + 400 * 25 + 100 * 0.5) / 1e6)  # cache reads at 0.1x
-    assert llm.estimate_cost(True) == pytest.approx((8000 * 5 + 16000 * 25) / 1e6)
+    # v0.8 regression (f): the reservation is a realistic reply (llm_reserve_output_tokens), not
+    # the max_tokens ceiling (this line asserted the 16000-token reservation before)
+    assert llm.estimate_cost(True) == pytest.approx((8000 * 5 + 2000 * 25) / 1e6)
 
     # refusal fallback goes through the beta endpoint with the fallbacks body, opus-5 only
     recorded.clear()
@@ -162,12 +169,13 @@ def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, cap
     fake_anthropic(monkeypatch, fail=_APIConnectionError("dns"))
     a = AnthropicLLM(cfg)
     assert a.complete("s", "p", deep=True) is None and a.usage.errors == 1 and a.usage.cost_usd == 0
-    # a timeout is billed at its maximum for every attempt the SDK made (1 retry -> 2 attempts)
+    # a timeout is billed at its maximum for every attempt made (1 retry -> 2 attempts), and
+    # counted per attempt (v0.8 regression (g); this asserted one timeout for two attempts before)
     fake_anthropic(monkeypatch, fail=_APITimeoutError("read timeout"))
     a = AnthropicLLM(cfg)
     assert a.complete("s", "p", deep=True) is None
     u = a.usage.by_model["claude-opus-5"]
-    assert a.usage.timeouts == 1 and u.estimated_calls == 2 and u.calls == 0
+    assert a.usage.timeouts == 2 and u.estimated_calls == 2 and u.calls == 0
     assert u.output_tokens == 2 * 16000 and u.input_tokens == 2 * 8000
     assert a.usage.cost_usd == pytest.approx(2 * (8000 * 5 + 16000 * 25) / 1e6)
 
@@ -401,9 +409,13 @@ def test_memory_never_values_an_entry_on_another_provider_and_expires_it():
     # a csv session with prices at a quarter of the level: nothing to compare
     assert m.resolve("AAPL", s.index[15].date(), (s / 4)[:16], provider="csv") == 0
     assert m.entries[0].resolved_on is None and m.track_record("AAPL", s.index[15].date()) == {}
-    # ... and once more than 2x the horizon has passed the entry is expired without a verdict
+    # ... nor to expire, however late the csv visit is (v0.8 regression (c): this asserted that
+    # the csv visit expired the synthetic entry); the entry's own provider expires it once more
+    # than 2x the horizon has passed and its series cannot value it (the entry bar is not in it)
     late = s.index[0].date() + timedelta(days=DecisionMemory.max_age_days(10) + 1)
-    assert m.resolve("AAPL", late, (s / 4), provider="csv") == 1
+    assert m.resolve("AAPL", late, (s / 4), provider="csv") == 0
+    assert m.entries[0].resolved_on is None and not m.entries[0].expired
+    assert m.resolve("AAPL", late, s[20:], provider="synthetic") == 1
     e = m.entries[0]
     assert e.expired and e.pnl is None and e.lesson is None and e.resolved_on == late.isoformat()
     assert m.lessons("AAPL", late) == [] and m.track_record("AAPL", late) == {}
@@ -688,3 +700,197 @@ def test_cli_main_reads_dotenv_only_from_the_real_command_line(tmp_path, monkeyp
     assert main() == 0
     assert "AT_V08_PROBE" not in os.environ                      # ... unless told not to
     capsys.readouterr()
+
+
+# ================================================= v0.8 regression review (agentic-2 cluster)
+# ------------------------------------------------- (c) expiry belongs to the entry's own provider
+def test_a_visit_by_another_provider_leaves_an_entry_for_its_own_provider_to_value():
+    s = _series(start="2024-01-02", n=60)
+    m = DecisionMemory(None)
+    m.record("AAPL", s.index[0].date(), "BUY", 0.5, float(s.iloc[0]), "r", horizon_days=10, provider="yahoo",
+             price_basis="adjusted_close")
+    late = s.index[0].date() + timedelta(days=DecisionMemory.max_age_days(10) + 4)
+    window = s[s.index <= pd.Timestamp(late)]
+    for prov, basis in (("synthetic", "close"), ("recording", "close"), ("yahoo", "close")):
+        assert m.resolve("AAPL", late, window, provider=prov, price_basis=basis) == 0, (prov, basis)
+    e = m.entries[0]
+    assert e.resolved_on is None and not e.expired
+    nxt = late + timedelta(days=1)
+    assert m.resolve("AAPL", nxt, s[s.index <= pd.Timestamp(nxt)], provider="yahoo", price_basis="adjusted_close") == 1
+    assert not e.expired and e.pnl == pytest.approx(0.5 * (s.iloc[10] / s.iloc[0] - 1)) and "was right" in e.lesson
+    assert m.track_record("AAPL", nxt, provider="yahoo") == {"n": 1.0, "hit_rate": 1.0, "avg_pnl": pytest.approx(e.pnl)}
+    # its own provider still expires what its own series cannot value (entry bar before the window)
+    m.record("AAPL", s.index[1].date(), "BUY", 0.5, float(s.iloc[1]), "r", horizon_days=10, provider="yahoo",
+             price_basis="adjusted_close")
+    short = s[5:]
+    assert m.resolve("AAPL", nxt, short[short.index <= pd.Timestamp(nxt)], provider="yahoo",
+                     price_basis="adjusted_close") == 1
+    assert m.entries[1].expired and m.entries[1].pnl is None
+
+
+# ------------------------------------------------- (d) the entry-bar tolerance is the staleness setting
+def test_entry_bar_tolerance_follows_the_staleness_setting():
+    idx = pd.bdate_range("2024-01-01", periods=40)
+    keep = [d for d in idx if not (date(2024, 1, 8) <= d.date() <= date(2024, 1, 12))]   # a week without bars
+    closes = pd.Series(np.linspace(100.0, 140.0, len(keep)), index=pd.DatetimeIndex(keep))
+    entry, visit = date(2024, 1, 13), date(2024, 2, 9)          # decided 8 days after the last bar (Jan 5)
+    truth = 0.5 * (closes.iloc[9] / closes.iloc[4] - 1)
+
+    def resolved(memory_kw=None, resolve_kw=None):
+        m = DecisionMemory(None, **(memory_kw or {}))
+        m.record("AAPL", entry, "BUY", 0.5, float(closes.iloc[4]), "r", horizon_days=5, provider="synthetic")
+        assert m.resolve("AAPL", visit, closes[closes.index <= pd.Timestamp(visit)], provider="synthetic",
+                         **(resolve_kw or {})) == 1
+        return m.entries[0]
+    assert DecisionMemory(None).max_staleness_days == 7 == make_config()["max_data_staleness_days"]
+    e = resolved()                                               # the old hard-coded 7: never valued
+    assert e.expired and e.pnl is None
+    e = resolved({"max_staleness_days": 10})
+    assert not e.expired and e.pnl == pytest.approx(truth) and e.resolved_on == closes.index[9].date().isoformat()
+    e = resolved(None, {"max_staleness_days": 10})               # the visit can pass the desk's setting
+    assert not e.expired and e.pnl == pytest.approx(truth)
+    e = resolved({"max_staleness_days": 10}, {"max_staleness_days": 7})
+    assert e.expired
+
+
+# ------------------------------------------------- (e) fenced text stays fenced one hop later
+class QuotingEverywhere:
+    """Every model-written text field quotes the headline it was shown."""
+
+    def __init__(self):
+        self.prompts = []
+
+    def complete(self, system, prompt, *, deep):
+        role = system.split("Your role: ")[-1].split(".")[0]
+        self.prompts.append((role, prompt))
+        if "News Analyst" in system:
+            return json.dumps({"signal": 0.2, "confidence": 0.6, "summary": f"Headline says: {HEADLINE}",
+                               "key_points": [f"Headline instructs: {HEADLINE}"]})
+        if "Researcher" in system:
+            return f"The decisive headline reads: {HEADLINE}. Position accordingly."
+        if "Facilitator" in system:
+            return json.dumps({"winner": "bull", "score": 0.3, "conviction": 0.5,
+                               "summary": f"Both sides cited the headline: {HEADLINE}"})
+        if "Trader." in system:
+            return json.dumps({"action": "BUY", "target_weight": 0.5, "confidence": 0.5, "stop_loss": None,
+                               "take_profit": None, "horizon_days": 10,
+                               "rationale": f"Trade quoting the headline: {HEADLINE}"})
+        if "Risk Analyst" in system:
+            return json.dumps({"recommended_weight": 0.3, "argument": f"Risk view quoting the headline: {HEADLINE}"})
+        if "Portfolio Manager" in system:
+            return json.dumps({"target_weight": 0.2, "confidence": 0.5, "rationale": f"Approved. {HEADLINE}"})
+        return None
+
+
+ROLES_DOWNSTREAM = {"Bull Researcher", "Bear Researcher", "Debate Facilitator", "Trader", "Portfolio Manager",
+                    "Aggressive (risk-seeking) Risk Analyst", "Neutral Risk Analyst",
+                    "Conservative (risk-averse) Risk Analyst"}
+
+
+def test_model_written_text_derived_from_fenced_input_stays_fenced_one_hop_later(tmp_path):
+    path = tmp_path / "memory.jsonl"
+    cfg = make_config(memory_path=str(path))
+    day1 = QuotingEverywhere()
+    g = TradingGraph(cfg, llm=day1, provider=EvilNews(cfg), memory=DecisionMemory(path), on_event=lambda *_: None)
+    st, _ = g.propagate("AAPL", date(2024, 3, 1))
+    _assert_fenced_everywhere(day1.prompts, {"News Analyst"} | ROLES_DOWNSTREAM)
+    pm = next(p for r, p in day1.prompts if r == "Portfolio Manager")
+    assert pm.count(MARK) >= 6 and MARK not in outside_fences(pm)     # digest, verdict, proposal, three risk views
+    assert all(t.untrusted for t in st.debate.turns) and st.debate.untrusted and st.proposal.untrusted
+    assert all(v.untrusted for v in st.risk_views)
+    # the flag follows the inputs, not the writer: rules-written turns quote the news key points too
+    st0, _ = TradingGraph(cfg, provider=EvilNews(cfg), memory=DecisionMemory(None),
+                          on_event=lambda *_: None).propagate("AAPL", date(2024, 3, 1))
+    assert all(t.untrusted for t in st0.debate.turns) and st0.debate.untrusted and st0.proposal.untrusted
+    assert all(v.untrusted for v in st0.risk_views)
+    # with no third-party text and no lessons nothing is fenced: the prompts read as before
+    clean = Recorder()
+    stc, _ = TradingGraph(make_config(cfg, analysts=["technical"]), llm=clean, memory=DecisionMemory(None),
+                          on_event=lambda *_: None).propagate("AAPL", date(2024, 3, 1))
+    assert not stc.debate.untrusted and not stc.proposal.untrusted and not any(v.untrusted for v in stc.risk_views)
+    assert not any(t.untrusted for t in stc.debate.turns) and not any("<untrusted_data" in p for p in clean.prompts)
+    assert any("Debate so far:\nbull: " in p for p in clean.prompts) and any("Debate verdict: Weighted" in p
+                                                                             for p in clean.prompts)
+    # day 2: the lessons carry the PM's rationale, and everything written from them is fenced too
+    day2 = QuotingEverywhere()
+    g2 = TradingGraph(cfg, llm=day2, provider=EvilNews(cfg), memory=DecisionMemory(path), on_event=lambda *_: None)
+    st2, _ = g2.propagate("AAPL", date(2024, 3, 20))
+    assert st2.lessons and MARK in st2.lessons[0]
+    _assert_fenced_everywhere(day2.prompts, ROLES_DOWNSTREAM)
+    # lessons alone make the derived text untrusted (they are model-written from earlier prompts)
+    stl, _ = TradingGraph(make_config(cfg, analysts=["technical"]), memory=DecisionMemory(path),
+                          on_event=lambda *_: None).propagate("AAPL", date(2024, 3, 20))
+    assert stl.lessons and stl.untrusted_inputs and stl.debate.untrusted and all(t.untrusted for t in stl.debate.turns)
+
+
+# ------------------------------------------------- (f) a realistic reservation
+def test_budget_reservation_is_a_realistic_reply_so_parallel_workers_use_the_cap(monkeypatch):
+    usage = SimpleNamespace(input_tokens=8000, output_tokens=2000, cache_read_input_tokens=0,
+                            cache_creation_input_tokens=0)
+    fake_anthropic(monkeypatch, served="claude-opus-5", usage=usage, delay=0.05)
+    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0)
+    assert cfg["llm_reserve_output_tokens"] == 2000
+    llm = get_llm(cfg)
+    per_call = (8000 * 5 + 2000 * 25) / 1e6                       # 0.09 USD: reserved, then booked as served
+    assert isinstance(llm, BudgetedLLM) and llm.inner.estimate_cost(True) == pytest.approx(per_call)
+    start = threading.Barrier(8)
+
+    def worker():
+        start.wait()
+        for _ in range(5):
+            llm.complete("s", "p", deep=True)
+    ts = [threading.Thread(target=worker) for _ in range(8)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert llm.inner.usage.calls == 11 and llm.spent_usd == pytest.approx(11 * per_call) and llm.spent_usd <= 1.0
+    assert llm.refused == 40 - 11 and llm.in_flight == 0 and llm.reserved_usd == pytest.approx(0.0, abs=1e-12)
+    # a cap below one reservation still refuses, before any spend (fail closed)
+    tiny = BudgetedLLM(AnthropicLLM(cfg), max_cost_usd=0.05)
+    assert tiny.complete("s", "p", deep=True) is None and tiny.refused == 1 and tiny.spent_usd == 0.0
+    # the reserve is configurable and must be a positive whole number of tokens
+    assert AnthropicLLM(make_config(cfg, llm_reserve_output_tokens=500)).estimate_cost(False) == \
+        pytest.approx((8000 * 1 + 500 * 5) / 1e6)
+    for bad in (0, -5, 2.5):
+        with pytest.raises(ValueError, match="llm_reserve_output_tokens"):
+            AnthropicLLM(make_config(cfg, llm_reserve_output_tokens=bad))
+
+
+# ------------------------------------------------- (g) every timed-out attempt is billed
+def test_every_timed_out_attempt_is_billed_even_when_a_retry_succeeds(monkeypatch):
+    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.0)
+    recorded, clients = fake_anthropic(monkeypatch, fail=[_APITimeoutError("read timeout"), None])
+    llm = AnthropicLLM(cfg)
+    assert clients[-1]["max_retries"] == 0 and llm.max_retries == 2
+    assert llm.complete("s", "p", deep=True) == '{"signal": 0.5}' and len(recorded) == 2
+    est, served = llm.usage.by_model["claude-opus-5"], llm.usage.by_model["claude-opus-5-20260101"]
+    assert (est.estimated_calls, est.calls, est.input_tokens, est.output_tokens) == (1, 0, 8000, 16000)
+    assert (served.calls, served.input_tokens, served.output_tokens) == (1, 1000, 200)
+    assert llm.usage.timeouts == 1 and llm.usage.errors == 0
+    assert llm.usage.cost_usd == pytest.approx((8000 * 5 + 16000 * 25 + 1000 * 5 + 200 * 25 + 50 * 0.5) / 1e6)
+    # two timeouts then success: two attempts billed; three timeouts: all billed and the call fails
+    recorded, _ = fake_anthropic(monkeypatch, fail=[_APITimeoutError("t"), _APITimeoutError("t"), None])
+    llm = AnthropicLLM(cfg)
+    assert llm.complete("s", "p", deep=True) is not None and len(recorded) == 3
+    assert llm.usage.timeouts == 2 and llm.usage.by_model["claude-opus-5"].estimated_calls == 2 and llm.usage.errors == 0
+    recorded, _ = fake_anthropic(monkeypatch, fail=_APITimeoutError("t"))
+    llm = AnthropicLLM(cfg)
+    assert llm.complete("s", "p", deep=True) is None and len(recorded) == 3
+    assert llm.usage.timeouts == 3 and llm.usage.errors == 1 and llm.usage.by_model["claude-opus-5"].estimated_calls == 3
+    # rate limits, overloads and dropped connections are retried by the same loop; a 400 is not
+    recorded, _ = fake_anthropic(monkeypatch, fail=[_RateLimitError("slow down", 429), _APIStatusError("overloaded", 529),
+                                                    None])
+    llm = AnthropicLLM(cfg)
+    assert llm.complete("s", "p", deep=True) is not None and len(recorded) == 3 and llm.usage.errors == 0
+    recorded, _ = fake_anthropic(monkeypatch, fail=[_APIConnectionError("reset"), None])
+    llm = AnthropicLLM(cfg)
+    assert llm.complete("s", "p", deep=True) is not None and len(recorded) == 2 and llm.usage.cost_usd > 0
+    recorded, _ = fake_anthropic(monkeypatch, fail=[_APIStatusError("bad request", 400), None])
+    llm = AnthropicLLM(cfg)
+    assert llm.complete("s", "p", deep=True) is None and len(recorded) == 1 and llm.usage.errors == 1
+    recorded, _ = fake_anthropic(monkeypatch, fail=_RateLimitError("slow down", 429))
+    llm = AnthropicLLM(cfg)
+    assert llm.complete("s", "p", deep=True) is None and len(recorded) == 3 and llm.usage.errors == 1
+    with pytest.raises(ValueError, match="llm_max_retries"):
+        AnthropicLLM(make_config(cfg, llm_max_retries=-1))

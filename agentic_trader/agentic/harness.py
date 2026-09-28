@@ -19,8 +19,9 @@ The harness owns the control plane; agents never control the loop. It:
   harness lock together with the last pending-approval check, so a decision or a
   cancellation that lands while the driver parks is never lost;
 * honours cancellation between steps;
-* seeds the desk's position book from the task's declared ``current_weight`` (and an
-  explicit positions map on ``submit``), so the tools and the report agree on the book;
+* gives each run its own position book -- the desk's positions overlaid with an explicit
+  map on ``submit`` and the task's declared ``current_weight`` -- read by that run's tools,
+  so the tools and the report agree on the book and no task rewrites it for another;
 * always runs the governance steps: critic, evidence validation, audited report;
 * keeps a bounded number of finished runs in memory (``agentic.max_retained_runs``);
   the persistent store holds the rest, and the metrics are one process-level set;
@@ -88,6 +89,7 @@ class TaskRun:
     started_at: datetime = field(default_factory=utc_now)
     finished_at: datetime | None = None
     correlation_id: str = field(default_factory=lambda: new_id("CID"))
+    positions: dict[str, float] = field(default_factory=dict)     # this run's book, read by its tools
     _executor: ToolExecutor | None = field(default=None, repr=False)
     _provider: RecordingProvider | None = field(default=None, repr=False)
     _driving: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -120,7 +122,7 @@ class TaskRun:
                            "evidence_ids": list(f.evidence_ids)} for f in self.findings],
              "critic": self.critic.to_dict() if self.critic else None,
              "evidence_count": len(self.evidence), "trace": self.tracer.summary(),
-             "started_at": self.started_at.isoformat(),
+             "positions": dict(self.positions), "started_at": self.started_at.isoformat(),
              "finished_at": self.finished_at.isoformat() if self.finished_at else None}
         if include_report and self.report:
             d["report"] = self.report.to_dict()
@@ -251,30 +253,33 @@ class AgentHarness:
             self._heartbeat_thread.join(timeout=2.0)
 
     # ----------------------------------------------------------- control
-    def seed_positions(self, positions: dict[str, float] | None) -> None:
-        """Declare position weights on the desk's book (an explicit map from a caller)."""
+    def _book_for(self, task: Task, positions: dict[str, float] | None) -> dict[str, float]:
+        """The run's own book: the desk's positions, overlaid with the caller's explicit map and
+        with the task's declared ``current_weight`` (the freshest fact about its symbol), so
+        ``portfolio.position``, ``execution.plan`` and ``submit_order`` agree with the task's
+        facts. Nothing a task declares is written to the desk's book."""
+        book = dict(self.tools.positions)
         for sym, w in (positions or {}).items():
-            ins = Instrument.parse(str(sym))
+            try:
+                ins = Instrument.parse(str(sym))
+            except ValueError as e:
+                raise ValueError(f"positions: {e}") from None
             fw = float(w)
             if not math.isfinite(fw):
-                raise ValueError(f"position weight for {ins.symbol} must be a finite number")
-            self.tools.positions[ins.symbol] = fw
-
-    def _seed_book(self, task: Task, ins: Instrument) -> None:
-        """The task's declared ``current_weight`` is what the desk holds for that symbol during
-        the run, so ``portfolio.position`` and ``execution.plan`` agree with the task's facts."""
-        if task.current_weight is None:
-            return
-        w = float(task.current_weight)
-        held = self.tools.positions.get(ins.symbol)
-        if held is not None and abs(held - w) > 1e-9:
-            log.warning("task %s declares %s at %+.4f; the desk's book held %+.4f and is updated",
-                        task.id, ins.symbol, w, held)
-        self.tools.positions[ins.symbol] = w
+                raise ValueError(f"positions: weight for {ins.symbol} must be a finite number")
+            book[ins.symbol] = fw
+        if task.current_weight is not None:
+            w = float(task.current_weight)
+            if not math.isfinite(w):
+                raise ValueError("current_weight must be a finite number")
+            try:
+                book[Instrument.parse(task.symbol).symbol] = w
+            except ValueError:   # an unparseable task symbol fails the run at planning, as it always did
+                pass
+        return book
 
     def submit(self, task: Task, positions: dict[str, float] | None = None) -> TaskRun:
-        self.seed_positions(positions)
-        run = TaskRun(task, tracer=Tracer(self.metrics))
+        run = TaskRun(task, tracer=Tracer(self.metrics), positions=self._book_for(task, positions))
         with self._lock:
             self.runs[task.id] = run
         self._persist(run)
@@ -294,6 +299,7 @@ class AgentHarness:
                 if run.state is TaskState.AWAITING_APPROVAL:
                     self._transition(run, TaskState.CANCELLED, "cancelled while awaiting approval")
                     self._finish(run)
+                    self._persist(run)
             finally:
                 run._driving.release()
         return run
@@ -408,7 +414,6 @@ class AgentHarness:
     def _plan(self, run: TaskRun) -> None:
         self._transition(run, TaskState.PLANNING)
         ins = Instrument.parse(run.task.symbol)
-        self._seed_book(run.task, ins)
         analysts = self.graph.analyst_names(ins)
         with run.tracer.span("plan"):
             run.plan = make_plan(run.task, ins, analysts, self.config, self.registry, self.graph.llm)
@@ -427,9 +432,12 @@ class AgentHarness:
         self._transition(run, TaskState.EXECUTING)
 
     def _executor(self, run: TaskRun) -> ToolExecutor:
+        """The run's executor: the desk's tools over this run's book (same catalogue and
+        descriptors as ``self.registry``, which the planner and the pre-check use)."""
         if run._executor is None:
             acfg = self.config.get("agentic", {})
-            run._executor = ToolExecutor(self.registry, self.policy, run.evidence, run.task.role, self.gateway,
+            registry = build_registry(self.tools.for_book(run.positions))
+            run._executor = ToolExecutor(registry, self.policy, run.evidence, run.task.role, self.gateway,
                                          run.tracer, ExecutorConfig(float(acfg.get("tool_timeout_s", 30.0))),
                                          run.id)
             run._provider = RecordingProvider(run._executor, self.graph.provider, run.correlation_id)

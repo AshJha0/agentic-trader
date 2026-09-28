@@ -34,6 +34,24 @@ if "--serve" in sys.argv:   # hostile MCP server for test_remote_tools_are_class
     srv.run(transport="stdio")
     sys.exit(0)
 
+if "--serve-slow" in sys.argv:   # a server with one slow tool, for the head-of-line blocking test
+    import time as _time
+    from mcp.server.mcpserver import MCPServer
+    from mcp.types import ToolAnnotations as McpAnnotations
+    srv = MCPServer("slow-desk")
+
+    @srv.tool(name="demo__slow", description="Sleeps for a while", annotations=McpAnnotations(read_only_hint=True))
+    def slow(seconds: float) -> int:
+        _time.sleep(seconds)
+        return 1
+
+    @srv.tool(name="demo__fast", description="Returns at once", annotations=McpAnnotations(read_only_hint=True))
+    def fast() -> int:
+        return 1
+
+    srv.run(transport="stdio")
+    sys.exit(0)
+
 import pytest
 
 from agentic_trader import TradingGraph, make_config
@@ -45,13 +63,13 @@ from agentic_trader.agentic.critic import Critic
 from agentic_trader.agentic.domain import Plan, PlanStep, RiskLevel, StepType, ToolRequest
 from agentic_trader.agentic.harness import wait_until_done
 from agentic_trader.agentic.planner import canonical_plan, plan_cost_bars
-from agentic_trader.agentic.servers import DeskTools, build_registry, ticket_from_plan
+from agentic_trader.agentic.servers import DeskTools, RecordingProvider, build_registry, ticket_from_plan
 from agentic_trader.agentic.store import TaskStore
 from agentic_trader.agentic.tools import ExecutorConfig, _summarise
 from agentic_trader.agentic.api import validate_app_config
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.instruments import Instrument
-from agentic_trader.memory import DecisionMemory
+from agentic_trader.memory import DecisionMemory, series_basis
 
 CFG = make_config(memory_path=None)
 QUIET = dict(memory=DecisionMemory(None), on_event=lambda *_: None)
@@ -110,6 +128,16 @@ class SlowReleaseLock:
 
     def locked(self):
         return self._l.locked()
+
+
+class PlannerStub:
+    """A model that answers only the planner, with the given raw steps."""
+
+    def __init__(self, steps):
+        self.steps = steps
+
+    def complete(self, system, prompt, *, deep):
+        return json.dumps({"steps": self.steps}) if "planning assistant" in system else None
 
 
 # ------------------------------------------------- 43 / 59: guards before approval
@@ -175,10 +203,15 @@ def test_a_36k_evaluation_plan_is_rejected():
     assert sum("no symbol in the configured universe" in n for n in plan.notes) == 20
     open_cfg = make_config(CFG, agentic={"llm_planner": True})
     plan = validate_plan(raw, task, ins, analysts, h.registry, config=open_cfg)
-    assert not [s for s in plan.steps if s.type is StepType.TOOL]
-    assert sum("max_plan_lookback_bars" in n for n in plan.notes) == 18     # 2 fell to the step cap first
-    assert any("truncated" in n for n in plan.notes)
-    assert plan_cost_bars(plan.steps, cfg) == 0
+    tools = [s for s in plan.steps if s.type is StepType.TOOL]
+    # v0.8 regression (i): each list is trimmed to max_symbols_per_call first (60 names, 54,000
+    # bars) and the data budget then keeps the three that fit -- before, the 1000-name steps were
+    # dropped whole by the budget and a 61..222-name step would have passed to the guard's denial
+    assert len(tools) == 3 and all(len(s.arguments["symbols"]) == 60 for s in tools)
+    assert sum("symbols truncated to 60 per call (940 dropped)" in n for n in plan.notes) == 20
+    assert sum("max_plan_lookback_bars" in n for n in plan.notes) == 15     # 2 fell to the step cap first
+    assert any("truncated to 25 steps" in n for n in plan.notes)
+    assert plan_cost_bars(plan.steps, open_cfg) == 3 * 60 * 900 <= open_cfg["agentic"]["max_plan_lookback_bars"]
     # A hand-built plan that bypasses the validator is refused by the harness pre-check:
     # the symbols cap and the universe first ...
     run = h.submit(task)
@@ -477,7 +510,7 @@ def test_a_cancel_landing_as_the_driver_parks_is_applied():
         h = harness(gateway=QueuedApprovalGateway())
         run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
         a1, a2 = h.pending_approvals(run.id)
-        tool = h.registry.get("execution.submit_order")
+        tool = h._executor(run).registry.get("execution.submit_order")   # the run's own view of the desk
         real = tool.fn
 
         def slow_order(*a, **kw):
@@ -1052,24 +1085,24 @@ def test_harness_seeds_the_desk_book_from_the_task_and_an_explicit_positions_map
     finally:
         harness_mod.make_plan = real_make_plan
     assert run.state is TaskState.COMPLETED and run.errors == [], run.errors
-    assert h.tools.positions == {"AAPL": 0.4} and run.report.facts["current_weight"] == 0.4
+    # v0.8 regression (a): the task's fact lives on the run's book; the desk's book is not written
+    assert run.positions == {"AAPL": 0.4} and h.tools.positions == {} and run.report.facts["current_weight"] == 0.4
     pos = next(e for e in run.evidence if e.source == "portfolio.position")
     plan = next(e for e in run.evidence if e.source == "execution.plan")
     assert pos.type is EvidenceType.DATA and pos.payload["weight"] == 0.4
     assert plan.payload["current_weight"] == 0.4 and plan.payload["side"] == "sell" and plan.payload["intent"] == "sell_to_close"
-    # the reduce now goes through: the book knows the long the task described
-    ex = h._executor(h.submit(Task("AAPL", AS_OF, Role.TRADER)))
-    res = ex.call("execution.submit_order", **ticket_from_plan(h.tools.plan("AAPL", AS_OF, 0.0)))
+    # the reduce goes through: the run's book knows the long the task described
+    ex = h._executor(h.submit(Task("AAPL", AS_OF, Role.TRADER, current_weight=0.4)))
+    reduce = ex.call("execution.plan", symbol="AAPL", as_of=AS_OF.isoformat(), target_weight=0.0).payload
+    res = ex.call("execution.submit_order", **ticket_from_plan(reduce))
     assert res.ok and res.payload["intent"] == "sell_to_close" and res.payload["position_before"] == 0.4
     assert "quantity_unit=shares" in ex.evidence_for(res).summary and "notional=" in ex.evidence_for(res).summary
-    # a task that declares a different weight updates the book (the freshest declared fact)
-    h.run(Task("AAPL", AS_OF, Role.TRADER, current_weight=0.1))
-    assert h.tools.positions["AAPL"] == 0.1
-    h.run(Task("AAPL", AS_OF, Role.TRADER))                     # says nothing: the book is left alone
-    assert h.tools.positions["AAPL"] == 0.1
-    # an explicit map on submit
-    h.submit(Task("MSFT", AS_OF, Role.TRADER), positions={"msft": 0.2, "EUR/USD": -0.1})
-    assert h.tools.positions == {"AAPL": 0.1, "MSFT": 0.2, "EURUSD": -0.1}
+    # each task's declaration is its own; a task that says nothing starts from the desk's (empty) book
+    assert h.run(Task("AAPL", AS_OF, Role.TRADER, current_weight=0.1)).positions == {"AAPL": 0.1}
+    assert h.run(Task("AAPL", AS_OF, Role.TRADER)).positions == {} and h.tools.positions == {}
+    # an explicit map on submit is run-scoped too
+    scoped = h.submit(Task("MSFT", AS_OF, Role.TRADER), positions={"msft": 0.2, "EUR/USD": -0.1})
+    assert scoped.positions == {"MSFT": 0.2, "EURUSD": -0.1} and h.tools.positions == {}
     for bad in ({"AAPL": float("nan")}, {"EUR/XYZ": 0.1}):
         with pytest.raises(ValueError):
             h.submit(Task("MSFT", AS_OF, Role.TRADER), positions=bad)
@@ -1084,7 +1117,9 @@ def test_harness_seeds_the_desk_book_from_the_task_and_an_explicit_positions_map
     assert r.status_code == 202
     run = h2.runs[r.json()["task_id"]]
     wait_until_done(run, 120)
-    assert run.state is TaskState.COMPLETED and h2.tools.positions == {"AAPL": 0.4, "MSFT": 0.25}
+    assert run.state is TaskState.COMPLETED and run.positions == {"AAPL": 0.4, "MSFT": 0.25}
+    assert h2.tools.positions == {}
+    assert c.get(f"/tasks/{run.id}", headers=KEY["viewer"]).json()["positions"] == {"AAPL": 0.4, "MSFT": 0.25}
     assert c.get(f"/tasks/{run.id}/report", headers=KEY["viewer"]).json()["facts"]["current_weight"] == 0.4
     r = c.post("/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01", "positions": {"EUR/XYZ": 0.1}},
                headers=KEY["trader"])
@@ -1145,3 +1180,185 @@ def test_critic_var_check_falls_back_to_the_long_tail_for_a_short_and_summaries_
                  "notional=500000.0, notional_currency=USD, price=150.0) -> 1 fields")
     assert _summarise("market_data.news", {"symbol": "AAPL", "as_of": "2024-03-01", "lookback_days": 7}, []) == \
         "market_data.news(symbol=AAPL, as_of=2024-03-01, lookback_days=7) -> 0 items"
+
+
+# ================================================= v0.8 regression review (agentic-2 cluster)
+# ------------------------------------------------- (a) the desk book is per run
+def test_the_desk_book_is_per_run_so_tasks_on_one_symbol_keep_their_own_facts():
+    import agentic_trader.agentic.harness as harness_mod
+    h = harness(gateway=AutoApprovalGateway())
+
+    def facts_plan(task, ins, analysts, config, registry, llm):
+        facts = (PlanStep.make(StepType.TOOL, "portfolio.position", {"symbol": "AAPL"}),
+                 PlanStep.make(StepType.TOOL, "execution.plan",
+                               {"symbol": "AAPL", "as_of": AS_OF.isoformat(), "target_weight": 0.0,
+                                "current_weight": task.current_weight or 0.0}))
+        return Plan(facts + canonical_plan(task, ins, analysts, config, registry).steps, "test")
+    gate, real_prepare = threading.Barrier(2), h.graph.prepare
+
+    def gated_prepare(*a, **k):
+        gate.wait(60)                    # both runs have planned before either reads the book
+        return real_prepare(*a, **k)
+    h.graph.prepare = gated_prepare
+    runs = [h.submit(Task("AAPL", AS_OF, Role.TRADER, current_weight=w)) for w in (0.4, 0.1)]
+    real_make_plan = harness_mod.make_plan
+    harness_mod.make_plan = facts_plan
+    try:
+        ts = [threading.Thread(target=h.resume, args=(r,)) for r in runs]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(120)
+    finally:
+        harness_mod.make_plan = real_make_plan
+        h.graph.prepare = real_prepare
+    for run, w in zip(runs, (0.4, 0.1)):
+        assert run.state is TaskState.COMPLETED and run.errors == [], (w, run.state, run.errors)
+        pos = next(e for e in run.evidence if e.source == "portfolio.position")
+        plan = next(e for e in run.evidence if e.source == "execution.plan")
+        assert pos.payload["weight"] == w and plan.payload["current_weight"] == w
+        assert plan.payload["intent"] == "sell_to_close" and run.report.facts["current_weight"] == w
+        assert run.positions == {"AAPL": w} and run.to_dict()["positions"] == {"AAPL": w}
+    assert h.tools.positions == {}                                   # no task writes the desk's book
+    # a later task that declares nothing starts from the desk's book, not from a predecessor's facts
+    third = h.submit(Task("AAPL", AS_OF, Role.TRADER))
+    ex = h._executor(third)
+    assert third.positions == {} and ex.call("portfolio.position", symbol="AAPL").payload["weight"] == 0.0
+    flat = ex.call("execution.plan", symbol="AAPL", as_of=AS_OF.isoformat(), target_weight=0.0, current_weight=0.0)
+    assert flat.ok and flat.payload["trade"] is False
+    # submit_order's long-only check and portfolio.position read the same run-scoped book
+    reduce = ticket_from_plan(h.tools.for_book({"AAPL": 0.4}).plan("AAPL", AS_OF, 0.0))
+    refused = ex.call("execution.submit_order", **reduce)
+    assert not refused.ok and "long-only" in refused.error and h.tools.orders == []
+    holder = h.submit(Task("AAPL", AS_OF, Role.TRADER, current_weight=0.4), positions={"MSFT": 0.2})
+    assert holder.positions == {"AAPL": 0.4, "MSFT": 0.2}
+    hx = h._executor(holder)
+    assert hx.call("portfolio.position", symbol="AAPL").payload["weight"] == 0.4
+    res = hx.call("execution.submit_order", **reduce)
+    assert res.ok and res.payload["position_before"] == 0.4 and res.payload["intent"] == "sell_to_close"
+    assert hx.call("portfolio.position", symbol="AAPL").payload["pending"][0]["id"] == res.payload["id"]
+    # the desk's own book (declared when the harness is built) is what every run starts from
+    h2 = AgentHarness(TradingGraph(CFG, **QUIET), positions={"AAPL": 0.3})
+    assert h2.submit(Task("AAPL", AS_OF)).positions == {"AAPL": 0.3}
+    assert h2.submit(Task("AAPL", AS_OF, current_weight=0.5)).positions == {"AAPL": 0.5}
+    assert h2.submit(Task("MSFT", AS_OF), positions={"AAPL": 0.0}).positions == {"AAPL": 0.0}
+    assert h2.tools.positions == {"AAPL": 0.3}
+
+
+# ------------------------------------------------- (b) the recording wrapper is transparent
+def test_recording_provider_keeps_the_inner_providers_name_and_price_basis(tmp_path):
+    path = tmp_path / "memory.jsonl"
+    cfg = make_config(memory_path=str(path))
+    h = AgentHarness(TradingGraph(cfg, memory=DecisionMemory(path), on_event=lambda *_: None))
+    run = h.run(Task("AAPL", AS_OF, Role.TRADER))
+    assert run.state is TaskState.COMPLETED
+    assert (run.trading_state.provider_name, run.trading_state.price_basis) == ("synthetic", "close")
+    e = DecisionMemory(path).entries[-1]
+    assert (e.symbol, e.as_of, e.provider, e.price_basis) == ("AAPL", AS_OF.isoformat(), "synthetic", "close")
+    # the plain desk on the same data values the task's decision and shows it as a lesson
+    st = TradingGraph(cfg, memory=DecisionMemory(path), on_event=lambda *_: None).prepare("AAPL", date(2024, 3, 20))
+    assert st.lessons and st.lessons[0].startswith(f"{AS_OF.isoformat()} ")
+    # a yahoo-priced desk keeps its adjusted-close basis through the wrapper
+    class Yahoo(SyntheticProvider):
+        name = "yahoo"
+    ex = h._executor(h.submit(Task("AAPL", AS_OF)))
+    wrapped = RecordingProvider(ex, Yahoo(cfg), "CID")
+    assert wrapped.name == "yahoo" and series_basis(wrapped) == "adjusted_close"
+    assert series_basis(RecordingProvider(ex, SyntheticProvider(cfg), "CID")) == "close"
+
+
+# ------------------------------------------------- (h) a declared position above the cap
+def test_a_declared_position_above_the_cap_plans_a_reduce_instead_of_failing():
+    cfg = make_config(CFG, risk={"max_position": 0.5},
+                      agentic={"llm_planner": True, "llm_critic": False, "llm_reporter": False})
+    step = {"type": "tool", "name": "execution.plan",
+            "arguments": {"symbol": "AAPL", "as_of": AS_OF.isoformat(), "target_weight": 0.0, "current_weight": 0.0}}
+    h = AgentHarness(TradingGraph(cfg, llm=PlannerStub([step]), **QUIET))
+    run = h.run(Task("AAPL", AS_OF, Role.TRADER, current_weight=0.6))
+    assert run.state is TaskState.COMPLETED and run.errors == [], (run.state, run.errors)
+    planned = next(s for s in run.plan.steps if s.name == "execution.plan")
+    assert "current_weight" not in planned.arguments and planned.id in run.completed_steps
+    assert any("current_weight" in n and "+0.6000" in n for n in run.plan.notes)
+    ev = next(e for e in run.evidence if e.source == "execution.plan")
+    assert ev.payload["current_weight"] == 0.6 and ev.payload["side"] == "sell" and ev.payload["intent"] == "sell_to_close"
+    assert abs(run.decision.target_weight) <= 0.5 and run.report.facts["current_weight"] == 0.6
+    # a task that declares nothing keeps the model's value (the book does not know the symbol)
+    plan2 = validate_plan([step], Task("AAPL", AS_OF), Instrument.parse("AAPL"), ["technical"], h.registry, config=cfg)
+    assert next(s for s in plan2.steps if s.name == "execution.plan").arguments["current_weight"] == 0.0
+
+
+# ------------------------------------------------- (i) symbols lists and the per-call cap agree
+def test_validate_plan_truncates_symbol_lists_to_the_per_call_cap():
+    cfg = make_config(CFG, agentic={"max_symbols_per_call": 4, "llm_planner": True, "llm_critic": False,
+                                    "llm_reporter": False})
+    reg = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
+    ins, task = Instrument.parse("AAPL"), Task("AAPL", AS_OF)
+    names = ["AAPL", "MSFT", "GOOG", "NVDA", "AMZN", "META"]
+    raw = [{"type": "tool", "name": "quant.xalpha", "arguments": {"symbols": names, "as_of": AS_OF.isoformat()}},
+           {"type": "tool", "name": "portfolio.construct",
+            "arguments": {"symbols": names, "targets": [1, 2, 3, 4, 5, 6], "as_of": AS_OF.isoformat()}}]
+    plan = validate_plan(raw, task, ins, ["technical"], reg, config=cfg)
+    tools = [s for s in plan.steps if s.type is StepType.TOOL]
+    assert [s.arguments["symbols"] for s in tools] == [names[:4], names[:4]] and tools[1].arguments["targets"] == [1, 2, 3, 4]
+    assert sum("symbols truncated to 4 per call" in n for n in plan.notes) == 2
+    pe = PolicyEngine({"max_symbols_per_call": 4, "max_position": 1.0})
+    for s in tools:
+        d = pe.evaluate(ToolRequest(s.name, s.arguments, "C"), reg.get(s.name).descriptor, Role.TRADER)
+        assert d.outcome is PolicyOutcome.ALLOW, (s.name, d)
+    # the universe is applied first, then the cap; duplicates never count
+    cfg_u = make_config(cfg, agentic={"symbol_universe": ["AAPL", "MSFT", "GOOG", "NVDA", "AMZN"]})
+    plan = validate_plan([dict(raw[0], arguments={"symbols": ["AAPL", "aapl", "META", *names], "as_of": AS_OF.isoformat()})],
+                         task, ins, ["technical"], reg, config=cfg_u)
+    assert next(s for s in plan.steps if s.type is StepType.TOOL).arguments["symbols"] == ["AAPL", "MSFT", "GOOG", "NVDA"]
+    assert any("META" in n and "outside the configured universe" in n for n in plan.notes)
+    assert any("truncated to 4 per call (1 dropped)" in n for n in plan.notes)
+    # end to end: the model's long list runs trimmed instead of failing the run at the pre-check
+    h = AgentHarness(TradingGraph(cfg, llm=PlannerStub([raw[0]]), **QUIET))
+    run = h.run(Task("AAPL", AS_OF, Role.TRADER))
+    assert run.state is TaskState.COMPLETED and run.errors == [], (run.state, run.errors)
+    step = next(s for s in run.plan.steps if s.name == "quant.xalpha")
+    assert step.arguments["symbols"] == names[:4] and step.id in run.completed_steps
+
+
+# ------------------------------------------------- (k) no head-of-line blocking on the stdio session
+def test_stdio_session_serves_calls_concurrently_so_an_abandoned_call_does_not_block_the_next(monkeypatch):
+    pytest.importorskip("mcp")
+    from mcp import StdioServerParameters
+    from agentic_trader.agentic import mcp_server as ms
+    monkeypatch.setattr(ms, "_server_params",
+                        lambda args=None: StdioServerParameters(command=sys.executable, args=[__file__, "--serve-slow"]))
+    relax = {"read_only": True, "risk": "low", "required": ["read_market_data"]}
+    reg = ms.registry_from_stdio(overrides={"demo.slow": relax, "demo.fast": relax}, call_timeout_s=1.5)
+    try:
+        ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER, AutoApprovalGateway(),
+                          Tracer(), ExecutorConfig(timeout_s=0.5, max_attempts=1))
+        assert ex.call("demo.fast").ok
+        t0 = time.perf_counter()
+        slow = ex.call("demo.slow", seconds=3.0)
+        assert not slow.ok and "timed out" in slow.error
+        fast = ex.call("demo.fast")
+        assert fast.ok and fast.payload == 1 and time.perf_counter() - t0 < 2.0, (fast.error, time.perf_counter() - t0)
+        for _ in range(3):                                   # several abandoned calls do not wedge the session
+            assert not ex.call("demo.slow", seconds=3.0).ok
+        t1 = time.perf_counter()
+        assert ex.call("demo.fast").ok and time.perf_counter() - t1 < 1.0
+        assert ex.tracer.metrics.counter("tool_calls_abandoned_total", tool="demo.slow") == 4
+    finally:
+        reg.session.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        reg.get("demo.fast").fn()
+
+
+# ------------------------------------------------- (l) a run cancelled while parked persists its finish
+def test_cancelling_a_parked_run_persists_its_finish_time(tmp_path):
+    store = TaskStore(tmp_path / "tasks.sqlite")
+    h = AgentHarness(TradingGraph(CFG, **QUIET), gateway=QueuedApprovalGateway(), store=store)
+    run = _parked_run(h, [_ticket(h, "AAPL", 0.1)])
+    assert store.load(run.id)["state"] == "AWAITING_APPROVAL" and store.load(run.id)["finished_at"] is None
+    h.cancel(run.id)
+    assert run.state is TaskState.CANCELLED and run.finished_at is not None
+    rec = store.load(run.id)
+    assert rec["state"] == "CANCELLED" and rec["finished_at"] == run.finished_at.isoformat()
+    assert h.record(run.id)["finished_at"] == run.finished_at.isoformat()
+    h.close()
+    store.close()

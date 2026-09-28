@@ -215,6 +215,13 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     root of the capital traded, so a sleeve running 1/N of the book pays the impact of an
     account of ``capital / N``. ``rebalance_offset`` is the bar of the first decision
     (``0 <= offset < rebalance_every``); sweeping it measures the cadence's phase noise.
+
+    On each decision bar the desk is told the weight it actually holds (the last decision's
+    units drifted with the market). A decision equal to that weight, reported to 4 decimals
+    and clipped to the leverage cap, is a decision to keep the position and is executed as
+    no trade -- also when drift has carried the weight outside the cap (a capped short with
+    borrow, a capped FX long with negative carry): the cap binds on decisions, not on drift,
+    so no cap-enforcement trade appears in ``trades``, ``traded`` or the turnover.
     """
     cfg = make_config(config)
     ins = Instrument.parse(symbol, asset_class)
@@ -272,9 +279,12 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
             for s in _sources(st):
                 sources[s] = sources.get(s, 0) + 1
             # Hold each decision (weight and its protective levels) until the next one. A
-            # decision to keep the current position (the PM's no-trade band; reported to 4
-            # decimals) is executed as no trade, not as a trade to the rounded weight.
-            w[i:] = held if dec.target_weight == round(held, 4) else dec.target_weight
+            # decision to keep the current position (the PM's no-trade band, or the cap when
+            # drift has carried the weight past it; reported to 4 decimals) is executed as no
+            # trade, not as a trade to the rounded or capped weight: the engine leaves a
+            # target equal to the held weight unclamped.
+            capped = min(max(held, -bt.max_leverage if bt.allow_short else 0.0), bt.max_leverage)
+            w[i:] = held if dec.target_weight == round(capped, 4) else dec.target_weight
             stop[i:] = np.nan if dec.stop_loss is None else dec.stop_loss
             take[i:] = np.nan if dec.take_profit is None else dec.take_profit
             reb[i] = 1.0
@@ -333,8 +343,10 @@ class PortfolioReport:
         from .stats import paired_sharpe_block_bootstrap
         ppy = max(r.instrument.periods_per_year for r in self.sleeves.values())
         # ``metrics`` are computed from the equity curve, whose first return (bar 0, before
-        # any position) does not exist; use the same bars so sharpe_a equals metrics[a].sharpe.
-        rf = self.rf[1:] if isinstance(self.rf, np.ndarray) else self.rf
+        # any position) does not exist, and pair the return over (t-1, t] with rf[t-1], the
+        # rate credited over that bar; use the same bars and pairing so sharpe_a equals
+        # metrics[a].sharpe.
+        rf = self.rf[:-1] if isinstance(self.rf, np.ndarray) else self.rf
         return paired_sharpe_block_bootstrap(self.returns[a].to_numpy(dtype=float)[1:],
                                              self.returns[b].to_numpy(dtype=float)[1:], ppy,
                                              rf=rf, block=block, n_boot=n_boot, seed=seed)

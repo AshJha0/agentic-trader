@@ -548,3 +548,256 @@ def test_24_risk_facts_carry_the_short_side_cvar_and_the_analyst_text_uses_it():
     state.proposal = replace(state.proposal, action=Action.BUY, target_weight=1.0)
     long_view = RiskAnalyst(None, CFG, "neutral").speak(state, risk_facts(state, CFG), 1, [])
     assert "CVaR95 0.50%" in long_view.argument
+
+
+# =========================================================================================
+# v0.8 regression review (engine-2 cluster): items (a)-(k). Each test fails without its fix.
+# =========================================================================================
+import inspect
+import os
+import warnings
+
+from agentic_trader.backtest import AGENT, run_agent_backtest
+
+from agentic_trader.cli import common as cli_common
+from agentic_trader.cli import evaluate as cli_evaluate
+from agentic_trader.data.csv_provider import one_basis
+
+METRICS = pytest.mark.parametrize("metrics", [quant.compute_metrics, pycore.compute_metrics], ids=["active", "numpy"])
+
+
+def _flat_book_cases():
+    T = 250
+    flat = np.full(T, 100.0)
+    fred = 0.03 + 0.002 * np.cumsum(np.random.default_rng(1).normal(size=T)) / 10   # a wandering DTB3-like path
+    return {
+        "flat book, constant rf, no cash leg": (flat, np.zeros(T), quant.BacktestConfig(risk_free_annual=0.03), {}),
+        "flat book under a varying cash leg (earns exactly rf)": (flat, np.zeros(T), quant.BacktestConfig(),
+                                                                {"cash_rate": fred}),
+        "unfunded flat book under the cash leg": (flat, np.zeros(T), quant.BacktestConfig(funded=False),
+                                                  {"cash_rate": fred}),
+    }
+
+
+@ENGINES
+@pytest.mark.parametrize("case", list(_flat_book_cases()))
+def test_a_constant_excess_return_has_zero_sharpe_sortino_and_tstat(engine, case):
+    prices, w, cfg, extras = _flat_book_cases()[case]
+    m = engine(prices, w, cfg, **extras).metrics
+    assert (m.sharpe, m.sharpe_tstat, m.sortino, m.annualized_vol) == (0.0, 0.0, 0.0, 0.0)   # was -8e15 / +0.97
+
+
+@needs_cpp
+@pytest.mark.parametrize("case", list(_flat_book_cases()))
+def test_a_backends_agree_on_the_flat_book(case):
+    prices, w, cfg, extras = _flat_book_cases()[case]
+    a, b = quant.run_backtest(prices, w, cfg, **extras).metrics, pycore.run_backtest_ex(prices, w, cfg, **extras).metrics
+    for f in ("sharpe", "sharpe_tstat", "sortino", "annualized_vol", "cumulative_return"):
+        assert getattr(a, f) == getattr(b, f), f
+
+
+@METRICS
+def test_a_a_curve_compounding_at_exactly_rf_is_zero_and_a_real_curve_is_untouched(metrics):
+    T = 400
+    rf = 0.02 + 0.03 * np.linspace(0, 1, T)
+    e = 100_000.0 * np.cumprod(np.r_[1.0, 1.0 + rf[:-1] / 252.0])          # the portfolio path: equity at rf
+    z = metrics(e, np.ones(T), 252.0, rf, np.zeros(T))
+    assert (z.sharpe, z.sharpe_tstat, z.sortino, z.annualized_vol) == (0.0, 0.0, 0.0, 0.0)   # was 0.686
+    c = metrics(np.full(T, 100_000.0), np.zeros(T), 252.0, 0.03, np.zeros(T))
+    assert (c.sharpe, c.sharpe_tstat, c.sortino, c.annualized_vol) == (0.0, 0.0, 0.0, 0.0)
+    # a series with genuine dispersion, however small, is reported exactly as before
+    r = np.random.default_rng(3).normal(1e-4, 1e-6, T - 1)
+    e2 = 100_000.0 * np.cumprod(np.r_[1.0, 1.0 + r])
+    ex = e2[1:] / e2[:-1] - 1.0 - 0.03 / 252.0
+    m = metrics(e2, np.ones(T), 252.0, 0.03, np.zeros(T))
+    assert m.sharpe == pytest.approx(ex.mean() / ex.std(ddof=1) * np.sqrt(252), rel=1e-9)
+    assert m.annualized_vol == pytest.approx(ex.std(ddof=1) * np.sqrt(252), rel=1e-9) and m.sortino != 0.0
+
+
+@ENGINES
+def test_b_equity_is_float64_for_an_integer_initial_capital(engine):
+    px = 100 * np.cumprod(1 + np.random.default_rng(0).normal(0, 0.01, 30))
+    w = np.full(30, 0.7)
+    ri = engine(px, w, quant.BacktestConfig(initial_capital=100_000))
+    rf = engine(px, w, quant.BacktestConfig(initial_capital=100_000.0))
+    assert ri.equity.dtype == np.float64                                    # numpy: int64, truncated per bar
+    np.testing.assert_array_equal(ri.equity, rf.equity)
+    assert ri.metrics.cumulative_return == rf.metrics.cumulative_return
+
+
+@needs_cpp
+def test_b_backends_agree_with_an_integer_initial_capital():
+    px = 100 * np.cumprod(1 + np.random.default_rng(0).normal(0, 0.01, 30))
+    w = np.full(30, 0.7)
+    cfg = quant.BacktestConfig(initial_capital=100_000, cost_bps=5)
+    _same_result(quant.run_backtest(px, w, cfg, impact=np.full(30, 0.01)),
+                 pycore.run_backtest_ex(px, w, cfg, impact=np.full(30, 0.01)))
+
+
+@METRICS
+def test_c_an_empty_rf_or_traded_array_means_absent_on_both_backends(metrics):
+    e, pos, tr = np.array([1.0, 1.01, 1.0, 1.02, 1.03]), np.array([0.0, 1.0, 1.0, 0.5, 0.5]), np.array([1.0, 0, 0, .5, 0])
+    fields = list(quant.Metrics.__dataclass_fields__)
+    empty_rf, zero_rf = metrics(e, pos, 252.0, [], tr), metrics(e, pos, 252.0, 0.0, tr)   # numpy: ValueError
+    assert [getattr(empty_rf, f) for f in fields] == [getattr(zero_rf, f) for f in fields]
+    assert empty_rf.sharpe != metrics(e, pos, 252.0, 0.03, tr).sharpe
+    with pytest.warns(RuntimeWarning, match="inferred from changes"):
+        empty_tr = metrics(e, pos, 252.0, 0.0, [])
+    with pytest.warns(RuntimeWarning, match="inferred from changes"):
+        no_tr = metrics(e, pos, 252.0, 0.0, None)
+    assert [getattr(empty_tr, f) for f in fields] == [getattr(no_tr, f) for f in fields]
+    assert empty_tr.num_trades == 2 and empty_tr.turnover == pytest.approx(1.5)
+    with pytest.raises(ValueError):
+        metrics(e, pos, 252.0, [0.03, 0.03], tr)                                # a wrong length still raises
+    with pytest.raises(ValueError):
+        metrics(e, pos, 252.0, 0.0, [1.0, 0.0])
+
+
+def _drifted_short(engine, T: int = 12):
+    prices = np.full(T, 100.0)
+    cfg = quant.BacktestConfig(borrow_annual=0.05, cost_bps=0.0, max_leverage=1.0)
+    w = np.full(T, -1.0)
+    reb = np.zeros(T)
+    reb[0] = reb[5] = 1.0
+    held = engine(prices[:6], w[:6], cfg, rebalance=reb[:6]).positions[5]     # the replay run_agent_backtest does
+    return prices, cfg, w, reb, float(held)
+
+
+@ENGINES
+def test_e_a_keep_at_the_cap_is_no_trade_even_when_drift_sits_outside_it(engine):
+    prices, cfg, w, reb, held = _drifted_short(engine)
+    assert held < -1.0                                                         # borrow de-levers a short past the cap
+    keep = w.copy()
+    keep[5:] = held
+    r = engine(prices, keep, cfg, rebalance=reb)
+    assert len(r.trades) == 1 and r.traded[5] == 0.0 and r.metrics.num_trades == 1   # was 2: a +0.00099 trim
+    assert r.positions[5] == held and r.positions[6] < held                  # still held, still drifting
+    assert r.metrics.turnover == pytest.approx(1.0)
+    # a genuinely new target outside the cap is still clamped (the cap binds on decisions)
+    trim = w.copy()
+    trim[5:] = -1.5
+    t = engine(prices, trim, cfg, rebalance=reb)
+    assert len(t.trades) == 2 and t.positions[5] == -1.0 and t.traded[5] == pytest.approx(abs(held) - 1.0)
+    # and a new target equal to the cap while held is past it is a trim too (it is not the held weight)
+    cap = w.copy()
+    t2 = engine(prices, cap, cfg, rebalance=reb)
+    assert len(t2.trades) == 2 and t2.positions[5] == -1.0
+    # the unfunded FX long with negative carry: the mirror case
+    fx = quant.BacktestConfig(carry_annual=-0.05, cost_bps=0.0, funded=False, max_leverage=1.0)
+    held_fx = engine(prices[:6], -w[:6], fx, rebalance=reb[:6]).positions[5]
+    assert held_fx > 1.0
+    keep_fx = -w.copy()
+    keep_fx[5:] = held_fx
+    assert len(engine(prices, keep_fx, fx, rebalance=reb).trades) == 1
+
+
+@needs_cpp
+def test_e_backends_agree_on_the_keep_at_the_cap():
+    prices, cfg, w, reb, held = _drifted_short(quant.run_backtest)
+    assert held == _drifted_short(pycore.run_backtest_ex)[4]
+    keep = w.copy()
+    keep[5:] = held
+    _same_result(quant.run_backtest(prices, keep, cfg, rebalance=reb),
+                 pycore.run_backtest_ex(prices, keep, cfg, rebalance=reb))
+
+
+def test_e_desk_keeping_a_capped_short_books_no_cap_enforcement_trade(monkeypatch):
+    cfg = make_config(CFG, risk={"allow_short_equity": True, "max_position": 1.0, "rebalance_band": 0.0},
+                      costs={"equity_borrow_annual": 0.05, "equity_cost_bps": 0.0, "equity_slippage_bps": 0.0})
+    told = []
+    orig = TradingGraph.propagate
+
+    def always_max_short(self, symbol, as_of, asset_class=None, current_weight=None, book=None):
+        told.append(current_weight)
+        st, dec = orig(self, symbol, as_of, asset_class, current_weight, book)
+        return st, replace(dec, action=Action.SELL, target_weight=-1.0, stop_loss=None, take_profit=None)
+
+    monkeypatch.setattr(TradingGraph, "propagate", always_max_short)
+    reb = 5
+    rep = run_agent_backtest("AAPL", "2024-01-02", "2024-06-28", cfg, rebalance_every=reb)
+    res = rep.results[AGENT]
+    bars = list(range(0, len(rep.prices) - 1, reb))
+    assert len(told) == len(bars) and all(d.target_weight == -1.0 for d in rep.decisions)
+    kept = trimmed = 0
+    for k, i in enumerate(bars[1:], 1):
+        if round(max(told[k], -1.0), 4) == -1.0:         # at or past the cap to 4 decimals: a keep
+            kept += 1
+            assert res.traded[i] == 0.0 and res.positions[i] == told[k], (k, i)   # was a trade of |held| - 1
+        else:                                             # inside the cap: the desk really re-levers to it
+            trimmed += 1
+            assert res.traded[i] == pytest.approx(abs(-1.0 - told[k]), abs=1e-12) and res.positions[i] == -1.0
+    assert kept > 0 and trimmed > 0 and any(t < -1.0 for t in told)   # both branches, and drift past the cap, occurred
+    assert res.metrics.num_trades == 1 + trimmed
+
+
+@METRICS
+def test_f_metrics_without_traded_warn_once_and_the_engine_paths_do_not(metrics):
+    e, pos = np.array([1.0, 1.01, 1.0, 1.02, 1.03]), np.array([0.0, 1.0, 1.0, 0.5, 0.5])
+    with pytest.warns(RuntimeWarning, match="drift every bar under constant units") as rec:
+        m = metrics(e, pos, 252.0)
+    assert len(rec) == 1 and m.num_trades == 2
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        assert metrics(e, pos, 252.0, 0.0, [1.0, 0.0, 0.0, 0.5, 0.0]).num_trades == 2
+        px = 100 * np.cumprod(1 + np.random.default_rng(0).normal(0, 0.01, 40))
+        for engine in (quant.run_backtest, pycore.run_backtest_ex):
+            assert engine(px, np.r_[np.ones(20), np.zeros(20)], quant.BacktestConfig()).metrics.num_trades == 2
+            engine(px, np.ones(40), quant.BacktestConfig(), cash_rate=np.full(40, 0.03))
+
+
+def test_g_a_weight_change_below_one_lot_is_nothing_to_trade_not_an_error(caplog):
+    dec = FinalDecision("AAPL", date(2024, 3, 1), Action.BUY, 0.25, 0.5, None, None, "")
+    with caplog.at_level(logging.INFO, logger="agentic_trader.algo"):
+        assert plan_execution(dec, Instrument.parse("AAPL"), 0.2499, 100_000.0, 180.0) is None   # was ValueError
+    assert "below one lot" in caplog.text
+    assert plan_execution(dec, Instrument.parse("AAPL"), 0.2400, 100_000.0, 180.0).quantity == 5.0
+    fx = FinalDecision("EURUSD", date(2024, 3, 1), Action.BUY, 0.5, 0.5, None, None, "")
+    assert plan_execution(fx, Instrument.parse("EURUSD"), 0.4995, 100_000.0, 1.08, lot_size=1000.0) is None
+    assert plan_execution(fx, Instrument.parse("EURUSD"), 0.48, 100_000.0, 1.08, lot_size=1000.0).quantity == 1000.0
+    for bad in ({"capital": 0.0}, {"last_price": 0.0}, {"lot_size": -1.0}):    # invalid inputs still raise
+        kw = dict(capital=100_000.0, last_price=1.08)
+        kw.update(bad)
+        with pytest.raises(ValueError):
+            plan_execution(fx, Instrument.parse("EURUSD"), 0.0, **kw)
+
+
+def test_h_volume_is_rescaled_so_dollar_volume_stays_as_traded_across_a_split(tmp_path):
+    rows = ["Date,Open,High,Low,Close,Adj Close,Volume"]
+    for d in pd.bdate_range("2024-01-01", "2024-01-05"):
+        rows.append(f"{d.date()},100,101,99,100,50,1000")                   # before the 2:1 split
+    for d in pd.bdate_range("2024-01-08", "2024-01-12"):
+        rows.append(f"{d.date()},50,51,49,50,50,2000")                      # after it
+    (tmp_path / "SPL.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    p = CSVProvider(make_config(csv_dir=str(tmp_path)))
+    h = p.history(Instrument.parse("SPL"), date(2024, 1, 1), date(2024, 1, 12))
+    assert len(h) == 10 and (h["Close"] == 50.0).all()
+    np.testing.assert_allclose(h["Volume"].to_numpy(), 2000.0)               # was 1000 before the split
+    np.testing.assert_allclose((h["Close"] * h["Volume"]).to_numpy(), 100_000.0)   # dollar volume as traded
+    # one_basis leaves a file without Volume, or without Adj Close, alone
+    raw = pd.DataFrame({"Close": [100.0, 50.0], "Volume": [1000.0, 2000.0]}, index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
+    assert one_basis(raw.copy()).equals(raw)
+    adj_only = one_basis(raw.assign(**{"Adj Close": [50.0, 50.0]}).drop(columns="Close"))
+    assert adj_only["Volume"].tolist() == [1000.0, 2000.0]                    # no raw close: no factor, volume untouched
+
+
+@pytest.mark.parametrize("host_tz", ["Asia/Kolkata", "Asia/Tokyo", "Europe/London", "America/Los_Angeles"])
+def test_i_the_default_as_of_is_new_yorks_yesterday_whatever_the_host_clock_says(monkeypatch, host_tz):
+    clock = {"now": datetime(2026, 9, 29, 3, 0, tzinfo=timezone.utc)}     # 23:00 Mon 28 in New York
+    monkeypatch.setattr(cli_common, "_now", lambda: clock["now"].astimezone(ZoneInfo(host_tz)))
+    args = types.SimpleNamespace(date=None)
+    assert cli_common.exchange_today() == date(2026, 9, 28)
+    assert cli_common.default_as_of() == cli_common._as_of(args) == date(2026, 9, 27)   # host yesterday: Mon 28 in IST
+    clock["now"] = datetime(2026, 9, 29, 5, 0, tzinfo=timezone.utc)         # 01:00 Tue 29 in New York
+    assert cli_common._as_of(args) == date(2026, 9, 28)
+    assert cli_common._as_of(types.SimpleNamespace(date="2024-03-01")) == date(2024, 3, 1)
+    assert cli_evaluate.default_as_of is cli_common.default_as_of
+    for mod in (cli_common, cli_evaluate):
+        assert "date.today" not in inspect.getsource(mod)
+
+
+def test_k_the_environment_is_restored_between_tests_part_1():
+    os.environ["AT_ENGINE2_PROBE"] = "leaked"
+
+
+def test_k_the_environment_is_restored_between_tests_part_2():
+    assert "AT_ENGINE2_PROBE" not in os.environ

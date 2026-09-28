@@ -246,6 +246,16 @@ def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0
     factor puts this scheme's coverage of a true zero closest to nominal, and it errs
     conservative when the groups turn out to be independent (``tests/test_v08_stats.py``).
 
+    The first stage draws clusters with equal probability whatever their size (each cluster
+    is one draw: the standard cluster bootstrap), and the replicate statistic is the pooled
+    mean over the instruments drawn, so a replicate that draws a large cluster several times
+    is dominated by it and one that omits it is not. With markedly unequal cluster sizes
+    (``--universe all``: 10/5/26/9/10) the replicate distribution is therefore not centred
+    on ``mean_diff``: the percentile interval is not symmetric about it and the two-sided
+    ``p_value`` inherits the same shift. This is the estimator's ratio-form bias, not an
+    indexing artefact (a brute-force loop reproduces the vectorised numbers); read the
+    interval's midpoint accordingly.
+
     Do NOT confuse this with the stratified bootstrap (resampling within each group with the
     group's count held fixed): that conditions on the group composition, so its variance is
     the pooled *within*-group variance only -- it can only narrow the interval relative to
