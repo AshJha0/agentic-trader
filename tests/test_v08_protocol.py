@@ -111,3 +111,30 @@ def test_portfolio_report_sharpe_difference_pairs_a_varying_rf_like_the_metrics(
     aligned = paired_sharpe_block_bootstrap(a, b, ppy, rf=rep.rf[:-1], n_boot=50)
     assert abs(shifted.sharpe_a - rep.metrics[AGENT].sharpe) > 1e-6                    # the test can see the shift
     assert aligned.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)
+
+
+# Final code review (stats.py, medium): a flat agent reads Sharpe 0 in the table and in the printed
+# Sharpe difference alike, under a constant rf and under a varying cash leg.
+@pytest.mark.parametrize("provider", [None, "ramp"])
+def test_portfolio_report_sharpe_difference_of_a_flat_agent_is_zero_like_the_table(monkeypatch, provider):
+    from dataclasses import replace
+
+    from agentic_trader import TradingGraph
+    from agentic_trader.state import Action
+
+    orig = TradingGraph.propagate
+
+    def flat(self, symbol, as_of, asset_class=None, current_weight=None, book=None):
+        st, dec = orig(self, symbol, as_of, asset_class, current_weight, book)
+        return st, replace(dec, action=Action.HOLD, target_weight=0.0, stop_loss=None, take_profit=None)
+
+    monkeypatch.setattr(TradingGraph, "propagate", flat)
+    syms = ["AAPL", "MSFT", "EURUSD"]
+    rep = run_portfolio_backtest(syms, "2024-01-02", "2024-03-28", CFG, rebalance_every=10,
+                                 provider=_RampRF(CFG) if provider else None)
+    assert rep.metrics[AGENT].avg_exposure == 0.0 and rep.metrics[AGENT].num_trades == 0
+    d = rep.sharpe_difference(AGENT, "Buy&Hold")
+    assert d.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)               # was -3.5e16 vs 0.0
+    assert d.sharpe_b == pytest.approx(rep.metrics["Buy&Hold"].sharpe, abs=1e-9) and abs(d.ci_low) < 1e3
+    if provider is None:                                                                  # constant rf: exactly flat
+        assert rep.metrics[AGENT].sharpe == 0.0 and d.sharpe_a == 0.0 and d.diff == -d.sharpe_b

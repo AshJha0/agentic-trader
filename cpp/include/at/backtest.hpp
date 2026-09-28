@@ -19,7 +19,8 @@
 // rebalance and the protective levels are the intrabar risk control). A target equal
 // to the weight currently held is a decision to keep the position and is executed as
 // no trade even when drift has carried that weight outside the cap: the cap binds on
-// new targets, not on drift (run_agent_backtest passes the held weight for a keep).
+// new targets, not on drift (run_agent_backtest passes the held weight only for a
+// genuine keep, FinalDecision.kept; any other decision past the cap is trimmed).
 // ``positions[t]`` is the weight actually held over (t, t+1], drifted.
 //
 // Cash leg: idle capital earns ``cash_rate[t]`` (annual, per bar). For funded
@@ -136,7 +137,9 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
 // t-stat use the excess return r_t - rf_t / ppy. An excess-return series that is
 // constant to rounding (sample sd <= kZeroVarianceTol * max(1, |mean|)) has no
 // dispersion to divide by: Sharpe, Sortino, the t-stat and annualized_vol are 0
-// rather than noise over noise (a flat book, or one earning exactly rf). ``traded``
+// rather than noise over noise (a flat book, or one earning exactly rf). The same
+// tolerance applies to the downside deviation on its own: real dispersion whose only
+// losses are rounding noise gives Sortino 0 while Sharpe stands. ``traded``
 // (|dw| per bar) gives the turnover and trade count; without it both are inferred
 // from changes in ``positions``, which drift every bar under constant units.
 constexpr double kZeroVarianceTol = 1e-12;

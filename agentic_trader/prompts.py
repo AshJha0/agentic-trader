@@ -13,10 +13,11 @@ What the bundle covers, exactly:
   every base class below ``Agent``;
 * ``firm_context``: the ``FIRM_CONTEXT`` preamble;
 * ``shared``: the source of each callable enumerated in ``shared_prompt_code()`` (the
-  fact formatter, the untrusted-text fence, the state's prompt facts, report digest and
-  lessons block, the direction note, the consensus score, the policy passages, the risk
-  facts, the anonymiser and its key test, the memory's settle and track-record methods,
-  the risk percentage formatter) and the value of each constant enumerated in
+  fact formatter, the untrusted-text fence and the ``fenced`` helper, the state's prompt
+  facts, report digest, lessons block, ``untrusted_inputs`` flag and the debate / verdict /
+  proposal / risk-views blocks, the direction note, the consensus score, the policy
+  passages, the risk facts, the anonymiser and its key test, the memory's settle and
+  track-record methods, the risk percentage formatter) and the value of each constant enumerated in
   ``shared_prompt_constants()`` (the fence tag ``state._TAG`` and the anonymiser's
   price-key and scale-free-key allow-lists, suffixes, prefixes and date pattern).
 
@@ -89,11 +90,17 @@ def shared_prompt_code() -> dict[str, Callable[..., Any] | type]:
         "Agent._contract_problem": base.Agent._contract_problem,
         "fmt_facts": base.fmt_facts,
         "untrusted_block": state.untrusted_block,
+        "fenced": state.fenced,
         "TradingState.px": state.TradingState.px,
         "TradingState.fmt_px": state.TradingState.fmt_px,
         "TradingState.prompt_facts": state.TradingState.prompt_facts,
         "TradingState.reports_digest": state.TradingState.reports_digest,
         "TradingState.lessons_block": state.TradingState.lessons_block,
+        "TradingState.untrusted_inputs": state.TradingState.untrusted_inputs.fget,
+        "TradingState.debate_block": state.TradingState.debate_block,
+        "TradingState.verdict_block": state.TradingState.verdict_block,
+        "TradingState.proposal_block": state.TradingState.proposal_block,
+        "TradingState.risk_views_block": state.TradingState.risk_views_block,
         "_direction_note": analysts._direction_note,
         "consensus_score": researchers.consensus_score,
         "policy_passages": trader.policy_passages,

@@ -22,7 +22,10 @@ check and an evidence record.
 The position book is per run: ``DeskTools.for_book`` gives a view of the desk that
 reads and checks positions in one run's book (the desk's positions overlaid with the
 task's declared facts) while sharing the provider, the plans it produced and the
-tickets it wrote, so concurrent tasks on one symbol never see each other's facts.
+tickets it wrote, so concurrent tasks on one symbol never see each other's facts. A
+ticket ``submit_order`` writes moves that book to the ticket's ``position_after`` (the
+position once the pending ticket fills), so a following ``plan`` in the same run sizes
+the next leg from it; ``portfolio.position`` lists the tickets behind the weight.
 """
 from __future__ import annotations
 
@@ -245,7 +248,8 @@ class DeskTools:
     # ----------------------------------------------------------- portfolio
     def position(self, symbol: str) -> dict:
         """The current position weight for a symbol (0 when not held), the account capital, and
-        any tickets recorded against the symbol this session (``pending``)."""
+        any tickets recorded against the symbol this session (``pending``): the weight already
+        counts them, as the position they leave once filled."""
         sym = Instrument.parse(symbol).symbol
         out = {"symbol": sym, "weight": self.positions.get(sym, 0.0), "capital": self.capital}
         pending = [{k: t[k] for k in ("id", "side", "intent", "quantity", "quantity_unit", "notional", "status")}
@@ -381,7 +385,9 @@ class DeskTools:
         fields do not match the plan reference, the notional exceeds the per-order cap, it
         would take a long-only book short, or the plan is not one this desk produced with these
         exact fields (``execution.allow_external_plans`` admits tickets planned elsewhere);
-        ``intent`` records reduce vs short against the book."""
+        ``intent`` records reduce vs short against the book. The book is then moved to
+        ``position_after`` (pending the fill), so a following ``plan`` sizes the next leg of a
+        split order from it and ``position`` reports the ticket behind the weight."""
         from ..algo import plan_reference, trade_intent
         ins = Instrument.parse(symbol)
         if side not in ("buy", "sell"):
@@ -436,6 +442,7 @@ class DeskTools:
                   "price": price, "position_before": before, "position_after": round(after, 6),
                   "plan_known": known is not None, "note": note, "status": "ticketed"}
         self.orders.append(ticket)
+        self.positions[ins.symbol] = ticket["position_after"]
         return ticket
 
 

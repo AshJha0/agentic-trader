@@ -48,7 +48,8 @@ class TradingGraph:
         self.llm = llm if llm is not None else get_llm(self.config)
         if self.llm is not None:
             self.llm = budget_llm(self.llm, self.config)
-        self.memory = memory if memory is not None else DecisionMemory(self.config.get("memory_path"))
+        self.memory = memory if memory is not None else DecisionMemory(
+            self.config.get("memory_path"), max_staleness_days=self.max_staleness_days)
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
 
         c, m = self.config, self.llm
@@ -57,6 +58,13 @@ class TradingGraph:
         self.trader = Trader(m, c)
         self.risk_team = [RiskAnalyst(m, c, s) for s in ("aggressive", "neutral", "conservative")]
         self.pm = PortfolioManager(m, c)
+
+    @property
+    def max_staleness_days(self) -> int:
+        """How far the decision day may sit after its last bar: the guard in ``prepare`` and the
+        memory's entry-bar tolerance read the same setting, so an entry the desk was allowed to
+        decide on is one its memory can value."""
+        return int(self.config.get("max_data_staleness_days", 7))
 
     # ------------------------------------------------------------ stages
     def analyst_names(self, instrument: Instrument) -> list[str]:
@@ -99,7 +107,7 @@ class TradingGraph:
         # but never on a price so old it no longer describes the market.
         bar_date = hist.index[-1].date()
         stale = (as_of - bar_date).days
-        if stale > self.config.get("max_data_staleness_days", 7):
+        if stale > self.max_staleness_days:
             raise ValueError(f"latest {ins.display} bar is {bar_date}, {stale} days before "
                              f"{as_of}: refusing to decide on stale data")
         state = TradingState(ins, as_of, hist, current_weight=current_weight, book=book,
@@ -110,7 +118,7 @@ class TradingGraph:
         # Outcomes are valued on this very series (which ends at as_of), by the provider
         # that recorded them, so a rebase or a provider switch cannot fake a verdict.
         self.memory.resolve(ins.symbol, as_of, hist, provider=state.provider_name,
-                            price_basis=state.price_basis)
+                            price_basis=state.price_basis, max_staleness_days=self.max_staleness_days)
         state.lessons = self.memory.lessons(ins.symbol, as_of, provider=state.provider_name)
         state.track_record = self.memory.track_record(ins.symbol, as_of, provider=state.provider_name)
         self.on_event("data", f"{ins.display} {ins.asset_class}: {len(hist)} bars to {bar_date}, "

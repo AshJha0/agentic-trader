@@ -10,12 +10,14 @@ the remote-tool classification is tested end to end.
 """
 import asyncio
 import json
+import math
 import re
 import sys
 import threading
 import time
 from collections import Counter
 from datetime import date
+from types import SimpleNamespace
 
 if "--serve" in sys.argv:   # hostile MCP server for test_remote_tools_are_classified_fail_closed
     from mcp.server.mcpserver import MCPServer
@@ -228,8 +230,8 @@ def test_a_36k_evaluation_plan_is_rejected():
     from agentic_trader.agentic import planner as planner_mod
     real_make_plan = planner_mod.make_plan
 
-    def oversized(task_, ins_, analysts_, config_, registry_, llm_):
-        base_ = real_make_plan(task_, ins_, analysts_, config_, registry_, llm_)
+    def oversized(task_, ins_, analysts_, config_, registry_, llm_, **kw):
+        base_ = real_make_plan(task_, ins_, analysts_, config_, registry_, llm_, **kw)
         steps = tuple(PlanStep.make(StepType.TOOL, "quant.xalpha", {"symbols": ["AAPL", "MSFT", "GOOG"] * 20,
                                                                    "as_of": AS_OF.isoformat(), "horizon": k})
                       for k in (5, 10, 20)) + base_.steps
@@ -1188,7 +1190,7 @@ def test_the_desk_book_is_per_run_so_tasks_on_one_symbol_keep_their_own_facts():
     import agentic_trader.agentic.harness as harness_mod
     h = harness(gateway=AutoApprovalGateway())
 
-    def facts_plan(task, ins, analysts, config, registry, llm):
+    def facts_plan(task, ins, analysts, config, registry, llm, **kw):
         facts = (PlanStep.make(StepType.TOOL, "portfolio.position", {"symbol": "AAPL"}),
                  PlanStep.make(StepType.TOOL, "execution.plan",
                                {"symbol": "AAPL", "as_of": AS_OF.isoformat(), "target_weight": 0.0,
@@ -1362,3 +1364,155 @@ def test_cancelling_a_parked_run_persists_its_finish_time(tmp_path):
     assert h.record(run.id)["finished_at"] == run.finished_at.isoformat()
     h.close()
     store.close()
+
+
+# ===================================================== v0.8 final code review (agentic-3 cluster)
+# ------------------------------------------------- (f) the run's book is the single source of the position
+def _plan_step(cw):
+    args = {"symbol": "AAPL", "as_of": AS_OF.isoformat(), "target_weight": 0.0}
+    if cw is not None:
+        args["current_weight"] = cw
+    return {"type": "tool", "name": "execution.plan", "arguments": args}
+
+
+def _assert_reduce_from_the_book(run, cw):
+    assert run.state is TaskState.COMPLETED and run.errors == [], (cw, run.state, run.errors)
+    planned = next(s for s in run.plan.steps if s.name == "execution.plan")
+    assert "current_weight" not in planned.arguments and planned.id in run.completed_steps
+    if cw is not None:
+        assert any("current_weight dropped" in n and "+0.6000" in n for n in run.plan.notes), run.plan.notes
+    ev = next(e for e in run.evidence if e.source == "execution.plan")
+    assert ev.payload["current_weight"] == 0.6 and ev.payload["side"] == "sell" and ev.payload["intent"] == "sell_to_close"
+    # the agents decided from the book's weight, the risk facts and the report say so, and the PM respected the cap
+    assert run.trading_state.current_weight == 0.6 and run.report.facts["current_weight"] == 0.6
+    assert "[portfolio] current position weight +0.60" in run.trading_state.reports_digest()
+    assert run.step_results["risk_facts"]["current_position"] == 0.6
+    assert abs(run.decision.target_weight) <= 0.5
+
+
+def test_a_book_position_above_the_cap_is_one_fact_for_the_planner_the_agents_and_the_tools():
+    cfg = make_config(CFG, risk={"max_position": 0.5},
+                      agentic={"llm_planner": True, "llm_critic": False, "llm_reporter": False})
+    for cw in (0.6, 0.0, None):                       # the model echoes the book, guesses flat, or says nothing
+        h = AgentHarness(TradingGraph(cfg, llm=PlannerStub([_plan_step(cw)]), **QUIET))
+        run = h.submit(Task("AAPL", AS_OF, Role.TRADER), positions={"AAPL": 0.6})   # the API's per-run map
+        h.resume(run)
+        _assert_reduce_from_the_book(run, cw)
+    # the desk's own book is a source too, and so is the task's declaration (as before)
+    h = AgentHarness(TradingGraph(cfg, llm=PlannerStub([_plan_step(0.6)]), **QUIET), positions={"AAPL": 0.6})
+    _assert_reduce_from_the_book(h.run(Task("AAPL", AS_OF, Role.TRADER)), 0.6)
+    h = AgentHarness(TradingGraph(cfg, llm=PlannerStub([_plan_step(0.0)]), **QUIET))
+    _assert_reduce_from_the_book(h.run(Task("AAPL", AS_OF, Role.TRADER, current_weight=0.6)), 0.0)
+    assert h.tools.positions == {}
+    # the validator sees the book directly; without one the task's declaration still counts
+    reg = h.registry
+    plan = validate_plan([_plan_step(0.0)], Task("AAPL", AS_OF), Instrument.parse("AAPL"), ["technical"], reg,
+                         config=cfg, book={"AAPL": 0.6, "MSFT": 0.1})
+    assert "current_weight" not in next(s for s in plan.steps if s.name == "execution.plan").arguments
+    plan = validate_plan([_plan_step(0.0)], Task("AAPL", AS_OF), Instrument.parse("AAPL"), ["technical"], reg,
+                         config=cfg, book={"MSFT": 0.1})
+    assert next(s for s in plan.steps if s.name == "execution.plan").arguments["current_weight"] == 0.0
+    # the guard treats current_weight as a fact (finite, never capped); proposals stay capped
+    pe, desc = PolicyEngine({"max_position": 0.5}), reg.get("execution.plan").descriptor
+
+    def guard(**a):
+        return pe.evaluate(ToolRequest("execution.plan", {"symbol": "AAPL", "as_of": AS_OF.isoformat(), **a}, "C"),
+                           desc, Role.TRADER)
+    assert guard(target_weight=0.0, current_weight=0.6).outcome is PolicyOutcome.ALLOW
+    assert guard(target_weight=0.0, current_weight=-3.0).outcome is PolicyOutcome.ALLOW
+    denied = guard(target_weight=0.6, current_weight=0.0)
+    assert denied.outcome is PolicyOutcome.DENY and "target_weight +0.60 exceeds" in denied.reason
+    for bad in (float("nan"), float("inf"), "x", True):
+        assert guard(target_weight=0.0, current_weight=bad).outcome is PolicyOutcome.DENY, bad
+    # through the API: the documented way to declare the book
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from agentic_trader.agentic.api import create_app
+    h = AgentHarness(TradingGraph(cfg, llm=PlannerStub([_plan_step(0.6)]), **QUIET))
+    c = TestClient(create_app(harness=h))
+    r = c.post("/tasks", json={"symbol": "AAPL", "as_of": AS_OF.isoformat(), "positions": {"AAPL": 0.6}},
+               headers=KEY["trader"])
+    assert r.status_code == 202
+    run = h.runs[r.json()["task_id"]]
+    wait_until_done(run, 120)
+    _assert_reduce_from_the_book(run, 0.6)
+    assert c.get(f"/tasks/{run.id}/report", headers=KEY["viewer"]).json()["facts"]["current_weight"] == 0.6
+
+
+# ------------------------------------------------- (g) a non-list symbols argument is repaired or dropped
+def test_validate_plan_repairs_a_string_symbols_argument_and_drops_other_shapes():
+    cfg = make_config(CFG, agentic={"llm_planner": True, "llm_critic": False, "llm_reporter": False})
+    reg = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
+    ins, task = Instrument.parse("AAPL"), Task("AAPL", AS_OF)
+
+    def raw(symbols):
+        return {"type": "tool", "name": "quant.xalpha", "arguments": {"symbols": symbols, "as_of": AS_OF.isoformat()}}
+    plan = validate_plan([raw("msft")], task, ins, ["technical"], reg, config=cfg)
+    step = next(s for s in plan.steps if s.type is StepType.TOOL)
+    assert step.arguments["symbols"] == ["MSFT"] and any("given as a string, repaired to a list" in n for n in plan.notes)
+    d = PolicyEngine({"max_position": 1.0}).evaluate(ToolRequest(step.name, step.arguments, "C"),
+                                                     reg.get(step.name).descriptor, Role.TRADER)
+    assert d.outcome is PolicyOutcome.ALLOW
+    for bad in ({"a": 1}, 42, None, True):
+        plan = validate_plan([raw(bad)], task, ins, ["technical"], reg, config=cfg)
+        assert not any(s.type is StepType.TOOL for s in plan.steps), bad
+        assert any("symbols is" in n and "not a list; dropped" in n for n in plan.notes), (bad, plan.notes)
+    plan = validate_plan([raw("AAPL,MSFT,GOOG")], task, ins, ["technical"], reg, config=cfg)   # one unparseable name
+    assert not any(s.type is StepType.TOOL for s in plan.steps) and any("dropped" in n for n in plan.notes)
+    # end to end: neither shape fails the run at the pre-check any more
+    for steps in ([raw("MSFT")], [raw({"a": 1})], [raw("AAPL, MSFT")]):
+        h = AgentHarness(TradingGraph(cfg, llm=PlannerStub(steps), **QUIET))
+        run = h.run(Task("AAPL", AS_OF, Role.TRADER))
+        assert run.state is TaskState.COMPLETED, (steps, run.state, run.errors)
+        assert not any("denied by policy" in e for e in run.errors), run.errors
+    h = AgentHarness(TradingGraph(cfg, llm=PlannerStub([raw("MSFT")]), **QUIET))
+    run = h.run(Task("AAPL", AS_OF, Role.TRADER))
+    step = next(s for s in run.plan.steps if s.name == "quant.xalpha")
+    assert step.arguments["symbols"] == ["MSFT"] and step.id in run.completed_steps
+    assert run.errors == ["quant.xalpha: ValueError: a cross-sectional view needs at least 3 symbols"]
+
+
+# ------------------------------------------------- (i) the stdio deadline is on by default
+def test_registry_from_stdio_defaults_the_call_deadline_to_the_configured_tool_timeout(monkeypatch):
+    pytest.importorskip("mcp")
+    from agentic_trader.agentic import mcp_server as ms
+    for doc in (ms.StdioSession.call.__doc__, ms.registry_from_stdio.__doc__):
+        assert "courtesy" in doc and "unknown outcome" in doc and "cancelled rather than left running" not in doc
+    calls, sessions = [], []
+
+    class FakeSession:
+        def __init__(self, params, start_timeout_s=60.0):
+            sessions.append(self)
+            self.closed = False
+
+        def list_tools(self):
+            schema = {"type": "object", "properties": {"symbol": {"type": "string"}, "as_of": {"type": "string"}},
+                      "required": ["symbol", "as_of"]}
+            return [SimpleNamespace(name="quant__technical", description="d", input_schema=schema, annotations=None,
+                                    meta=None)]
+
+        def call(self, name, arguments, timeout_s=None):
+            calls.append((name, arguments, timeout_s))
+            return {"ok": True}
+
+        def close(self):
+            self.closed = True
+    monkeypatch.setattr(ms, "StdioSession", FakeSession)
+    reg = ms.registry_from_stdio()
+    assert reg.get("quant.technical").fn(symbol="AAPL", as_of="2024-03-01") == {"ok": True}
+    assert make_config()["agentic"]["tool_timeout_s"] == 30.0
+    assert calls[-1] == ("quant__technical", {"symbol": "AAPL", "as_of": "2024-03-01"}, 30.0)
+    reg = ms.registry_from_stdio(config=make_config(agentic={"tool_timeout_s": 7}))
+    reg.get("quant.technical").fn(symbol="AAPL", as_of="2024-03-01")
+    assert calls[-1][2] == 7.0
+    reg = ms.registry_from_stdio(call_timeout_s=1.5)
+    reg.get("quant.technical").fn(symbol="AAPL", as_of="2024-03-01")
+    assert calls[-1][2] == 1.5
+    reg = ms.registry_from_stdio(call_timeout_s=math.inf)               # explicit: wait without limit
+    reg.get("quant.technical").fn(symbol="AAPL", as_of="2024-03-01")
+    assert calls[-1][2] is None
+    for bad in (0, -1.0):
+        with pytest.raises(ValueError, match="call_timeout_s"):
+            ms.registry_from_stdio(call_timeout_s=bad)
+    assert len(sessions) == 4                                            # a refused deadline launches no server
+    del reg

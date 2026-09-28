@@ -7,10 +7,12 @@ validator:
 * drops steps with an unknown type, tool or stage (and records why);
 * drops unknown arguments and pins ``symbol`` / ``as_of`` to the task's values,
   so a plan cannot look at another instrument or another date; drops a
-  ``current_weight`` argument when the task declares one (the run's book carries
-  the declared fact, whatever its size); and clips a ``symbols`` list to the
-  configured universe and to ``agentic.max_symbols_per_call`` (a step with nothing
-  left is dropped, never a reason to fail the run);
+  ``current_weight`` argument whenever the run's book holds the symbol (the book --
+  the desk's positions, the API's per-run map and the task's declaration -- is the
+  single source of that fact, whatever its size); repairs a ``symbols`` argument
+  given as a string to a one-element list and clips the list to the configured
+  universe and to ``agentic.max_symbols_per_call`` (a step with nothing left, or
+  with ``symbols`` of any other shape, is dropped, never a reason to fail the run);
 * enforces stage order dependencies (debate needs analysts, trader needs the
   debate, risk needs the trader), inserting canonical stages when missing;
 * appends the governance steps (critic, validate, finalise) when a plan omits
@@ -154,12 +156,18 @@ def clip_symbols(symbols: list[Any] | tuple[Any, ...], universe: list[str] | tup
 
 
 def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, analysts: list[str],
-                  registry: ToolRegistry, source: str = "llm", config: dict[str, Any] | None = None) -> Plan:
+                  registry: ToolRegistry, source: str = "llm", config: dict[str, Any] | None = None,
+                  book: dict[str, float] | None = None) -> Plan:
+    """``book`` is the run's position book (symbol -> weight); a model-written ``current_weight``
+    is dropped when it holds the task's symbol. Without one, the task's own declaration counts."""
     notes: list[str] = []
     steps: list[PlanStep] = []
     allowed_agents = {f"{ANALYST_PREFIX}{a}" for a in analysts} | set(AGENT_STAGES)
     universe = (config or {}).get("agentic", {}).get("symbol_universe")
     max_symbols = int((config or {}).get("agentic", {}).get("max_symbols_per_call", DEFAULT_MAX_SYMBOLS_PER_CALL))
+    held = (book or {}).get(instrument.symbol)
+    if held is None:
+        held = task.current_weight
     for i, raw in enumerate(raw_steps[:MAX_STEPS * 2]):
         if not isinstance(raw, dict):
             notes.append(f"step {i}: not an object, dropped")
@@ -185,7 +193,13 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
                 if clean.get("as_of", task.as_of.isoformat()) != task.as_of.isoformat():
                     notes.append(f"step {i}: {name} as_of pinned to {task.as_of.isoformat()}")
                 clean["as_of"] = task.as_of.isoformat()
-            if "symbols" in props and isinstance(clean.get("symbols"), (list, tuple)):
+            if "symbols" in props and "symbols" in clean:
+                if isinstance(clean["symbols"], str):
+                    notes.append(f"step {i}: {name} symbols given as a string, repaired to a list")
+                    clean["symbols"] = [clean["symbols"]]
+                elif not isinstance(clean["symbols"], (list, tuple)):
+                    notes.append(f"step {i}: {name} symbols is {type(clean['symbols']).__name__}, not a list; dropped")
+                    continue
                 kept, dropped_syms, idx = clip_symbols(clean["symbols"], universe)
                 if dropped_syms:
                     notes.append(f"step {i}: {name} symbols {dropped_syms} outside the configured universe dropped")
@@ -200,9 +214,9 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
                 if isinstance(targets, (list, tuple)) and len(targets) == len(clean["symbols"]):
                     clean["targets"] = [targets[j] for j in idx]
                 clean["symbols"] = kept
-            if "current_weight" in clean and task.current_weight is not None:
+            if "current_weight" in clean and held is not None:
                 notes.append(f"step {i}: {name} current_weight dropped: the run's book holds {instrument.symbol} "
-                             f"at {task.current_weight:+.4f}")
+                             f"at {held:+.4f}")
                 del clean["current_weight"]
             if not registry.get(name).descriptor.annotations.read_only:
                 notes.append(f"step {i}: {name} changes state; a plan may not schedule it, dropped")
@@ -269,14 +283,14 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
 
 
 def make_plan(task: Task, instrument: Instrument, analysts: list[str], config: dict[str, Any],
-              registry: ToolRegistry, llm: LLM | None) -> Plan:
+              registry: ToolRegistry, llm: LLM | None, book: dict[str, float] | None = None) -> Plan:
     if llm is None or not config.get("agentic", {}).get("llm_planner", False):
         return canonical_plan(task, instrument, analysts, config, registry)
     raw, _ = propose_plan(llm, task, instrument, analysts, registry)
     if raw is None:
         plan = canonical_plan(task, instrument, analysts, config, registry)
         return Plan(plan.steps, "canonical", ("model plan unusable: canonical plan used",))
-    return validate_plan(raw, task, instrument, analysts, registry, config=config)
+    return validate_plan(raw, task, instrument, analysts, registry, config=config, book=book)
 
 
 def plan_to_dict(plan: Plan) -> dict[str, Any]:

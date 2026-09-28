@@ -75,7 +75,9 @@ Metrics compute_metrics_rf(const Series& equity, const Series& positions, double
     }
     double sd = live > 1 ? std::sqrt(var / (live - 1)) : 0.0;
     double dd = live > 0 ? std::sqrt(down / live) : 0.0;
-    if (sd <= kZeroVarianceTol * std::max(1.0, std::fabs(mean))) sd = dd = 0.0;
+    const double tol = kZeroVarianceTol * std::max(1.0, std::fabs(mean));
+    if (sd <= tol) sd = dd = 0.0;
+    else if (dd <= tol) dd = 0.0;
     const double ann = std::sqrt(periods_per_year);
     m.annualized_vol = sd * ann;
     m.sharpe = sd > 0.0 ? mean / sd * ann : 0.0;

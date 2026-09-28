@@ -420,13 +420,15 @@ def test_plan_flags_a_notional_over_the_desk_cap_as_unticketable():
     assert p["plan_id"] not in tools.plans and p["simulated"] is True
     with pytest.raises(ValueError, match="per-order cap"):
         ticket_from_plan(p)
-    ok = tools.plan("EURUSD", AS_OF, 0.0)
-    assert ok["ticketable"] is True and ok["order_cap"] == 100_000.0 and ok["plan_id"] in tools.plans and "note" not in ok
-    assert tools.submit_order(**ticket_from_plan(ok))["intent"] == "buy_to_cover"
     # through the executor a flagged plan is evidence, never a submittable ticket
     ex = _executor(tools, max_order_notional=tools.order_cap)
     res = ex.call("execution.plan", symbol="EURUSD", as_of=AS_OF.isoformat(), target_weight=0.6)
     assert res.ok and res.payload["ticketable"] is False and res.payload["order_cap"] == 100_000.0
+    ok = tools.plan("EURUSD", AS_OF, 0.0)
+    assert ok["ticketable"] is True and ok["order_cap"] == 100_000.0 and ok["plan_id"] in tools.plans and "note" not in ok
+    assert tools.submit_order(**ticket_from_plan(ok))["intent"] == "buy_to_cover"
+    # (v0.8 final review (h): the ticket moves the book to flat, so the executor check above runs
+    # before it; the same reversal now fits the cap as a second leg, see test_two_leg_reduce_...)
     # a cap of zero flags every plan, and the no-session note still travels with the cap note
     frozen = DeskTools(StubProvider({"AAPL": _history(100.0)}), make_config(CFG, execution={"max_order_notional": 0}),
                        capital=100_000.0)
@@ -461,7 +463,10 @@ def test_position_reports_tickets_recorded_against_the_symbol():
     assert "pending" not in tools.position("AAPL")
     t = tools.submit_order(**ticket_from_plan(tools.plan("AAPL", AS_OF, 0.1)))
     pos = tools.position("AAPL")
-    assert pos["weight"] == 0.4 and pos["pending"][0]["id"] == t["id"] and pos["pending"][0]["intent"] == "sell_to_reduce"
+    # v0.8 final review (h): the book moves to the ticket's position_after (this line asserted the
+    # weight stayed 0.4 after a ticket to 0.1 before, the enshrined defect)
+    assert pos["weight"] == t["position_after"] == pytest.approx(0.1, abs=0.01) and pos["weight"] != 0.4
+    assert pos["pending"][0]["id"] == t["id"] and pos["pending"][0]["intent"] == "sell_to_reduce"
 
 
 # ------------------------------------------------------ 73: long-only truncation
@@ -570,3 +575,36 @@ def test_quantities_are_rounded_once_at_plan_time_and_used_everywhere(capsys):
     assert plan_execution(_decision("AAPL", 0.001), ins, 0.0, 100_000.0, 223.219) is None
     with pytest.raises(ValueError, match="unknown execution algo"):
         plan_execution(_decision("AAPL", 0.5), ins, 0.0, 100_000.0, 223.219, algo="vwip")
+
+
+# ------------------------------------------------- v0.8 final review (h): a ticket moves the book
+def test_two_leg_reduce_sizes_the_second_leg_from_the_ticketed_book():
+    tools = DeskTools(SyntheticProvider(CFG), CFG, positions={"EURUSD": -0.6}, capital=100_000.0)
+    assert tools.plan("EURUSD", AS_OF, 0.6)["ticketable"] is False       # the whole reversal is over the cap
+    leg1 = tools.submit_order(**ticket_from_plan(tools.plan("EURUSD", AS_OF, 0.0)))
+    assert leg1["intent"] == "buy_to_cover" and leg1["position_before"] == -0.6
+    assert leg1["position_after"] == pytest.approx(0.0, abs=0.02) and tools.positions["EURUSD"] == leg1["position_after"]
+    pos = tools.position("EURUSD")
+    assert pos["weight"] == leg1["position_after"] and [t["id"] for t in pos["pending"]] == [leg1["id"]]
+    leg2 = tools.plan("EURUSD", AS_OF, 0.6)                             # sized from the book the ticket left
+    assert leg2["trade"] and leg2["ticketable"] is True and leg2["current_weight"] == leg1["position_after"]
+    assert leg2["notional"] <= 100_000.0 and leg2["side"] == "buy"
+    t2 = tools.submit_order(**ticket_from_plan(leg2))
+    assert t2["position_before"] == leg1["position_after"] and t2["position_after"] == pytest.approx(0.6, abs=0.02)
+    assert tools.positions["EURUSD"] == t2["position_after"]
+    assert [t["id"] for t in tools.position("EURUSD")["pending"]] == [leg1["id"], t2["id"]]
+    with pytest.raises(ValueError, match="disagrees with the desk's book"):   # the pre-ticket weight is stale
+        tools.plan("EURUSD", AS_OF, 0.6, current_weight=-0.6)
+    # a run's view moves the run's book, never the desk's; a second reduce cannot re-sell sold shares
+    desk = DeskTools(SyntheticProvider(CFG), CFG, positions={"AAPL": 0.4}, capital=100_000.0)
+    book = {"AAPL": 0.4}
+    view = desk.for_book(book)
+    first = view.submit_order(**ticket_from_plan(view.plan("AAPL", AS_OF, 0.2)))
+    assert first["intent"] == "sell_to_reduce" and book == {"AAPL": first["position_after"]}
+    assert desk.positions == {"AAPL": 0.4} and first["position_after"] == pytest.approx(0.2, abs=0.01)
+    again = view.plan("AAPL", AS_OF, 0.0)
+    assert again["current_weight"] == first["position_after"] and again["notional"] < 0.2 * 100_000.0 + 300
+    second = view.submit_order(**ticket_from_plan(again))
+    assert second["position_after"] == pytest.approx(0.0, abs=0.01) and 0 <= second["position_after"]
+    assert view.orders is desk.orders and len(desk.orders) == 2 and desk.positions == {"AAPL": 0.4}
+    assert desk.position("AAPL")["weight"] == 0.4 and len(desk.position("AAPL")["pending"]) == 2

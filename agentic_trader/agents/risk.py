@@ -221,7 +221,8 @@ class PortfolioManager(Agent):
             stop, take = fallback
         d = FinalDecision(state.instrument.symbol, state.as_of,
                           action_for(w, state.debate.score, thr), round(w, 4), conf,
-                          stop, take, rationale, bool(approved), notes, source)
+                          stop, take, rationale, bool(approved), notes, source,
+                          kept=band_note is not None)
         state.decision = d
         return d
 
@@ -231,7 +232,9 @@ class PortfolioManager(Agent):
 
         Small target changes cost spread and commission without changing the risk
         materially. The current position is kept only if it would itself pass every
-        firm limit today, so the band can never hold a position the limits forbid.
+        firm limit today, so the band can never hold a position the limits forbid. A
+        note is returned exactly when the position is kept (``FinalDecision.kept``); any
+        other outcome is a target the backtester trades, cap included.
         """
         band = f.get("rebalance_band", 0.0)
         if current is None or band <= 0 or w == current or abs(w - current) >= band:

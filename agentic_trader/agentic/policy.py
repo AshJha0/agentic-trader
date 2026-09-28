@@ -8,10 +8,11 @@ can be extended; the defaults are:
 1. **deny list** - tools that are never callable through the agent path;
 2. **required capabilities** - the role must hold every capability the tool asks for;
 3. **argument guards** - symbols (scalar ``symbol`` and every element of a
-   ``symbols`` list, capped in length) must be in the configured universe, weights
-   must be finite and within the max position, dates must not be in the future,
-   order quantities must be finite and positive and the notional below the
-   per-order cap (``max_order_notional``);
+   ``symbols`` list, capped in length) must be in the configured universe, proposed
+   weights must be finite and within the max position (``current_weight`` is a fact
+   about the book, not a proposal: finite, but never capped, so a position above the
+   limit can be reduced), dates must not be in the future, order quantities must be
+   finite and positive and the notional below the per-order cap (``max_order_notional``);
 4. **read-only** - a non-read-only tool needs ``PROPOSE_TRADES`` and approval;
 5. **risk level** - HIGH-risk tools always require approval, even for admins.
 
@@ -132,8 +133,10 @@ def argument_guard_rule(ctx: PolicyContext) -> PolicyDecision | None:
             fv = float(v)
         except (TypeError, ValueError):
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", f"{key} is not a number")
-        if not math.isfinite(fv):
+        if isinstance(v, bool) or not math.isfinite(fv):
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", f"{key} is not finite")
+        if key == "current_weight":   # the position held: a fact to size from, whatever the cap
+            continue
         cap = float(ctx.config.get("max_position", 1.0))
         if abs(fv) > cap:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard",

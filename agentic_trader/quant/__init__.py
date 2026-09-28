@@ -20,7 +20,7 @@ import os
 import numpy as np
 
 from . import pycore
-from .pycore import BacktestConfig, BacktestResult, Metrics, Trade
+from .pycore import ZERO_VARIANCE_TOL, BacktestConfig, BacktestResult, Metrics, Trade
 
 try:  # pragma: no cover - depends on the local build
     if os.environ.get("AGENTIC_TRADER_BACKEND", "").lower() == "python":
@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover
             "numpy backend explicitly.", RuntimeWarning, stacklevel=2)
 
 __all__ = [
-    "BACKEND", "BacktestConfig", "BacktestResult", "Metrics", "Trade",
+    "BACKEND", "ZERO_VARIANCE_TOL", "BacktestConfig", "BacktestResult", "Metrics", "Trade",
     "sma", "ema", "rolling_std", "zscore", "rsi", "macd", "bollinger", "atr", "kdj",
     "pct_change", "realized_vol", "rolling_max", "rolling_min", "spearman", "almgren_chriss",
     "quantile", "historical_var", "historical_cvar",
@@ -180,8 +180,10 @@ def compute_metrics(equity, positions, periods_per_year: float,
     ``risk_free_annual`` is a constant or a per-bar array of the same length as ``equity``
     (NaN -> 0); Sharpe, Sortino and the t-stat use excess returns ``r_t - rf_t / ppy``, and
     are 0 (with ``annualized_vol``) when the excess return is constant to rounding, on both
-    backends. ``traded`` (|dw| per bar) gives turnover and the trade count exactly; without
-    it both are inferred from changes in ``positions`` (which drift every bar under constant
+    backends, and Sortino alone is 0 when only the downside is rounding noise (the same
+    ``ZERO_VARIANCE_TOL``, exported here). ``traded`` (|dw| per bar) gives turnover and the
+    trade count exactly; without it both are inferred from changes in ``positions`` (which
+    drift every bar under constant
     units) and a ``RuntimeWarning`` says so. An empty ``risk_free_annual`` or ``traded``
     array means absent (rf 0 / inferred trades) on both backends. ``positions`` must match
     ``equity`` in length.
@@ -212,8 +214,9 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
     trade and no cost. The leverage cap applies to targets; a target equal to the weight
     currently held is a decision to keep the position and is executed as no trade even when
     drift has carried that weight outside the cap (the cap binds on new targets, not on
-    drift). Equity is floored at 0 (ruin: any one leg of a bar -- entry cost, move or exit
-    cost -- consuming the whole account).
+    drift; ``run_agent_backtest`` passes the held weight only for a genuine keep, so any
+    other decision past the cap is a trim). Equity is floored at 0 (ruin: any one leg of a
+    bar -- entry cost, move or exit cost -- consuming the whole account).
 
     Optional per-bar arrays (same length as ``prices``):
       carry      annual carry rate per bar (overrides ``config.carry_annual``)

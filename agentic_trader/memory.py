@@ -185,10 +185,12 @@ class DecisionMemory:
 
         ``history`` is the price series the desk sees at ``as_of`` (a frame with a ``Close``
         column, or a series), which must not extend past ``as_of``. Only entries recorded by
-        this ``provider`` on this ``price_basis`` are touched: another provider's entries are
+        this ``provider`` on this ``price_basis`` are valued: another provider's entries are
         neither valued on this series nor expired by this visit. An entry this series cannot
         value (its entry bar predates the window, or its exit bar never arrives) is expired
-        once more than twice its horizon has elapsed. ``max_staleness_days`` is how far the
+        once more than twice its horizon has elapsed. An entry with no provider stamp (written
+        before v0.8) is never valued and is closed out that way by any provider's visit, so a
+        migrated log drains instead of holding it open forever. ``max_staleness_days`` is how far the
         decision day may sit after its entry bar -- the desk's ``max_data_staleness_days``,
         under which the decision was allowed at all (the instance's setting when omitted).
         Returns the number of entries closed (resolved or expired).
@@ -201,17 +203,18 @@ class DecisionMemory:
             for e in self.entries:
                 if e.symbol != symbol or e.resolved_on is not None:
                     continue
-                if (e.provider, e.price_basis) != (provider, price_basis):
-                    continue
                 entry_day = date.fromisoformat(e.as_of)
-                pos = int(closes.index.searchsorted(pd.Timestamp(entry_day), side="right")) - 1 if last_pos >= 0 else -1
-                if pos >= 0 and (entry_day - closes.index[pos].date()).days <= tolerance:
-                    exit_pos = pos + e.horizon_days
-                    if exit_pos <= last_pos:
-                        self._settle(e, float(closes.iloc[pos]), float(closes.iloc[exit_pos]),
-                                     closes.index[exit_pos].date())
-                        n += 1
-                        continue
+                if (e.provider, e.price_basis) == (provider, price_basis):
+                    pos = int(closes.index.searchsorted(pd.Timestamp(entry_day), side="right")) - 1 if last_pos >= 0 else -1
+                    if pos >= 0 and (entry_day - closes.index[pos].date()).days <= tolerance:
+                        exit_pos = pos + e.horizon_days
+                        if exit_pos <= last_pos:
+                            self._settle(e, float(closes.iloc[pos]), float(closes.iloc[exit_pos]),
+                                         closes.index[exit_pos].date())
+                            n += 1
+                            continue
+                elif e.provider:
+                    continue   # another provider's entry: its own provider values or expires it
                 # Horizon not reached, or not valuable on this series: expire once the entry is
                 # older than twice its horizon, whether or not its exit bar ever arrives.
                 if (as_of - entry_day).days > self.max_age_days(e.horizon_days):

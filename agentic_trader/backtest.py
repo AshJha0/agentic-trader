@@ -217,11 +217,12 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     (``0 <= offset < rebalance_every``); sweeping it measures the cadence's phase noise.
 
     On each decision bar the desk is told the weight it actually holds (the last decision's
-    units drifted with the market). A decision equal to that weight, reported to 4 decimals
-    and clipped to the leverage cap, is a decision to keep the position and is executed as
-    no trade -- also when drift has carried the weight outside the cap (a capped short with
-    borrow, a capped FX long with negative carry): the cap binds on decisions, not on drift,
-    so no cap-enforcement trade appears in ``trades``, ``traded`` or the turnover.
+    units drifted with the market). A keep (``FinalDecision.kept``: the PM's no-trade band
+    held that position, which it does only when the position passes every firm limit) is
+    executed as no trade, not as a trade to the weight rounded to 4 decimals. Every other
+    decision is a target that the engine clamps to the leverage cap and trades, so a weight
+    that drift has carried past the cap (a losing short, a capped FX long with negative
+    carry) is trimmed back to it at the next decision bar.
     """
     cfg = make_config(config)
     ins = Instrument.parse(symbol, asset_class)
@@ -278,13 +279,12 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
             st, dec = graph.propagate(ins, window.index[i].date(), current_weight=held)
             for s in _sources(st):
                 sources[s] = sources.get(s, 0) + 1
-            # Hold each decision (weight and its protective levels) until the next one. A
-            # decision to keep the current position (the PM's no-trade band, or the cap when
-            # drift has carried the weight past it; reported to 4 decimals) is executed as no
-            # trade, not as a trade to the rounded or capped weight: the engine leaves a
-            # target equal to the held weight unclamped.
-            capped = min(max(held, -bt.max_leverage if bt.allow_short else 0.0), bt.max_leverage)
-            w[i:] = held if dec.target_weight == round(capped, 4) else dec.target_weight
+            # Hold each decision (weight and its protective levels) until the next one. Only a
+            # keep (the PM's no-trade band held the current position: dec.kept) passes the held
+            # weight unchanged, which the engine executes as no trade rather than a trade to the
+            # rounded weight. Every other decision is a target the engine clamps to the cap and
+            # trades, including one equal to the cap while the held weight has drifted past it.
+            w[i:] = held if dec.kept else dec.target_weight
             stop[i:] = np.nan if dec.stop_loss is None else dec.stop_loss
             take[i:] = np.nan if dec.take_profit is None else dec.take_profit
             reb[i] = 1.0

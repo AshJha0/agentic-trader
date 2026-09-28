@@ -701,7 +701,11 @@ def test_e_backends_agree_on_the_keep_at_the_cap():
                  pycore.run_backtest_ex(prices, keep, cfg, rebalance=reb))
 
 
-def test_e_desk_keeping_a_capped_short_books_no_cap_enforcement_trade(monkeypatch):
+def test_e_desk_deciding_the_cap_while_past_it_is_trimmed_and_a_keep_is_not(monkeypatch):
+    # Final review (engine, high): the earlier version of this test enshrined "a decision equal to
+    # the capped held weight is a keep", which never de-levered a short that drifted past the cap.
+    # A keep is now only what the PM's no-trade band marks (FinalDecision.kept); a -1.0 decision
+    # while the held weight sits past the cap is a trim back to it.
     cfg = make_config(CFG, risk={"allow_short_equity": True, "max_position": 1.0, "rebalance_band": 0.0},
                       costs={"equity_borrow_annual": 0.05, "equity_cost_bps": 0.0, "equity_slippage_bps": 0.0})
     told = []
@@ -717,17 +721,12 @@ def test_e_desk_keeping_a_capped_short_books_no_cap_enforcement_trade(monkeypatc
     rep = run_agent_backtest("AAPL", "2024-01-02", "2024-06-28", cfg, rebalance_every=reb)
     res = rep.results[AGENT]
     bars = list(range(0, len(rep.prices) - 1, reb))
-    assert len(told) == len(bars) and all(d.target_weight == -1.0 for d in rep.decisions)
-    kept = trimmed = 0
+    assert len(told) == len(bars) and all(d.target_weight == -1.0 and not d.kept for d in rep.decisions)
+    assert any(t < -1.0 for t in told)                    # borrow and price moves carried the short past the cap
     for k, i in enumerate(bars[1:], 1):
-        if round(max(told[k], -1.0), 4) == -1.0:         # at or past the cap to 4 decimals: a keep
-            kept += 1
-            assert res.traded[i] == 0.0 and res.positions[i] == told[k], (k, i)   # was a trade of |held| - 1
-        else:                                             # inside the cap: the desk really re-levers to it
-            trimmed += 1
-            assert res.traded[i] == pytest.approx(abs(-1.0 - told[k]), abs=1e-12) and res.positions[i] == -1.0
-    assert kept > 0 and trimmed > 0 and any(t < -1.0 for t in told)   # both branches, and drift past the cap, occurred
-    assert res.metrics.num_trades == 1 + trimmed
+        assert res.positions[i] == -1.0, (k, i)           # was: kept at told[k] whenever told[k] <= -1.0
+        assert res.traded[i] == pytest.approx(abs(-1.0 - told[k]), abs=1e-12)
+    assert res.metrics.num_trades == sum(1 for t in told if t != -1.0)
 
 
 @METRICS
@@ -801,3 +800,274 @@ def test_k_the_environment_is_restored_between_tests_part_1():
 
 def test_k_the_environment_is_restored_between_tests_part_2():
     assert "AT_ENGINE2_PROBE" not in os.environ
+
+
+# ======================================================= final code review (engine-3 cluster)
+from agentic_trader.cli import main as cli_main
+from agentic_trader.data.csv_provider import SPLIT_JUMP, split_factor
+from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_ci_bootstrap, sharpe_stats
+
+
+def _winning_bars_under_a_cash_leg(T: int = 30):
+    """Real dispersion (five +0.5% bars held long), flat and unpositioned for the rest of the
+    window under a wandering cash leg: the only negative excess returns are the +-1e-16 rounding
+    noise of the flat bars (r - rf/ppy), never a genuine loss."""
+    prices = np.full(T, 100.0)
+    prices[1:6] = 100.0 * 1.005 ** np.arange(1, 6)
+    prices[6:] = prices[5]
+    w = np.zeros(T)
+    w[:5] = 1.0
+    cash = 0.03 + 0.002 * np.cumsum(np.random.default_rng(1).normal(size=T)) / 10
+    return prices, w, quant.BacktestConfig(cost_bps=0.0, slippage_bps=0.0), cash
+
+
+@ENGINES
+def test_fa_sortino_is_zero_when_only_the_downside_is_rounding_noise(engine):
+    prices, w, cfg, cash = _winning_bars_under_a_cash_leg()
+    r = engine(prices, w, cfg, cash_rate=cash)
+    ex = r.returns[1:] - cash[:-1] / cfg.periods_per_year
+    assert (ex < 0).sum() > 5 and ex.min() > -1e-14                        # losses are rounding noise only
+    assert r.metrics.sharpe == pytest.approx(7.1197, abs=1e-3) and r.metrics.annualized_vol > 0.02
+    assert r.metrics.sortino == 0.0                                          # was +2.76e14 on both backends
+    # the direct entry with a constant rf and an equity curve compounding at exactly rf on flat bars
+    e = np.empty(40)
+    e[0] = 100_000.0
+    for i in range(39):
+        e[i + 1] = e[i] * (1.0 + (0.004 if 5 <= i < 10 else 0.03 / 252.0))
+    metrics = quant.compute_metrics if engine is quant.run_backtest else pycore.compute_metrics
+    m = metrics(e, np.ones(40), 252.0, 0.03, np.zeros(40))
+    assert m.sharpe > 5.0 and m.sortino == 0.0                              # was +1.89e14
+    # a genuine loss, however small next to the noise, still gives a finite Sortino
+    e[20] *= 1 - 1e-6
+    m2 = metrics(e, np.ones(40), 252.0, 0.03, np.zeros(40))
+    assert 0.0 < m2.sortino < 1e6 and m2.sharpe > 5.0
+
+
+@needs_cpp
+def test_fa_backends_agree_on_the_downside_rule_and_its_boundary():
+    prices, w, cfg, cash = _winning_bars_under_a_cash_leg()
+    a = quant.run_backtest(prices, w, cfg, cash_rate=cash).metrics
+    b = pycore.run_backtest_ex(prices, w, cfg, cash_rate=cash).metrics
+    assert a.sortino == b.sortino == 0.0 and a.sharpe == pytest.approx(b.sharpe, rel=1e-12)
+    # ZERO_VARIANCE_TOL is a per-bar floor of 1e-12: sd 1e-10 keeps its Sharpe, 1e-13 is zeroed (both)
+    T = 300
+    for sd, real in ((1e-10, True), (1e-13, False)):
+        rr = 1e-4 + sd * np.random.default_rng(5).standard_normal(T - 1)
+        e = 100_000.0 * np.cumprod(np.r_[1.0, 1.0 + rr])
+        ma, mb = (f(e, np.ones(T), 252.0, 0.0, np.zeros(T)) for f in (quant.compute_metrics, pycore.compute_metrics))
+        if real:
+            ref = rr.mean() / rr.std(ddof=1) * np.sqrt(252)
+            assert ma.sharpe == pytest.approx(ref, rel=1e-3) and mb.sharpe == pytest.approx(ref, rel=1e-3)
+            assert ma.annualized_vol > 0 and mb.annualized_vol > 0
+        else:
+            assert (ma.sharpe, ma.sortino, ma.annualized_vol) == (0.0, 0.0, 0.0) == (mb.sharpe, mb.sortino, mb.annualized_vol)
+
+
+def test_fb_the_stats_module_reports_zero_for_a_flat_book_like_the_table():
+    T = 200
+    r = np.random.default_rng(0).normal(0.0004, 0.01, T)
+    flat = np.full(T, 0.05 / 252.0)                                           # exactly rf every day
+    d = paired_sharpe_block_bootstrap(np.zeros(T), r, 252.0, rf=0.05, n_boot=200)
+    assert d.sharpe_a == 0.0 and np.isfinite(d.diff) and abs(d.ci_low) < 1e3    # sharpe_a was -1.16e17
+    assert d.sharpe_b == pytest.approx((r - 0.05 / 252).mean() / r.std(ddof=1) * np.sqrt(252))
+    e = paired_sharpe_block_bootstrap(flat, r, 252.0, rf=np.full(T, 0.05), n_boot=200)
+    assert e.sharpe_a == 0.0
+    s = sharpe_stats(flat + 1e-17 * np.random.default_rng(1).standard_normal(T))
+    assert s.sharpe == s.sharpe_annual == s.t_stat == 0.0 and s.std == 0.0     # was +-1e14
+    assert sharpe_ci_bootstrap(flat, 252.0, n_boot=100) == (0.0, 0.0)
+    # real dispersion, however small, keeps its Sharpe in every helper
+    tiny = 1e-4 + 1e-10 * np.random.default_rng(2).standard_normal(T)
+    ref = tiny.mean() / tiny.std(ddof=1) * np.sqrt(252)
+    assert sharpe_stats(tiny).sharpe_annual == pytest.approx(ref, rel=1e-6)
+    assert paired_sharpe_block_bootstrap(tiny, r, 252.0, n_boot=50).sharpe_a == pytest.approx(ref, rel=1e-6)
+    lo, hi = sharpe_ci_bootstrap(tiny, 252.0, n_boot=100)
+    assert np.isfinite(lo) and hi > lo
+
+
+# ---- (c) a keep is a keep only when the desk actually kept
+class _Rising(SyntheticProvider):
+    """A price that rises 1% a session: constant units carry a short well past the cap between
+    decision bars (a -1.0 short is -1.105 five bars later)."""
+
+    def _frame(self, instrument):
+        if instrument.symbol not in self._cache:
+            dates = pd.bdate_range("2022-01-03", "2024-12-31")
+            close = 100.0 * 1.01 ** np.arange(len(dates))
+            df = pd.DataFrame({"Open": close, "High": close * 1.002, "Low": close * 0.998, "Close": close,
+                               "Volume": np.full(len(dates), 1e6)}, index=dates)
+            df["_z"] = 0.0
+            self._cache[instrument.symbol] = df
+        return self._cache[instrument.symbol]
+
+
+_SHORT_CFG = make_config(CFG, risk={"allow_short_equity": True, "max_position": 1.0, "rebalance_band": 0.0},
+                         costs={"equity_borrow_annual": 0.01, "equity_cost_bps": 0.0, "equity_slippage_bps": 0.0})
+
+
+def _desk(monkeypatch, decide):
+    """Patch the desk: ``decide(k, current_weight, dec)`` returns the k-th decision."""
+    told = []
+    orig = TradingGraph.propagate
+
+    def patched(self, symbol, as_of, asset_class=None, current_weight=None, book=None):
+        st, dec = orig(self, symbol, as_of, asset_class, current_weight, book)
+        told.append(current_weight)
+        return st, decide(len(told) - 1, current_weight, replace(dec, stop_loss=None, take_profit=None))
+
+    monkeypatch.setattr(TradingGraph, "propagate", patched)
+    return told
+
+
+def _both_backends(run):
+    """Run ``run()`` on the active backend and again with the numpy engine behind ``quant.run_backtest``."""
+    active = run()
+    if not CPP:
+        return active, None
+    saved = quant.run_backtest
+    quant.run_backtest = pycore.run_backtest_ex
+    try:
+        numpy = run()
+    finally:
+        quant.run_backtest = saved
+    return active, numpy
+
+
+def test_fc_a_levered_short_past_the_cap_with_a_decision_at_the_cap_is_trimmed(monkeypatch):
+    told = _desk(monkeypatch, lambda k, cw, dec: replace(dec, action=Action.SELL, target_weight=-1.0))
+
+    def run():
+        told.clear()
+        return run_agent_backtest("AAPL", "2024-01-02", "2024-06-28", _SHORT_CFG, rebalance_every=5,
+                                  provider=_Rising(_SHORT_CFG))
+
+    rep, rep_np = _both_backends(run)
+    res = rep.results[AGENT]
+    bars = list(range(0, len(rep.prices) - 1, 5))
+    assert all(d.target_weight == -1.0 and not d.kept for d in rep.decisions)
+    assert min(told[1:]) < -1.09 and max(told[1:]) < -1.05        # every decision bar starts past the cap
+    for k, i in enumerate(bars[1:], 1):
+        assert res.positions[i] == -1.0 and res.traded[i] == pytest.approx(abs(told[k]) - 1.0, abs=1e-12)
+    assert res.metrics.num_trades == len(bars) and np.abs(res.positions).max() < 1.12   # was 1 trade, |w| up to 15
+    if rep_np is not None:
+        _same_result(res, rep_np.results[AGENT])
+        np.testing.assert_allclose(res.traded, rep_np.results[AGENT].traded, rtol=1e-12, atol=1e-15)
+
+
+def test_fc_a_genuine_keep_past_the_cap_books_no_trade(monkeypatch):
+    def decide(k, cw, dec):
+        if k == 0:
+            return replace(dec, action=Action.SELL, target_weight=-1.0)
+        return replace(dec, action=Action.SELL, target_weight=round(cw, 4), kept=True,
+                       adjustments=[f"within no-trade band: keep {cw:+.2f}"])
+
+    told = _desk(monkeypatch, decide)
+
+    def run():
+        told.clear()
+        return run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", _SHORT_CFG, rebalance_every=5,
+                                  provider=_Rising(_SHORT_CFG))
+
+    rep, rep_np = _both_backends(run)
+    res = rep.results[AGENT]
+    bars = list(range(0, len(rep.prices) - 1, 5))
+    assert all(d.kept for d in rep.decisions[1:]) and not rep.decisions[0].kept
+    assert res.ruined_at == -1 and told[-1] < -1.5                # the kept short keeps drifting past the cap
+    for k, i in enumerate(bars[1:], 1):
+        assert res.traded[i] == 0.0 and res.positions[i] == told[k]   # no trade to the rounded or capped weight
+    assert res.metrics.num_trades == 1 and len(res.trades) == 1
+    if rep_np is not None:
+        _same_result(res, rep_np.results[AGENT])
+        np.testing.assert_array_equal(res.traded != 0, rep_np.results[AGENT].traded != 0)
+
+
+def test_fc_the_pm_marks_a_keep_only_when_the_band_holds_a_legal_position():
+    free = TradingGraph(make_config(CFG, risk={"rebalance_band": 0.0}), provider=SyntheticProvider(CFG),
+                        memory=DecisionMemory(None), on_event=lambda *_: None)
+    _, d0 = free.propagate("AAPL", "2024-03-01")
+    assert not d0.kept and "kept" in d0.to_dict() and d0.to_dict()["kept"] is False
+    held = round(d0.target_weight - 0.04, 4)
+    banded = TradingGraph(make_config(CFG, risk={"rebalance_band": 0.10}), provider=SyntheticProvider(CFG),
+                          memory=DecisionMemory(None), on_event=lambda *_: None)
+    _, d1 = banded.propagate("AAPL", "2024-03-01", current_weight=held)
+    assert d1.kept and d1.target_weight == held and any("no-trade band" in a for a in d1.adjustments)
+    _, d2 = banded.propagate("AAPL", "2024-03-01", current_weight=round(d0.target_weight - 0.3, 4))
+    assert not d2.kept and d2.target_weight == d0.target_weight
+    # a held weight past the cap is never kept, however close the new target: it is a target at the cap
+    wide = TradingGraph(make_config(CFG, risk={"rebalance_band": 0.5, "allow_short_equity": True}),
+                        provider=SyntheticProvider(CFG), memory=DecisionMemory(None), on_event=lambda *_: None)
+    _, d3 = wide.propagate("AAPL", "2024-03-01", current_weight=1.3)
+    assert not d3.kept and abs(d3.target_weight) <= 1.0
+    assert not any("no-trade band" in a for a in d3.adjustments)
+
+
+# ---- (d) Volume follows the split ratio only, never the dividend drift
+def _csv(tmp_path, name, rows):
+    (tmp_path / f"{name}.csv").write_text("Date,Open,High,Low,Close,Adj Close,Volume\n" + "\n".join(rows) + "\n",
+                                          encoding="utf-8")
+    p = CSVProvider(make_config(csv_dir=str(tmp_path)))
+    return p.history(Instrument.parse(name), date(2024, 1, 1), date(2024, 2, 29))
+
+
+def test_fd_a_dividend_payer_without_a_split_keeps_its_volume_as_traded(tmp_path, caplog):
+    days = pd.bdate_range("2024-01-01", "2024-01-12")
+    rows = [f"{d.date()},100,101,99,100,{97 if i < 5 else 100},1000" for i, d in enumerate(days)]   # 3% ex-div row 5
+    with caplog.at_level(logging.INFO, logger="agentic_trader.data.csv_provider"):
+        h = _csv(tmp_path, "DIV", rows)
+    assert h["Close"].tolist() == [97.0] * 5 + [100.0] * 5                   # prices on the total-return basis
+    np.testing.assert_array_equal(h["Volume"].to_numpy(), 1000.0)            # was 1030.93 before the ex-date
+    assert "split" not in caplog.text
+    # a 3%-yield stock over a year (three ex-dates): the factor drifts by 3%, never in a jump
+    days = pd.bdate_range("2024-01-01", "2024-12-31")
+    adj = [100.0 * 0.99 ** (3 - sum(d.month > m for m in (3, 6, 9))) for d in days]
+    rows = [f"{d.date()},100,101,99,100,{a:.6f},1000000" for d, a in zip(days, adj)]
+    p = CSVProvider(make_config(csv_dir=str(tmp_path)))
+    (tmp_path / "YLD.csv").write_text("Date,Open,High,Low,Close,Adj Close,Volume\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    y = p.history(Instrument.parse("YLD"), date(2024, 1, 1), date(2024, 12, 31))
+    assert y["Close"].iloc[0] == pytest.approx(100 * 0.99 ** 3) and y["Close"].iloc[-1] == 100.0
+    np.testing.assert_array_equal(y["Volume"].to_numpy(), 1e6)               # ADV in shares as traded, not 1.03e6
+
+
+def test_fd_a_split_still_rescales_volume_and_a_dividend_beside_it_does_not(tmp_path, caplog):
+    days = pd.bdate_range("2024-01-01", "2024-01-19")
+    rows = []
+    for i, d in enumerate(days):
+        if i < 5:
+            rows.append(f"{d.date()},100,101,99,100,48.5,1000")              # before the 2:1 split, before the dividend
+        elif i < 10:
+            rows.append(f"{d.date()},50,51,49,50,48.5,2000")                 # after the split, before the 3% dividend
+        else:
+            rows.append(f"{d.date()},50,51,49,50,50,2000")                   # after both
+    with caplog.at_level(logging.INFO, logger="agentic_trader.data.csv_provider"):
+        h = _csv(tmp_path, "SPD", rows)
+    assert h["Close"].tolist() == [48.5] * 10 + [50.0] * 5
+    np.testing.assert_allclose(h["Volume"].to_numpy(), 2000.0)               # pre-split x2 (was x2.06), rest untouched
+    assert "1 split(s) detected" in caplog.text and str(days[5].date()) in caplog.text
+    # split_factor itself: a 4:1 split, then a 1:10 reverse split, with a 3% dividend before each (the
+    # factor is Adj Close / Close relative to the last row: 2.5 in old shares, 10 after the 4:1, 1 at the end)
+    idx = pd.bdate_range("2024-01-01", periods=8)
+    factor = pd.Series([2.5, 2.5, 2.5 * 1.03, 10.3, 10.3, 1.03, 1.0, 1.0], index=idx)
+    comp, splits = split_factor(factor)
+    np.testing.assert_allclose(comp.to_numpy(), [2.5, 2.5, 2.5, 10.0, 10.0, 1.0, 1.0, 1.0])   # 1000 old shares = 400 now
+    assert list(splits) == [idx[3], idx[5]]
+    comp1, none = split_factor(pd.Series([0.97, 0.97, 1.0, 1.0], index=idx[:4]))
+    assert (comp1 == 1.0).all() and len(none) == 0 and 0 < SPLIT_JUMP < 0.1
+    # unsorted, duplicated and blank rows: the split is found in date order and every row gets its factor
+    shuffled = pd.Series([1.0, 0.5, NAN, 0.5, 1.0], index=pd.to_datetime(["2024-01-05", "2024-01-02", "2024-01-03",
+                                                                          "2024-01-02", "2024-01-04"]))
+    comp2, s2 = split_factor(shuffled)
+    assert comp2.tolist() == [1.0, 0.5, 1.0, 0.5, 1.0] and list(s2) == [pd.Timestamp("2024-01-04")]
+
+
+# ---- (e) the CLI's below-one-lot message sizes the effective change
+def test_fe_cli_below_one_lot_message_uses_the_truncated_change_and_says_so(capsys):
+    base = ["execute", "AAPL", "--date", "2024-03-01", "--capital", "100000"]
+    assert cli_main(base + ["--target", "-0.3", "--current", "0.0001"]) == 0
+    out = capsys.readouterr().out
+    assert "nothing to trade" in out and "below one share" in out
+    assert "+0.0001 -> +0.0000 (10 USD)" in out and "30,010" not in out        # was 'the change (30,010 USD)'
+    assert "target -0.30 truncated to flat" in out
+    assert cli_main(base + ["--target", "0.25", "--current", "0.2499"]) == 0
+    out = capsys.readouterr().out
+    assert "+0.2499 -> +0.2500 (10 USD) is below one share" in out and "truncated" not in out
+    assert cli_main(base + ["--target", "-0.3", "--current", "0.0001", "--allow-short"]) == 0
+    assert "SELL" in capsys.readouterr().out                                    # shorting allowed: a real order

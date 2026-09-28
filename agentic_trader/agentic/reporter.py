@@ -21,7 +21,7 @@ from typing import Any
 
 from ..llm import LLM
 from ..state import TradingState
-from .critic import CriticReport
+from .critic import FENCE_NOTE, CriticReport, findings_block
 from .domain import Finding, Task
 from .evidence import EvidenceStore
 
@@ -203,10 +203,10 @@ def llm_narrative(llm: LLM, state: TradingState, facts: dict[str, float], findin
         f"Write a 4-6 sentence executive summary of this decision for a portfolio manager.\n\n"
         f"Structured facts (use these figures and no others; quote them as given):\n"
         + "\n".join(f"- {k}: {v:.4g}" for k, v in facts.items())
-        + "\n\nFindings:\n" + "\n".join(f"- {f.agent}: {f.claim}" for f in findings)
+        + "\n\nFindings:\n" + findings_block(findings, confidence=False)
         + "\n\nDo not invent numbers, dates or evidence ids. Plain prose, no headings."
     )
-    return llm.complete("You are the reporting analyst of a trading desk.", prompt, deep=True)
+    return llm.complete(FENCE_NOTE + "You are the reporting analyst of a trading desk.", prompt, deep=True)
 
 
 def build_report(task: Task, state: TradingState, findings: list[Finding], critic: CriticReport,
@@ -228,7 +228,7 @@ def build_report(task: Task, state: TradingState, findings: list[Finding], criti
                      "take_profit": None if d.take_profit is None else round(d.take_profit, 6),
                      "adjustments": list(d.adjustments), "approved": d.approved, "source": d.source},
         "findings": [{"agent": f.agent, "claim": f.claim, "confidence": round(f.confidence, 3),
-                      "evidence_ids": list(f.evidence_ids)} for f in findings],
+                      "evidence_ids": list(f.evidence_ids), "untrusted": f.untrusted} for f in findings],
         "critic": critic.to_dict(),
         "knowledge": list(state.knowledge),
         "evidence": evidence.summary_rows(),

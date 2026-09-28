@@ -167,20 +167,22 @@ MAX_FLOW_LAG_DAYS = _QUARTER[1]
 # has moved its comparatives onto a new reporting basis (discontinued operations, a
 # restatement) and opens a new generation, provided its quarters reconcile with its own
 # annual span (ANNUAL_CHECK_TOLERANCE). A lone material re-print, or a recast whose quarters
-# do not add up to its annual figure (mis-tagged comparatives), is ignored. See
-# ``_tag_quarters``.
+# do not add up to its annual figure (mis-tagged comparatives), is ignored; a later filing
+# repeating an ignored value within the tolerance confirms it as a correction, taken in
+# place. See ``_tag_quarters``.
 BASIS_CHANGE_TOLERANCE = 0.05
 BASIS_CHANGE_MIN_SPANS = 2
 # Two tags are one concept for a filer (a rename) when every span they both print agrees
 # within this fraction; gross and net revenue tags differ by far more on every shared span.
 TAG_EQUIVALENCE_TOLERANCE = 0.01
 # The four quarters of a fiscal year must agree with its annual span within this fraction of
-# the annual figure; otherwise the audited annual figure less the three quarters is Q4. Only
-# additive flows are checked: quarterly per-share figures do not sum to the annual one
+# the year's scale (the annual figure or the quarters' total magnitude, whichever is larger:
+# a year netting to nearly nothing is judged on the size of its quarters, not on a rounding
+# unit); otherwise the audited annual figure less the three quarters is Q4. Only additive
+# flows are checked: quarterly per-share figures do not sum to the annual one
 # (weighted-average shares and anti-dilution differ by period), so a per-share recast is
 # judged mis-tagged only when its quarters miss its annual figure by more than
-# PER_SHARE_CHECK_TOLERANCE of the year's scale (the annual figure or the quarters' total
-# magnitude, whichever is larger), and a direct per-share Q4 print is never overridden.
+# PER_SHARE_CHECK_TOLERANCE of that scale, and a direct per-share Q4 print is never overridden.
 ANNUAL_CHECK_TOLERANCE = 0.02
 PER_SHARE_CHECK_TOLERANCE = 0.15
 
@@ -428,6 +430,11 @@ class EdgarClient:
                 self._warn_once(ticker, f"ignored-reprint:{tag}:{start}:{end}:{filed}",
                                 f"{tag} {start}..{end} re-printed as {printed:.4g} on {filed} against {held:.4g} held: "
                                 "a material change no other span corroborates; ignored")
+            elif kind == "confirmed":
+                _, _, start, end, held, printed, filed = note
+                self._warn_once(ticker, f"confirmed-reprint:{tag}:{start}:{end}:{filed}",
+                                f"{tag} {start}..{end} re-printed as {printed:.4g} on {filed}, repeating a print ignored "
+                                f"earlier: a correction confirmed by repetition; taken in place of {held:.4g}")
             else:
                 _, _, filed, end, quarters, annual = note
                 self._warn_once(ticker, f"rejected-recast:{tag}:{filed}",
@@ -510,7 +517,9 @@ class EdgarClient:
         # A live series' latest complete window can end behind the report period (a basis or
         # tag change not yet covering the newest quarters): say so rather than pass it off as
         # the period's figure, and never divide it into a figure from another window.
-        for name, s, total in (("revenue", rev, rev_ttm), ("net_income", ni, ni_ttm), ("eps", eps, eps_ttm)):
+        ocf_ttm, capex_ttm = ttm(ocf), ttm(capex)
+        for name, s, total in (("revenue", rev, rev_ttm), ("net_income", ni, ni_ttm), ("eps", eps, eps_ttm),
+                               ("ocf", ocf, ocf_ttm)):
             if total is not None and s.index.max() != period_end:
                 out[f"{name}_period_end"] = s.index.max().date().isoformat()
         if rev_ttm is not None:
@@ -529,11 +538,12 @@ class EdgarClient:
             out["_eps_ttm"] = eps_ttm
         if debt is not None and equity:
             out["debt_to_equity"] = round(debt / equity, 3)
-        ocf_ttm, capex_ttm = ttm(ocf), ttm(capex)
-        # A filer that reports capital expenditure but has no current four-quarter window of
-        # it (a dead or renamed tag) has no free cash flow figure, not a free cash flow equal
-        # to operating cash flow.
-        if ocf_ttm is not None and shares and (capex_ttm is not None or not capex_reported):
+        # A filer that reports capital expenditure but has no four-quarter window of it ending
+        # with the operating cash flow window (a dead or renamed tag, a recast of one series)
+        # has no free cash flow figure: neither operating cash flow alone nor a difference of
+        # two windows. Only a filer that never reports capex has free cash flow equal to it.
+        if ocf_ttm is not None and shares and (not capex_reported
+                                               or (capex_ttm is not None and capex.index.max() == ocf.index.max())):
             out["_fcf_ttm"], out["_shares"] = ocf_ttm - (capex_ttm or 0.0), shares
         if notes:
             out["_notes"] = notes
@@ -565,9 +575,11 @@ def _comparative(old: tuple[int, int], new: tuple[int, int]) -> bool:
 
 def _inconsistent(rows: list[tuple[int, int, float]], additive: bool) -> list[tuple[int, int, float, float]]:
     """The annual spans a filing prints whose four quarters, printed by the same filing and
-    tiling the year, do not sum to it (within ``ANNUAL_CHECK_TOLERANCE`` of the annual figure
-    for an ``additive`` flow, ``PER_SHARE_CHECK_TOLERANCE`` of the year's scale for a
-    per-share one), each as ``(start_day, end_day, four_quarter_sum, annual)``."""
+    tiling the year, do not sum to it (within ``ANNUAL_CHECK_TOLERANCE`` of the year's scale
+    for an ``additive`` flow, ``PER_SHARE_CHECK_TOLERANCE`` of it for a per-share one, the
+    scale being the annual figure or the quarters' total magnitude, whichever is larger: a
+    year netting to nearly nothing is still checked against the size of its quarters), each
+    as ``(start_day, end_day, four_quarter_sum, annual)``."""
     vals = {(s, e): v for s, e, v in rows}
     quarters = sorted((s, e) for s, e in vals if _QUARTER[0] <= e - s <= _QUARTER[1])
     bad = []
@@ -579,10 +591,8 @@ def _inconsistent(rows: list[tuple[int, int, float]], additive: bool) -> list[tu
                 or not all(0 <= b[0] - a[1] <= 3 for a, b in zip(inside, inside[1:]))):
             continue
         total = sum(vals[q] for q in inside)
-        if additive:
-            tolerance = ANNUAL_CHECK_TOLERANCE * abs(v)
-        else:
-            tolerance = PER_SHARE_CHECK_TOLERANCE * max(abs(v), sum(abs(vals[q]) for q in inside))
+        scale = max(abs(v), sum(abs(vals[q]) for q in inside))
+        tolerance = (ANNUAL_CHECK_TOLERANCE if additive else PER_SHARE_CHECK_TOLERANCE) * scale
         if abs(total - v) > tolerance:
             bad.append((s, e, total, v))
     return bad
@@ -611,6 +621,15 @@ def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: 
     a filing are still taken (nothing contradicts them), except the quarters of a year it
     mis-tagged: that year's Q4 is its annual span less the quarters already held.
 
+    *Corroboration by repetition.* Every ignored print is remembered. A later filing that
+    re-prints the span within ``BASIS_CHANGE_TOLERANCE`` of an ignored value has confirmed a
+    correction (an amended quarter that every later comparative repeats): it is taken in
+    place within the current generation, the latest confirmed print winning, and noted as
+    ``("confirmed", start, end, held, printed, filing_day)``. Such a re-print never counts
+    towards a basis change: a first-quarter 10-Q re-printing the corrected comparative
+    beside its new quarter is not a recast, so a generation only opens on spans no ignored
+    print anticipated.
+
     *Reconstruction*, separately per generation so no difference ever straddles a basis
     change: direct ~90-day spans are taken as they are; longer spans sharing a start date
     (year-to-date 10-Q values, the 10-K annual figure) are differenced against the next
@@ -618,19 +637,28 @@ def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: 
     quarterly cash flows (H1 minus Q1, 9M minus H1); an annual span with no nine-month
     sibling has the direct quarters it contains subtracted, when they fill it. For an
     ``additive`` flow a direct Q4 print is cross-checked against the annual span: when the
-    four direct quarters disagree with it by more than ``ANNUAL_CHECK_TOLERANCE``, Q4 is the
-    audited annual figure less the three quarters, and the case is appended to ``notes`` as
-    ``("annual", end_day, generation, four_quarter_sum, annual)``. Per-share series are
-    not additive across quarters and keep their direct prints.
+    four direct quarters disagree with it by more than ``ANNUAL_CHECK_TOLERANCE`` of the
+    year's scale (the annual figure or the quarters' total magnitude, whichever is larger),
+    Q4 is the audited annual figure less the three quarters, and the case is appended to
+    ``notes`` as ``("annual", end_day, generation, four_quarter_sum, annual)``. Per-share
+    series are not additive across quarters and keep their direct prints.
     """
     by_filing: dict[int, list[tuple[int, int, float]]] = {}
     for s, e, v, f in zip(starts, ends, vals, filed):
         by_filing.setdefault(f, []).append((s, e, v))
     spans: dict[tuple[int, int], dict[int, float]] = {}
+    ignored: dict[tuple[int, int], list[float]] = {}
     g = 0
     for f in sorted(by_filing):
         rows = by_filing[f]
         recast = {(s, e) for s, e, v in rows if g in spans.get((s, e), {}) and _material(spans[(s, e)][g], v)}
+        # A material re-print agreeing with one ignored earlier is a correction two filings
+        # confirm: taken in place, and never the comparative a basis change is read from.
+        confirmed = {(s, e) for s, e, v in rows if (s, e) in recast
+                     and any(not _material(u, v) for u in ignored.get((s, e), ()))}
+        if notes is not None:
+            notes.extend(("confirmed", s, e, spans[(s, e)][g], v, f) for s, e, v in rows if (s, e) in confirmed)
+        recast -= confirmed
         if recast:
             first = [(s, e) for s, e, _ in rows if (s, e) not in spans]
             corroborated = (len(recast) >= BASIS_CHANGE_MIN_SPANS
@@ -648,6 +676,10 @@ def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: 
                         notes.append(("rejected", f, *bad[0][1:]))
                     else:
                         notes.extend(("ignored", s, e, spans[(s, e)][g], v, f) for s, e, v in rows if (s, e) in recast)
+                if not bad:
+                    for s, e, v in rows:
+                        if (s, e) in recast:
+                            ignored.setdefault((s, e), []).append(v)
                 rows = [(s, e, v) for s, e, v in rows if (s, e) not in drop]
         for s, e, v in rows:
             spans.setdefault((s, e), {})[g] = v
@@ -681,7 +713,7 @@ def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: 
             rest = v - sum(out[q][gg] for q in inside)
             if have is None:
                 out.setdefault(e, {})[gg] = rest
-            elif abs(have - rest) > ANNUAL_CHECK_TOLERANCE * abs(v):
+            elif abs(have - rest) > ANNUAL_CHECK_TOLERANCE * max(abs(v), abs(have) + sum(abs(out[q][gg]) for q in inside)):
                 out[e][gg] = rest
                 if notes is not None:
                     notes.append(("annual", e, gg, v - rest + have, v))
@@ -767,7 +799,8 @@ def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str
     A per-share unit (``USD/shares``) is not additive across quarters, so its annual
     cross-check is skipped. ``notes`` collects the data-quality cases of ``_tag_quarters``
     with the concept's tag and ISO dates: ``("annual", tag, year_end, quarters, annual)``,
-    ``("ignored", tag, start, end, held, printed, filed)`` and
+    ``("ignored", tag, start, end, held, printed, filed)``,
+    ``("confirmed", tag, start, end, held, printed, filed)`` and
     ``("rejected", tag, filed, year_end, quarters, annual)``.
 
     Columns: ``val``; ``tag`` (the best-ranked tag of the concept); ``gen`` (0 = the filer's
@@ -796,8 +829,8 @@ def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str
         for n in found if notes is not None else ():
             if n[0] == "annual":
                 notes.append(("annual", members[0], day(n[1]), n[3], n[4]))
-            elif n[0] == "ignored":
-                notes.append(("ignored", members[0], day(n[1]), day(n[2]), n[3], n[4], day(n[5])))
+            elif n[0] in ("ignored", "confirmed"):
+                notes.append((n[0], members[0], day(n[1]), day(n[2]), n[3], n[4], day(n[5])))
             else:
                 notes.append(("rejected", members[0], day(n[1]), day(n[2]), n[3], n[4]))
         if q:

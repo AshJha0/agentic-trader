@@ -359,6 +359,108 @@ def test_lone_material_reprint_is_ignored_never_spliced_into_the_held_basis(capl
     assert "revenue_period_end" not in g
 
 
+def _jpm_shaped(reprint=4.924, repeat=None):
+    """JPMorgan 2012-2013: Q1-2012 net income first printed 5.383 (10-Q 2012-05-10); the 10-Q/A of
+    2012-08-09 re-prints it alone as 4.924 (the London Whale restatement, -8.5%), and the Q1-2013
+    10-Q prints ``repeat`` (4.924 again) as the comparative of its first-print quarter. Every later
+    span is on the restated basis; revenue is unchanged."""
+    ni_tag = "NetIncomeLoss"
+    f11 = ["2011-05-06", "2011-08-05", "2011-11-04", "2012-02-29"]
+    f12 = ["2012-05-10", "2012-08-09", "2012-11-08", "2013-02-28"]
+    f13 = ["2013-05-08", "2013-08-07", "2013-11-01"]
+    ni = _quarters(ni_tag, 2011, [5.555, 5.431, 4.262, 3.728], f11)
+    ni += [_f("2012-01-01", "2012-03-31", 5.383, f12[0]),
+           _f("2012-01-01", "2012-03-31", reprint, "2012-08-09", "10-Q/A"),
+           _f("2012-04-01", "2012-06-30", 4.960, f12[1]), _f("2012-01-01", "2012-06-30", 9.884, f12[1]),
+           _f("2012-07-01", "2012-09-30", 5.708, f12[2]), _f("2012-01-01", "2012-09-30", 15.592, f12[2]),
+           _f("2012-01-01", "2012-12-31", 21.284, f12[3], "10-K"),                     # Q4 = 5.692
+           _f("2013-01-01", "2013-03-31", 6.529, f13[0]), _f("2012-01-01", "2012-03-31", reprint if repeat is None else repeat, f13[0]),
+           _f("2013-04-01", "2013-06-30", 6.496, f13[1]), _f("2012-04-01", "2012-06-30", 4.960, f13[1]),
+           _f("2013-07-01", "2013-09-30", -0.380, f13[2]), _f("2012-07-01", "2012-09-30", 5.708, f13[2])]
+    rev = _quarters(N, 2011, [24.0] * 4, f11) + _quarters(N, 2012, [24.0] * 4, f12) + _quarters(N, 2013, [24.0] * 3, f13)
+    return {ni_tag: ni, N: rev}
+
+
+def test_correction_confirmed_by_repetition_is_taken_in_place_and_opens_no_generation(caplog):
+    """Final review of v0.8 (edgar.py:633): an ignored lone re-print was forgotten, so the same
+    corrected value printed a year later as the comparative of a first-print quarter opened a
+    two-span generation and the concept had no window for three quarters (JPM 2013, MSFT FY2017,
+    NVDA FY2018 lost net_margin and served a frozen eps_ttm)."""
+    c = _edgar(_jpm_shaped())
+    with caplog.at_level("WARNING", logger="agentic_trader.data.edgar"):
+        early = c.fundamentals("TST", date(2012, 8, 15))
+        f = c.fundamentals("TST", date(2013, 5, 15))
+        c.fundamentals("TST", date(2013, 6, 15))
+    # the amendment alone is a lone material re-print: ignored, the first print held
+    t0 = quarterly_table(_known(c, date(2012, 8, 15)), edgar_mod.NET_INCOME_TAGS)
+    assert t0.loc[pd.Timestamp("2012-03-31"), "val"] == pytest.approx(5.383)
+    assert early["net_margin"] == pytest.approx((4.262 + 3.728 + 5.383 + 4.960) / 96, abs=1e-4)
+    # the Q1-2013 10-Q repeats it: a correction confirmed by repetition, taken in place on the one
+    # basis; the window runs to the new quarter and the margin is served
+    t = quarterly_table(_known(c, date(2013, 5, 15)), edgar_mod.NET_INCOME_TAGS)
+    assert set(t["gen"]) == {0} and t.loc[pd.Timestamp("2012-03-31"), "val"] == pytest.approx(4.924)
+    assert t.loc[pd.Timestamp("2012-12-31"), "val"] == pytest.approx(21.284 - 15.592)
+    assert f["report_period_end"] == "2013-03-31" and "net_income_period_end" not in f
+    assert f["net_margin"] == pytest.approx((4.960 + 5.708 + 5.692 + 6.529) / 96, abs=1e-4)
+    assert c.fundamentals("TST", date(2013, 11, 15))["net_margin"] == pytest.approx((5.692 + 6.529 + 6.496 - 0.380) / 96, abs=1e-4)
+    msgs = [r.getMessage() for r in caplog.records if "2012-01-01..2012-03-31" in r.getMessage()]
+    assert len(msgs) == 2 and "ignored" in msgs[0] and "2012-08-09" in msgs[0]
+    assert "confirmed by repetition" in msgs[1] and "2013-05-08" in msgs[1] and "4.924" in msgs[1]
+    # a comparative that repeats nothing ignored is still a restatement of the single comparative
+    # a first-quarter 10-Q prints: a new basis, with no window on it yet
+    d = _edgar(_jpm_shaped(repeat=4.5))
+    g = d.fundamentals("TST", date(2013, 5, 15))
+    assert g["net_income_period_end"] == "2012-12-31" and "net_margin" not in g
+    assert quarterly_table(_known(d, date(2013, 5, 15)), edgar_mod.NET_INCOME_TAGS).index.max() == pd.Timestamp("2012-12-31")
+
+
+def _near_zero_recast(new18_q4=241e6):
+    """A genuine continuing-operations recast printed by the FY2019 10-K (every 2018 and 2019 span
+    re-printed materially) in a year whose net income nets to nearly nothing: the new-basis 2018
+    quarters, tagged in millions, sum to -9M against an annual re-printed as -8M."""
+    ni = "NetIncomeLoss"
+    f18 = ["2018-04-25", "2018-07-26", "2018-10-30", "2019-02-21"]
+    f19 = ["2019-04-25", "2019-07-25", "2019-10-24", "2020-02-24"]
+    facts = _quarters(ni, 2018, [400e6, -900e6, 300e6, 180e6], f18) + [
+        _f("2018-01-01", "2018-09-30", -200e6, f18[2]), _f("2018-01-01", "2018-12-31", -20e6, f18[3], "10-K"),
+        _f("2019-01-01", "2019-03-31", 500e6, f19[0]),
+        _f("2019-04-01", "2019-06-30", -700e6, f19[1]), _f("2019-01-01", "2019-06-30", -200e6, f19[1]),
+        _f("2019-07-01", "2019-09-30", 250e6, f19[2]), _f("2019-01-01", "2019-09-30", 50e6, f19[2]),
+        _f("2019-01-01", "2019-12-31", 130e6, f19[3], "10-K"), _f("2018-01-01", "2018-12-31", -8e6, f19[3], "10-K"),
+        _f("2019-01-01", "2019-09-30", 30e6, f19[3], "10-K"), _f("2018-01-01", "2018-09-30", -250e6, f19[3], "10-K")]
+    facts += _quarters(ni, 2019, [420e6, -600e6, 210e6, 100e6], [f19[3]] * 4, ["10-K"] * 4)
+    facts += _quarters(ni, 2018, [300e6, -800e6, 250e6, new18_q4], [f19[3]] * 4, ["10-K"] * 4)
+    rev = _quarters(N, 2018, [8e9] * 4, f18) + _quarters(N, 2019, [8.5e9] * 4, f19)
+    return {ni: facts, N: rev}
+
+
+def test_near_zero_annual_figure_is_reconciled_on_the_scale_of_its_quarters(caplog):
+    """Final review of v0.8 (edgar.py:583): the additive tolerance was 2% of the annual figure
+    alone, so a 1M rounding difference against an -8M year rejected a genuine recast as mis-tagged,
+    spliced Q4-2019 across bases (130M new-basis annual less 50M of old-basis quarters) and warned
+    twice against a correct filing. The reconstruction's Q4 cross-check (edgar.py:684) had the same
+    fragility: it overrode the printed 241M Q4-2018 with 242M (AMZN NetIncomeLoss Q4-2012, 97M
+    printed, was served as 98M with a warning at every cutoff from 2014)."""
+    d = pd.Timestamp("2018-01-01") - pd.Timestamp("1970-01-01")
+    y = [(d.days, d.days + 364, -8.0), (d.days, d.days + 89, 300.0), (d.days + 90, d.days + 180, -800.0),
+         (d.days + 181, d.days + 272, 250.0), (d.days + 273, d.days + 364, 241.0)]
+    assert edgar_mod._inconsistent(y, additive=True) == []
+    assert edgar_mod._inconsistent(y[:-1] + [(d.days + 273, d.days + 364, 141.0)], additive=True) == [(d.days, d.days + 364, -109.0, -8.0)]
+    c = _edgar(_near_zero_recast())
+    with caplog.at_level("WARNING", logger="agentic_trader.data.edgar"):
+        f = c.fundamentals("TST", date(2020, 3, 1))
+    t = quarterly_table(_known(c, date(2020, 3, 1)), edgar_mod.NET_INCOME_TAGS)
+    assert t.loc["2019"]["val"].tolist() == pytest.approx([420e6, -600e6, 210e6, 100e6]) and set(t["gen"].iloc[-8:]) == {1}
+    assert t.loc["2018"]["val"].tolist() == pytest.approx([300e6, -800e6, 250e6, 241e6])
+    assert f["net_margin"] == pytest.approx(130e6 / 34e9, abs=1e-4) and not caplog.records
+    # quarters that miss the year by more than the tolerance of their own scale are still mis-tagged
+    e = _edgar(_near_zero_recast(new18_q4=141e6))
+    with caplog.at_level("WARNING", logger="agentic_trader.data.edgar"):
+        e.fundamentals("TST", date(2020, 3, 1))
+    te = quarterly_table(_known(e, date(2020, 3, 1)), edgar_mod.NET_INCOME_TAGS)
+    assert set(te["gen"]) == {0} and sum("mis-tagged" in r.getMessage() for r in caplog.records) == 1
+
+
 def test_mis_tagged_recast_is_rejected_and_never_manufactures_a_quarter(caplog):
     """The AMZN FY2012 10-K (2011 and 2012 quarter values swapped) recasts seven spans, enough
     to corroborate a basis change by count, but its quarters do not add up to its own annual
@@ -413,14 +515,21 @@ def test_annual_cross_check_never_overrides_a_per_share_print(caplog):
     assert g["eps_ttm"] == pytest.approx(0.47) and sum("mis-tagged" in r.getMessage() for r in caplog.records) == 1
 
 
-def _lly_shaped(recast=N):
+OCF, CAPEX = "NetCashProvidedByUsedInOperatingActivities", "PaymentsToAcquirePropertyPlantAndEquipment"
+
+
+def _lly_shaped(recast=N, cash=False):
     """Eli Lilly 2018-2019: the 2019 10-Qs recast the 2018 comparatives of one series to continuing
     operations (-13%) one quarter at a time (a corroborated basis from the Q1 10-Q), so that
-    series has no four-quarter window on the new basis until the Q3 10-Q; the others are unchanged."""
+    series has no four-quarter window on the new basis until the Q3 10-Q; the others are unchanged.
+    With ``cash`` the operating cash flow and capex series (direct quarters) are reported too."""
     f17 = ["2017-04-25", "2017-07-25", "2017-10-24", "2018-02-20"]
     f18 = ["2018-04-24", "2018-07-24", "2018-10-23", "2019-02-19"]
     facts = {}
-    for tag, scale in ((N, 1.0), ("NetIncomeLoss", 0.2), ("EarningsPerShareDiluted", 0.02)):
+    series = [(N, 1.0), ("NetIncomeLoss", 0.2), ("EarningsPerShareDiluted", 0.02)]
+    if cash:
+        series += [(OCF, 0.3e9), (CAPEX, 0.1e9)]
+    for tag, scale in series:
         v = [x * scale for x in (5.2, 5.8, 5.7, 6.2, 5.70, 6.36, 6.06, 6.44, 6.0, 6.3)]
         facts[tag] = _quarters(tag, 2017, v[:4], f17) + _quarters(tag, 2018, v[4:8], f18) + [
             _f("2019-01-01", "2019-03-31", v[8], "2019-04-30"), _f("2019-04-01", "2019-06-30", v[9], "2019-08-01")]
@@ -451,6 +560,33 @@ def test_live_series_with_a_lagging_window_is_kept_and_flagged_not_dropped_as_de
     facts["EarningsPerShareDiluted"] = [x for x in facts["EarningsPerShareDiluted"] if x["filed"] <= "2019-02-19"]
     k = _edgar(facts).fundamentals("TST", date(2019, 8, 3), price=100.0)
     assert "eps_ttm" not in k and k["report_period_end"] == "2019-06-30"
+
+
+def test_fcf_needs_ocf_and_capex_windows_ending_together_and_flags_a_lagging_ocf_window():
+    """Final review of v0.8 (edgar.py:536): free cash flow was operating cash flow of one window
+    less capex of another (NVDA served OCF to 2016-07-31 less capex to 2012-10-28; KO an OCF window
+    817 days stale), with no flag a consumer could read."""
+    ocf_ttm, capex_ttm, cap = 0.3e9 * 24.8, 0.1e9 * 24.8, 100.0 * 1e9
+    f = _edgar(_lly_shaped(cash=True)).fundamentals("TST", date(2019, 8, 3), price=100.0)
+    assert f["fcf_yield"] == pytest.approx((ocf_ttm - capex_ttm) / cap, abs=1e-4) and "ocf_period_end" not in f
+    # capex recast one comparative at a time: its window ends 2018-12-31, OCF's 2019-06-30
+    g = _edgar(_lly_shaped(recast=CAPEX, cash=True)).fundamentals("TST", date(2019, 8, 3), price=100.0)
+    assert "fcf_yield" not in g and "ocf_period_end" not in g and g["report_period_end"] == "2019-06-30"
+    # the mirror case: the OCF window lags, and the lag is reported under its own key
+    h = _edgar(_lly_shaped(recast=OCF, cash=True)).fundamentals("TST", date(2019, 8, 3), price=100.0)
+    assert "fcf_yield" not in h and h["ocf_period_end"] == "2018-12-31" and "revenue_period_end" not in h
+    # a filer that never reports capex has free cash flow equal to operating cash flow, flagged
+    # when that window lags the report period
+    facts = _lly_shaped(recast=OCF, cash=True)
+    del facts[CAPEX]
+    k = _edgar(facts).fundamentals("TST", date(2019, 8, 3), price=100.0)
+    assert k["fcf_yield"] == pytest.approx(0.3e9 * (5.70 + 6.36 + 6.06 + 6.44) / cap, abs=1e-4)
+    assert k["ocf_period_end"] == "2018-12-31"
+    # once both windows are current again the flag is gone and the figure is back
+    del facts[OCF]
+    facts[OCF] = _lly_shaped(cash=True)[OCF]
+    m = _edgar(facts).fundamentals("TST", date(2019, 8, 3), price=100.0)
+    assert m["fcf_yield"] == pytest.approx(ocf_ttm / cap, abs=1e-4) and "ocf_period_end" not in m
 
 
 # ==================================== finding 7 / 34: tag equivalence and concept continuity
@@ -638,7 +774,8 @@ def test_cached_filers_offline_regression():
                     cache_max_age_days=None, ciks={"MA": "0001141391", "BRK-B": "0001067983", "JNJ": "0000200406",
                                                    "NVDA": "0001045810", "AMZN": "0001018724", "CVX": "0000093410",
                                                    "PG": "0000080424", "XOM": "0000034088", "KO": "0000021344",
-                                                   "LLY": "0000059478"})
+                                                   "LLY": "0000059478", "JPM": "0000019617", "MSFT": "0000789019",
+                                                   "MRK": "0000310158"})
     try:
         ma = c.fundamentals("MA", date(2023, 3, 1))
     except AssertionError:
@@ -698,6 +835,24 @@ def test_cached_filers_offline_regression():
     # (k) JNJ / Kenvue: revenue is served at every filing cutoff through the transition
     assert all(c.fundamentals("JNJ", cut).get("revenue_ttm") for cut in
                (date(2023, 8, 1), date(2023, 10, 28), date(2024, 2, 17), date(2024, 5, 2)))
+    # Final review of v0.8:
+    # (l) a single-quarter restatement repeated by later filings is a confirmed correction: the
+    # Q1 10-Q re-printing it beside its new quarter opens no generation, so the net income
+    # window is current and the margin served (the round-2 code lost these nine cutoffs)
+    for ticker, cut, margin, eps in (("JPM", date(2013, 5, 15), 0.2382, 5.59), ("JPM", date(2013, 11, 15), 0.1888, 4.41),
+                                     ("MSFT", date(2016, 10, 21), 0.1942, 2.08), ("MSFT", date(2017, 4, 28), 0.2042, 2.26),
+                                     ("NVDA", date(2017, 5, 24), 0.2605, 3.02), ("NVDA", date(2017, 11, 22), 0.2878, 4.03)):
+        r = c.fundamentals(ticker, cut, price=100.0)
+        assert r["report_period_end"] > "2013" and "net_income_period_end" not in r and "eps_period_end" not in r, (ticker, cut)
+        assert r["net_margin"] == pytest.approx(margin, abs=2e-4) and r["eps_ttm"] == pytest.approx(eps, abs=1e-2), (ticker, cut)
+    # (m) free cash flow needs the operating cash flow and capex windows to end together: NVDA's
+    # capex window (to 2012-10-28) no longer backs a figure at 2016-08-24, KO's OCF window to
+    # 2017-12-31 is flagged rather than differenced against 2019 capex
+    assert "fcf_yield" not in c.fundamentals("NVDA", date(2016, 8, 24), price=100.0)
+    ko20 = c.fundamentals("KO", date(2020, 4, 25), price=100.0)
+    assert "fcf_yield" not in ko20 and ko20["ocf_period_end"] == "2017-12-31"
+    assert "fcf_yield" not in c.fundamentals("MRK", date(2024, 11, 7), price=100.0)
+    assert c.fundamentals("JNJ", date(2024, 3, 1), price=100.0)["fcf_yield"] == pytest.approx(0.0758, abs=1e-4)
 
 
 # ================================================ finding 15: one FX rate resolver

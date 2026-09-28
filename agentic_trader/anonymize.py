@@ -51,7 +51,7 @@ SCALE_FREE_KEYS = frozenset({
     # fundamentals: ratios, growth rates, margins, yields and filing dates
     "pe_ratio", "forward_pe", "sector_pe", "revenue_growth_yoy", "net_margin", "debt_to_equity",
     "fcf_yield", "eps_surprise", "insider_net_buying", "report_period_end", "revenue_period_end",
-    "net_income_period_end", "eps_period_end", "filed", "lag_days", "source",
+    "net_income_period_end", "eps_period_end", "ocf_period_end", "filed", "lag_days", "source",
     # FX macro
     "base", "quote", "base_rate", "quote_rate", "rate_diff", "base_inflation", "quote_inflation",
     "deviation_from_200d",

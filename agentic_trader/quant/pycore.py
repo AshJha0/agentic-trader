@@ -440,7 +440,10 @@ def compute_metrics(equity, positions, periods_per_year: float,
     ``r_t - rf_t / ppy``. An excess-return series that is constant to rounding (its sample
     standard deviation is at most ``ZERO_VARIANCE_TOL * max(1, |mean|)``) has no dispersion
     to divide by: Sharpe, Sortino, the t-stat and ``annualized_vol`` are 0, on both backends,
-    rather than noise over noise (a flat book, or one earning exactly rf). ``traded`` (|dw|
+    rather than noise over noise (a flat book, or one earning exactly rf). The same tolerance
+    applies to the downside deviation on its own: a series with real dispersion whose only
+    losses are rounding noise (flat bars under a cash leg) has no downside to divide by, so
+    its Sortino is 0 while its Sharpe stands. ``traded`` (|dw|
     per bar) gives turnover and the trade count; without it (``None`` or empty) both are
     inferred from changes in ``positions``, which drift every bar under constant units, and
     a ``RuntimeWarning`` says so once. Statistics stop at the ruin bar (the first equity <= 0).
@@ -489,8 +492,11 @@ def compute_metrics(equity, positions, periods_per_year: float,
     mean = float(ex.mean()) if live else 0.0
     sd = float(ex.std(ddof=1)) if live > 1 else 0.0
     dd = float(np.sqrt(np.mean(np.minimum(ex, 0.0) ** 2))) if live else 0.0
-    if sd <= ZERO_VARIANCE_TOL * max(1.0, abs(mean)):
+    tol = ZERO_VARIANCE_TOL * max(1.0, abs(mean))
+    if sd <= tol:
         sd, dd = 0.0, 0.0
+    elif dd <= tol:
+        dd = 0.0
     ann = np.sqrt(periods_per_year)
     m.annualized_vol = sd * ann
     m.sharpe = float(mean / sd * ann) if sd > 0 else 0.0

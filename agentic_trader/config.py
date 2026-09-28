@@ -21,12 +21,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # its connection. AnthropicLLM runs the retry loop itself (the SDK client makes none), so a
     # timed-out attempt is billed at its estimated maximum whether or not a later attempt succeeds.
     "llm_max_retries": 2,
-    "llm_retry_backoff_s": 0.5,   # delay before the first retry; doubles per attempt, capped at 8 s, jittered
-    # Output tokens reserved per call before it is dispatched under max_llm_cost_usd: a realistic
-    # reply, not the max_tokens ceiling (a timed-out attempt is still billed at max_tokens).
+    # Delay before the first retry; doubles per attempt, capped at 8 s, jittered. A retry-after /
+    # retry-after-ms header on a rate limit or overload is honoured instead (up to 60 s).
+    "llm_retry_backoff_s": 0.5,
+    # How max_llm_cost_usd is enforced. "hard": every call reserves its maximum possible cost
+    # (the input estimate plus max_tokens of reply) before it is dispatched and a timed-out
+    # attempt is billed at that maximum, so parallel workers can never overshoot the cap; a
+    # call the remaining cap cannot afford at that size is refused. "estimate": each call
+    # reserves the input estimate plus llm_reserve_output_tokens (a realistic reply), which
+    # admits more concurrent calls but makes the cap soft: spend can exceed it by up to the
+    # number of calls in flight times (max_tokens - llm_reserve_output_tokens) at list price.
+    "llm_budget_mode": "hard",
+    # Output tokens reserved per call under max_llm_cost_usd in "estimate" mode (a timed-out
+    # attempt is still billed at max_tokens).
     "llm_reserve_output_tokens": 2000,
     "max_llm_calls": None,  # hard cap per TradingGraph (None = unlimited); beyond it agents use rules
-    "max_llm_cost_usd": None,  # hard cap on estimated spend (list prices); beyond it agents use rules
+    "max_llm_cost_usd": None,  # cap on estimated spend (list prices; see llm_budget_mode); beyond it agents use rules
     # Hide ticker, calendar and price level from the model (anonymize.py). Use it for
     # any backtest inside the model's training period: otherwise the model can recall
     # what happened next instead of reasoning from the data.

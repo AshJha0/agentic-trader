@@ -180,15 +180,18 @@ def cmd_execute(args) -> int:
                           lot_size=cfg["execution"]["fx_lot_size"], ac_kappa=float(cfg["costs"]["ac_kappa"]))
     _header(f"execute {ins.display} {args.current:+.2f} -> {args.target:+.2f} capital {capital:,.0f} {account}", cfg)
     if plan is None:
+        effective = args.target if (allow_short or args.target >= 0) else 0.0   # what plan_execution sized
+        truncated = "" if effective == args.target else \
+            f" (target {args.target:+.2f} truncated to flat: shorting {ins.display} is not allowed)"
         if not allow_short and args.target < 0 and args.current <= 0:
             print(f"nothing to trade: target {args.target:+.2f} truncated to flat (shorting {ins.display} is not "
                   "allowed) and the position is already flat")
-        elif abs(args.target - args.current) > 1e-9:
+        elif abs(effective - args.current) > 1e-9:
             unit = f"{cfg['execution']['fx_lot_size']:,.0f}-unit lot" if ins.is_fx else "share"
-            print(f"nothing to trade: the change ({abs(args.target - args.current) * capital:,.0f} {account}) "
-                  f"is below one {unit}")
+            print(f"nothing to trade: the change {args.current:+.4f} -> {effective:+.4f} "
+                  f"({abs(effective - args.current) * capital:,.0f} {account}) is below one {unit}{truncated}")
         else:
-            print("nothing to trade: target equals the current position")
+            print(f"nothing to trade: target equals the current position{truncated}")
         return 0
     print(f"{plan.side.upper()} {plan.quantity:,.0f} {plan.quantity_unit} (notional {plan.notional:,.0f} "
           f"{plan.notional_currency} at {plan.price:.5g}) via {plan.algo.upper()} in {plan.slices} slices; "

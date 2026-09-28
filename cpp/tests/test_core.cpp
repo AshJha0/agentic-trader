@@ -489,6 +489,32 @@ void test_zero_variance_metrics() {
     for (int i = 0; i < 5; ++i) e2[i + 1] = e2[i] * (1.0 + rr[i]);
     const auto m = at::compute_metrics(e2, at::Series(6, 1.0), 252, 0.0, at::Series(6, 0.0));
     check(m.sharpe > 10.0 && m.annualized_vol > 0.0, "a series with real dispersion keeps its Sharpe");
+    // final review (a): the rule applies to the downside deviation on its own. Real dispersion (five
+    // winning bars held long) whose only negative excess returns are the rounding noise of flat
+    // bars under a cash leg has no downside to divide by: Sortino 0, Sharpe untouched.
+    at::Series px(30, 100.0);
+    for (int i = 1; i < 6; ++i) px[i] = 100.0 * std::pow(1.005, i);
+    for (int i = 6; i < 30; ++i) px[i] = px[5];
+    at::Series wl(30, 0.0);
+    for (int i = 0; i < 5; ++i) wl[i] = 1.0;
+    at::BacktestInputs leg;
+    leg.cash_rate.resize(30);
+    for (int i = 0; i < 30; ++i) leg.cash_rate[i] = 0.03 + 0.004 * std::sin(i * 0.37);
+    cfg.risk_free_annual = 0.0;
+    const auto n = at::run_backtest_ex(px, wl, cfg, leg);
+    int noise = 0;
+    for (int i = 1; i < 30; ++i) {
+        const double ex = n.returns[i] - leg.cash_rate[i - 1] / 252.0;
+        if (ex < 0.0 && ex > -1e-14) ++noise;
+    }
+    check(noise > 5, "the fixture's only losses are rounding noise on flat bars");
+    check(n.metrics.sharpe > 5.0 && n.metrics.annualized_vol > 0.02, "real dispersion keeps its Sharpe and vol");
+    check(n.metrics.sortino == 0.0, "Sortino is 0 when only the downside is rounding noise (was +2.8e14)");
+    // a genuine loss, however small next to the noise, still gives a finite Sortino
+    at::Series e3(n.equity);
+    e3[20] *= 1.0 - 1e-6;
+    const auto g = at::compute_metrics_rf(e3, n.positions, 252, leg.cash_rate, n.traded);
+    check(g.sortino > 0.0 && g.sortino < 1e6 && g.sharpe > 5.0, "one real losing bar: a finite Sortino");
 }
 
 // v0.8 regression review (e): a target equal to the held weight is a keep, not clamped.

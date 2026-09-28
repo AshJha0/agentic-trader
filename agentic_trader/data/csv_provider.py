@@ -7,7 +7,10 @@ are always served on one basis:
 * ``Close`` and ``Adj Close`` both present: every price column is put on the adjusted
   (total-return, split-adjusted) basis by the row's ``Adj Close / Close`` factor, the
   same basis the Yahoo provider serves, so a split is not a -75% day, and ``Volume`` is
-  divided by the same factor so that ``Close * Volume`` (the dollar volume, and the ADV
+  divided by the split component of that factor only (a split is a day-over-day jump of
+  the factor of more than ``SPLIT_JUMP``; the dividend drift between splits never touches
+  ``Volume``, so shares stay on Yahoo's split-adjusted basis and a dividend payer's
+  volume is served as traded) so that ``Close * Volume`` (the dollar volume, and the ADV
   the impact model and the execution planner read) stays as traded across a split; a
   row whose ``Adj Close`` is blank keeps its ``Close`` and takes the factor of the nearest
   dated row that has one (with a warning), so a missing cell is not a missing bar;
@@ -34,10 +37,36 @@ from .base import MarketDataProvider, NewsItem, cash_rates, clean_ohlcv, clip_hi
 
 log = logging.getLogger(__name__)
 
+SPLIT_JUMP = 0.05   # a day-over-day move of the Adj Close / Close factor above this is a split, not a dividend
+
+
+def split_factor(factor: pd.Series) -> tuple[pd.Series, pd.Index]:
+    """The split component of an adjustment factor, relative to the last dated row, and the
+    dates of the splits found.
+
+    ``factor`` is ``Adj Close / Close`` per row (NaN where unknown). Between corporate actions
+    it is constant; a dividend moves it by its yield (a few percent at most) and a split by
+    the split ratio, so a jump of more than ``SPLIT_JUMP`` between consecutive dated rows is
+    read as a split and only those jumps are accumulated: the result is ``factor`` with the
+    dividend drift removed (0.5 before a 2:1 split, 1 after it, 1 everywhere for a dividend
+    payer with no split). Rows are taken in date order; duplicate dates share one value."""
+    known = factor.dropna()
+    known = known[~known.index.duplicated(keep="last")].sort_index()
+    if known.empty:
+        return pd.Series(1.0, index=factor.index), known.index
+    jump = known / known.shift(1)
+    is_split = ((jump - 1.0).abs() > SPLIT_JUMP).to_numpy()
+    ratio = pd.Series(np.where(is_split, 1.0 / jump.to_numpy(), 1.0), index=known.index)  # pre / post at a split
+    after = ratio.iloc[::-1].cumprod().iloc[::-1]                  # product over rows >= t
+    comp = after.shift(-1, fill_value=1.0)                         # product over rows > t
+    return comp.reindex(factor.index).fillna(1.0), known.index[is_split]
+
 
 def one_basis(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
     """Put Open/High/Low/Close on the basis of ``Adj Close`` when that column exists; ``Volume``
-    is rescaled by the inverse factor so the dollar volume of every bar stays as traded."""
+    is divided by the split component of the factor only (``split_factor``), so the share
+    count stays on the split-adjusted basis Yahoo serves and the dollar volume of every bar
+    stays as traded across a split, while a dividend never changes the volume."""
     if "Adj Close" not in df:
         return df
     df = df.copy()
@@ -66,7 +95,11 @@ def one_basis(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
                 df[col] = pd.to_numeric(df[col], errors="coerce") * factor
         df["Close"] = adj.where(~gap, close * factor)
         if "Volume" in df:
-            df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce") / factor.where(factor > 0, 1.0)
+            comp, splits = split_factor(factor)
+            if len(splits):
+                log.info("%s: %d split(s) detected from the adjustment factor (%s); Volume rescaled across them",
+                         name or "price file", len(splits), ", ".join(str(d)[:10] for d in splits[:5]))
+            df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce") / comp
     else:
         dropped = [c for c in ("Open", "High", "Low") if c in df]
         if dropped:

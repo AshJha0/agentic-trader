@@ -82,6 +82,10 @@ DEFAULT_RESERVE_OUTPUT_TOKENS = 2000
 # Status codes retried besides rate limits and every 5xx (what the SDK's own loop retries).
 _RETRY_STATUS = frozenset({408, 409, 429})
 MAX_RETRY_DELAY_S = 8.0
+# A retry-after header is honoured up to this many seconds (as the SDK's own loop does); a
+# longer wait falls back to the backoff rather than parking a worker for minutes.
+MAX_RETRY_AFTER_S = 60.0
+BUDGET_MODES = ("hard", "estimate")
 
 _warned: set[str] = set()
 _warned_lock = threading.Lock()
@@ -164,6 +168,44 @@ def _whole_number(config: dict, key: str, default: int, minimum: int) -> int:
     if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or v < minimum:
         raise ValueError(f"{key} must be a whole number >= {minimum}, got {v!r}")
     return int(v)
+
+
+def _seconds(config: dict, key: str, default: float) -> float:
+    v = config.get(key, default)
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        f = math.nan
+    if isinstance(v, bool) or not math.isfinite(f) or f < 0:
+        raise ValueError(f"{key} must be a finite number of seconds >= 0, got {v!r}")
+    return f
+
+
+def retry_after_seconds(error: Any) -> float | None:
+    """The wait a rate-limit or overload reply asked for, from the ``retry-after-ms`` or
+    ``retry-after`` header the SDK exposes on ``error.response``: seconds when the header is
+    present, parseable and at most ``MAX_RETRY_AFTER_S``; ``None`` otherwise (the caller then
+    uses its backoff). An HTTP-date form is measured from now."""
+    headers = getattr(getattr(error, "response", None), "headers", None)
+    if headers is None:
+        return None
+    try:
+        ms = headers.get("retry-after-ms")
+        wait = float(ms) / 1000.0 if ms is not None else None
+        if wait is None:
+            raw = headers.get("retry-after")
+            if raw is None:
+                return None
+            try:
+                wait = float(raw)
+            except ValueError:
+                from email.utils import parsedate_to_datetime
+                wait = (parsedate_to_datetime(str(raw)).timestamp() - time.time())
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not math.isfinite(wait) or wait < 0 or wait > MAX_RETRY_AFTER_S:
+        return None
+    return wait
 
 
 class LLM(Protocol):
@@ -271,9 +313,12 @@ class AnthropicLLM:
             except ValueError as e:
                 raise ValueError(f"{key}: {e}") from None
         self.max_retries = _whole_number(config, "llm_max_retries", 2, 0)
-        self.retry_backoff_s = float(config.get("llm_retry_backoff_s", 0.5))
+        self.retry_backoff_s = _seconds(config, "llm_retry_backoff_s", 0.5)
         self.reserve_output_tokens = _whole_number(config, "llm_reserve_output_tokens",
                                                    DEFAULT_RESERVE_OUTPUT_TOKENS, 1)
+        self.budget_mode = str(config.get("llm_budget_mode", "hard"))
+        if self.budget_mode not in BUDGET_MODES:
+            raise ValueError(f"llm_budget_mode must be one of {BUDGET_MODES}, got {config.get('llm_budget_mode')!r}")
         # Credentials: ANTHROPIC_API_KEY or an `ant auth login` profile. The client makes no
         # retries of its own: ``complete`` runs the loop, so every attempt is observed and billed.
         self.client = anthropic.Anthropic(timeout=float(config.get("llm_timeout_s", 300)), max_retries=0)
@@ -293,10 +338,14 @@ class AnthropicLLM:
                              self.config["max_tokens"])
 
     def estimate_cost(self, deep: bool) -> float:
-        """What one call on this tier is reserved at before it is dispatched: a typical prompt
-        plus ``llm_reserve_output_tokens`` of reply (a realistic size; the ``max_tokens`` ceiling
-        would reserve roughly ten times a real call and starve parallel workers)."""
-        return estimate_call_cost(self.model_for(deep), self.reserve_output_tokens)
+        """What one call on this tier is reserved at before it is dispatched. Under
+        ``llm_budget_mode="hard"`` it is the most the call can cost -- a typical prompt plus a
+        full ``max_tokens`` reply, which is also what a timed-out attempt is billed at -- so the
+        dollar cap is a bound on spend. Under ``"estimate"`` it is the prompt plus
+        ``llm_reserve_output_tokens`` of reply: a realistic size that admits more concurrent
+        calls but lets spend overshoot the cap by what replies exceed the reserve."""
+        out = self.config["max_tokens"] if self.budget_mode == "hard" else self.reserve_output_tokens
+        return estimate_call_cost(self.model_for(deep), int(out))
 
     def _create(self, kwargs: dict[str, Any]) -> Any:
         if self.config.get("use_refusal_fallback") and kwargs["model"] in _FALLBACK_MODELS:
@@ -312,14 +361,16 @@ class AnthropicLLM:
         kwargs = self._request(deep)
         kwargs.update(system=system, messages=[{"role": "user", "content": prompt}])
         for attempt in range(1, self.max_retries + 2):
+            wait = None
             try:
                 resp = self._create(kwargs)
                 break
             except a.RateLimitError as e:
-                problem, retry = f"rate limited: {e}", True
+                problem, retry, wait = f"rate limited: {e}", True, retry_after_seconds(e)
             except a.APIStatusError as e:
                 problem = f"Claude API error {e.status_code}: {e.message}"
                 retry = e.status_code in _RETRY_STATUS or e.status_code >= 500
+                wait = retry_after_seconds(e)
             except a.APIConnectionError as e:
                 if isinstance(e, a.APITimeoutError):
                     # The server can finish (and bill) a request the client abandoned; an unknown
@@ -335,7 +386,7 @@ class AnthropicLLM:
                 self.usage.count("errors")
                 return None
             log.warning("%s; retry %d of %d", problem, attempt, self.max_retries)
-            time.sleep(self._retry_delay(attempt))
+            time.sleep(self._retry_delay(attempt) if wait is None else wait)
         self.usage.add(getattr(resp, "model", kwargs["model"]), getattr(resp, "usage", None))
         if resp.stop_reason == "refusal":
             log.warning("model declined the request; using rule-based fallback")
@@ -348,21 +399,24 @@ class AnthropicLLM:
 
 
 class BudgetedLLM:
-    """Hard cap on model calls and / or estimated spend. Past either cap every call
-    returns ``None``, so each agent falls back to its rule-based reasoning and the
-    run finishes normally.
+    """Cap on model calls and / or estimated spend. Past either cap every call returns
+    ``None``, so each agent falls back to its rule-based reasoning and the run finishes
+    normally.
 
     Protects backtests from runaway cost: at default settings one decision makes
     14 calls, so a 1-year weekly backtest of one instrument is ~730 calls, and an
     Opus call costs roughly 15x a Haiku call, so a call count alone does not bound
     the bill. The dollar cap uses the inner model's ``UsageTracker`` (list prices,
-    cache-aware). Before a call is dispatched its expected cost (``inner.estimate_cost``:
-    a typical prompt plus ``llm_reserve_output_tokens`` of reply) is reserved under the
-    lock, and calls in flight count against the cap, so parallel workers sharing one
-    budget cannot each slip one more call past it; a cap below one reservation refuses
-    every call on that tier, before any spend. A served model with no list price makes
-    the spend unknowable and the budget treats it as exhausted (fail closed) rather than
-    as free.
+    cache-aware). Before a call is dispatched its reservation (``inner.estimate_cost``)
+    is taken under the lock, and calls in flight count against the cap, so parallel
+    workers sharing one budget cannot each slip one more call past it. What is reserved
+    is the inner model's ``llm_budget_mode``: ``"hard"`` (the default) reserves the most a
+    call can cost, so spend never exceeds the cap; ``"estimate"`` reserves a realistic
+    reply and the cap is soft by the amount replies run over the reserve. A cap below one
+    reservation refuses every call on that tier, before any spend, and ``exhausted_for``
+    (and ``exhausted``, the deep tier) report that state the same way ``complete`` acts on
+    it. A served model with no list price makes the spend unknowable and the budget
+    treats it as exhausted (fail closed) rather than as free.
     """
 
     def __init__(self, inner: LLM, max_calls: int | None = None, max_cost_usd: float | None = None):
@@ -390,11 +444,22 @@ class BudgetedLLM:
 
     @property
     def exhausted(self) -> bool:
-        return self._why_exhausted() is not None
+        """True when the next deep-tier call would be refused (the tier every reasoning role
+        uses; ``exhausted_for(False)`` asks about the quick tier)."""
+        return self.exhausted_for(True)
+
+    def exhausted_for(self, deep: bool) -> bool:
+        """True when the next call on this tier would be refused: its reservation, on top of
+        what is spent and reserved for calls in flight, would reach the cap."""
+        with self._lock:
+            return self._why_exhausted(self._reserve(deep)) is not None
 
     def _estimate(self, deep: bool) -> float:
         est = getattr(self.inner, "estimate_cost", None)
         return float(est(deep)) if callable(est) else 0.0
+
+    def _reserve(self, deep: bool) -> float:
+        return self._estimate(deep) if self.max_cost_usd is not None else 0.0
 
     def _why_exhausted(self, reserve: float = 0.0) -> str | None:
         if self.max_calls is not None and self.calls >= self.max_calls:
@@ -412,7 +477,7 @@ class BudgetedLLM:
         return None
 
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
-        reserve = self._estimate(deep) if self.max_cost_usd is not None else 0.0
+        reserve = self._reserve(deep)
         with self._lock:
             why = self._why_exhausted(reserve)
             if why is not None:

@@ -50,7 +50,7 @@ def sharpe_stats(returns, periods_per_year: float = 252.0) -> SharpeStats:
     if n < 3:
         return SharpeStats(n, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0)
     mean, std = float(r.mean()), float(r.std(ddof=1))
-    if std <= 0:
+    if std <= quant.ZERO_VARIANCE_TOL * max(1.0, abs(mean)):
         return SharpeStats(n, mean, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0)
     z = (r - mean) / r.std(ddof=0)
     skew, kurt = float(np.mean(z ** 3)), float(np.mean(z ** 4))
@@ -74,10 +74,7 @@ def sharpe_ci_bootstrap(returns, periods_per_year: float = 252.0, n_boot: int = 
     n_blocks = int(math.ceil(n / block))
     starts = rng.integers(0, n, size=(n_boot, n_blocks))
     idx = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1)[:, :n] % n
-    samples = r[idx]
-    mean = samples.mean(axis=1)
-    std = samples.std(axis=1, ddof=1)
-    sr = np.where(std > 0, mean / np.where(std > 0, std, 1.0), 0.0) * math.sqrt(periods_per_year)
+    sr = _sharpe_rows(r[idx], periods_per_year)
     lo, hi = np.quantile(sr, [(1 - ci) / 2, 1 - (1 - ci) / 2])
     return (float(lo), float(hi))
 
@@ -473,9 +470,12 @@ def _excess(r, rf, periods_per_year: float) -> np.ndarray:
 
 
 def _sharpe_rows(x: np.ndarray, periods_per_year: float) -> np.ndarray:
-    sd = x.std(axis=1, ddof=1)
+    """Annualised Sharpe of every row, 0 where the row is constant to rounding (the
+    ``quant.compute_metrics`` zero-variance rule, so a flat book reads 0 here as in the table)."""
+    mean, sd = x.mean(axis=1), x.std(axis=1, ddof=1)
+    real = sd > quant.ZERO_VARIANCE_TOL * np.maximum(1.0, np.abs(mean))
     with np.errstate(divide="ignore", invalid="ignore"):
-        return np.where(sd > 0, x.mean(axis=1) / sd * math.sqrt(periods_per_year), 0.0)
+        return np.where(real, mean / np.where(real, sd, 1.0) * math.sqrt(periods_per_year), 0.0)
 
 
 def paired_sharpe_block_bootstrap(a, b, periods_per_year: float = 252.0, rf=None, block: int = 10,

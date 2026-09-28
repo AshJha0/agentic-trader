@@ -35,6 +35,7 @@ import argparse
 import asyncio
 import concurrent.futures
 import json
+import math
 import sys
 import threading
 import weakref
@@ -335,8 +336,13 @@ class StdioSession:
         return self._submit(lambda s: s.list_tools()).tools
 
     def call(self, name: str, arguments: dict[str, Any], timeout_s: float | None = None) -> Any:
-        """One remote call; ``timeout_s`` bounds the wait for its result on the server side
-        too, so a request the caller has given up on is cancelled rather than left running."""
+        """One remote call; ``timeout_s`` bounds the wait for its result (``None`` waits). At
+        the deadline the SDK stops waiting and sends the server a ``notifications/cancelled``
+        courtesy notice, which is as far as the cancellation reaches: a desk tool is a
+        synchronous function on a server worker thread that nothing interrupts, so a
+        state-changing call that timed out may still complete (the ticket written) while the
+        caller records an unknown outcome. Reconcile through ``portfolio.position`` (its
+        ``pending`` tickets) before re-submitting."""
         args = _json_arguments(arguments)
         return _payload(self._submit(lambda s: s.call_tool(name, args, read_timeout_seconds=timeout_s)))
 
@@ -397,7 +403,8 @@ def classify_remote_tool(tool: dict[str, Any], override: dict[str, Any] | None =
 
 def registry_from_stdio(server_args: list[str] | None = None,
                         overrides: dict[str, dict[str, Any]] | None = None,
-                        call_timeout_s: float | None = None) -> ToolRegistry:
+                        call_timeout_s: float | None = None,
+                        config: dict[str, Any] | None = None) -> ToolRegistry:
     """A local registry whose tools forward to one stdio server session.
 
     Descriptors come from discovery, so the executor validates arguments against
@@ -406,13 +413,23 @@ def registry_from_stdio(server_args: list[str] | None = None,
     ``overrides``, keyed by the local ``server.tool`` name. ``None`` means the desk's
     own catalogue (``desk_overrides``: the server this client launches is this
     package's own module); pass ``{}`` to relax nothing. ``call_timeout_s`` is the
-    per-call server-side deadline (give it the executor's ``tool_timeout_s`` so an
-    abandoned call is cancelled on the server too; ``None`` waits). The session lives
-    with the registry (``registry.session.close()`` ends it early).
+    per-call deadline on the session: ``None`` (the default) takes ``config``'s
+    ``agentic.tool_timeout_s`` (the shipped configuration's when ``config`` is not
+    given), so an abandoned call stops occupying the session by default; ``math.inf``
+    waits without limit. At the deadline the SDK stops waiting and sends the server a
+    ``notifications/cancelled`` courtesy notice, which is as far as the cancellation
+    reaches: a synchronous tool already running on the server finishes anyway, so a
+    timed-out state-changing call has an unknown outcome (see ``StdioSession.call``).
+    The session lives with the registry (``registry.session.close()`` ends it early).
     """
     _require_mcp()
     if overrides is None:
         overrides = desk_overrides()
+    if call_timeout_s is None:
+        call_timeout_s = float((config or make_config()).get("agentic", {}).get("tool_timeout_s", 30.0))
+    if not call_timeout_s > 0:
+        raise ValueError(f"call_timeout_s must be positive (math.inf waits without limit), got {call_timeout_s!r}")
+    deadline = None if math.isinf(call_timeout_s) else float(call_timeout_s)
     session = StdioSession(_server_params(server_args))
     try:
         tools = session.list_tools()
@@ -430,7 +447,7 @@ def registry_from_stdio(server_args: list[str] | None = None,
         remote_name = raw["name"]
 
         def forward(_name=remote_name, **kwargs):
-            return session.call(_name, kwargs, call_timeout_s)
+            return session.call(_name, kwargs, deadline)
         reg.register_descriptor(ToolDescriptor(local, server, raw["description"], schema, ann), forward)
     reg.session = session   # type: ignore[attr-defined]
     weakref.finalize(reg, session.close)

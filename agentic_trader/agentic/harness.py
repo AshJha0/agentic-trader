@@ -20,8 +20,11 @@ The harness owns the control plane; agents never control the loop. It:
   cancellation that lands while the driver parks is never lost;
 * honours cancellation between steps;
 * gives each run its own position book -- the desk's positions overlaid with an explicit
-  map on ``submit`` and the task's declared ``current_weight`` -- read by that run's tools,
-  so the tools and the report agree on the book and no task rewrites it for another;
+  map on ``submit`` and the task's declared ``current_weight`` -- which is the single source
+  of the current position: the planner drops a model-written ``current_weight`` for a
+  symbol the book holds, the agents' ``TradingState`` is prepared from the book's weight,
+  and the run's tools read (and a ticket updates) the same book, so the agents, the
+  report and the tools agree and no task rewrites the desk's book for another;
 * always runs the governance steps: critic, evidence validation, audited report;
 * keeps a bounded number of finished runs in memory (``agentic.max_retained_runs``);
   the persistent store holds the rest, and the metrics are one process-level set;
@@ -47,7 +50,7 @@ from ..agents.risk import risk_facts
 from ..graph import TradingGraph
 from ..instruments import Instrument
 from ..state import TradingState
-from .critic import Critic, CriticReport
+from .critic import Critic, CriticReport, decision_untrusted
 from .domain import (EvidenceType, Finding, Plan, PlanStep, PolicyOutcome, StepType, Task, TaskState,
                      TERMINAL_STATES, TRANSITIONS, ToolRequest, new_id, utc_now)
 from .evidence import EvidenceStore
@@ -119,7 +122,7 @@ class TaskRun:
              "completed_steps": sorted(self.completed_steps),
              "decision": self.decision.to_dict() if self.decision else None,
              "findings": [{"agent": f.agent, "claim": f.claim, "confidence": round(f.confidence, 3),
-                           "evidence_ids": list(f.evidence_ids)} for f in self.findings],
+                           "evidence_ids": list(f.evidence_ids), "untrusted": f.untrusted} for f in self.findings],
              "critic": self.critic.to_dict() if self.critic else None,
              "evidence_count": len(self.evidence), "trace": self.tracer.summary(),
              "positions": dict(self.positions), "started_at": self.started_at.isoformat(),
@@ -416,7 +419,8 @@ class AgentHarness:
         ins = Instrument.parse(run.task.symbol)
         analysts = self.graph.analyst_names(ins)
         with run.tracer.span("plan"):
-            run.plan = make_plan(run.task, ins, analysts, self.config, self.registry, self.graph.llm)
+            run.plan = make_plan(run.task, ins, analysts, self.config, self.registry, self.graph.llm,
+                                 book=run.positions)
         self._transition(run, TaskState.VALIDATING_PLAN, run.plan.source)
         # Pre-check every tool step against policy, and the plan's data budget as a whole,
         # so an impossible plan fails before it runs.
@@ -448,8 +452,8 @@ class AgentHarness:
         ex.pending_approval = False
         if run.trading_state is None:
             with run.tracer.span("prepare"):
-                run.trading_state = self.graph.prepare(run.task.symbol, run.task.as_of,
-                                                       current_weight=run.task.current_weight,
+                held = run.positions.get(Instrument.parse(run.task.symbol).symbol, run.task.current_weight)
+                run.trading_state = self.graph.prepare(run.task.symbol, run.task.as_of, current_weight=held,
                                                        provider=run._provider)
         steps = [s for s in run.plan.steps if s.type in (StepType.TOOL, StepType.AGENT)]
         i = 0
@@ -516,7 +520,7 @@ class AgentHarness:
             r.evidence_ids = tuple(ev.ids_since(before))
             if not r.abstained:
                 run.findings.append(Finding.make(name, r.summary, r.confidence, r.evidence_ids,
-                                                 {"signal": r.signal}, ("analyst", r.source)))
+                                                 {"signal": r.signal}, ("analyst", r.source), untrusted=r.untrusted))
         elif step.name == "debate":
             d = self.graph.run_debate(st)
             dec = ev.record(EvidenceType.DECISION, "facilitator", d.summary,
@@ -525,7 +529,7 @@ class AgentHarness:
             cited = tuple(dict.fromkeys(i for r in st.reports.values() for i in r.evidence_ids)) + (dec.id,)
             d.evidence_ids = cited
             run.findings.append(Finding.make("facilitator", d.summary, d.conviction, cited,
-                                             {"score": d.score}, ("debate", d.source)))
+                                             {"score": d.score}, ("debate", d.source), untrusted=d.untrusted))
         elif step.name == "trader":
             p = self.graph.run_trader(st)
             dec = ev.record(EvidenceType.DECISION, "trader", p.rationale,
@@ -534,7 +538,8 @@ class AgentHarness:
                              "horizon_days": p.horizon_days}, run.correlation_id)
             p.evidence_ids = (st.debate.evidence_ids if st.debate else ()) + (dec.id,)
             run.findings.append(Finding.make("trader", p.rationale, p.confidence, p.evidence_ids,
-                                             {"target_weight": p.target_weight}, ("proposal", p.source)))
+                                             {"target_weight": p.target_weight}, ("proposal", p.source),
+                                             untrusted=p.untrusted))
         elif step.name == "risk":
             facts = risk_facts(st, self.config)
             fev = ev.record(EvidenceType.CALCULATION, "quant.risk", "risk facts for the proposal", facts,
@@ -550,7 +555,8 @@ class AgentHarness:
                 (st.proposal.evidence_ids if st.proposal else ()) + (fev.id,)
                 + tuple(i for v in st.risk_views for i in v.evidence_ids) + (dev.id,)))
             run.findings.append(Finding.make("portfolio_manager", d.rationale, d.confidence, d.evidence_ids,
-                                             {"target_weight": d.target_weight}, ("decision", d.source)))
+                                             {"target_weight": d.target_weight}, ("decision", d.source),
+                                             untrusted=decision_untrusted(st)))
             run.step_results["risk_facts"] = facts
         else:
             raise ValueError(f"unknown agent stage {step.name}")

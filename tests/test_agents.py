@@ -11,7 +11,7 @@ import pytest
 from agentic_trader import Instrument, TradingGraph, make_config
 from agentic_trader.agents.analysts import (AlphaAnalyst, FundamentalsAnalyst, MacroAnalyst, NewsAnalyst,
                                             SentimentAnalyst, TechnicalAnalyst)
-from agentic_trader.agents.base import untrusted_block
+from agentic_trader.agents.base import clip, untrusted_block
 from agentic_trader.agents.researchers import consensus_score
 from agentic_trader.agents.risk import PortfolioManager
 from agentic_trader.agents.trader import protective_levels, sane_levels
@@ -206,6 +206,54 @@ def test_fundamentals_analyst_orders_cheap_growing_above_rich_shrinking():
     assert only(debt_to_equity=3.0) < only(debt_to_equity=0.5)
     assert only(fcf_yield=0.08) > only(fcf_yield=-0.02)
     assert fa.rules({"report_period_end": "2023-12-31"}, st).abstained    # nothing numeric -> no view
+
+
+def test_fundamentals_analyst_skips_stale_windows_and_abstains_on_a_stale_report():
+    """Final review of v0.8 (analysts.py:245): a window the provider flagged as lagging the report
+    period (KO growth -3.25% on revenue to 2019-06-28 at 2020-02-25, BAC eps_ttm from 2015 at
+    2017-05-03) was scored at full strength, and a report months old scored like a fresh one."""
+    st = _state(100 + np.arange(60.0))
+    fa = FundamentalsAnalyst(None, CFG)
+    base = {"report_period_end": "2019-12-31", "filed": "2020-02-24", "lag_days": 7, "pe_ratio": 40.0, "sector_pe": None,
+            "revenue_growth_yoy": -0.0325, "net_margin": 0.2, "debt_to_equity": 0.5, "fcf_yield": 0.03}
+    ref = fa.rules(base, st)
+    term = lambda **kv: fa.rules({**base, **kv}, st)                                        # noqa: E731
+    # a window one quarter behind is scored as before; more than STALE_WINDOW_DAYS behind is not
+    assert term(revenue_period_end="2019-09-30").signal == pytest.approx(ref.signal)
+    stale = term(revenue_period_end="2019-06-28")
+    assert stale.signal == pytest.approx(ref.signal - 0.3 * math.tanh(-0.0325 / 0.15))
+    assert not any("Revenue growth -" in p for p in stale.key_points)
+    assert any(p.startswith("Revenue growth not scored") and "2019-06-28" in p and "186 days" in p for p in stale.key_points)
+    assert "revenue figures through 2019-06-28" in stale.summary
+    # P/E (positive or negative), margin and FCF each key off their own window
+    assert term(eps_period_end="2019-03-31").signal == pytest.approx(ref.signal)             # no benchmark: P/E was text only
+    assert term(eps_period_end="2019-03-31", sector_pe=22.0).signal == pytest.approx(ref.signal)
+    assert term(sector_pe=22.0).signal < ref.signal
+    assert term(pe_ratio=-1.0, eps_period_end="2019-03-31").signal == pytest.approx(ref.signal)
+    assert term(pe_ratio=-1.0).signal == pytest.approx(ref.signal - 0.1)
+    assert any("P/E not scored" in p and "EPS through 2019-03-31" not in p for p in term(pe_ratio=-1.0, eps_period_end="2019-03-31").key_points)
+    assert term(net_income_period_end="2019-06-30").signal == pytest.approx(ref.signal - 0.15 * math.tanh(0.2 / 0.15))
+    assert term(ocf_period_end="2018-12-31").signal == pytest.approx(ref.signal - 0.15 * math.tanh(0.03 / 0.05))
+    assert "cash flow through 2018-12-31" in term(ocf_period_end="2018-12-31").summary
+    # a report older than STALE_REPORT_DAYS is not scored at all
+    assert term(lag_days=120).signal == pytest.approx(ref.signal) and not term(lag_days=120).abstained
+    old = term(lag_days=121)
+    assert old.abstained and "121 days old" in old.summary
+    # every term stale: nothing to score
+    allstale = term(revenue_period_end="2019-06-28", eps_period_end="2019-06-28", net_income_period_end="2019-06-28",
+                    ocf_period_end="2019-06-28", debt_to_equity=None)
+    assert allstale.abstained and "Revenue growth not scored" in allstale.summary
+    # the report's age alone is not a fundamental
+    assert fa.rules({"report_period_end": "2019-12-31", "filed": "2020-02-24", "lag_days": 7}, st).abstained
+    # a provider without lag keys (the synthetic one) is scored exactly as before
+    syn = SyntheticProvider(CFG).fundamentals(st.instrument, st.as_of)
+    assert not any(k.endswith("_period_end") for k in syn if k != "report_period_end") and "lag_days" not in syn
+    r = fa.rules(syn, st)
+    expected = (clip((22.0 - syn["pe_ratio"]) / 22.0, -0.3, 0.3) + 0.3 * math.tanh(syn["revenue_growth_yoy"] / 0.15)
+                + 0.15 * math.tanh(syn["net_margin"] / 0.15) - (0.15 if syn["debt_to_equity"] > 2 else 0.0)
+                + 0.15 * math.tanh(syn["fcf_yield"] / 0.05) + 0.15 * math.tanh(syn["eps_surprise"] / 0.05)
+                + 0.05 * np.sign(syn["insider_net_buying"]))
+    assert not r.abstained and r.signal == pytest.approx(clip(expected, -1, 1)) and not any("not scored" in p for p in r.key_points)
 
 
 def test_macro_analyst_follows_carry_and_fades_inflation_and_stretch():

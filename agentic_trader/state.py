@@ -136,6 +136,7 @@ class FinalDecision:
     adjustments: list[str] = field(default_factory=list)
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
+    kept: bool = False   # the desk held its current position (the no-trade band): not a target
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
