@@ -587,7 +587,13 @@ numbers are not.
   `AGENTIC_TRADER_BACKEND=python` (skips differ at run time, not at collection).
 - **Measurement is a script**: `scripts/measure_v08.py` (with `--only`) writes every
   re-measured table to `results/v08/` and `scripts/render_v08_tables.py` renders the markdown
-  from it; the documents' Reproducing sections name them.
+  from it; the documents' Reproducing sections name them. The driver shares one Yahoo
+  provider across runs and, for a run that overrides a provider-level key (`edgar`,
+  `cash_leg`, the FRED/FX settings), hands it `provider.reconfigured(cfg)`: the same
+  downloaded bars under the run's own config. `MarketDataProvider.reconfigured(config)` is
+  new for this; the first v0.8 measurement had run "EDGAR off" and "cash leg off" with both
+  still on (the shared provider kept its settings, and `meta["edgar"]` recorded it), and
+  those files were re-measured before any number was published.
 - New config keys, all additive with defaults that keep prior behaviour except where a bullet
   above says otherwise: `account_currency`, `cash_leg`, `execution.fx_lot_size`,
   `execution.max_order_notional`, `execution.allow_external_plans`, `fred_cache_max_age_days`,

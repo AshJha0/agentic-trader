@@ -138,3 +138,28 @@ def test_portfolio_report_sharpe_difference_of_a_flat_agent_is_zero_like_the_tab
     assert d.sharpe_b == pytest.approx(rep.metrics["Buy&Hold"].sharpe, abs=1e-9) and abs(d.ci_low) < 1e3
     if provider is None:                                                                  # constant rf: exactly flat
         assert rep.metrics[AGENT].sharpe == 0.0 and d.sharpe_a == 0.0 and d.diff == -d.sharpe_b
+
+
+# The measurement driver: a run whose overrides touch a provider-level key gets the shared
+# market data reconfigured under its config; every other run keeps the shared provider.
+def test_measurement_driver_reconfigures_the_shared_provider_for_provider_level_overrides():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "measure_v08.py"
+    spec = importlib.util.spec_from_file_location("measure_v08", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    shared = SyntheticProvider(CFG)
+    engine_only = {"rules": {"track_record_cut": False}}
+    assert mod.provider_for(make_config(CFG, **engine_only), engine_only, shared) is shared
+    for over in ({"cash_leg": "off"}, {"edgar": False}):
+        p = mod.provider_for(make_config(CFG, **over), over, shared)
+        assert p is not shared and isinstance(p, SyntheticProvider)
+        assert all(p.config[k] == v for k, v in over.items())
+    runs = [o for *_, o in mod.EVALS.values()] + [o for *_, o in mod.PORTFOLIOS.values()]
+    runs += [t.overrides for t in TRIALS if t.overrides is not None]
+    touched = [o for o in runs if "cash_leg" in o or "edgar" in o]
+    assert len(touched) >= 5                                     # EDGAR off, cash leg off x3, the EDGAR-off trial
+    assert all(mod.provider_for(make_config(CFG, **o), o, shared) is not shared for o in touched)
+

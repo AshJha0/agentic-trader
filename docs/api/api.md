@@ -153,8 +153,13 @@ fundamental.
 dates)`, `risk_free_series(dates) -> np.ndarray` (annual fractions, NaN where unknown;
 implemented on the base class from `config["cash_leg"]`); `real_world` class attribute;
 `macro_sources`, a per-provider tally `{"fred" | "static" | "none": count}` of what every
-`macro()` answer was sized on. Implementations: `SyntheticProvider`, `YahooProvider`,
-`CSVProvider`; `get_provider(config)`, `PROVIDERS`.
+`macro()` answer was sized on; `reconfigured(config) -> MarketDataProvider`, the same market
+data under another configuration (`cash_leg`, `edgar` and the FRED/FX settings are read from
+the provider's own config, so a run that overrides one of them needs a provider built from
+its config rather than a shared one: the base class builds a fresh provider, `YahooProvider`
+returns one that shares the bars, headlines and corporate actions already downloaded, with
+its own EDGAR client and `macro_sources` tally). Implementations: `SyntheticProvider`,
+`YahooProvider`, `CSVProvider`; `get_provider(config)`, `PROVIDERS`.
 
 `base.fx_rates(instrument, dates, config, real_world) -> (base_rate %, quote_rate %, source)`
 is the single resolver behind both `macro()` (via `base.fx_macro`) and `carry_series()`: the

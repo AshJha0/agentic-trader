@@ -92,6 +92,26 @@ def section_headline(res: EvaluationResult) -> None:
             emit(f"paired {metric}, agent minus control: {label}", md(t, index=False))
 
 
+def section_asset_class(res: EvaluationResult) -> None:
+    """The headline summaries and the paired controls split by asset class. The documents'
+    drawdown statements were made for equities, and on FX the vol-target control is the
+    shared position cap, so the split says which comparison has a control at all. The
+    equity rows of the extended slice include its 9 macro ETFs (asset_class "equity")."""
+    for label, universes in SLICES[:2]:
+        view = subset(res, universes)
+        for ac in sorted(view.rows["asset_class"].astype(str).unique()):
+            sub = EvaluationResult(view.rows[view.rows["asset_class"] == ac].reset_index(drop=True), view.meta)
+            n = sub.rows["symbol"].nunique()
+            for period in PERIODS:
+                s = sub.summary(period=period)
+                if len(s):
+                    emit(f"summary by asset class: {label} {ac} ({n}), {period}", md(s))
+            for metric in ("Sharpe", "MDD%"):
+                t = sub.paired_table(metric)
+                t = t[t["baseline"].isin(["Buy&Hold", "B&H vol-target"])] if "baseline" in t else t
+                emit(f"paired {metric} by asset class, agent minus control: {label} {ac} ({n})", md(t, index=False))
+
+
 def agent_sharpe(res: EvaluationResult) -> pd.DataFrame:
     r = res.rows[res.rows["strategy"] == AGENT]
     return r.groupby(["period", "symbol"], as_index=False).agg(
@@ -228,6 +248,8 @@ def main(argv=None) -> int:
         return 1
     if want("headline"):
         section_headline(main_res)
+    if want("asset_class"):
+        section_asset_class(main_res)
     rechecks = [("eval_noedgar", "EDGAR on (a) vs off (b)"), ("eval_rules_v03", "FX carry rule on (a) vs off (b)"),
                 ("eval_xalpha", "with the cross-sectional analyst (a) vs default (b)"),
                 ("eval_alpha", "with the alpha analyst, corrected gate (a) vs default (b)"),

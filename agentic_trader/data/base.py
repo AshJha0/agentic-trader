@@ -49,6 +49,17 @@ class MarketDataProvider(ABC):
         # state whether any decision was sized on the illustrative static table.
         self.macro_sources: dict[str, int] = {}
 
+    def reconfigured(self, config: dict) -> "MarketDataProvider":
+        """The same market data under another configuration.
+
+        ``cash_leg``, ``edgar`` and the FRED/FX settings are read from the provider's own
+        config, so a run that overrides one of them needs a provider built from its config:
+        a provider shared across runs silently keeps the settings it was built with. The
+        default builds a fresh provider; a provider that downloads shares what it has already
+        downloaded (``YahooProvider``), so an on/off comparison is paired on identical bars.
+        """
+        return type(self)(config)
+
     @abstractmethod
     def history(self, instrument: Instrument, start: date, end: date) -> pd.DataFrame:
         """Daily OHLCV indexed by date (DatetimeIndex), inclusive of start and end."""

@@ -96,6 +96,15 @@ class YahooProvider(MarketDataProvider):
         from .edgar import EdgarClient
         self.edgar = EdgarClient.from_config(config)
 
+    def reconfigured(self, config: dict) -> "YahooProvider":
+        """A provider serving this one's downloaded bars, headlines and corporate actions under
+        ``config``: its own EDGAR client, cash leg and macro settings, one shared download
+        cache (and lock) in both directions."""
+        other = type(self)(config)
+        other._cache, other._covered, other._news = self._cache, self._covered, self._news
+        other._actions, other._actions_day, other._lock = self._actions, self._actions_day, self._lock
+        return other
+
     def _corporate_actions(self, sym: str) -> pd.DataFrame:
         """``RawClose`` (split-adjusted to today, not dividend-adjusted) and ``Split`` (the
         ratio on ex-dates, 0 elsewhere): complete bars only, downloaded once per symbol per day."""

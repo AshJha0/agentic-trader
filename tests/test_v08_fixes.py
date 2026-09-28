@@ -308,6 +308,27 @@ def test_36_an_empty_download_raises_the_documented_value_error(yahoo_clock):
     assert list(empty.columns) == ["Open", "High", "Low", "Close", "Volume"]
 
 
+def test_36_a_reconfigured_provider_shares_the_downloads_under_its_own_settings(yahoo_clock, monkeypatch):
+    """scripts/measure_v08.py hands one provider to every run; a run that overrides cash_leg or
+    edgar needs the same bars under its own config (the first v0.8 measurement ran "EDGAR off"
+    and "cash leg off" with both still on, because the shared provider kept its settings)."""
+    from agentic_trader.data import edgar as edgar_mod
+    p, yf, clock = yahoo_clock
+    ins = Instrument.parse("AAPL")
+    h = p.history(ins, D - timedelta(days=120), D)
+    q = p.reconfigured(make_config(p.config, cash_leg="off"))
+    assert q is not p and q.config["cash_leg"] == "off" and p.config["cash_leg"] == "auto"
+    pd.testing.assert_frame_equal(q.history(ins, D - timedelta(days=120), D), h)
+    assert len(yf.calls) == 1                                       # the bars were not downloaded again
+    assert np.isnan(q.risk_free_series(h.index)).all()              # the engine credits nothing
+    q.history(Instrument.parse("MSFT"), D - timedelta(days=30), D)
+    assert "MSFT" in p._cache and len(yf.calls) == 2                # one cache, both ways
+    assert q.macro_sources == {} and q.macro_sources is not p.macro_sources
+    monkeypatch.setattr(edgar_mod.EdgarClient, "from_config", classmethod(lambda cls, c: ("edgar", c["edgar"])))
+    assert p.reconfigured(make_config(p.config, edgar=True)).edgar == ("edgar", True)   # its own EDGAR client
+    assert p.reconfigured(make_config(p.config, edgar=False)).edgar == ("edgar", False)
+
+
 # ====================================== 69: the pair is a subject; both legs -> the first named
 @pytest.mark.parametrize("headline, base, quote, sign", [
     ("USD/JPY falls as yen rallies", "USD", "JPY", -1),               # was 0.00

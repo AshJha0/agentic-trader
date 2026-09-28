@@ -70,6 +70,16 @@ PORTFOLIOS: dict[str, tuple[list[str], str, dict]] = {
                                                                     "ac_kappa": 5.0}, "initial_capital": 1e9}),
 }
 
+# Keys the data layer reads from the provider's own config (config.get / config[...] in
+# agentic_trader/data). A run that overrides one of them needs a provider built from its
+# config: the shared provider keeps the settings it was built with, so the first v0.8
+# measurement ran "EDGAR off" and "cash leg off" with both still on (meta recorded it).
+PROVIDER_KEYS = frozenset({
+    "data_provider", "edgar", "edgar_user_agent", "edgar_cache_dir", "edgar_cache_max_age_days",
+    "edgar_ciks", "cash_leg", "risk_free_annual", "fx_policy_rates", "fx_macro_source", "fx_inflation",
+    "fred_vintages", "fred_vintage_step_days", "fred_cache_dir", "fred_cache_max_age_days",
+})
+
 VAR_WINDOWS = (120, 250)
 DESK_VAR_WINDOW = 250   # agents/risk.py risk_facts: historical VaR of the last 250 daily returns
 
@@ -79,6 +89,12 @@ def base_config(**over) -> dict:
                       edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
                       fred_cache_dir=str(ROOT / "build" / "fred_cache"))
     return make_config(cfg, **over)
+
+
+def provider_for(cfg: dict, over: dict, shared):
+    """The shared provider, or the same market data reconfigured under ``cfg`` when the run's
+    overrides touch a provider-level key (the bars already downloaded are shared either way)."""
+    return shared if PROVIDER_KEYS.isdisjoint(over) else shared.reconfigured(cfg)
 
 
 def log(msg: str) -> None:
@@ -108,7 +124,7 @@ def run_eval(name: str, out: Path, provider) -> None:
     cfg = base_config(**over)
     log(f"{name}: {len(syms)} symbols x {list(periods)} ...")
     t0 = time.time()
-    res = evaluate(syms, periods, cfg, EVERY, provider=provider, workers=4,
+    res = evaluate(syms, periods, cfg, EVERY, provider=provider_for(cfg, over, provider), workers=4,
                    progress=lambda m: log(f"  {name}: {m}"))
     res.meta["measurement"] = {"name": name, "overrides": _jsonable(over), "rebalance_every": EVERY,
                                "seconds": round(time.time() - t0, 1)}   # meta["macro_sources"] is evaluate()'s own tally
@@ -126,7 +142,8 @@ def run_portfolio(name: str, out: Path, provider) -> None:
     cfg = base_config(**over)
     log(f"{name}: {len(syms)} sleeves {start} -> {end} ...")
     t0 = time.time()
-    rep = run_portfolio_backtest(syms, start, end, cfg, rebalance_every=EVERY, provider=provider)
+    rep = run_portfolio_backtest(syms, start, end, cfg, rebalance_every=EVERY,
+                                 provider=provider_for(cfg, over, provider))
     frame = rep.returns.copy()
     frame["rf"] = rep.rf if isinstance(rep.rf, np.ndarray) else float(rep.rf if rep.rf is not None else 0.0)
     frame.to_csv(out / f"{name}.csv")
@@ -186,7 +203,8 @@ def run_trials(out: Path, provider) -> None:
             continue
         log(f"trial {t.name!r} ...")
         t0 = time.time()
-        res = evaluate(CORE, design, base_config(**t.overrides), EVERY, provider=provider, workers=4)
+        cfg = base_config(**t.overrides)
+        res = evaluate(CORE, design, cfg, EVERY, provider=provider_for(cfg, t.overrides, provider), workers=4)
         res.meta["measurement"] = {"trial": t.name, "version": t.version, "overrides": _jsonable(t.overrides),
                                    "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1)}
         res.to_json(path)
