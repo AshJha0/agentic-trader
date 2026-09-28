@@ -183,6 +183,10 @@ def cmd_execute(args) -> int:
         if not allow_short and args.target < 0 and args.current <= 0:
             print(f"nothing to trade: target {args.target:+.2f} truncated to flat (shorting {ins.display} is not "
                   "allowed) and the position is already flat")
+        elif abs(args.target - args.current) > 1e-9:
+            unit = f"{cfg['execution']['fx_lot_size']:,.0f}-unit lot" if ins.is_fx else "share"
+            print(f"nothing to trade: the change ({abs(args.target - args.current) * capital:,.0f} {account}) "
+                  f"is below one {unit}")
         else:
             print("nothing to trade: target equals the current position")
         return 0
