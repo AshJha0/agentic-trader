@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from agentic_trader.backtest import AGENT  # noqa: E402
-from agentic_trader.evaluation import EvaluationResult  # noqa: E402
+from agentic_trader.evaluation import EvaluationResult, trial_slug  # noqa: E402
 from agentic_trader.stats import paired_bootstrap, paired_sharpe_block_bootstrap, selection_report  # noqa: E402
 
 PERIODS = ("design", "holdout", "q1_2024", "reserve")
@@ -202,7 +202,16 @@ def section_var(v: dict) -> None:
          md(df, index=False, floatfmt=".4f"))
 
 
-def section_selection(trials: dict, design_csv: Path) -> None:
+def trial_means(d: Path, name: str) -> dict:
+    """Design-period agent means of CR% / MDD% / Exp% for one re-measured trial (its own file)."""
+    res = load_eval(d / f"trial_{trial_slug(name)}.json")
+    if res is None:
+        return {}
+    rows = res.rows[(res.rows["strategy"] == AGENT) & (res.rows["period"] == "design")]
+    return {f"design mean {c}": float(rows[c].mean()) for c in ("CR%", "MDD%", "Exp%")} if len(rows) else {}
+
+
+def section_selection(trials: dict, design_csv: Path, d: Path) -> None:
     frame = pd.read_csv(design_csv, index_col=0, parse_dates=True)
     r = frame[AGENT].to_numpy(float)[1:]
     rf = frame["rf"].to_numpy(float)[1:] if "rf" in frame else 0.0
@@ -214,7 +223,7 @@ def section_selection(trials: dict, design_csv: Path) -> None:
     t = pd.DataFrame([{"trial": t["name"], "version": t["version"],
                        "design mean Sharpe (v0.8 engine)": t["mean_sharpe"],
                        "recorded (v0.3 engine)": t["recorded_mean_sharpe_v03_engine"],
-                       "re-measured": t["reproducible"]} for t in trials["trials"]])
+                       "re-measured": t["reproducible"], **trial_means(d, t["name"])} for t in trials["trials"]])
     emit(f"trials registry: {len(trials['trials'])} variants judged on the design period", md(t, index=False))
     emit("selection statistics for the frozen rules (design-period portfolio, all trials)",
          "```json\n" + json.dumps(rep, indent=1, default=str) + "\n```")
@@ -286,7 +295,7 @@ def main(argv=None) -> int:
         section_var(v)
     trials = load_json(d / "trials.json")
     if trials is not None and (d / "portfolio_design.csv").exists() and want("selection"):
-        section_selection(trials, d / "portfolio_design.csv")
+        section_selection(trials, d / "portfolio_design.csv", d)
     ps = load_json(d / "phase_sweep_holdout.json")
     if ps is not None and want("phase"):
         section_phase_sweep(ps)
