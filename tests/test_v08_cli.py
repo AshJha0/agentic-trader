@@ -191,16 +191,37 @@ def _lock_requirements() -> list[tuple[str, str, str | None]]:
     return reqs
 
 
+def _pyproject_requirements(text: str) -> list[str]:
+    """Every requirement string under [project] dependencies and optional-dependencies.
+
+    ``tomllib`` is Python 3.11+, and ``tomli`` is not a dependency, so on 3.10 the two
+    arrays are read with a regex (the file keeps one double-quoted requirement per entry).
+    """
+    try:
+        import tomllib
+    except ImportError:                                   # Python 3.10
+        project = re.search(r"^\[project\]\n(.*?)(?=^\[)", text, re.S | re.M).group(1)
+        optional = re.search(r"^\[project\.optional-dependencies\]\n(.*?)(?=^\[|\Z)", text, re.S | re.M).group(1)
+        deps = re.search(r"^dependencies\s*=\s*\[(.*?)\]", project, re.S | re.M).group(1)
+        return re.findall(r'"([^"]+)"', deps) + re.findall(r'"([^"]+)"', optional)
+    proj = tomllib.loads(text)["project"]
+    return proj["dependencies"] + [r for reqs in proj["optional-dependencies"].values() for r in reqs]
+
+
 def _pyproject_requirement_names() -> set[str]:
-    import tomllib
-    proj = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    names = set()
-    for req in proj["dependencies"] + [r for reqs in proj["optional-dependencies"].values() for r in reqs]:
-        names.add(re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", req).group(0).lower().replace("_", "-"))
-    return names
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    return {re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", req).group(0).lower().replace("_", "-")
+            for req in _pyproject_requirements(text)}
 
 
-def test_lock_pins_every_declared_and_transitive_dependency():
+def test_lock_pins_every_declared_and_transitive_dependency(monkeypatch):
+    import importlib.util
+
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    if importlib.util.find_spec("tomllib") is not None:        # 3.11+: the 3.10 fallback reads the same
+        with_tomllib = _pyproject_requirements(text)
+        monkeypatch.setitem(sys.modules, "tomllib", None)      # import tomllib now raises ImportError
+        assert _pyproject_requirements(text) == with_tomllib and len(with_tomllib) > 5
     reqs = _lock_requirements()
     names = {n for n, _, _ in reqs}
     assert len(names) == len(reqs)                                  # no duplicates
