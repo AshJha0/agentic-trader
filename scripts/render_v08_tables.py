@@ -208,7 +208,7 @@ def trial_means(d: Path, name: str) -> dict:
     if res is None:
         return {}
     rows = res.rows[(res.rows["strategy"] == AGENT) & (res.rows["period"] == "design")]
-    return {f"design mean {c}": float(rows[c].mean()) for c in ("CR%", "MDD%", "Exp%")} if len(rows) else {}
+    return {f"design mean {c}": float(rows[c].mean()) for c in ("CR%", "MDD%", "Exp%", "Trades")} if len(rows) else {}
 
 
 def section_selection(trials: dict, design_csv: Path, d: Path) -> None:
