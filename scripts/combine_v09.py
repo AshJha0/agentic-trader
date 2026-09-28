@@ -64,7 +64,7 @@ def load_streams(inp: Path) -> tuple[pd.DataFrame, pd.Series]:
         frames[name] = f[col]
         rfs.append(f["rf"])
     streams = pd.DataFrame(frames).sort_index()
-    rf = pd.concat(rfs, axis=1).sort_index().max(axis=1).reindex(streams.index).ffill()   # one bill rate
+    rf = pd.concat(rfs, axis=1, sort=True).max(axis=1).reindex(streams.index).ffill()   # one bill rate
     return streams.fillna(0.0), rf
 
 
@@ -143,7 +143,8 @@ def main(argv=None) -> int:
                                           "vs_base": asdict(paired_sharpe_block_bootstrap(ro, base, PPY, block=10, n_boot=5000))}
         out["books"][book] = entry
     (inp / "combine.json").write_text(json.dumps(out, indent=1, default=float), encoding="utf-8")
-    lines = ["# v0.9 phase 3: strategy combination on the design period (2016-2021), 260 periods/year\n",
+    period = f"{streams.index[0].date()} -> {streams.index[-1].date()}"
+    lines = [f"# v0.9 phase 3: strategy combination, {period}, 260 periods/year\n",
              "## streams (excess returns)\n", "| stream | Sharpe | t | vol % | excess return %/yr | MDD % | n |", "|:--|--:|--:|--:|--:|--:|--:|"]
     for n, m in out["streams"].items():
         lines.append(f"| {n} | {m['sharpe']:.2f} | {m['t']:.2f} | {m['vol_pct']:.2f} | {m['excess_return_annual_pct']:+.2f} | {m['mdd_pct']:.2f} | {m['n']} |")
