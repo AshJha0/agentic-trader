@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased — v0.9 research (branch `research/v0.9-multi-asset`)
+
+The Sharpe plan that followed v0.8: attribution first, then a multi-asset base, trend and
+carry streams, their combination, and a forward test. Every number is in
+[docs/evaluation/v09_research.md](docs/evaluation/v09_research.md) (generated from
+`results/v09` by `scripts/render_v09_doc.py`) and the rule for what the holdout run may
+mean was written before it ran ([docs/evaluation/v09_preregistration.md](docs/evaluation/v09_preregistration.md)).
+
+- **Attribution** (`scripts/attribution_v09.py`): against the vol-target control the v0.8
+  desk has beta 0.92 (design) / 0.89 (holdout), R² 0.89 / 0.86, alpha +0.41%/yr (t 0.40) /
+  −0.80%/yr (t −0.68); the active tilt's Sharpe is −0.17 [−0.90, +0.56] and −0.61
+  [−1.51, +0.29]. The signals add nothing over holding the same sleeves mechanically.
+- **Two return streams as baselines in every sleeve**, fully costed and combinable by the
+  portfolio machinery: `TSMOM(12-1)` (sign of the trailing 12-month return skipping the last
+  month, at the vol-target size, long-only where shorts are not allowed) and `Carry` (the
+  FX carry premium at the desk's strategic size; flat on equities). Every `backtest`,
+  `baselines`, `portfolio` and `evaluate` table gains the two rows.
+- **Design-period verdict (2016–2021), nothing adopted**: the 11-ETF risk-parity base
+  (`B&H vol-target`) has Sharpe 1.02 against the v0.8 core-15 control's 1.43; risk parity
+  on the core 15 gives 0.91 (it overweights FX sleeves that earn nothing); ETF trend 0.50,
+  −0.52 [−0.89, −0.15] p 0.007 against its control; FX carry 0.13, +0.05 [−0.98, +1.08];
+  every risk-parity book with trend or carry is at or below the base (beta + trend −0.24
+  [−0.42, −0.05] p 0.012). Six books and five runs count as trials.
+- **The pre-registered holdout report (2022–2026)**, a report and not a choice: the
+  bond-heavy base −0.09, ETF trend 0.16, FX carry 0.43, the core-15 controls 1.28–1.32;
+  no difference clears its interval.
+- **The forward test** (`scripts/paper_trade_v09.py`): from 2026-09-29 a daily job
+  recomputes the frozen books' returns (the v0.8 desk on the core 15 with its controls, the
+  ETF base with trend, the FX pairs with carry and trend), writes `results/paper/ledger.csv`,
+  a summary with block-bootstrap intervals after 60 sessions, and a `runs.jsonl` line with
+  provenance and any revision of an earlier return. A candidate is adopted only when its
+  forward Sharpe minus its control's clears an interval that excludes zero.
+- Drivers: `scripts/measure_v09.py` (`--period design|holdout`), `scripts/combine_v09.py`
+  (risk parity across streams, drawdown overlay), `scripts/render_v09_tables.py`,
+  `scripts/render_v09_doc.py`. Tests: `tests/test_v09.py`, `tests/test_v09_paper.py`.
+
 ## v0.8.0 — 2026-09-28
 
 A tier-1 review of v0.7.0 -- the code, the tests and every claim in the documentation --
