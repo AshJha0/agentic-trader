@@ -25,6 +25,12 @@ def main() -> int:
     args = ap.parse_args()
     md = (ROOT / "COOKBOOK.md").read_text(encoding="utf-8")
     sections = re.split(r"^### ", md, flags=re.M)[1:]
+    if not args.offline:
+        # The network recipes (EDGAR) read their contact from the repository's .env; each block runs in a
+        # temp dir where the file is not visible, so load it here (values are never printed).
+        sys.path.insert(0, str(ROOT))
+        from agentic_trader.cli import load_dotenv
+        load_dotenv(str(ROOT / ".env"))
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": str(ROOT)}
     fails = ran = skipped = 0
     for sec in sections:

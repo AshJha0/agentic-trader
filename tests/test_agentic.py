@@ -338,6 +338,13 @@ def test_harness_fails_cleanly_on_bad_input():
         harness(make_config(CFG, agentic={"approval": "bogus"}))
 
 
+def _ticket(h, symbol, target):
+    """v0.8: a ticket is the plan execution.plan produced (units, notional, currency, price, plan
+    reference), never a bare quantity (review finding 71)."""
+    from agentic_trader.agentic.servers import ticket_from_plan
+    return ticket_from_plan(h.tools.plan(symbol, AS_OF, target))
+
+
 def test_harness_awaits_approval_then_resumes_or_cancels():
     h = harness(gateway=QueuedApprovalGateway())
     ins = Instrument.parse("AAPL")
@@ -345,7 +352,7 @@ def test_harness_awaits_approval_then_resumes_or_cancels():
     # A plan that starts with a state-changing tool cannot come from the validator; build it by hand.
     from agentic_trader.agentic.domain import Plan, PlanStep
     run = h.submit(Task("AAPL", AS_OF, Role.TRADER))
-    order = PlanStep.make(StepType.TOOL, "execution.submit_order", {"symbol": "AAPL", "side": "buy", "quantity": 5})
+    order = PlanStep.make(StepType.TOOL, "execution.submit_order", _ticket(h, "AAPL", 0.1))
     base = canonical_plan(run.task, ins, h.graph.analyst_names(ins), CFG, reg)
     h._transition(run, TaskState.PLANNING)
     run.plan = Plan((order,) + base.steps, "test")
@@ -362,8 +369,8 @@ def test_harness_awaits_approval_then_resumes_or_cancels():
 
     run2 = h.submit(Task("AAPL", AS_OF, Role.TRADER))
     h._transition(run2, TaskState.PLANNING)
-    run2.plan = Plan((PlanStep.make(StepType.TOOL, "execution.submit_order",
-                                    {"symbol": "AAPL", "side": "sell", "quantity": 9}),) + base.steps, "test")
+    run2.plan = Plan((PlanStep.make(StepType.TOOL, "execution.submit_order", _ticket(h, "AAPL", 0.2)),)
+                     + base.steps, "test")
     h._transition(run2, TaskState.VALIDATING_PLAN)
     h._transition(run2, TaskState.EXECUTING)
     h.resume(run2)
@@ -380,8 +387,8 @@ def test_rejected_approval_fails_the_step_but_finishes_the_task():
     ins = Instrument.parse("AAPL")
     base = canonical_plan(run.task, ins, h.graph.analyst_names(ins), CFG, h.registry)
     h._transition(run, TaskState.PLANNING)
-    run.plan = Plan((PlanStep.make(StepType.TOOL, "execution.submit_order",
-                                   {"symbol": "AAPL", "side": "buy", "quantity": 5}),) + base.steps, "test")
+    run.plan = Plan((PlanStep.make(StepType.TOOL, "execution.submit_order", _ticket(h, "AAPL", 0.1)),)
+                    + base.steps, "test")
     h._transition(run, TaskState.VALIDATING_PLAN)
     h._transition(run, TaskState.EXECUTING)
     h.resume(run)

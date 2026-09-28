@@ -167,8 +167,11 @@ def test_fx_macro_modes(fake_fred):
     assert fx_macro(ins, old, cfg, real_world=False)["source"].startswith("static")
     # Real-world, old date, no FRED coverage for the pair -> nothing, not today's static rates.
     assert fx_macro(Instrument.parse("EURGBP"), date(2019, 1, 2), cfg, real_world=True) == {}
-    # ...but a recent date may fall back to the static table.
+    # ...and a recent date is no different (v0.8: the static table never stands in for FRED,
+    # so the answer for a date does not depend on the wall clock).
     recent = date.today() - timedelta(days=5)
-    assert fx_macro(Instrument.parse("EURGBP"), recent, cfg, real_world=True)["source"].startswith("static")
+    assert fx_macro(Instrument.parse("EURGBP"), recent, cfg, real_world=True) == {}
+    assert fx_macro(Instrument.parse("EURGBP"), recent, make_config(fx_macro_source="static"),
+                    real_world=True)["source"].startswith("static")
     with pytest.raises(ValueError):
         fx_macro(ins, old, make_config(fx_macro_source="bogus"), real_world=True)

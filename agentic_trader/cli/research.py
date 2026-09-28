@@ -8,7 +8,7 @@ from datetime import date, timedelta
 import numpy as np
 
 from ..backtest import run_agent_backtest, run_portfolio_backtest
-from .common import _as_of, _config, _header, _symbols
+from .common import _as_of, _config, _header, _symbols, write_sidecar
 
 
 def cmd_backtest(args, include_agent: bool = True) -> int:
@@ -24,10 +24,7 @@ def cmd_backtest(args, include_agent: bool = True) -> int:
                              asset_class=args.asset_class, include_agent=include_agent,
                              on_decision=on_dec if include_agent and args.verbose else None)
     bt = rep.backtest_config
-    known = rep.carry[~np.isnan(rep.carry)] if rep.carry is not None else None
-    carry = (f"carry {known.mean():+.2%} p.a. (mean, point-in-time)" if known is not None and known.size
-             else "carry n/a (no point-in-time rates)" if known is not None
-             else f"carry {bt.carry_annual:+.2%} p.a.")
+    carry = carry_summary(rep.carry, bt.carry_annual)
     print(f"\n{rep.instrument.display}: {len(rep.dates)} bars, cost {bt.cost_bps:.2f}bps + "
           f"slippage {bt.slippage_bps:.2f}bps, {carry}, shorts {'on' if bt.allow_short else 'off'}, "
           f"stops {'on' if cfg['backtest']['use_stops'] else 'off'}")
@@ -35,7 +32,27 @@ def cmd_backtest(args, include_agent: bool = True) -> int:
     if args.out:
         rep.equity_curves().to_csv(args.out)
         print(f"equity curves written to {args.out}")
+        print(f"provenance written to {write_sidecar(args.out, {'backtest_config': vars(bt)})}")
     return 0
+
+
+def carry_summary(carry: np.ndarray | None, carry_annual: float) -> str:
+    """The carry the backtester actually credited: the mean over every accruing bar with an
+    unknown (NaN) point-in-time rate counted as 0, which is what the backtester books on such
+    bars, plus how many of them had no rate. The final bar never accrues (carry is earned over
+    the step to the next bar, and there is none), so it is outside both the mean and the
+    count. Non-FX runs report the static ``carry_annual``."""
+    if carry is None:
+        return f"carry {carry_annual:+.2%} p.a."
+    c = np.asarray(carry, float)[:-1]
+    n = c.size
+    unknown = int(np.isnan(c).sum())
+    credited = float(np.nan_to_num(c, nan=0.0).mean()) if n else 0.0
+    known = c[~np.isnan(c)]
+    detail = f"{known.mean():+.2%} on {known.size}/{n} accruing bars, 0 on {unknown} with no point-in-time rate" \
+        if unknown and known.size else f"{unknown}/{n} accruing bars with no point-in-time rate" if unknown \
+        else f"point-in-time, all {n} accruing bars"
+    return f"carry {credited:+.2%} p.a. credited ({detail})"
 
 
 def cmd_portfolio(args) -> int:
@@ -53,12 +70,19 @@ def cmd_portfolio(args) -> int:
     rep = run_portfolio_backtest(syms, args.start, args.end, cfg, rebalance_every=args.every,
                                  weighting=args.weighting, class_budgets=budgets)
     print(rep.table().to_string())
+    from ..backtest import AGENT
+    for base in ("B&H vol-target", "Buy&Hold"):
+        if base in rep.returns:
+            d = rep.sharpe_difference(AGENT, base)
+            print(f"Sharpe {AGENT} - {base}: {d.diff:+.2f} [{d.ci_low:+.2f}, {d.ci_high:+.2f}] p={d.p_value:.3f} "
+                  f"(paired block bootstrap over {d.n} days, block {d.block})")
     if rep.allocations is not None:
         print("\nlatest capital allocation:")
         print(rep.allocations.iloc[-1].round(3).to_string())
     if args.out:
         rep.returns.to_csv(args.out)
         print(f"portfolio daily returns written to {args.out}")
+        print(f"provenance written to {write_sidecar(args.out, {'weighting': args.weighting, 'symbols': syms})}")
     return 0
 
 
@@ -126,38 +150,78 @@ def cmd_execute(args) -> int:
     from ..data import get_provider
     from ..instruments import Instrument
     from ..state import Action, FinalDecision
+    import pandas as pd
+    from ..algo import base_to_account_rate
     cfg = _config(args)
     provider = get_provider(cfg)
     ins = Instrument.parse(args.symbol, args.asset_class)
     as_of = _as_of(args)
+    capital = float(cfg["initial_capital"] if args.capital is None else args.capital)
+    if capital <= 0:
+        raise ValueError("--capital must be positive")
     df = provider.history(ins, as_of - timedelta(days=60), as_of)
+    df = df[df.index <= pd.Timestamp(as_of)]
     if df.empty:
         raise ValueError(f"no bars for {ins.display} up to {as_of}")
     last = float(df["Close"].iloc[-1])
-    adv = float(df["Volume"].tail(20).mean()) if df["Volume"].sum() > 0 else None
+    if ins.is_fx:
+        adv_notional = cfg["costs"].get("fx_adv_notional")
+        adv = float(adv_notional) / last if adv_notional else None
+    else:
+        adv = float(df["Volume"].tail(20).mean()) if df["Volume"].sum() > 0 else None
+    account = str(cfg.get("account_currency", "USD")).upper()
+    rate = base_to_account_rate(provider, ins.base, account, as_of) \
+        if ins.is_fx and account not in (ins.base, ins.quote) else None
+    allow_short = bool(cfg["risk"]["allow_short_fx"] if ins.is_fx else cfg["risk"]["allow_short_equity"])
     dec = FinalDecision(ins.symbol, as_of, Action.BUY if args.target > args.current else Action.SELL,
                         args.target, 0.0, None, None, "")
-    plan = plan_execution(dec, ins, args.current, args.capital, last, adv, args.algo)
-    _header(f"execute {ins.display} {args.current:+.2f} -> {args.target:+.2f} capital {args.capital:,.0f}", cfg)
+    plan = plan_execution(dec, ins, args.current, capital, last, adv, args.algo, account_currency=account,
+                          base_to_account=rate, allow_short=allow_short,
+                          lot_size=cfg["execution"]["fx_lot_size"], ac_kappa=float(cfg["costs"]["ac_kappa"]))
+    _header(f"execute {ins.display} {args.current:+.2f} -> {args.target:+.2f} capital {capital:,.0f} {account}", cfg)
     if plan is None:
-        print("nothing to trade: target equals the current position")
+        effective = args.target if (allow_short or args.target >= 0) else 0.0   # what plan_execution sized
+        truncated = "" if effective == args.target else \
+            f" (target {args.target:+.2f} truncated to flat: shorting {ins.display} is not allowed)"
+        if not allow_short and args.target < 0 and args.current <= 0:
+            print(f"nothing to trade: target {args.target:+.2f} truncated to flat (shorting {ins.display} is not "
+                  "allowed) and the position is already flat")
+        elif abs(effective - args.current) > 1e-9:
+            unit = f"{cfg['execution']['fx_lot_size']:,.0f}-unit lot" if ins.is_fx else "share"
+            print(f"nothing to trade: the change {args.current:+.4f} -> {effective:+.4f} "
+                  f"({abs(effective - args.current) * capital:,.0f} {account}) is below one {unit}{truncated}")
+        else:
+            print(f"nothing to trade: target equals the current position{truncated}")
         return 0
-    bars = synthetic_intraday_bars(df.iloc[-1], plan.slices, "fx" if ins.is_fx else "equity", seed=args.seed)
-    daily_vol = float(df["Close"].pct_change().tail(20).std() or 0.02)
-    spread = cfg["costs"]["fx_spread_pips"] * ins.pip_size / last * 1e4 if ins.is_fx else args.spread_bps
-    rep = simulate_execution(plan.schedule(bars, participation=args.participation), bars, plan.side,
-                             plan.algo, spread, args.impact, daily_vol, adv)
-    unit = "units" if ins.is_fx else "shares"
-    print(f"{plan.side.upper()} {plan.quantity:,.0f} {unit} (notional {plan.notional:,.0f}) via {plan.algo.upper()} "
-          f"in {plan.slices} slices; {plan.reason}")
+    print(f"{plan.side.upper()} {plan.quantity:,.0f} {plan.quantity_unit} (notional {plan.notional:,.0f} "
+          f"{plan.notional_currency} at {plan.price:.5g}) via {plan.algo.upper()} in {plan.slices} slices; "
+          f"{plan.reason}; intent {plan.intent}; {plan.id}")
     if plan.participation_of_adv is not None:
         print(f"order is {plan.participation_of_adv:.2%} of 20-day ADV")
-    print(f"executed {rep.executed:,.0f} ({rep.completion:.0%}); arrival {rep.arrival:.5g}, avg fill {rep.avg_price:.5g}, "
-          f"session VWAP {rep.session_vwap:.5g}")
-    print(f"implementation shortfall {rep.is_bps:+.1f} bps, vs VWAP {rep.vs_vwap_bps:+.1f} bps "
-          f"(spread {rep.spread_cost_bps:.1f} bps, impact {rep.impact_cost_bps:.1f} bps), "
-          f"max slice participation {rep.max_participation:.1%}" if rep.max_participation == rep.max_participation
-          else f"implementation shortfall {rep.is_bps:+.1f} bps, vs VWAP {rep.vs_vwap_bps:+.1f} bps")
+    nxt = provider.history(ins, as_of + timedelta(days=1), as_of + timedelta(days=14))
+    nxt = nxt[nxt.index > pd.Timestamp(as_of)] if len(nxt) else nxt
+    if nxt.empty:
+        print(f"no session after {as_of} is available yet: the order executes on the next session, so no fill "
+              "was simulated")
+        return 0
+    day = nxt.iloc[0]
+    from ..agentic.servers import _daily_vol
+    bars = synthetic_intraday_bars(day, plan.slices, "fx" if ins.is_fx else "equity", seed=args.seed)
+    daily_vol = _daily_vol(df)
+    spread = cfg["costs"]["fx_spread_pips"] * ins.pip_size / last * 1e4 if ins.is_fx else args.spread_bps
+    rep = simulate_execution(plan.schedule(bars, participation=args.participation), bars, plan.side,
+                             plan.algo, spread, args.impact, daily_vol, adv, requested=plan.quantity)
+    print(f"executed {rep.executed:,.0f} of {rep.requested:,.0f} {plan.quantity_unit} ({rep.completion:.0%}) on "
+          f"{pd.Timestamp(day.name).date()}; arrival {rep.arrival:.5g}, avg fill {rep.avg_price:.5g}, "
+          f"session VWAP {rep.session_vwap:.5g}, close {rep.close:.5g}")
+    line = (f"implementation shortfall {rep.is_bps:+.1f} bps, vs VWAP {rep.vs_vwap_bps:+.1f} bps "
+            f"(spread {rep.spread_cost_bps:.1f} bps, impact {rep.impact_cost_bps:.1f} bps")
+    if rep.unfilled >= plan.lot_size * (1.0 - 1e-9):   # a closed-form schedule can leave 1e-14 of a share
+        line += f", opportunity cost of {rep.unfilled:,.0f} unfilled {rep.opportunity_cost_bps:+.1f} bps"
+    line += ")"
+    if rep.max_participation == rep.max_participation:
+        line += f", max slice participation {rep.max_participation:.1%}"
+    print(line)
     return 0
 
 

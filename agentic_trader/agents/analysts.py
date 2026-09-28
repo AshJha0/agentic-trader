@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from datetime import date
 from typing import Any
 
 import numpy as np
@@ -46,7 +47,8 @@ class Analyst(Agent):
         return (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}). "
             f"As-of date: {state.as_of.isoformat()}. Last close: {state.fmt_px(state.last_price)}.\n"
-            f"Data from your tools:\n{fmt_facts(state.prompt_facts(plain))}\n"
+            f"Data from your tools (a null value is unavailable: do not estimate it):\n"
+            f"{fmt_facts(state.prompt_facts(plain))}\n"
             + ("\n".join(blocks) + "\n" if blocks else "")
             + f"\n{self.instructions}\nSignal direction refers to {_direction_note(state)}.\n"
             'JSON keys: "signal" (number in [-1, 1]), "confidence" (number in [0, 1]), '
@@ -60,7 +62,7 @@ class Analyst(Agent):
         # invent a view from an empty input).
         if not report.abstained:
             data = self.ask_json(self.prompt(facts, state), ("signal", "confidence", "summary"),
-                                 state=state)
+                                 state=state, numeric=("signal", "confidence"))
             if data:
                 kp = data.get("key_points") or []
                 report = AnalystReport(
@@ -73,6 +75,8 @@ class Analyst(Agent):
                     source="llm",
                     rule_signal=report.signal,
                 )
+        # Text derived from headlines or posts stays fenced wherever it is shown next.
+        report.untrusted = bool(self.untrusted_keys)
         state.reports[self.name] = report
         return report
 
@@ -191,52 +195,110 @@ class TechnicalAnalyst(Analyst):
 
 
 # --------------------------------------------------------------------------
+# A point-in-time fundamentals report older than STALE_REPORT_DAYS at the decision date (a
+# skipped periodic filing) is not scored at all; a series whose four-quarter window ends
+# more than STALE_WINDOW_DAYS behind the report period (a recast or renamed tag not yet
+# covering the newest quarters, flagged by the provider under ``<series>_period_end``) has
+# its term skipped. A window one quarter behind is scored as before.
+STALE_REPORT_DAYS = 120
+STALE_WINDOW_DAYS = 100
+_WINDOW_KEYS = {"revenue": "revenue_period_end", "net_income": "net_income_period_end",
+                "eps": "eps_period_end", "ocf": "ocf_period_end"}
+_WINDOW_LABELS = {"revenue": "revenue figures", "net_income": "net income", "eps": "EPS", "ocf": "cash flow"}
+
+
+def _window_lag(f: dict[str, Any], end: str) -> int | None:
+    """Days the window ending ``end`` lags the report period, or None when either date is unreadable."""
+    try:
+        return (date.fromisoformat(str(f.get("report_period_end"))) - date.fromisoformat(str(end))).days
+    except ValueError:
+        return None
+
+
 class FundamentalsAnalyst(Analyst):
     name = "fundamentals"
     role = ("Fundamentals Analyst. You assess a company's intrinsic value and financial "
             "health from its latest reported financials and insider activity.")
-    instructions = ("Assess valuation versus the sector, growth, profitability, balance-sheet "
-                    "leverage, cash generation, earnings surprise and insider activity.")
+    instructions = ("Assess valuation (against the sector only when a sector P/E is given), growth, "
+                    "profitability, balance-sheet leverage, cash generation, and earnings surprise "
+                    "and insider activity where they are reported.")
 
     def gather(self, state, provider):
         return provider.fundamentals(state.instrument, state.as_of)
 
     def rules(self, f, state):
-        usable = {k: v for k, v in f.items() if isinstance(v, (int, float)) and v is not None}
+        usable = {k: v for k, v in f.items() if isinstance(v, (int, float)) and v is not None and k != "lag_days"}
         if not usable:
             return self.abstain("No point-in-time fundamental data available.", f)
-        s, pts = 0.0, []
-        pe, spe = f.get("pe_ratio"), f.get("sector_pe") or 22.0
-        if pe and pe > 0:
+        # A point-in-time provider says how old its report is and which of its windows end
+        # behind the report period; neither is scored as if current.
+        lag = f.get("lag_days")
+        if isinstance(lag, (int, float)) and lag > STALE_REPORT_DAYS:
+            return self.abstain(f"Latest report ({f.get('report_period_end', 'n/a')}) is {int(lag)} days old "
+                                f"at {state.as_of.isoformat()}: no current fundamentals to score.", f)
+        stale = {name: (end, days) for name, key in _WINDOW_KEYS.items()
+                 if (end := f.get(key)) and (days := _window_lag(f, end)) is not None and days > STALE_WINDOW_DAYS}
+
+        def skipped(name: str, term: str) -> bool:
+            if name not in stale:
+                return False
+            end, days = stale[name]
+            pts.append(f"{term} not scored: its window ends {end}, {days} days behind the report period")
+            return True
+
+        s, pts, scored = 0.0, [], 0
+        pe, spe = f.get("pe_ratio"), f.get("sector_pe")
+        # Relative valuation needs a benchmark from the data; the real providers have no
+        # sector P/E, and a placeholder would be scored and reported as a fact.
+        if pe is not None and skipped("eps", "P/E"):
+            pass
+        elif pe and pe > 0 and spe and spe > 0:
             v = clip((spe - pe) / spe, -0.3, 0.3)
             s += v
+            scored += 1
             pts.append(f"P/E {pe:.1f} vs sector {spe:.1f} ({'cheap' if v > 0 else 'rich'})")
+        elif pe and pe > 0:
+            scored += 1
+            pts.append(f"P/E {pe:.1f}; no sector benchmark available")
         elif pe is not None and pe <= 0:
             s -= 0.1
+            scored += 1
             pts.append("Negative earnings (P/E not meaningful)")
-        if (g := f.get("revenue_growth_yoy")) is not None:
+        if (g := f.get("revenue_growth_yoy")) is not None and not skipped("revenue", "Revenue growth"):
             s += 0.3 * math.tanh(g / 0.15)
+            scored += 1
             pts.append(f"Revenue growth {g:+.1%} YoY")
-        if (m := f.get("net_margin")) is not None:
+        if (m := f.get("net_margin")) is not None and not skipped("net_income", "Net margin"):
             s += 0.15 * math.tanh(m / 0.15)
+            scored += 1
             pts.append(f"Net margin {m:.1%}")
         if (de := f.get("debt_to_equity")) is not None:
             if de > 2.0:
                 s -= 0.15
+            scored += 1
             pts.append(f"Debt/equity {de:.2f}{' (high)' if de > 2 else ''}")
-        if (fy := f.get("fcf_yield")) is not None:
+        if (fy := f.get("fcf_yield")) is not None and not skipped("ocf", "FCF yield"):
             s += 0.15 * math.tanh(fy / 0.05)
+            scored += 1
             pts.append(f"FCF yield {fy:.1%}")
         if (es := f.get("eps_surprise")) is not None:
             s += 0.15 * math.tanh(es / 0.05)
+            scored += 1
             pts.append(f"EPS surprise {es:+.1%}")
         if (ins := f.get("insider_net_buying")) is not None and ins != 0:
             s += 0.05 * np.sign(ins)
+            scored += 1
             pts.append(f"Insiders net {'buyers' if ins > 0 else 'sellers'} ({ins:+d} filings)")
+        if not scored:
+            return self.abstain("Every fundamental term is on a window behind the report period: "
+                                + "; ".join(pts), f)
         sig = clip(s, -1, 1)
+        window = f"({f.get('report_period_end', 'n/a')}"
+        for name, key in _WINDOW_KEYS.items():
+            if f.get(key):
+                window += f"; {_WINDOW_LABELS[name]} through {f[key]}"
         return AnalystReport(self.name, sig, clip(0.3 + 0.4 * abs(sig), 0, 0.8),
-                             f"Fundamentals score {sig:+.2f} from the latest report "
-                             f"({f.get('report_period_end', 'n/a')}).", pts, f)
+                             f"Fundamentals score {sig:+.2f} from the latest report {window}).", pts, f)
 
 
 # --------------------------------------------------------------------------
@@ -451,9 +513,10 @@ class AlphaAnalyst(Analyst):
         ic = {}
         if len(df) >= 120:
             sig = compute_alphas(df, ins, None, carry)
-            fwd = forward_returns(df["Close"].to_numpy(float), 10)
+            horizon = 10
+            fwd = forward_returns(df["Close"].to_numpy(float), horizon)
             for name in sig.columns:
-                v, t, n = information_coefficient(sig[name].to_numpy(), fwd)
+                v, t, n = information_coefficient(sig[name].to_numpy(), fwd, horizon)
                 ic[name] = {"IC": v, "t(IC)": t, "n": n}
         return {"latest": latest, "ic": ic}
 

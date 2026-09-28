@@ -123,7 +123,8 @@ def test_evaluation_harness_records_errors_and_round_trips(tmp_path):
 
 
 # ------------------------------------------------------------------ memory
-def test_memory_survives_corrupt_lines_and_writes_atomically(tmp_path):
+def test_memory_survives_corrupt_lines_and_appends_under_a_lock(tmp_path, monkeypatch):
+    from agentic_trader import memory as memory_mod
     path = tmp_path / "m.jsonl"
     m = DecisionMemory(path)
     m.record("X", date(2024, 1, 1), "BUY", 0.5, 100.0, "ok")
@@ -132,7 +133,14 @@ def test_memory_survives_corrupt_lines_and_writes_atomically(tmp_path):
         f.write('{"unexpected": 1}\n')                   # wrong schema
     m2 = DecisionMemory(path)
     assert len(m2.entries) == 1 and m2.skipped_lines == 2
+    locked, real_lock = [], memory_mod._lock_file
+
+    def counting_lock(fd, timeout=30.0):
+        locked.append(fd)
+        return real_lock(fd, timeout)
+    monkeypatch.setattr(memory_mod, "_lock_file", counting_lock)
     m2.record("X", date(2024, 1, 2), "HOLD", 0.0, 101.0, "ok")
+    assert locked, "an append must take the cross-process file lock"
     assert not (tmp_path / "m.jsonl.tmp").exists() and len(DecisionMemory(path).entries) == 2
 
 

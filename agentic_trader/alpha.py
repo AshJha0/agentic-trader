@@ -5,9 +5,12 @@ bar's close. The library covers the classic time-series signals for a single
 instrument; ``alpha_report`` measures each one the way a research desk would:
 
 * **IC**: Spearman correlation between the signal and the forward return over
-  the horizon, with its t-statistic;
+  the horizon, with an overlap-aware t-statistic (consecutive h-bar forward
+  returns share h-1 bars, so only n/h of the daily pairs are independent);
 * **decay**: IC across horizons;
-* **hit rate** and **tercile spread**: does the sign predict, and by how much;
+* **hit rate** next to the **base rate** (share of up-moves), and the
+  **tercile spread** on rank-assigned, disjoint terciles: does the sign predict
+  beyond the drift, and by how much;
 * **autocorrelation**: how fast the signal changes (turnover);
 * **correlations** between alphas, and a **combined** alpha.
 
@@ -162,8 +165,51 @@ def forward_returns(close, horizon: int) -> np.ndarray:
     return out
 
 
-def information_coefficient(signal, fwd) -> tuple[float, float, int]:
-    """Spearman IC, its t-statistic and the number of pairs used."""
+IC_T_METHODS = ("n_eff", "newey_west")
+
+
+def _newey_west_t(s: np.ndarray, f: np.ndarray, lag: int) -> float:
+    """HAC t-statistic of the Spearman IC: the slope of standardised rank(f) on standardised
+    rank(s) (which equals the IC) with a Bartlett-kernel variance over ``lag`` lags of the
+    time-ordered score series."""
+    x = pd.Series(s).rank().to_numpy(float)
+    y = pd.Series(f).rank().to_numpy(float)
+    sx, sy = x.std(), y.std()
+    if sx <= 0 or sy <= 0:
+        return float("nan")
+    x, y = (x - x.mean()) / sx, (y - y.mean()) / sy
+    n = x.size
+    beta = float(x @ y) / n
+    u = x * (y - beta * x)
+    var = float(u @ u) / n
+    for k in range(1, min(lag, n - 1) + 1):
+        var += 2.0 * (1.0 - k / (lag + 1)) * float(u[k:] @ u[:-k]) / n
+    return beta / math.sqrt(var / n) if var > 0 else float("nan")
+
+
+def information_coefficient(signal, fwd, horizon: int = 1, method: str = "n_eff") -> tuple[float, float, int]:
+    """Spearman IC, its t-statistic and the number of (signal, forward-return) pairs used.
+
+    ``fwd`` is assumed to be the ``horizon``-bar forward return sampled every bar, so
+    consecutive pairs overlap and only about ``n / horizon`` of them are independent. The
+    t-statistic corrects for that in one of two ways:
+
+    * ``"n_eff"`` (default): ``IC * sqrt(n / horizon)`` -- the same effective-sample rule
+      ``xalpha.ic_summary`` applies, so the time-series and cross-sectional analysts' gates
+      are the same test;
+    * ``"newey_west"``: a Bartlett/Newey-West HAC t-statistic with ``horizon - 1`` lags on the
+      rank-transformed pairs. Its window covers the return overlap only: on the library's
+      slow signals (autocorrelation ~0.99) it leaves a null SD of ~1.2-1.7, so it is offered
+      for comparison, not as the gate.
+
+    ``n`` is the raw pair count either way (the gate's ``min_n`` floor reads it as such). The
+    ``n / horizon`` rule over-corrects a short-memory signal such as ``reversal_5`` (its
+    measured null SD is ~0.7 at horizon 10), which errs on the conservative side of the gate.
+    """
+    if horizon < 1:
+        raise ValueError("horizon must be a positive number of bars")
+    if method not in IC_T_METHODS:
+        raise ValueError(f"unknown IC t-stat method {method!r}; choose from {IC_T_METHODS}")
     s, f = np.asarray(signal, float), np.asarray(fwd, float)
     ok = np.isfinite(s) & np.isfinite(f)
     n = int(ok.sum())
@@ -172,7 +218,9 @@ def information_coefficient(signal, fwd) -> tuple[float, float, int]:
     ic = quant.spearman(s[ok], f[ok])
     if not math.isfinite(ic):
         return float("nan"), float("nan"), n
-    return ic, ic * math.sqrt(n), n
+    if method == "newey_west":
+        return ic, _newey_west_t(s[ok], f[ok], int(horizon) - 1), n
+    return ic, ic * math.sqrt(max(1.0, n / horizon)), n
 
 
 @dataclass
@@ -220,26 +268,53 @@ def significance_gated_series(sig: pd.DataFrame, ic: dict[str, dict], min_tstat:
     return (num / den.where(den > 0)).clip(-1.0, 1.0)
 
 
-def _alpha_diagnostics(s: np.ndarray, fwd: np.ndarray) -> dict[str, float]:
-    """IC, hit rate, tercile spread, autocorrelation and coverage of one signal series
-    against forward returns -- the row every column of ``alpha_report``'s table gets,
-    factored out so ``significance_gated`` gets exactly the same measurement as every
-    individual alpha and ``combined``, not a different one."""
-    ic, t, n = information_coefficient(s, fwd)
+def tercile_spread(s: np.ndarray, fwd: np.ndarray) -> float:
+    """Mean forward return of the top signal tercile minus the bottom one, with terciles
+    assigned by rank so the two groups are disjoint and each holds n/3 bars whatever the
+    signal's tie structure. Bars tied at a tercile boundary share the boundary's remaining
+    mass equally (fractional weights), so a signal that sits at exactly -1 on most bars
+    still has a proper top group and the result does not depend on bar order."""
+    s, f = np.asarray(s, float), np.asarray(fwd, float)
+    ok = np.isfinite(s) & np.isfinite(f)
+    s, f = s[ok], f[ok]
+    n = s.size
+    k = n // 3
+    if k < 1:
+        return float("nan")
+    srt = np.sort(s)
+    lo_val, hi_val = srt[k - 1], srt[n - k]
+
+    def group_mean(inside: np.ndarray, boundary: np.ndarray) -> float:
+        w = inside.astype(float)
+        need = k - w.sum()
+        tied = boundary.sum()
+        if need > 0 and tied > 0:
+            w[boundary] = need / tied
+        return float((w * f).sum() / w.sum())
+
+    bot = group_mean(s < lo_val, s == lo_val)
+    top = group_mean(s > hi_val, s == hi_val)
+    return top - bot
+
+
+def _alpha_diagnostics(s: np.ndarray, fwd: np.ndarray, horizon: int = 1) -> dict[str, float]:
+    """IC (with the overlap-aware t-statistic for ``horizon``), hit rate and the base rate to
+    read it against, tercile spread, autocorrelation and coverage of one signal series against
+    forward returns -- the row every column of ``alpha_report``'s table gets, factored out so
+    ``significance_gated`` gets exactly the same measurement as every individual alpha and
+    ``combined``, not a different one. ``up%`` is the share of positive forward returns on the
+    same pairs: a signal stuck at +1 through a rally scores ``hit% == up%`` with zero skill."""
+    ic, t, n = information_coefficient(s, fwd, horizon)
     ok = np.isfinite(s) & np.isfinite(fwd)
     hit = float(np.mean(np.sign(s[ok]) == np.sign(fwd[ok]))) if n else float("nan")
-    spread = float("nan")
-    if n >= 30:
-        lo, hi = np.quantile(s[ok], [1 / 3, 2 / 3])
-        top, bot = fwd[ok][s[ok] >= hi], fwd[ok][s[ok] <= lo]
-        if top.size and bot.size:
-            spread = float(top.mean() - bot.mean())
+    up = float(np.mean(fwd[ok] > 0)) if n else float("nan")
+    spread = tercile_spread(s, fwd) if n >= 30 else float("nan")
     valid = s[np.isfinite(s)]
     ac = float("nan")
     if valid.size > 10 and valid[:-1].std() > 0 and valid[1:].std() > 0:
         ac = float(np.corrcoef(valid[:-1], valid[1:])[0, 1])
-    return {"IC": ic, "t(IC)": t, "n": n, "hit%": 100 * hit, "tercile spread%": 100 * spread,
-            "autocorr": ac, "coverage%": 100 * np.isfinite(s).mean()}
+    return {"IC": ic, "t(IC)": t, "n": n, "hit%": 100 * hit, "up%": 100 * up,
+            "tercile spread%": 100 * spread, "autocorr": ac, "coverage%": 100 * np.isfinite(s).mean()}
 
 
 def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
@@ -255,15 +330,15 @@ def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
     rows, decay = {}, {}
     for name in sig.columns:
         s = sig[name].to_numpy()
-        rows[name] = _alpha_diagnostics(s, fwd)
-        decay[name] = {h: information_coefficient(s, forward_returns(close, h))[0] for h in decay_horizons}
+        rows[name] = _alpha_diagnostics(s, fwd, horizon)
+        decay[name] = {h: information_coefficient(s, forward_returns(close, h), h)[0] for h in decay_horizons}
     # The row nobody was measuring: the significance-gated combination is what the alpha
     # analysts actually trade (agents.analysts.significant_alpha_signal), not "combined"
     # above, which is an equal-weighted diagnostic over every alpha regardless of quality.
     sig["significance_gated"] = significance_gated_series(sig.drop(columns=["combined"]), rows)
     s = sig["significance_gated"].to_numpy()
-    rows["significance_gated"] = _alpha_diagnostics(s, fwd)
-    decay["significance_gated"] = {h: information_coefficient(s, forward_returns(close, h))[0] for h in decay_horizons}
+    rows["significance_gated"] = _alpha_diagnostics(s, fwd, horizon)
+    decay["significance_gated"] = {h: information_coefficient(s, forward_returns(close, h), h)[0] for h in decay_horizons}
     table = pd.DataFrame(rows).T.round(4)
     with np.errstate(invalid="ignore", divide="ignore"):  # a constant or empty column has no correlation
         corr = sig.drop(columns=["combined", "significance_gated"]).corr().round(3)
@@ -287,7 +362,11 @@ def significant_alpha_signal(latest: dict[str, float | None], ic: dict[str, dict
     """Recombine an alpha snapshot using only alphas whose measured IC is significant.
 
     ``latest`` is a name -> value snapshot (as returned by ``alpha_snapshot``); ``ic`` is a
-    name -> {"IC", "t(IC)", "n"} table (as returned by ``alpha_report`` or computed inline).
+    name -> {"IC", "t(IC)", "n"} table (as returned by ``alpha_report`` or computed inline),
+    whose ``t(IC)`` must be the overlap-aware statistic ``information_coefficient`` returns for
+    the forward horizon actually used -- the ``min_tstat`` bar is calibrated as a per-alpha
+    two-sided test at roughly the 5% level, and the raw ``IC * sqrt(n)`` on overlapping
+    10-bar returns is ~2.5-3x too large under the null.
     Both ``AlphaAnalyst`` and the ``quant.alpha`` tool produce this shape, so this one
     function is the single source of truth for what "the alpha analyst's view" means: it is
     used whether the analyst computes its own snapshot or reuses one already fetched as a

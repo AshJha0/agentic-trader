@@ -27,10 +27,18 @@ def _label_key(labels: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted((k, str(v)) for k, v in labels.items()))
 
 
+def _new_hist() -> dict[str, Any]:
+    return {"count": 0, "sum": 0.0, "min": None, "max": None, "buckets": [0] * len(_HIST_BUCKETS)}
+
+
 class Metrics:
+    """Counters and histograms. A histogram keeps count, sum, min, max and cumulative counts
+    for the fixed buckets, never the observations themselves, so a process-level instance
+    stays the same size however many calls it has seen."""
+
     def __init__(self) -> None:
         self._counters: dict[str, dict[tuple, float]] = {}
-        self._hists: dict[str, dict[tuple, list[float]]] = {}
+        self._hists: dict[str, dict[tuple, dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     def inc(self, name: str, value: float = 1.0, **labels: Any) -> None:
@@ -40,11 +48,25 @@ class Metrics:
             self._counters[name][key] = self._counters[name].get(key, 0.0) + value
 
     def observe(self, name: str, value: float, **labels: Any) -> None:
+        x = float(value)
         with self._lock:
-            self._hists.setdefault(name, {}).setdefault(_label_key(labels), []).append(float(value))
+            h = self._hists.setdefault(name, {}).setdefault(_label_key(labels), _new_hist())
+            h["count"] += 1
+            h["sum"] += x
+            h["min"] = x if h["min"] is None else min(h["min"], x)
+            h["max"] = x if h["max"] is None else max(h["max"], x)
+            for i, b in enumerate(_HIST_BUCKETS):
+                if x <= b:
+                    h["buckets"][i] += 1
 
     def counter(self, name: str, **labels: Any) -> float:
         return self._counters.get(name, {}).get(_label_key(labels), 0.0)
+
+    def histogram(self, name: str, **labels: Any) -> dict[str, Any] | None:
+        """``{count, sum, min, max, buckets}`` of a series (cumulative bucket counts), or None."""
+        with self._lock:
+            h = self._hists.get(name, {}).get(_label_key(labels))
+            return None if h is None else {**h, "buckets": list(h["buckets"])}
 
     def render(self) -> str:
         """Prometheus text exposition format."""
@@ -53,24 +75,37 @@ class Metrics:
             for name, series in sorted(self._counters.items()):
                 lines.append(f"# TYPE {name} counter")
                 for key, v in sorted(series.items()):
-                    lines.append(f"{name}{_fmt_labels(key)} {v:g}")
+                    lines.append(f"{name}{_fmt_labels(key)} {_num(v)}")
             for name, series in sorted(self._hists.items()):
                 lines.append(f"# TYPE {name} histogram")
-                for key, values in sorted(series.items()):
-                    for b in _HIST_BUCKETS:
-                        n = sum(1 for x in values if x <= b)
+                for key, h in sorted(series.items()):
+                    for b, n in zip(_HIST_BUCKETS, h["buckets"]):
                         lines.append(f"{name}_bucket{_fmt_labels(key + (('le', str(b)),))} {n}")
-                    lines.append(f"{name}_bucket{_fmt_labels(key + (('le', '+Inf'),))} {len(values)}")
-                    lines.append(f"{name}_sum{_fmt_labels(key)} {sum(values):g}")
-                    lines.append(f"{name}_count{_fmt_labels(key)} {len(values)}")
+                    lines.append(f"{name}_bucket{_fmt_labels(key + (('le', '+Inf'),))} {h['count']}")
+                    lines.append(f"{name}_sum{_fmt_labels(key)} {_num(h['sum'])}")
+                    lines.append(f"{name}_count{_fmt_labels(key)} {h['count']}")
         return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _num(v: float) -> str:
+    """A sample value, exactly: integral values as integers (a counter of 1,234,567 is not
+    ``1.23457e+06``), anything else with repr's round-trip precision."""
+    f = float(v)
+    if f.is_integer() and abs(f) < 2 ** 53:
+        return str(int(f))
+    return repr(f)
 
 
 def _fmt_labels(key: tuple[tuple[str, str], ...]) -> str:
     if not key:
         return ""
-    inner = ",".join(f'{k}="{v}"' for k, v in key)
+    inner = ",".join(f'{k}="{_escape(v)}"' for k, v in key)
     return "{" + inner + "}"
+
+
+def _escape(v: str) -> str:
+    """Label value escaping per the exposition format: backslash, quote, newline."""
+    return v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 @dataclass

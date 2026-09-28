@@ -1,6 +1,830 @@
 # Changelog
 
-## v0.7.0 — Unreleased
+## v0.8.0 — 2026-09-28
+
+A tier-1 review of v0.7.0 -- the code, the tests and every claim in the documentation --
+produced 91 findings (17 high, 58 medium, 16 low; the digest with each verifier's reasoning
+is the record). The code changes for them are in this release, one bullet per finding group
+below; the findings about what the documentation claimed are answered by retracting the
+claims and re-measuring. The engine changed in ways that move every backtest-derived number
+(constant units between decisions, a cash leg, equity-scaled impact, the desk told its true
+position after a stop), so no number from v0.7 or earlier is carried forward: `scripts/measure_v08.py`
+re-measures every published table into `results/v08/` (each file carries `provenance`) and
+`scripts/render_v08_tables.py` prints the tables the documents paste. Numbers produced by the
+synthetic provider are unchanged by the cash leg (its rate is the constant 0 there); real-data
+numbers are not.
+
+### Retracted
+- **The v0.7 "stratified bootstrap"** (`stats.paired_bootstrap(groups=...)`, the default in
+  `EvaluationResult.paired` since v0.7). Resampling within each group with the group's count
+  held fixed removes the between-group component of the variance: it can only *narrow* the
+  interval and lower `p`, the opposite of what the v0.7 entry claimed, and it does nothing
+  about correlation inside a cluster. Every interval, `p` and BH flag printed by
+  `agentic-trader evaluate` under v0.7 defaults is withdrawn (finding 4). Replaced by a
+  two-stage cluster bootstrap, below; the v0.6 tables, which used the plain instrument
+  bootstrap, stand and are now labelled `scheme=instruments`.
+- **The magnitudes in the v0.7 execution-algorithm table** (VWAP 2.37% / TWAP 2.51% /
+  Almgren-Chriss 3.14% of equity to impact on the $1B 15-sleeve holdout portfolio, and its
+  Sharpe column). `run_portfolio_backtest` ran every sleeve with the whole book's capital and
+  combined them at 1/N, so with impact proportional to the square root of capital each sleeve
+  paid sqrt(15) = 3.87 times what a sleeve of $1B/15 pays (finding 1). The ordering
+  VWAP < TWAP < AC is a property of the schedules and survives; the table is re-measured at
+  the sleeve's own capital under Re-measured results.
+- **"The desk's own risk model is well-calibrated"** (the v0.7 VaR-coverage entry, the
+  evaluation's VaR section and LEARN #34). What was tested was a 120/250-day rolling
+  historical quantile of the 15-sleeve portfolio's *own realised returns* against those same
+  returns. The forecast the desk sizes on -- the 250-day historical VaR of each instrument's
+  price returns, times |weight|, against `max_var_95` -- was never tested, and book-level VaR
+  (`max_book_var_95`) was off in every published run (findings 28, 62). v0.8 tests the
+  per-instrument forecast against each core instrument's next-day return over the holdout;
+  the portfolio-returns test is kept and labelled as exactly that.
+- **The headline results** of v0.5 through v0.7 -- per-instrument Sharpe against buy & hold,
+  the 15-sleeve portfolio's "beats plain buy & hold on Sharpe", "about half of buy & hold's
+  drawdown", the impact sweep and the EDGAR deltas -- were measured under an engine that
+  credited nothing on idle cash and used a risk-free rate of 0 (finding 14), compared
+  drawdown against 100%-invested buy & hold rather than the vol-targeted control the
+  evaluation itself names as fair (finding 66), and reported the EDGAR gain on extended
+  equities as "intervals that exclude zero" when the project's own FDR correction did not
+  flag it (finding 61). All of them are re-measured in this release, on excess returns with
+  the cash leg credited; whether each claim still holds is stated, with its interval, under
+  Re-measured results. Measured, the portfolio claim does not hold: on the
+  holdout the 15-sleeve desk's Sharpe is 0.80 against plain buy & hold's 0.86, a difference of
+  -0.06 [-0.41, +0.30] p 0.748 (paired block bootstrap over days), so **"beats plain buy &
+  hold on Sharpe" is retracted**; with the cash leg off the order is the same (1.04 against
+  1.05), so the v0.7 figure was inside the noise under either convention.
+- **"$1B: MACD loses three quarters of its equity to impact"** (the v0.5 impact-sweep
+  sentence, LEARN #28). It was measured with impact charged at the constant initial capital
+  (finding 23); with impact following the equity, the core-universe MACD baseline pays 64.71%
+  of equity in impact on the design period at $1B and 39.01% on the holdout
+  (`results/v08/tables.md`, impact sweep). The sentence is withdrawn and the sweep is under
+  Re-measured results.
+- **"The reserve period is untouched by every choice"** (the evaluation's periods table,
+  LEARN #27, README and the landing page). The reserve (2026-07-01 to 2026-09-25) and the
+  extended universe were consulted for the v0.5.1 carry rule and the v0.6 EDGAR and
+  cross-sectional decisions, and v0.8 re-measures every period, so no held-out data remains:
+  the next unseen data is the future (finding 64).
+
+### Re-measured results
+Every measured number here is copied from `results/v08/tables.md` (the earlier releases'
+figures quoted beside their retraction or replacement, and the v0.5.1 LLM record, are
+labelled as such and are not in the tables), which `scripts/render_v08_tables.py` renders
+from the files `scripts/measure_v08.py` wrote to `results/v08/` (the section named in each
+bullet is the table it came from; the full tables are in
+[the evaluation's v0.8 section](docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured)).
+Conventions: Sharpe and Sortino are on returns in excess of the credited 3-month bill
+(FRED DTB3, one-day publication lag); CR, AR, MDD and Calmar are total return; summary
+tables quote the *median* Sharpe across instruments and paired tables the *mean* difference
+with its 95% bootstrap interval, `p` and, on the paired Sharpe, MDD% and Calmar tables, the
+Benjamini-Hochberg flag over the unrounded `p` across the table (the (a)-versus-(b) re-check
+tables print `p` but no BH column); the bootstrap scheme is `instruments` on core (15 = 10
+equities + 5 FX pairs) and extended (45 = 26 sector equities, 9 macro ETFs, 10 FX crosses)
+and `clusters` (two-stage over the five asset-class-by-universe groups) on all 60. An
+interval printed as [0.00, x] or [-0.00, x] is not "excluding zero". Periods: design
+2016-2021, holdout 2022-mid-2026, q1_2024, reserve 2026-07-01 to 2026-09-25.
+- **Per instrument, out of sample, the desk is below buy & hold on Sharpe, and below the
+  vol-targeted control** ("summary: core (15), holdout"; "paired Sharpe, agent minus
+  baseline"). Core holdout median Sharpe 0.30 (desk) vs 0.51 (B&H) vs 0.52 (B&H vol-target);
+  paired mean difference desk - B&H -0.10 [-0.21, -0.00] p 0.04, not BH-significant; desk -
+  vol-target -0.11 [-0.21, -0.00] p 0.04, not BH-significant. Extended holdout medians 0.25
+  vs 0.39 vs 0.27; desk - B&H -0.07 [-0.12, -0.02] p 0.01, BH-significant; desk - vol-target
+  -0.03 [-0.09, +0.02] p 0.19, not BH-significant. All 60 (clusters): desk - B&H -0.08
+  [-0.15, -0.03] p 0.00, BH-significant; desk - vol-target -0.05 [-0.15, 0.00] p 0.07, not
+  BH-significant. Design period, core: medians 0.67 vs 0.73 vs 0.69; desk - B&H +0.06
+  [-0.06, +0.17] p 0.29, not BH-significant. v0.7's "noise either way" is superseded: on the
+  names the rules never saw, the Sharpe deficit against buy & hold clears the BH bar. The
+  desk stays ahead of the signal-flipping baselines on most slices (holdout, all 60: desk -
+  SMA(20/50) +0.25 [+0.01, +0.43] p 0.04, not BH-significant; holdout, extended: +0.28
+  [+0.16, +0.41] p 0.00, BH-significant; design, core: desk - MACD +0.26 [+0.09, +0.43] p
+  0.00, BH-significant).
+- **Drawdown against the fair control** ("paired MDD%, agent minus control", "summary by
+  asset class", "paired Calmar"). Core holdout mean MDD 17.40% (desk) vs 31.64% (B&H) vs
+  18.98% (vol-target); paired desk - B&H -14.24 points [-20.41, -8.70] p 0.00,
+  BH-significant; desk - vol-target -1.58 [-4.33, +1.14] p 0.27, not BH-significant. On the
+  ten core equities, the names the rules were tuned on, holdout mean MDD is 22.11% vs 40.24%
+  vs 21.28% and desk - vol-target is +0.83 [-1.63, +3.21] p 0.50, not BH-significant: the desk's drawdown is not
+  below the fair control's there. Extended holdout: 15.46% vs 26.39% vs 19.79%; desk -
+  vol-target -4.33 [-6.10, -2.55] p 0.00, BH-significant; desk - B&H -10.93 [-13.41, -8.64]
+  p 0.00, BH-significant. On FX the vol-target control sits at the shared 1.0 position cap
+  most of the time and coincides with buy & hold (core FX holdout: mean MDD 14.40% vs 14.45%,
+  exposure 94.43% vs 92.17%), so the FX drawdown comparison has no separate control. Calmar,
+  extended holdout: desk - B&H +0.11 [+0.03, +0.19] p 0.00, BH-significant; desk - vol-target
+  +0.07 [0.00, +0.14] p 0.05, not BH-significant. "About half the drawdown" is true against
+  plain buy & hold and is almost entirely volatility scaling.
+- **The 15-sleeve equal-capital portfolio beats neither control on Sharpe** ("portfolio:
+  holdout", "portfolio Sharpe difference (paired block bootstrap over days)",
+  "rebalance-phase sweep"). Holdout: desk Sharpe 0.80, CR 50.62%, MDD 7.80%, exposure
+  59.10%; B&H 0.86 / 96.91% / 20.43%; vol-target 0.99 / 61.48% / 9.17%. Paired block
+  bootstrap over days (block 10, n 1167): desk - B&H -0.06 [-0.41, +0.30] p 0.748; desk -
+  vol-target -0.19 [-0.53, +0.16] p 0.297. Design (n 1564): desk 1.40 vs B&H 1.28 vs
+  vol-target 1.43; desk - B&H +0.12 [-0.16, +0.40] p 0.434; desk - vol-target -0.03 [-0.28,
+  +0.23] p 0.898. The rebalance-phase sweep (holdout, offsets 0-4) puts the desk at 0.80 /
+  0.85 / 0.86 / 0.80 / 0.84 (spread 0.06) against a fixed 0.99 (vol-target) and 0.86 (B&H):
+  the cadence noise floor is the size of the portfolio differences quoted. The v0.7 "beats
+  plain buy & hold on Sharpe" (1.09 vs 1.06) is retracted above.
+- **The cash leg lowered every strategy's holdout Sharpe and leaves the desk below both
+  controls under either convention** ("cash leg on vs off: holdout / design"; "cash leg off
+  (a) vs on (b)"). Under
+  `cash_leg: auto` (the default) an equity position is funded, so `(1 - |w|)` of the account
+  earns the bill; an FX forward leaves the whole account earning it; Sharpe and Sortino are
+  on excess returns; `cash_leg: "off"` credits nothing and uses `risk_free_annual` (0), the
+  v0.7 convention; synthetic data is unchanged either way (its rate is the constant 0).
+  Holdout portfolio, cash leg on -> off: desk 0.80 -> 1.04 (CR 50.62% -> 35.17%, MDD 7.80% ->
+  8.01%); B&H 0.86 -> 1.05 (96.91% -> 86.23%); vol-target 0.99 -> 1.24 (61.48% -> 46.21%);
+  SMA(20/50) 0.64 -> 0.85; MACD 0.38 -> 0.54. Design portfolio: desk 1.40 -> 1.46 (CR 93.64%
+  -> 87.97%), B&H 1.28 -> 1.32, vol-target 1.43 -> 1.49. Per instrument, agent Sharpe with
+  the leg off minus on (these on/off tables carry `p` but no BH column): holdout core +0.10
+  [+0.06, +0.15] p 0.00, extended +0.17 [+0.13, +0.21] p 0.00, all 60 +0.15 [+0.04, +0.23] p
+  0.02 (clusters); design core +0.03 [+0.02, +0.04] p 0.00, all 60 +0.04 [+0.01, +0.06] p
+  0.01. Reading: 2022-2026 bills paid several percent a year, so an excess-return Sharpe is
+  lower for everyone; crediting the desk's idle capital raises its cumulative return (35.17%
+  -> 50.62%) but not its excess-return Sharpe by as much as the bill takes from a
+  low-volatility strategy, while buy & hold holds almost no cash; 2016-2021 bills were near
+  zero, so the design period barely moves. Of the v0.7 -> v0.8 holdout portfolio move 1.09
+  -> 0.80, the cash-leg convention accounts for 1.04 -> 0.80, measured here on one engine;
+  the remaining 1.09 -> 1.04 (the other engine corrections plus any data drift since
+  2026-09-25) is a difference between two records across two engines, not a measured
+  effect. Under either convention the holdout order is desk < B&H < vol-target (1.04 / 1.05
+  / 1.24 off; 0.80 / 0.86 / 0.99 on). The README headline follows the cash-leg-on numbers.
+- **Impact, equity-scaled, textbook coefficient 1.0, core universe** ("impact sweep"). Desk
+  Sharpe with impact off / at $100k / $10M / $1B: design 0.66 / 0.66 / 0.66 / 0.61 (impact
+  paid 0.04% / 0.43% / 4.24% of equity), holdout 0.34 / 0.34 / 0.34 / 0.31 (0.03% / 0.26% /
+  2.53%). B&H vol-target: design 0.64 -> 0.57 at $1B (6.92%), holdout 0.45 -> 0.41 (3.57%);
+  SMA(20/50): 0.57 -> 0.38 (24.63%) and 0.18 -> 0.04 (12.99%); MACD: 0.40 -> -0.18 (64.71%)
+  and 0.14 -> -0.30 (39.01%). v0.7's "the desk loses 0.09 Sharpe at $1B" is replaced by these
+  figures.
+- **Execution algorithms at $1B, holdout portfolio, sleeve impact at the sleeve's capital**
+  ("execution algorithm, $1B holdout portfolio"): VWAP Sharpe 0.78 / CR 49.62% / MDD 7.83% /
+  mean sleeve impact paid 0.66%; TWAP 0.78 / 49.56% / 7.83% / 0.70%; Almgren-Chriss kappa=5
+  0.77 / 49.30% / 7.84% / 0.87%. The v0.7 magnitudes (2.37% / 2.51% / 3.14%) are retracted
+  above; the ordering VWAP < TWAP < AC survives, the magnitudes do not.
+- **EDGAR on vs off, re-checked under the per-tag, per-basis reconstruction** ("EDGAR on (a)
+  vs off (b)"; every earlier EDGAR figure is superseded; this and every (a)-versus-(b)
+  re-check table below, through the track-record cut, carry `p` but no BH column, so none
+  of their rows is called BH-significant). Agent mean Sharpe with the filings minus without:
+  design core +0.01 [-0.03, +0.04] p 0.72 (4 / 15 wins; the filings reach the
+  ten equities only), design extended +0.01 [+0.00, +0.02] p 0.02 (16 / 45), design all 60
+  +0.01 [-0.01, +0.02] p 0.19 (clusters); holdout core -0.01 [-0.07, +0.04] p 0.83, holdout
+  extended +0.03 [+0.01, +0.06] p 0.00 (15 / 45), holdout all 60 +0.02 [-0.02, +0.05] p 0.39;
+  q1_2024 core +0.09 [+0.00, +0.21] p 0.02; reserve core +0.11 [+0.00, +0.23] p 0.04,
+  reserve extended +0.03 [-0.04, +0.10] p 0.45. The core design period, the choice basis,
+  cannot tell on from off; the extended equities, which no rule was tuned on, show a small gain with the cluster interval
+  covering zero. The data stays on (it is a data source, not a rule, and the design period
+  shows no harm); the untuned rules that read it remain the next protocol item. Trials
+  registry: "EDGAR filings off" design mean Sharpe 0.65 vs 0.66 with them, CR 110.44% vs
+  118.18%, MDD 15.30% vs 17.59%, exposure 60.48% vs 63.31% -- the filings add exposure and
+  drawdown on the core names for about no Sharpe, the v0.6 finding re-measured.
+- **FX carry-neutral rule on vs off** ("FX carry rule on (a) vs off (b)"; the v0.5.1 rule):
+  design core +0.04 [-0.01, +0.10] p 0.11 (4 / 15 wins: the rule touches FX only); holdout
+  core +0.02 [-0.02, +0.07] p 0.37; holdout extended +0.04 [+0.00, +0.08] p 0.04; holdout all
+  60 +0.03 [-0.00, +0.12] p 0.23 (clusters); q1_2024 core +0.49 [+0.12, +0.94] p 0.01;
+  reserve extended +0.14 [+0.03, +0.28] p 0.00. Positive on every slice, small, with the
+  interval touching zero on most.
+- **v0.3 rules vs v0.2 rules, core** ("v0.3+ rules (a) vs v0.2 rules (b), core"): design
+  +0.19 [+0.10, +0.28] p 0.00 (12 / 15 wins); holdout -0.00 [-0.11, +0.09] p 0.99 (0.34 vs
+  0.34, 8 / 15); q1_2024 +0.72 [+0.29, +1.17] p 0.00; reserve +0.95 [+0.45, +1.47] p 0.00.
+  The design-period gain of the chosen rules did not carry to the holdout at all (v0.7 said
+  it "shrank"); the two short windows favour v0.3.
+- **Cross-sectional analyst vs default** ("with the cross-sectional analyst (a) vs default
+  (b)"): design core -0.01 [-0.02, +0.00] p 0.36; holdout core 0.00 [-0.01, +0.02] p 0.60;
+  holdout extended -0.00 [-0.01, +0.00] p 0.23; q1_2024 core +0.09 [+0.00, +0.20] p 0.04;
+  reserve extended -0.02 [-0.06, +0.01] p 0.20. Off by default stands.
+- **Alpha analyst with the corrected gate vs default, core** ("with the alpha analyst,
+  corrected gate (a) vs default (b)"): design -0.00 [-0.05, +0.05] p 0.90; holdout -0.00
+  [-0.04, +0.02] p 0.79; q1_2024 +0.10 [+0.01, +0.23] p 0.01; reserve +0.07 [-0.00, +0.20] p
+  0.21. Off by default stands: the design period shows nothing. How often the corrected gate
+  speaks on real data was not recorded by the driver (the result metadata carries no
+  abstention tally), so it is not measured.
+- **Track-record size cut off vs on** ("track-record size cut off (a) vs on (b)"): design
+  core +0.00 [-0.00, +0.01] p 0.51; design extended +0.01 [+0.00, +0.01] p 0.01; design all
+  60 +0.01 [+0.00, +0.01] p 0.03 (clusters); holdout core +0.01 [-0.01, +0.02] p 0.46;
+  holdout extended +0.01 [+0.00, +0.02] p 0.02; q1_2024 extended +0.04 [+0.01, +0.07] p 0.00;
+  reserve core +0.04 [+0.00, +0.09] p 0.04. Removing the cut is worth about +0.01 on nearly
+  every slice, but the core design period, the only basis the protocol accepts for a rule
+  change, cannot tell the two apart: the default stays on (`rules.track_record_cut: True`)
+  and the other slices are recorded as information for the next rule change, not as a choice
+  basis.
+- **VaR coverage, two labelled tests** ("VaR coverage: rolling historical VaR of the
+  15-sleeve portfolio's own returns"; "VaR coverage: the desk's own per-instrument
+  forecast"). (a) Rolling historical VaR of the holdout portfolio's own returns: 120-day
+  window n 1048, 65 breaches, rate 0.0620, Kupiec p 0.0847, Christoffersen p 0.1488,
+  conditional coverage p 0.0798 -- not rejected at 5%, but close; 250-day window n 918, 42
+  breaches, 0.0458, Kupiec p 0.5493, Christoffersen p 0.1650, conditional coverage p 0.3188.
+  (b) The forecast the desk sizes on, the 250-day historical VaR of each core instrument
+  (`agents/risk.py` risk_facts), against next-day returns over the holdout (n 1126 equities,
+  1167 FX): Kupiec rejects at 5% on 2 of 15 (AAPL, breach rate 0.0657, p 0.0207; AUDUSD,
+  0.0634, p 0.0432); every breach rate is above 5% (0.0523 to 0.0657); Christoffersen
+  independence rejects on 6 of 15 (AAPL p 0.0027, SPY 0.0121, JPM 0.0158, GBPUSD 0.0182, META
+  0.0274, USDCAD 0.0441): breaches cluster. Book-level VaR (`max_book_var_95`) was off in
+  every published run and its coverage is untested.
+- **Selection statistics, 26 trials** ("selection statistics for the frozen rules"; "trials
+  registry"). Design-period 15-sleeve portfolio: n 1564 days, annual Sharpe 1.375, t 3.42,
+  skew -0.635, kurtosis 8.41, bootstrap 95% CI [0.593, 2.17], PSR vs 0 = 1.00, expected
+  maximum Sharpe of 26 null trials 0.161, deflated Sharpe probability 0.998, minimum track
+  record 496 periods -- "an upper bound on the true significance: the benchmark is built
+  from the dispersion of trial_sharpes_annual, which is usually narrower than the dispersion
+  of the full return series each trial would have produced, so the true search space is wider
+  than this reports and the real probability is no higher than the number given." The 24
+  reproducible trials re-measured under the v0.8 engine against the v0.3 record: control 0.47
+  (recorded 0.50); strategic equity weight 0.25 / 0.50 / 1.00 = 0.54 / 0.58 / 0.63 (recorded
+  0.54 / 0.58 / 0.66); frozen v0.3 0.62 (0.65). The reading of the 16-variant ablation is
+  unchanged, though not every rank (the strategic-weight ranking 0.25 < 0.50 < 1.00 holds
+  under both engines; the signal tweaks, alone or on top of strategic 0.50, reorder among
+  themselves): the strategic weight is the one change that matters (control 0.47, CR 58.24%,
+  exposure 43.99% -> strategic 1.00 0.63, 121.95%, 60.37%), the signal tweaks move the mean
+  Sharpe by a few hundredths. "+ intraday stops": 0.45 / CR 44.10% / MDD 12.67% / 292.20
+  trades per instrument vs the control's 0.47 / 58.24% / 13.31% / 254.20 (stops cut the
+  cumulative return by about a quarter at a similar Sharpe; the "about 30%" of earlier
+  documents is replaced); "+ no-trade band 0.10": 0.47 / 58.11% with 135.20 trades vs 254.20
+  (the same Sharpe with far fewer trades; replaces "44% fewer"). Trials added since v0.3:
+  the v0.5 gated alpha analyst (0.66), the four v0.5.1 carry variants (0.65 / 0.66 adopted /
+  0.65 / 0.64), the v0.6 cross-sectional analyst (0.66) and EDGAR off (0.65), and the v0.8
+  track-record cut off (0.66); the two v0.4 alpha-analyst variants are historical (recorded
+  0.60 and 0.58, not re-measured).
+- **Nothing remains unseen.** The reserve period and the extended universe were consulted
+  for the v0.5.1 carry rule and the v0.6 EDGAR and cross-sectional decisions, and this
+  release re-measures every period, so the next unseen data is the future; "untouched by
+  every choice" is retracted above. The three-month reserve says little on its own
+  ("summary: core (15), reserve"; "paired Sharpe, agent minus baseline"): core desk median
+  Sharpe 0.81 vs 1.05 (B&H) and 1.05 (vol-target), paired desk - B&H -0.06 [-0.21, +0.12] p
+  0.44 and desk - vol-target -0.06 [-0.24, +0.14] p 0.53, neither BH-significant; extended
+  -0.11 vs -0.08 / -0.11, paired +0.08 [-0.14, +0.33] p 0.54 and +0.07 [-0.15, +0.33] p 0.61,
+  neither BH-significant.
+- **The LLM desk is not re-measured.** The one language-model measurement is still v0.5.1's
+  (five stocks, one quarter, about $4), produced under the v0.7-and-earlier engine and not
+  re-derived under v0.8; the multi-year LLM harness is unexecuted. Wherever those numbers
+  are quoted they are labelled so.
+
+### Engine
+- **Constant units between decisions** (finding 79). A target is executed on a decision bar;
+  between decisions the position drifts with the market and nothing is charged. v0.7 held the
+  *weight* constant, which is a free daily rebalance; the desk's own turnover was partly
+  never paid for. Costs are multiplicative and sizing is post-cost:
+  `E[t+1] = E[t] (1 - k_in) (1 + g) (1 - k_out)`. The leverage cap binds on targets;
+  `positions[t]` is now the drifted weight and can sit above the cap between decisions.
+  Turnover comes from the per-bar traded fraction (`BacktestResult.traded`, exit fills
+  included) and the trade count from executed trades. FX carry accrues on the constant
+  notional, which moves the FX baselines by more than the equity ones.
+- **A cash leg, and Sharpe on excess returns** (finding 14). `run_backtest(cash_rate=...)`
+  credits `(1 - |w|) * rf` per bar on funded positions (equities) and the full capital's `rf`
+  on FX forwards; `compute_metrics` takes a constant or a per-bar rate and computes Sharpe,
+  Sortino and the t-statistic on `r_t - rf_t`. Annualised return, cumulative return and
+  Calmar remain total-return quantities. The rate comes from
+  `MarketDataProvider.risk_free_series` under the new config key `cash_leg` (`auto`: FRED
+  3-month bills, DTB3, with a one-day publication lag on real-world providers and the
+  constant `risk_free_annual` on synthetic and CSV data; `fred`, `static`, `off`).
+  `ComparisonReport.rf` records what was credited.
+- **The desk is told its true position** (finding 22). `run_agent_backtest` replays the
+  engine before each decision and hands the desk the position it actually holds: 0 after a
+  stop, take-profit or ruin, otherwise the previous decision's units drifted with the market.
+  Under v0.7 the desk was told it still held the pre-stop position, the PM "kept" a phantom
+  and the backtester bought it back. A keep is only what the PM's no-trade band marks: the
+  new `FinalDecision.kept` field (default `False`, in `to_dict()`) is set exactly when the
+  band holds the current position, which it does only when that position passes every firm
+  limit, and only such a decision is executed as no trade (the engine leaves a target equal
+  to the held weight unclamped and untraded). Every other decision, including one equal to
+  the cap while the held weight has drifted past it (a losing short, a capped FX long with
+  negative carry), is a target the engine clamps and trades, so a drifted position past the
+  cap is trimmed back to it at the next decision bar rather than carried; fix round 2 had
+  made any decision at the cap a keep, fix round 3 restricts it to the band's own mark.
+  `BacktestResult.exits` marks the bars where a protective level filled.
+- **A ruin floor** (finding 18). When a bar takes equity to zero or below the return is -1,
+  every later bar is flat, `BacktestResult.ruined_at` records the bar and `Metrics.ruined` is
+  set; statistics stop there. v0.7 let negative equity compound with inverted sign. Ruin is
+  declared per factor: the entry cost `(1 - k_in)`, the move `(1 + g)` and the exit cost
+  `(1 - k_out)` are each checked, so two factors at or below zero on one bar can no longer
+  multiply into a surviving account; the non-ruin arithmetic is unchanged.
+- **A gap through the take-profit fills at the open** (finding 21), as a gap through the stop
+  already did; the stop-first rule applies only inside the bar's range.
+- **Impact follows the equity, not the initial capital** (finding 23): the impact coefficient
+  is scaled by `sqrt(equity_t / initial_capital)`, so a strategy that has lost most of its
+  equity is no longer charged as if it still traded the whole account.
+- **Sleeves pay impact at the sleeve's capital** (finding 1): `run_portfolio_backtest`
+  computes the allocation first and runs each sleeve with `capital_share`, which scales the
+  impact coefficient by `sqrt(share)` -- exactly the impact of an account of that size.
+- **Almgren-Chriss is finite for any urgency** (findings 19, 32, 33): the inventory path uses
+  an `expm1` form instead of `sinh`, so `--ac-kappa` above ~710 charges impact instead of
+  silently switching it off; a non-finite `algo_cost_ratio` is a `ValueError`. `costs.ac_kappa`
+  0 is TWAP everywhere it is read -- the backtester's `impact_coefficients`, the desk's
+  `execution.plan` tool and `plan_execution` (a `costs.get("ac_kappa") or 3.0` had turned 0
+  into the default urgency) -- and an infinite, NaN or negative kappa is rejected with
+  `ValueError` by `almgren_chriss` and `plan_execution` on both backends; `--ac-kappa` must be
+  finite and `>= 0` or the command exits 2 instead of printing an all-NaN report.
+- **Both backends agree on flat windows** (finding 20): the crossover baselines hold no
+  position when the two averages differ only by rounding noise.
+- **Zero variance is zero, not noise** (fix rounds 2 and 3). An excess-return series that is
+  constant to rounding (sample standard deviation at most `quant.ZERO_VARIANCE_TOL`, 1e-12,
+  times `max(1, |mean|)`) reports Sharpe, Sortino, t-statistic and annualised volatility of 0
+  on both backends -- a flat book under a constant rate, a flat book earning exactly a
+  varying cash leg, a curve compounding at exactly rf -- where the two backends printed
+  +-1e16 or an O(1) random value. The same tolerance applies to the downside deviation on its
+  own, so a series whose only losses are rounding noise (flat bars under a cash leg) has
+  Sortino 0 while its Sharpe stands, and a constant *negative* excess return's Sortino is 0
+  as well (was -sqrt(ppy)). The stats helpers (`sharpe_stats`, `sharpe_ci_bootstrap`,
+  `paired_sharpe_block_bootstrap`, hence `PortfolioReport.sharpe_difference` and `research
+  stats`) use the same rule.
+- **Small engine contracts** (fix round 2): the numpy backend carries equity as float64 for an
+  integer `initial_capital` (it truncated per bar; now bit-identical to the C++ backend); an
+  empty `risk_free_annual` or `traded` array means absent on both backends instead of raising
+  on numpy; `compute_metrics` called without `traded` warns once (`RuntimeWarning`) that trades
+  are inferred from position changes, which drift every bar under constant units -- no engine
+  path triggers it.
+- **One NaN rule across indicators** (finding 76): windowed functions are NaN while the gap is
+  inside their window; `ema`, `rsi` and `atr` reset at the gap and re-seed, instead of
+  poisoning the rest of the series (or, for RSI, treating a missing close as a zero change).
+- **Inputs are validated before the engine runs** (findings 57, 77, 78):
+  `pycore.validate_backtest_inputs`, called by the facade for both backends, rejects
+  non-finite or non-positive prices and bar ranges, infinite carry, levels, impact or cash
+  rate, and length mismatches, as `ValueError`;
+  `compute_metrics` requires `positions` to match `equity` in length; every window argument
+  is checked at the facade (an integer in `[1, 2**31 - 1]`, `bool` rejected). The hypothesis
+  property that draws every optional input now asserts finite results and backend agreement.
+
+### Data
+- **EDGAR quarters are reconstructed per concept and per reporting basis** (findings 7, 8,
+  34; fix rounds 1-3). A concept is one XBRL tag, or tags proven equivalent for the filer (a
+  rename: every span both print agrees within `TAG_EQUIVALENCE_TOLERANCE`, 1%); no span of one
+  concept is differenced against another's, each trailing-year window is taken whole from
+  the concept that covers it, and the concept already reported is kept across filings while
+  it covers the window (rank decides only when it does not), so a rename or a gross/net pair
+  no longer flips the series or drops growth for a year. A re-print within
+  `BASIS_CHANGE_TOLERANCE` (5%) of the value held is a revision and the latest print wins. A
+  material change must be corroborated: a filing that recasts at least
+  `BASIS_CHANGE_MIN_SPANS` (2) spans of a concept, or the year-earlier comparative of a span
+  it prints for the first time, and whose quarters reconcile with its own annual span
+  (`ANNUAL_CHECK_TOLERANCE`, 2% of the larger of the annual figure and the quarters' total
+  magnitude; `PER_SHARE_CHECK_TOLERANCE`, 0.15, for per-share series) opens a new basis
+  generation. A lone material re-print is ignored, logged once and remembered; a later
+  filing repeating it within 5% confirms it as a correction, taken in place within the
+  current basis and never as a basis change (logged: `<tag> <start>..<end> re-printed as <v>
+  on <filed>, repeating a print ignored earlier: a correction confirmed by repetition; taken
+  in place of <held>`). A recast whose quarters do not add up to its own annual figure is
+  mis-tagged and ignored (logged once), that year's Q4 being the annual span less the
+  quarters held. Every difference and every year-over-year growth is taken within one
+  concept and one generation. A direct Q4 print of an additive flow disagreeing with the
+  annual span by more than 2% is replaced by the annual figure less the three quarters
+  (logged once per ticker, tag and year); a per-share print is never overridden. Revenue
+  quarters that reconstruct to zero or below are rejected. Balance-sheet instants must be
+  dated within 400 days of the report period; a flow series is dead only when no filing
+  within `MAX_FLOW_LAG_DAYS` (120) of the newest filing printed it, and a live series whose
+  latest four-quarter window ends before the report period is kept and flagged
+  (`revenue_period_end`, `net_income_period_end`, `eps_period_end`, `ocf_period_end`, each
+  present only when that window lags). `net_margin` is reported only when the revenue and
+  net-income windows end together; `fcf_yield` only when the OCF and capex windows end
+  together or the filer never reports capex, so a stale capex series removes the FCF figure
+  rather than the capex. Market-cap and EPS sanity checks and a share-class ratio table
+  (`BRK.B` and `BRK-B` alike) drop ratios built on another class's prints, warning once per
+  ticker and kind. User-visible: some filers lose a year of growth across a basis change,
+  lagging windows are flagged instead of served as current or dropped as dead, filers whose
+  capex tag lags have no FCF yield, and BRK-B reports no P/E or FCF yield at any date. Every
+  EDGAR-on real-data number is re-measured under Re-measured results.
+- **One FX rate resolver, no static fallback** (findings 15, 35). `base.fx_rates` serves both
+  the macro analyst and the credited carry: the static table only on synthetic data or with
+  `fx_macro_source="static"`; otherwise FRED as known on the date, and a stale, discontinued
+  or unlisted leg gives no macro (the analyst abstains, the strategic FX weight is 0) and NaN
+  carry. The answer for a date no longer depends on when it is asked. Every non-empty macro
+  dict carries `macro_source`, `provider.macro_sources` tallies per run and
+  `EvaluationResult.meta["macro_sources"]` records the tally for the run (cleared at the start
+  of every `evaluate`). The FRED disk cache expires (`fred_cache_max_age_days`, 1; vintage
+  snapshots never), downloads are validated before they are written, and fetches have a 30 s
+  timeout; when the re-download of an expired file fails the stale series is served with a
+  warning naming it and its last observation, so an offline historical re-run keeps its FX
+  macro view instead of losing it. The config key
+  `static_macro_max_age_days`, which gated the fallback, is removed. Norway's policy rate is
+  in `RATE_SERIES`; Sweden has no series.
+- **No partial Yahoo bar** (finding 36): history never includes or caches a bar dated today,
+  where today is the New York calendar date whatever the host's timezone: a bar dated D is
+  served once it is D+1 in New York, so a host east of UTC+4 no longer sees the bar still
+  trading and a host west of New York no longer waits for its own midnight. An empty download
+  raises the documented `ValueError` instead of a `TypeError`. A live decision "at the
+  close" uses yesterday's complete bar.
+- **CSV prices on one basis** (findings 37, 57; fix rounds 1-3): with `Close` and `Adj Close`
+  present every price column is put on the adjusted basis and `Volume` is divided by the
+  split component of the factor only (a day-over-day jump above `SPLIT_JUMP`, 5%), never by
+  the dividend drift, so dollar volume, ADV and the impact ratio stay as traded across a
+  split and a dividend payer's volume is served as traded (fix round 2 had divided by the
+  whole factor); a row with a blank `Adj Close` keeps its bar with the nearest dated row's
+  factor instead of being dropped; with only `Adj Close` the raw open/high/low are dropped
+  with a warning rather than served on another basis. `clean_ohlcv` drops a non-finite close
+  like a missing one and repairs `+inf` open/high/low from the close instead of widening the
+  high to infinity.
+- **Synthetic data** (findings 68, 88, 69): JPY crosses outside the classic pairs start near
+  their real level, so their half-spread is a fraction of a basis point rather than tens;
+  synthetic fundamentals draw from their own stream, so P/E is no longer a function of the
+  instrument's volatility; `score_fx_headline` understands currency names, nicknames and
+  central banks ("dollar", "yen", "Fed", "BoJ") and reads each clause from the subject it
+  names first: the pair is recognised before its legs, only a clause about the quote
+  currency is flipped, a two-leg clause takes the first-named subject, and a clause naming
+  none inherits the headline's. "USD/JPY falls as yen rallies" scores -0.76 (was 0.00) and
+  "Yen gains against dollar" -0.46 (was +0.46); the synthetic FX template "Hawkish {q}
+  policymakers boost {q}, pressuring {s}" scores -0.905 instead of -0.462, so synthetic FX
+  runs whose headline draw includes it get a different news signal. Synthetic price paths
+  and the classic FX pairs are unchanged; synthetic equity results that use the
+  fundamentals analyst, and synthetic FX runs that draw that template, are not.
+
+### Statistics
+- **Cluster bootstrap replaces the stratified one** (findings 4, 54). With `groups` given,
+  `stats.paired_bootstrap` draws whole groups with replacement and then instruments within
+  each drawn group, engaging only with at least `MIN_CLUSTER_GROUPS = 5` distinct labels
+  (`min_groups`); below that it falls back to the plain instrument bootstrap and says so.
+  `PairedBootstrap` gains `scheme` (`instruments` | `clusters`) and `n_groups`;
+  `EvaluationResult.paired` / `paired_table` rename the kwarg `stratify` to `cluster` (no
+  shim) and the table gains `scheme` and `groups` columns. In practice the core (2 groups)
+  and extended (3 groups) universes report `scheme=instruments` and `--universe all` (5
+  groups) reports `scheme=clusters`, with materially wider intervals. A sensitivity test now
+  fails when the groups are ignored (a mutant that v0.7's tests did not detect).
+- **Benjamini-Hochberg on the unrounded `p`** (finding 80); `m` counts only rows whose test
+  ran, and a period with fewer than three paired instruments prints `p` as NaN instead of
+  1.000 and no longer shrinks the other rows' thresholds.
+- **`t(IC)` accounts for overlapping forward returns** (finding 5).
+  `alpha.information_coefficient(signal, fwd, horizon, method)` scales by the effective
+  sample `n / horizon` by default (the rule `xalpha` already used), with a Newey-West
+  variant for comparison. At the analysts' horizon of 10 every published `t(IC)` is
+  sqrt(10), about 3.16 times, smaller; IC, `n` and the decay ICs are unchanged. The alpha
+  analyst's significance gate therefore admits far fewer alphas: on 200 seeded random walks
+  it speaks on about a fifth of pure-noise histories instead of nearly all of them
+  (`tests/test_v08_alpha.py::test_alpha_analyst_gate_is_a_five_percent_test_on_pure_noise`).
+- **Tercile spread by rank, hit rate beside its base rate** (finding 29):
+  `alpha.tercile_spread` assigns terciles by rank with boundary ties shared fractionally, so
+  a signal stuck at one value on most bars no longer merges its top and bottom groups; every
+  alpha table gains an `up%` column (share of positive forward returns on the same pairs)
+  next to `hit%`.
+- **Portfolio-level intervals** (finding 65): `stats.paired_sharpe_block_bootstrap` resamples
+  two daily return series with the same circular blocks and reports the interval and `p` of
+  the difference in excess-return Sharpe; `PortfolioReport.sharpe_difference` exposes it and
+  `run_portfolio_backtest(rebalance_offset=...)` lets the rebalance phase be swept as the
+  cadence noise floor. `sharpe_difference` pairs each bar's return with the rate credited
+  over that bar (`rf[:-1]`), as `compute_metrics` does, so its point estimates equal the
+  table's Sharpe under a per-bar rate (fix round 2; the mismatch was ~2e-6 with DTB3).
+- **A trials registry** (finding 87): `evaluation.TRIALS` names the 26 variants judged on the
+  design period, from the v0.2 control on (24 reproducible under the current engine, 2
+  historical from the record; `reproducible_trials()`), so the deflated-Sharpe trial count is
+  read from the record instead of frozen at 16.
+
+### Risk and portfolio
+- **`max_weight` is honoured** (finding 2): every weighting scheme's allocation is projected
+  onto the capped simplex (equal and inverse-vol included, and again after group budgets),
+  and the vol-target scale-up stops at the per-sleeve and gross caps.
+  `PortfolioWeights.allocation` is now the pre-vol-target split (sums to the gross cap, each
+  sleeve at most the cap) and `weights = allocation * target * scale`; callers that read
+  `allocation` as the final weight must read `weights`. The uncapped backtest path
+  (`max_weight=1.0`) is bit-identical.
+- **Book VaR fails closed** (findings 3, 25): a zero-weight symbol no longer deletes the
+  book's rows; when the book VaR cannot be evaluated (a held symbol with fewer than 20 aligned
+  returns, or one whose fetch failed) the proposal is flattened with a note rather than the
+  check silently passing; `TradingGraph.scan` fetches history for held symbols outside the
+  watchlist. A hedge is sized to the largest size that brings an already-breaching book
+  within the limit, and flattened only when no size does. `TradingGraph.scan` parses every
+  `positions` key like a symbol (`EUR/USD`, `eurusd`, `EURUSD=X` name one key), so a held
+  position is seen however its key is spelled, and raises `ValueError` on an unparseable key
+  or on two keys naming one symbol with different weights.
+- **Short positions use the right tail** (finding 24): `risk_facts` adds `var_95_1d_short`
+  and `cvar_95_1d_short`, `agents.risk.position_var` and the new `position_cvar` select the
+  tail by the sign of the weight, the PM guardrail, the conservative analyst's cap and the
+  Critic's firm-limits check all read it, and the rules-mode risk analyst's text quotes the
+  CVaR of the proposal's own side. The Critic falls back to `var_95_1d` for a short whose
+  facts lack the short-side key instead of silently skipping the check.
+- **Weighted Ledoit-Wolf** (finding 26): the shrinkage intensity is the Ledoit-Wolf (2004)
+  constant-correlation estimator for the weighted (EWMA) covariance it is applied to, with
+  the Kish effective sample size; every `construct()` with a non-equal weighting differs
+  slightly from v0.7. The unweighted path is numerically unchanged.
+- **A frozen sleeve gets nothing; only a window without variance raises** (finding 27).
+  `construct()` marks an active sleeve with zero sample variance (a forward-filled or frozen
+  series) inactive before any scheme runs, with a warning naming it, so every scheme
+  allocates it 0 (min-variance and mean-variance handed it the whole book under v0.7); on the
+  group-budget path a group whose only sleeves are flat drops out of the cross-group step.
+  `risk_parity_weights` and `construct()` raise `ValueError` only when no active sleeve has
+  variance, or a scheme returns a non-finite allocation, and `run_portfolio_backtest` then
+  keeps the previous allocation as it was designed to, instead of propagating NaN weights.
+
+### Execution
+- **One impact law** (finding 6): the intraday simulator charges each slice
+  `impact_coeff * daily_vol * sqrt(q_i / V_i)` against the bar's own volume, so VWAP
+  reproduces the backtester's single-shot law at any slice count and TWAP / AC reproduce
+  `algo_cost_ratio`; the v0.7 simulator charged about an eighth of that and ranked TWAP
+  cheaper than VWAP.
+- **FX quantities in the base currency, an account currency** (finding 16): new config key
+  `account_currency` (USD); `plan_execution` sizes USD-base pairs as the notional itself,
+  quote-USD pairs as notional / price, and crosses through `algo.base_to_account_rate`
+  (point in time), refusing a cross without a rate. Plans, payloads and tickets carry
+  `quantity_unit`, `notional_currency` and the reference price. A USDJPY order that was
+  sized in yen-per-dollar units is now 500,000 USD when 500,000 USD is meant.
+- **Whole shares and whole lots, once** (finding 91): `plan_execution` rounds at plan time
+  (shares; `execution.fx_lot_size`, 1000 base units, for FX) and recomputes the notional; the
+  schedule, payload, ticket and CLI all carry that quantity. A change that rounds down to
+  zero lots is nothing to trade, not an error (fix round 2): `plan_execution` returns `None`
+  as it does for an unchanged target, `execution.plan` answers `{"trade": false, "reason":
+  "weight change ... is below one share/lot; nothing to trade"}`, and `execute` prints the
+  change it sized -- the truncated change under the long-only policy, with the truncation
+  note -- and that it is below one share or lot (`ValueError` is reserved for invalid inputs).
+- **Fill risk is visible** (finding 30): `simulate_execution(requested=...)` reports
+  completion as executed / requested, the shortfall is the Perold implementation shortfall
+  on the requested quantity with the unfilled remainder marked at the close
+  (`opportunity_cost_bps`, `unfilled`), and `execute` prints "executed X of Y (Z%)". A POV
+  order five times the day's volume no longer reports 100% complete. `execute` prints the
+  unfilled clause only when at least one share or one lot went unfilled: a closed-form
+  schedule can leave 1e-14 of a share, which used to print as "opportunity cost of 0
+  unfilled".
+- **Next-session fills** (finding 31): `execution.plan` and `execute` size at the as-of close
+  and simulate on the first session after it (arrival = that session's open,
+  `execution_date` reported); when no later session exists the plan is returned unsimulated
+  with a note, instead of filling on the decision day's own bar.
+- **Almgren-Chriss urgency is dimensionless** (finding 32): `ExecutionPlan.schedule(bars,
+  participation, kappa)` uses `costs.ac_kappa` (3.0; 0 = TWAP) directly, so the schedule is
+  identical at any price level and seed; `execute --ac-kappa` is exposed.
+- **`submit_order` takes a ticket, not a float** (finding 71): its signature is now
+  `(symbol, side, quantity, quantity_unit, notional, notional_currency, price, plan_id,
+  note="")`; `plan_id` is verified against `algo.plan_reference` (a checksum over the ticket
+  fields, so edited numbers fail), the unit and currency must match, quantities must be whole
+  shares or lots, and the notional must be within `DeskTools.order_cap`
+  (`execution.max_order_notional`, default `initial_capital * risk.max_position`), which
+  policy enforces before an approver ever sees the ticket. `servers.ticket_from_plan` builds
+  the arguments from a plan payload; tickets record unit, notional, price, plan id, intent
+  and the position before and after.
+- **Plans start from the run's book, and tickets move it** (findings 71, 72, 73; fix rounds 1
+  and 3). Each task run has its own position book: the harness seeds it from
+  `Task.current_weight` and from an optional `positions` map (`AgentHarness.submit(task,
+  positions=...)`, `POST /tasks` body `positions: {symbol: weight}`, 422 on a bad map), the
+  tools run over it, the trading state is prepared from it, and the planner drops a
+  model-written `current_weight` whenever the book holds the symbol (`validate_plan(...,
+  book=...)`), so the position is one fact for the planner, the agents and the tools.
+  `DeskTools.plan` defaults `current_weight` to the book and refuses a contradicting explicit
+  value; its payload carries `ticketable` and `order_cap`, and a plan over the cap is
+  returned with the cap and a note instead of a ticket the desk would refuse.
+  `execution.submit_order` accepts only a plan this desk produced with exactly these fields
+  (`plan_known`); the plan reference alone is a checksum anyone can compute, so a forged
+  ticket is refused before it is written, and the new key `execution.allow_external_plans`
+  (`False`) admits tickets planned elsewhere. A ticket moves the book to `position_after`, so
+  the second leg of a split order plans from the reduced book and a second reduce cannot
+  re-sell the same shares; `portfolio.position` lists pending tickets and its weight counts
+  them. `execution.max_order_notional` of 0 is a cap of 0 (ticketing frozen), not "unset".
+  A negative equity target under the default long-only policy is truncated to flat with the
+  reason stated; every plan and ticket carries an `intent` (open / add / reduce / close long,
+  sell short, buy to cover, reverse), and `submit_order` refuses a ticket that would take a
+  long-only book short. `execute` honours `--allow-short`.
+- **`execute` defaults** (finding 90): `--capital` defaults to the configured
+  `initial_capital` (100,000), the convention the desk tools, `task` and the API already
+  used, instead of a hard-coded 1,000,000; the header prints the capital and account
+  currency; `task` and `serve` accept `--capital`.
+- **The carry line says what was credited** (finding 89): the backtest and baselines header
+  prints the mean carry over the accruing bars (every bar but the last, which has no
+  following bar to accrue into) with unknown bars as 0 -- what the backtester actually
+  credits -- plus the count of accruing bars with no point-in-time rate, and says "accruing
+  bars"; a rate known only on the final bar prints as 0 credited, matching the engine.
+
+### Agents and LLM
+- **The dollar budget fails closed, and is a hard bound by default** (findings 13, 38; fix
+  round 3). A served model id without a list price exhausts the cap instead of costing $0,
+  and `budget_llm` / `get_llm` refuse at construction to run an unpriced deep or quick model
+  under a dollar cap. `BudgetedLLM` reserves each call under the lock before dispatch and
+  counts calls in flight against the cap; what is reserved is set by the new key
+  `llm_budget_mode`: `"hard"` (the default) reserves the input estimate plus a full
+  `max_tokens` reply -- the same maximum a timed-out attempt is billed at -- so spend can
+  never exceed the cap, N workers cannot overshoot it, and a cap that cannot afford one such
+  call refuses that tier before any spend; `"estimate"` reserves the input estimate plus
+  `llm_reserve_output_tokens` (2000) and is a soft cap, overshooting by at most the calls in
+  flight times `(max_tokens - reserve)` at list price. The v0.5.0 entry's "overshoot is at
+  most one call" is superseded either way. `BudgetedLLM.exhausted_for(deep)` says whether the
+  next call on a tier would be refused and `exhausted` is `exhausted_for(True)`. Retries are
+  `AnthropicLLM`'s own (the SDK client is built with `max_retries=0`): `llm_max_retries` (2)
+  attempts after the first, a timed-out attempt billed at its maximum each time, a
+  `retry-after` / `retry-after-ms` header honoured up to 60 s on a rate limit or overload
+  and `llm_retry_backoff_s` (0.5, validated finite and `>= 0`) otherwise. The Anthropic call
+  path is exercised end to end against a fake SDK module.
+- **Request shape per model family** (finding 81): thinking and effort parameters are sent
+  only to families that accept them; older ids that failed on every call under v0.7 (and
+  silently turned the run rule-based) now get a plain request. `deep_effort` / `quick_effort`
+  outside `low`, `medium`, `high`, `xhigh`, `max` raise `ValueError` when `AnthropicLLM` is
+  built instead of silently sending `high`.
+- **Anonymised prompts are an allow-list** (finding 9): price-like facts are rebased,
+  scale-free ones pass, everything else (revenue, EPS, market cap, the sector string, the
+  peer list) is dropped, so `pe_ratio * eps_ttm` can no longer reproduce the real close.
+- **Memory is an append-only log under a lock** (finding 10): one write and fsync per record
+  and per resolution, no whole-file rewrite, so threads in one `serve` process and separate
+  processes sharing `results/memory.jsonl` cannot lose or overwrite each other's records;
+  old files load. Callers that parsed the file as one record per line must expect
+  `{"resolve": ...}` lines too.
+- **Memory outcomes are valued on one series, in bars** (findings 17, 75).
+  `DecisionMemory.resolve(symbol, as_of, history, provider, price_basis)` takes the current
+  history and values the entry from its own bar to `horizon` bars later on that series, only for entries
+  recorded by the same provider and price basis; a split or dividend rebase, a provider
+  switch or a multi-year gap no longer becomes a "was wrong" verdict that cuts live size.
+  `horizon_days` means trading days; an entry the series cannot value, or whose exit bar
+  never arrives, expires after twice the horizon. An entry is valued only when the decision
+  day sat within the desk's `max_data_staleness_days` of its entry bar:
+  `DecisionMemory(path, max_staleness_days=7)` and `resolve(..., max_staleness_days=None)`
+  take the setting, and `TradingGraph` wires its own into both, so a desk allowed to decide
+  on a ten-day gap settles those entries too. Lessons and the track record are
+  provider-scoped; entries written before v0.8 carry no provider, are never valued, and are
+  expired by any named provider's visit past twice their horizon, so a migrated log drains.
+- **The track-record size cut is a rule switch** (finding 74): `rules.track_record_cut`
+  (default on, so no published number moves) can be switched off for measurement; the
+  design-period measurement is under Re-measured results.
+- **Invalid numbers are rejected, not coerced** (finding 39): `Agent.ask_json(numeric=...)`
+  rejects a reply whose numeric field is null, a string, a boolean or non-finite (the rules
+  apply, `source="rules"`); `extract_json` rejects bare NaN / Infinity. A null
+  `target_weight` no longer liquidates a held position.
+- **No fabricated sector P/E** (finding 41): the fundamentals rules score P/E against a
+  sector benchmark only when the data carries `sector_pe`; on real data (Yahoo, EDGAR) it
+  never does, so every real-data equity fundamentals signal loses that term and the key point
+  says no benchmark is available. Synthetic data supplies one and is unchanged.
+- **The fundamentals analyst scores only current windows** (fix round 3). `FundamentalsAnalyst`
+  abstains when the report is older than `STALE_REPORT_DAYS` (120) at the decision date, and
+  skips a term whose window lags `report_period_end` by more than `STALE_WINDOW_DAYS` (100) as
+  the provider flags it (`revenue_period_end` for growth, `eps_period_end` for P/E and the
+  negative-earnings penalty, `net_income_period_end` for margin, `ocf_period_end` for FCF
+  yield) with a key point naming the window and its lag; it abstains when nothing was scored,
+  a metadata-only fact dict abstains, and the summary names every lagging window. A window
+  one quarter behind, and every provider without lag flags (synthetic), score as before.
+- **The untrusted fence covers digests, lessons, debate turns and rationales** (finding 42;
+  fix round 3): reports from analysts with untrusted inputs are marked and their summaries
+  fenced in every downstream prompt, memory lessons enter the researcher, trader and PM
+  prompts only inside `<untrusted_data>`, and so do debate turns, verdicts and trade and
+  decision rationales written from such text; `FIRM_CONTEXT` names them. Findings written
+  from third-party text carry `Finding.untrusted`, emitted in the `/tasks` record and the
+  report's findings, and the critic's and reporter's prompts fence those claims and the PM
+  rationale (`critic.findings_block`, `critic.decision_untrusted`) under a `FENCE_NOTE`
+  prefix; a clean run's prompts are unchanged.
+- **Shared prompt code is hashed** (finding 40): `prompt_registry` gains a `shared` entry over
+  every prompt-building helper outside the agent classes -- including the fence helpers
+  (`state.fenced`, `TradingState.untrusted_inputs`, the debate / verdict / proposal /
+  risk-views blocks), `risk._pct`, `anonymize.is_scale_free_key` and
+  `DecisionMemory.track_record` -- and the values of `shared_prompt_constants()` (the fence
+  tag `state._TAG`, the anonymiser's price-key and scale-free-key sets, suffixes, prefixes
+  and date pattern), folded into the bundle hash, which therefore differs from every hash
+  recorded before v0.8 although no prompt text changed; the `prompts.py` docstring
+  enumerates exactly what is covered and what is not. The bundle hash of `make_config()` is
+  `a2fb8be5c3066730` at this release. The policy documents under
+  `agentic/knowledge/docs/` are retrieval content, not prompt code: `prompts.py` never reads
+  them, so editing them does not move the hash.
+- **`.env` is read only from the real command line** (finding 84): `cli.main(argv=...)`
+  called in-process (the tests) no longer loads the developer's API key and EDGAR contact
+  into the shared process; `AGENTIC_TRADER_NO_DOTENV` disables it outright.
+
+### Services
+- **One driver per run** (findings 11, 45, 12): a per-run driving lock makes `resume` and
+  `cancel` non-reentrant, so two approvals on one task, or an approval racing a cancel, cannot
+  drive the same run twice or execute a state-changing tool twice; `POST /approvals/{id}`
+  schedules a continuation only when the run is parked and undriven and reports `resumed`;
+  an `IllegalTransition` inside a drive ends the run FAILED with the error instead of
+  vanishing into a Future. Only terminal records are cached; anything in flight is re-read
+  from the store, so a sibling process serves COMPLETED once the owner finishes. A decision
+  that lands as the driver parks is no longer lost (`resume` releases the driving lock inside
+  the same critical section as the final awaiting-approval check), and a cancel requested
+  while a run is parked or not yet started cancels it (AWAITING_APPROVAL -> CANCELLED)
+  instead of being missed or resuming the work. When a run finishes or is cancelled its
+  pending approvals are withdrawn (`QueuedApprovalGateway.withdraw`), so `POST
+  /approvals/{id}` answers 409 for a finished or cancelled run without consuming the
+  approval, and 404 once the run has been evicted (`forget`).
+- **Argument guards run before the approval decision** (findings 43, 59, 46): the universe,
+  date, weight, lookback, quantity and notional guards now apply to state-changing tools, so a
+  bad order is denied by `argument_guard` rather than parked for a person, and argument
+  binding runs before the approval decision too, so a state-changing call with a missing or
+  unknown argument (a bare-float `submit_order`) is `DENY (argument_guard): bad arguments`
+  and never parked; `current_weight` is guarded as a fact about the book -- finite, never
+  capped, `bool` rejected -- while `weight`, `target_weight` and `proposed_weight` stay
+  capped; `symbols` lists are checked element-wise and capped
+  (`agentic.max_symbols_per_call`, 60), and the planner clips a model's list to the
+  configured universe (canonical spelling, duplicates removed, a parallel `targets` list kept
+  aligned) with a note instead of failing the run, repairs a string `symbols` to a
+  one-element list and drops a step whose `symbols` has any other shape; a plan's total data
+  budget is bounded (`agentic.max_plan_lookback_bars`, 200,000 symbol-days) and duplicate
+  tool steps are dropped before the step cap is applied.
+- **A tool deadline isolates, it does not terminate** (finding 44): each attempt runs on its
+  own thread with a hard deadline; a timed-out worker is abandoned and counted
+  (`tool_calls_abandoned_total`); state-changing tools get exactly one attempt and a timeout
+  or transient failure is reported as "outcome unknown, not retried". A call to a remote MCP
+  server has the same deadline by default: `registry_from_stdio(server_args=None,
+  overrides=None, call_timeout_s=None, config=None)` takes `agentic.tool_timeout_s` (30 s
+  shipped) when `call_timeout_s` is `None`, `math.inf` waits without limit, and a
+  non-positive value is refused before a server is launched; when the deadline passes the
+  SDK only sends its `notifications/cancelled` courtesy notice, which is as far as the
+  cancellation reaches -- a synchronous remote tool still finishes and may land its ticket,
+  so the outcome is unknown and is reconciled through `portfolio.position`'s pending tickets.
+- **Remote MCP tools fail closed, whatever the server claims** (finding 47; fix round 1):
+  `classify_remote_tool` never reads a remote `read_only_hint` or `meta` (risk, required,
+  evidence type): every discovered tool is state-changing, HIGH risk, needs `PROPOSE_TRADES`
+  and yields DATA evidence, the remote's claims are kept for display only, and the operator
+  `overrides` map is the only relaxation. `registry_from_stdio(overrides=None)` applies
+  `mcp_server.desk_overrides()` -- the annotations of this package's own catalogue, keyed by
+  local name, because the client only ever launches this package's own server -- and `{}`
+  relaxes nothing. The client now keeps one live server session per registry
+  (`StdioSession`; `registry.session.close()`) instead of a fresh server process per call, so
+  the remote desk keeps its plans, book and tickets across calls.
+- **The MCP server is governed** (finding 58; fix round 1): every call routes through a
+  `ToolExecutor` with the configured policy, approval gateway, evidence store and tracer for
+  the operator's role; refusals surface as MCP errors with the policy reason.
+  `python -m agentic_trader.agentic.mcp_server` and the `agentic-trader mcp` subcommand
+  both take `--role` (default `trader`) and `--approval auto|deny` (default: the configured
+  `agentic.approval`); `queued` is refused with an explanation (exit 2), since nothing on a
+  stdio server can decide a parked request, and `build_mcp_server(registry, name, executor,
+  config, role, gateway, order_cap)` raises `ValueError` for a queued gateway. The default
+  executor caps every ticket at the desk's per-order cap (`servers.default_order_cap`).
+  Operators exposing either should pass `--approval deny` or set `agentic.approval`.
+- **Bounded memory and threads** (findings 48, 49): a malformed model critique is recorded as
+  a failed warning check named `llm_critique_wellformed` and the run completes; finished runs beyond
+  `agentic.max_retained_runs` (256) are evicted, terminal runs drop their executor, and the
+  policy decision log is a bounded deque.
+- **`/metrics` is one exposition** (finding 51): one process-level `Metrics` that every run
+  writes to, one TYPE line per family, counters summed across runs, label values escaped.
+  Scrapers that read the last run's page now read the process total. Histograms keep count,
+  sum, min, max and cumulative counts over the 11 fixed buckets, never the observations
+  (`Metrics.histogram()` returns them), so memory is bounded over a long-lived process, and
+  counters render exactly (integers as integers) instead of through `%g`; the exposition
+  lines are the same.
+- **The API follows the configured approval mode** (finding 52): `create_app` builds the
+  gateway from `agentic.approval` (`make_config` default `auto`; the `serve` CLI default stays
+  `queued`); `/health` reports the mode and instance id; `GET /approvals` answers 409 unless
+  the gateway is queued. `POST /tasks` accepts an optional `positions: {symbol: weight}` map
+  for the run's book (422 on a bad map).
+- **Lease-only sweeps** (finding 53; fix round 1): task records carry an owner and a
+  heartbeat; a live run heartbeats every `lease_s / 3` (`agentic.lease_s`, 90 s, at least 1;
+  validated by the harness and by `validate_app_config` before workers fork) and
+  `TaskStore.heartbeat(owner, task_ids)` refreshes only the runs this instance drives.
+  `mark_interrupted(note, owner=None, lease_s=None)` fails only records whose heartbeat is
+  older than `lease_s` or that have no owner or heartbeat (legacy rows); the owner never
+  widens the sweep and `owner` without `lease_s` raises `ValueError`; each update is a
+  compare-and-swap on the state and version selected, so a record its owner finished
+  meanwhile stays finished. A second instance on the same task DB no longer fails the first
+  one's live runs, and a restart under the same configured `instance_id` no longer fails its
+  predecessor's records at once: they are failed by any live instance once `lease_s` has
+  passed. `AgentHarness.close()` stops the heartbeat thread.
+
+### CLI, tests and packaging
+- **`evaluate` takes the cost flags** (finding 60): `--impact`, `--capital`,
+  `--execution-algo` and `--ac-kappa` are attached to `evaluate` as well as `backtest`,
+  `baselines` and `portfolio`, so the documented impact-sweep command parses and is honoured.
+- **`--rules v02` survives the other flags** (finding 50): per-flag overrides merge into the
+  config section instead of replacing it, so `--rules v02 --band 0.2` still runs the v0.2
+  neutral weights.
+- **The default as-of date is New York's yesterday** (fix round 2): without `--date`, the
+  desk commands and `calibrate` decide as of the last complete exchange day on the New York
+  calendar (`cli.common.default_as_of`), whatever the host's clock, instead of the host's
+  local yesterday; a host east of New York shortly after its local midnight now gets one day
+  earlier than before. An explicit `--date` is unchanged.
+- **One version, recorded everywhere** (finding 56): `pyproject.toml` is the single source
+  (`0.8.0`; `agentic_trader.__version__` and the FastAPI app read it); the new
+  `agentic_trader.provenance` module records version, git commit and dirty flag, quant
+  backend, interpreter, platform and dependency versions into every `evaluate` and
+  `calibrate` result (`meta.provenance`), into a `<stem>.provenance.json` sidecar next to
+  every `--out` CSV, and into the CLI header (`quant=<backend> | v<version> <commit>`).
+  `git_commit` and `git_dirty` are computed at every `provenance()` call, no longer cached
+  per process, so a long run stamps the tree as it is when each result is written.
+- **The lock is the full freeze** (finding 55): `requirements-lock.txt` pins every
+  transitive dependency, states that it is valid for Python 3.12 only and why, and a CI
+  `lock` job installs from it, asserts every pin and runs the suite.
+- **The wheel is tagged for what it ships** (finding 82): `setup.py` includes the compiled
+  core only when it matches the packaging interpreter and tags the wheel platform-specific
+  then, pure otherwise. A machine without the core prints one `RuntimeWarning` at import
+  naming the numpy backend; set `AGENTIC_TRADER_BACKEND=python` to choose it explicitly and
+  silence the warning.
+- **Tests** (findings 57, 70, 83, 54): a hypothesis property over every optional backtester
+  input; direction tests for each analyst's rules (a rule that reads the data backwards now
+  fails a test rather than only a golden number); the v0.7 assertions that could not fail
+  were repaired; a mutant that ignores bootstrap groups is detected. `tests/test_v08_*.py`
+  (agentic, agents, alpha, cli, data, engine, execution, portfolio, protocol, stats, and the
+  fix rounds' `fixes` and `fixes_cli`) cover every item above. An autouse fixture in
+  `tests/conftest.py` snapshots `os.environ` before each test and restores it after, so a
+  test that sets a backend or key can no longer leak it into the rest of the session.
+  `pytest --collect-only -q` collects 832 tests on the C++ backend and 832 with
+  `AGENTIC_TRADER_BACKEND=python` (skips differ at run time, not at collection): the C++
+  suite runs 832 passed, the numpy suite 796 passed and 36 skipped (the C++-only tests), and
+  line coverage on the numpy backend is 95% (`pytest --cov=agentic_trader`; weakest
+  `data/yahoo.py` at 75%, the network branches, and `quant/__init__.py` at 77%, the C++
+  dispatch that backend skips). The C++ core has 25 `void test_` functions in
+  `cpp/tests/test_core.cpp` under one registered ctest test.
+- **Measurement is a script**: `scripts/measure_v08.py` (with `--only`) writes every
+  re-measured table to `results/v08/` and `scripts/render_v08_tables.py` renders the markdown
+  from it; the documents' Reproducing sections name them. The driver shares one Yahoo
+  provider across runs and, for a run that overrides a provider-level key (`edgar`,
+  `cash_leg`, the FRED/FX settings), hands it `provider.reconfigured(cfg)`: the same
+  downloaded bars under the run's own config. `MarketDataProvider.reconfigured(config)` is
+  new for this; the first v0.8 measurement had run "EDGAR off" and "cash leg off" with both
+  still on (the shared provider kept its settings, and `meta["edgar"]` recorded it; their
+  tables showed zero difference on every instrument, which is what exposed it), and those
+  files were re-measured before any number was published. The published files therefore
+  come from three commits of one engine (`results/v08/manifest.json` and each file's
+  `provenance` say which, all `git_dirty: false`): `eval_main.json` at `c4385e2` (fix round
+  3); the impact sweeps, `eval_alpha`, `eval_xalpha`, `eval_no_trackrecord_cut`, both
+  portfolios, the execution-algorithm portfolios, `var_coverage`, `phase_sweep` and 23 of the
+  24 re-measured trials at `eec0d27` (which changed only the `FIRM_CONTEXT` prompt string,
+  read by no offline rules-based number); `eval_noedgar`, `eval_cash_leg_off`, the two
+  cash-leg-off portfolios, `trial_edgar_filings_off`, `eval_rules_v03` and `eval_rules_v02` at
+  `ac727ce` (the driver fix and a renderer change; no engine code). The regression tests are
+  `tests/test_v08_fixes.py::test_36_a_reconfigured_provider_shares_the_downloads_under_its_own_settings`
+  and
+  `tests/test_v08_protocol.py::test_measurement_driver_reconfigures_the_shared_provider_for_provider_level_overrides`.
+- New config keys, all additive with defaults that keep prior behaviour except where a bullet
+  above says otherwise: `account_currency`, `cash_leg`, `execution.fx_lot_size`,
+  `execution.max_order_notional`, `execution.allow_external_plans`, `fred_cache_max_age_days`,
+  `llm_max_retries`, `llm_retry_backoff_s`, `llm_budget_mode`, `llm_reserve_output_tokens`,
+  `rules.track_record_cut`, `agentic.max_symbols_per_call`, `agentic.max_plan_lookback_bars`,
+  `agentic.max_retained_runs`, `agentic.instance_id`, `agentic.lease_s`. Behaviour changes
+  behind existing keys: `costs.ac_kappa` 0 is TWAP (was read as the default 3.0),
+  `execution.max_order_notional` 0 freezes ticketing (was "unset"), and a dollar cap under
+  `max_llm_cost_usd` admits fewer concurrent calls under the default `llm_budget_mode`
+  (`estimate` restores the earlier admission at the price of a soft cap).
+
+## v0.7.0 — 2026-09-27
 
 A pass through the whole codebase against its own highest-quality bar: risk aggregated
 across the book instead of only per-instrument, two textbook tests of whether the risk
@@ -26,6 +850,8 @@ dependency drift apart from a real result change.
   well-calibrated on this data (see
   [the evaluation's VaR coverage section](docs/evaluation/evaluation.md#var-coverage-is-the-desks-risk-model-calibrated)
   and [LEARN.md #34](LEARN.md#34-is-the-risk-model-telling-the-truth-var-coverage-backtesting)).
+  *Retracted in v0.8.0: the test covered a rolling quantile of the portfolio's own returns,
+  not the per-instrument forecast the desk sizes on — see [v0.8.0 Retracted](#v080--2026-09-28).*
 
 ### Execution
 - **Execution-algorithm-aware impact cost** (`algo.algo_cost_ratio`,
@@ -42,6 +868,8 @@ dependency drift apart from a real result change.
   $1B holdout portfolio, TWAP pays 2.51% of equity to impact over the period against VWAP's
   2.37%, and an aggressively front-loaded Almgren-Chriss (kappa=5) pays 3.14% (see
   [the evaluation's execution-algorithm section](docs/evaluation/evaluation.md#execution-algorithm-aware-impact-v07)).
+  *Retracted in v0.8.0: these magnitudes charged each sleeve sqrt(15) times the impact of its
+  own capital; the ordering stands, the numbers are re-measured — see [v0.8.0 Retracted](#v080--2026-09-28).*
 
 ### Evaluation
 - **Benjamini-Hochberg FDR correction** (`stats.benjamini_hochberg`). The cross-instrument
@@ -52,6 +880,8 @@ dependency drift apart from a real result change.
   asset-class/universe group rather than pooling, so correlated clusters (e.g. the FX
   majors) do not masquerade as independent draws; `EvaluationResult.paired(stratify=True)`
   is the default when the rows carry more than one group.
+  *Retracted in v0.8.0: this scheme narrows the interval rather than widening it and was
+  replaced by a cluster bootstrap — see [v0.8.0 Retracted](#v080--2026-09-28).*
 - **Deflated-Sharpe caveat** made explicit in `selection_report`'s own output
   (`DEFLATED_SHARPE_CAVEAT`), not only in the surrounding prose.
 - **Significance-gated diagnostic column** (`alpha.significance_gated_series`,

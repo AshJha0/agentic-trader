@@ -9,9 +9,10 @@ inflate it?
   ratios (Bailey & Lopez de Prado, 2014).
 * ``min_track_record``     how many periods are needed before a Sharpe ratio is
   significant at a given confidence.
-* ``paired_bootstrap``     bootstrap over *instruments*: is the mean per-instrument
-  difference between two strategies (Sharpe, drawdown, ...) distinguishable
-  from zero across the universe, not just along time?
+* ``paired_bootstrap``     bootstrap over *instruments* (or over clusters of correlated
+  instruments): is the mean per-instrument difference between two strategies
+  (Sharpe, drawdown, ...) distinguishable from zero across the universe, not
+  just along time?
 
 Sharpe ratios inside these formulas are per period (daily); the public helpers
 convert from annualised figures where they take them.
@@ -49,7 +50,7 @@ def sharpe_stats(returns, periods_per_year: float = 252.0) -> SharpeStats:
     if n < 3:
         return SharpeStats(n, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0)
     mean, std = float(r.mean()), float(r.std(ddof=1))
-    if std <= 0:
+    if std <= quant.ZERO_VARIANCE_TOL * max(1.0, abs(mean)):
         return SharpeStats(n, mean, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0)
     z = (r - mean) / r.std(ddof=0)
     skew, kurt = float(np.mean(z ** 3)), float(np.mean(z ** 4))
@@ -73,10 +74,7 @@ def sharpe_ci_bootstrap(returns, periods_per_year: float = 252.0, n_boot: int = 
     n_blocks = int(math.ceil(n / block))
     starts = rng.integers(0, n, size=(n_boot, n_blocks))
     idx = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1)[:, :n] % n
-    samples = r[idx]
-    mean = samples.mean(axis=1)
-    std = samples.std(axis=1, ddof=1)
-    sr = np.where(std > 0, mean / np.where(std > 0, std, 1.0), 0.0) * math.sqrt(periods_per_year)
+    sr = _sharpe_rows(r[idx], periods_per_year)
     lo, hi = np.quantile(sr, [(1 - ci) / 2, 1 - (1 - ci) / 2])
     return (float(lo), float(hi))
 
@@ -168,6 +166,8 @@ class PairedBootstrap:
     ci_high: float
     p_value: float           # two-sided: share of resamples on the other side of zero, doubled
     wins: int                # instruments where a > b
+    scheme: str = "instruments"   # "instruments" (plain) or "clusters" (whole groups resampled)
+    n_groups: int = 0        # distinct group labels among the finite pairs (0 when none were given)
 
     @property
     def significant(self) -> bool:
@@ -189,29 +189,33 @@ def benjamini_hochberg(p_values, q: float = 0.05) -> np.ndarray:
     per-universe tables do) is exactly the repeated-testing problem the deflated Sharpe ratio
     corrects for when choosing among rule variants; this is the analogous correction for a
     table of significance flags read together rather than a single winner chosen from trials.
-    NaN p-values (fewer than three instruments) are never significant.
+    NaN p-values (rows that were never tested, e.g. fewer than three instruments) are never
+    significant and do not count towards ``m``: only hypotheses that were actually tested share
+    the false-discovery budget. Pass the p-values unrounded -- BH compares each one against a
+    threshold ``k / m * q``, and rounding first can move a p across it in either direction.
     """
     p = np.asarray(p_values, dtype=float)
-    m = p.size
-    out = np.zeros(m, dtype=bool)
-    finite = np.isfinite(p)
-    if m == 0 or not finite.any():
+    out = np.zeros(p.size, dtype=bool)
+    tested = np.flatnonzero(np.isfinite(p))
+    m = tested.size
+    if m == 0:
         return out
-    idx = np.argsort(np.where(finite, p, np.inf))
-    ranked = p[idx]
-    k = np.arange(1, m + 1)
-    thresh = k / m * q
-    ok = finite[idx] & (ranked <= thresh)
+    order = tested[np.argsort(p[tested], kind="stable")]
+    thresh = np.arange(1, m + 1) / m * q
+    ok = p[order] <= thresh
     if not ok.any():
         return out
     # BH: reject every hypothesis up to the largest k whose own p clears its threshold.
-    largest = np.max(np.where(ok)[0])
-    out[idx[:largest + 1]] = finite[idx[:largest + 1]]
+    largest = int(np.flatnonzero(ok).max())
+    out[order[:largest + 1]] = True
     return out
 
 
+MIN_CLUSTER_GROUPS = 5
+
+
 def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0,
-                     groups=None) -> PairedBootstrap:
+                     groups=None, min_groups: int = MIN_CLUSTER_GROUPS) -> PairedBootstrap:
     """Bootstrap the mean paired difference ``a - b`` across instruments.
 
     The time-series bootstrap (``sharpe_ci_bootstrap``) asks whether one instrument's
@@ -224,16 +228,42 @@ def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0
 
     That exchangeability assumption is false when the universe mixes clusters of highly
     correlated instruments -- e.g. nine rate/credit/commodity ETFs that mostly move
-    together, next to unrelated equities -- because plain resampling can by chance draw an
-    unusually large or small share of one cluster far more easily than it could if every
-    instrument moved independently, which understates the true resampling variance and
-    makes the interval too tight. Pass ``groups`` (one label per instrument, the same length
-    as ``a``/``b``) to resample *within* each group instead, keeping every group's own count
-    fixed across replicates: this is the standard stratified-bootstrap fix and needs no
-    assumption about the correlation structure inside or between groups, only that groups are
-    chosen so instruments within one are the ones plausibly correlated. ``groups=None``
-    (the default) is the original unstratified behaviour, correct when the universe already
-    is close to exchangeable (e.g. one asset class of broadly similar instruments).
+    together, next to unrelated equities. A cluster's common shock is then one noisy draw
+    shared by all its members, not nine independent ones, so the effective sample is closer
+    to the number of clusters than to the number of instruments and plain resampling
+    understates the sampling variance of the mean. Pass ``groups`` (one label per instrument,
+    the same length as ``a``/``b``) to use a two-stage cluster bootstrap instead: each
+    replicate draws whole groups with replacement, then instruments with replacement within
+    each drawn group, and the replicate statistic is the pooled mean of the instruments drawn.
+    Resampling whole groups is what carries the between-group (common-factor) variance into
+    the interval; the within-group stage is deliberately kept because with a handful of
+    groups the groups-only scheme is anti-conservative (its variance is biased by
+    ``(G-1)/G`` and the percentile interval ignores the small-``G`` tail), and the extra
+    within-group variance leans the other way -- Monte Carlo under a shared within-group
+    factor puts this scheme's coverage of a true zero closest to nominal, and it errs
+    conservative when the groups turn out to be independent (``tests/test_v08_stats.py``).
+
+    The first stage draws clusters with equal probability whatever their size (each cluster
+    is one draw: the standard cluster bootstrap), and the replicate statistic is the pooled
+    mean over the instruments drawn, so a replicate that draws a large cluster several times
+    is dominated by it and one that omits it is not. With markedly unequal cluster sizes
+    (``--universe all``: 10/5/26/9/10) the replicate distribution is therefore not centred
+    on ``mean_diff``: the percentile interval is not symmetric about it and the two-sided
+    ``p_value`` inherits the same shift. This is the estimator's ratio-form bias, not an
+    indexing artefact (a brute-force loop reproduces the vectorised numbers); read the
+    interval's midpoint accordingly.
+
+    Do NOT confuse this with the stratified bootstrap (resampling within each group with the
+    group's count held fixed): that conditions on the group composition, so its variance is
+    the pooled *within*-group variance only -- it can only narrow the interval relative to
+    plain resampling and does nothing for within-cluster correlation.
+
+    A cluster bootstrap needs enough clusters to resample: with fewer than ``min_groups``
+    distinct labels among the finite pairs the plain instrument bootstrap is used instead and
+    the result says so (``scheme="instruments"``, ``n_groups`` = the labels seen). Read a
+    plain-scheme interval over a clustered universe as anti-conservative. ``groups=None``
+    (the default) is the plain behaviour, appropriate when the universe is already close to
+    exchangeable (one asset class of broadly similar instruments).
 
     NaN pairs are dropped. Fewer than three pairs gives NaN bounds and ``p_value = 1``.
     """
@@ -247,29 +277,48 @@ def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0
     d = a - b
     ok = np.isfinite(d)
     d = d[ok]
+    n_groups = 0
+    codes = None
     if groups is not None:
-        groups = groups[ok]
+        _, codes = np.unique(groups[ok], return_inverse=True)
+        n_groups = int(codes.max()) + 1 if codes.size else 0
     n = int(d.size)
     if n == 0:
-        return PairedBootstrap(0, float("nan"), float("nan"), float("nan"), 1.0, 0)
+        return PairedBootstrap(0, float("nan"), float("nan"), float("nan"), 1.0, 0, "instruments", n_groups)
     mean = float(d.mean())
     wins = int((d > 0).sum())
+    clustered = n_groups >= max(2, min_groups)
+    scheme = "clusters" if clustered else "instruments"
     if n < 3 or n_boot < 10 or not 0 < ci < 1:
-        return PairedBootstrap(n, mean, float("nan"), float("nan"), 1.0, wins)
+        return PairedBootstrap(n, mean, float("nan"), float("nan"), 1.0, wins, scheme, n_groups)
     rng = np.random.default_rng(seed)
-    if groups is None or np.unique(groups).size < 2:
+    if not clustered:
         idx = rng.integers(0, n, size=(n_boot, n))
         means = d[idx].mean(axis=1)
     else:
-        pieces = []
-        for g in np.unique(groups):
-            gi = np.flatnonzero(groups == g)
-            samp = rng.integers(0, gi.size, size=(n_boot, gi.size))
-            pieces.append(d[gi][samp])
-        means = np.concatenate(pieces, axis=1).mean(axis=1)
+        means = _two_stage_cluster_means(d, codes, n_groups, n_boot, rng)
     lo, hi = np.quantile(means, [(1 - ci) / 2, 1 - (1 - ci) / 2])
     tail = float(min((means <= 0).mean(), (means >= 0).mean()))
-    return PairedBootstrap(n, mean, float(lo), float(hi), min(1.0, 2.0 * tail), wins)
+    return PairedBootstrap(n, mean, float(lo), float(hi), min(1.0, 2.0 * tail), wins, scheme, n_groups)
+
+
+def _two_stage_cluster_means(d: np.ndarray, codes: np.ndarray, n_groups: int, n_boot: int,
+                             rng: np.random.Generator) -> np.ndarray:
+    """Replicate pooled means: ``n_groups`` groups drawn with replacement, then each drawn
+    group's own size of instruments drawn with replacement from inside it."""
+    sizes = np.bincount(codes, minlength=n_groups)
+    widest = int(sizes.max())
+    members = np.zeros((n_groups, widest), dtype=int)
+    for g in range(n_groups):
+        gi = np.flatnonzero(codes == g)
+        members[g, :gi.size] = gi
+    drawn = rng.integers(0, n_groups, size=(n_boot, n_groups))
+    sz = sizes[drawn]
+    # one uniform per padded slot, scaled to the drawn group's size; slots past it are masked
+    within = np.minimum((rng.random(size=(n_boot, n_groups, widest)) * sz[:, :, None]).astype(int), widest - 1)
+    picked = members[drawn[:, :, None], within]
+    live = np.arange(widest)[None, None, :] < sz[:, :, None]
+    return (d[picked] * live).sum(axis=(1, 2)) / sz.sum(axis=1)
 
 
 # --------------------------------------------------------------- VaR coverage
@@ -391,3 +440,80 @@ def var_backtest(returns, var_forecasts, alpha: float = 0.95) -> VarBacktest:
     return VarBacktest(n, x, rate, p, round(lr_uc, 4), round(kupiec_p, 4),
                        None if lr_ind is None else round(lr_ind, 4), p_ind,
                        None if p_cc is None else round(p_cc, 4))
+
+
+# ------------------------------------------------------------- portfolio-level intervals
+@dataclass(frozen=True)
+class SharpeDifference:
+    """Sharpe(a) - Sharpe(b) on the same days, with a paired circular block bootstrap over time."""
+    n: int                    # days used (both series finite)
+    sharpe_a: float
+    sharpe_b: float
+    diff: float
+    ci_low: float
+    ci_high: float
+    p_value: float            # two-sided: share of resamples on the other side of zero, doubled (capped at 1)
+    block: int
+    n_boot: int
+
+
+def _excess(r, rf, periods_per_year: float) -> np.ndarray:
+    r = np.asarray(r, dtype=float)
+    if rf is None:
+        return r
+    rf = np.asarray(rf, dtype=float)
+    if rf.ndim == 0:
+        return r - float(rf) / periods_per_year
+    if rf.shape != r.shape:
+        raise ValueError("rf must be a scalar or one annual rate per day")
+    return r - np.where(np.isfinite(rf), rf, 0.0) / periods_per_year
+
+
+def _sharpe_rows(x: np.ndarray, periods_per_year: float) -> np.ndarray:
+    """Annualised Sharpe of every row, 0 where the row is constant to rounding (the
+    ``quant.compute_metrics`` zero-variance rule, so a flat book reads 0 here as in the table)."""
+    mean, sd = x.mean(axis=1), x.std(axis=1, ddof=1)
+    real = sd > quant.ZERO_VARIANCE_TOL * np.maximum(1.0, np.abs(mean))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(real, mean / np.where(real, sd, 1.0) * math.sqrt(periods_per_year), 0.0)
+
+
+def paired_sharpe_block_bootstrap(a, b, periods_per_year: float = 252.0, rf=None, block: int = 10,
+                                  n_boot: int = 5000, ci: float = 0.95, seed: int = 0) -> SharpeDifference:
+    """Is one strategy's Sharpe higher than another's over the *same days*?
+
+    The cross-instrument bootstrap (``paired_bootstrap``) treats instruments as the unit of
+    independence, so it cannot speak to time-period luck that every instrument shared (one
+    bear market, one rally). For a portfolio-level comparison the unit is the day: both daily
+    return series are resampled with the same circular blocks (``block`` days, preserving
+    short-range autocorrelation and the pairing), each resample's annualised Sharpe is taken on
+    excess returns over ``rf`` (annual; a scalar or one rate per day, NaN = 0) and the
+    percentile interval and two-sided p of the difference are reported. Days where either
+    series is not finite are dropped; fewer than three days gives NaN bounds and ``p = 1``.
+    """
+    if block < 1 or n_boot < 1:
+        raise ValueError("block and n_boot must be positive")
+    ra, rb = _excess(a, rf, periods_per_year), _excess(b, rf, periods_per_year)
+    if ra.shape != rb.shape:
+        raise ValueError("a and b must have the same length (one return per day)")
+    keep = np.isfinite(ra) & np.isfinite(rb)
+    ra, rb = ra[keep], rb[keep]
+    n = int(ra.size)
+    nan = float("nan")
+    if n < 3:
+        return SharpeDifference(n, nan, nan, nan, nan, nan, 1.0, block, n_boot)
+    sa = float(_sharpe_rows(ra[None, :], periods_per_year)[0])
+    sb = float(_sharpe_rows(rb[None, :], periods_per_year)[0])
+    rng = np.random.default_rng(seed)
+    blk = min(block, n)
+    starts = rng.integers(0, n, size=(n_boot, -(-n // blk)))
+    idx = ((starts[:, :, None] + np.arange(blk)[None, None, :]) % n).reshape(n_boot, -1)[:, :n]
+    diffs = _sharpe_rows(ra[idx], periods_per_year) - _sharpe_rows(rb[idx], periods_per_year)
+    lo, hi = np.percentile(diffs, [100 * (1 - ci) / 2, 100 * (1 + ci) / 2])
+    point = sa - sb
+    if point == 0.0:
+        p = 1.0
+    else:
+        other = np.mean(diffs <= 0.0) if point > 0 else np.mean(diffs >= 0.0)
+        p = float(min(1.0, 2.0 * other))
+    return SharpeDifference(n, sa, sb, point, float(lo), float(hi), p, blk, n_boot)

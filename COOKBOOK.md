@@ -432,6 +432,14 @@ print(state.reports["seasonality"].summary)
 
 ### 24. Persist memory across runs
 
+An entry is valued only by the provider and price basis that recorded it, on the history
+the desk holds, from its entry bar to the bar `horizon_days` trading days later, and only
+when the decision day sat within the desk's `max_data_staleness_days` of its entry bar
+(`DecisionMemory(path, max_staleness_days=7)`; `TradingGraph` passes its own setting to
+the memory it builds and to every `resolve`). An entry the series cannot value expires
+without a verdict after twice its horizon; entries written before v0.8 carry no provider,
+are never valued, and are expired by any named provider's visit.
+
 ```python
 import os
 import tempfile
@@ -553,13 +561,17 @@ print(rep.table().loc[["AgenticTrader", "Buy&Hold"], ["CR%", "Sharpe", "MDD%", "
 ```
 
 `agentic-trader backtest NVDA --start 2023-01-02 --end 2023-12-29 --stops on` does the same.
-On real 2016–2021 data, stops lowered returns at a similar Sharpe, which is why they are
-off by default.
+On the real 2016–2021 design period (core universe, re-measured under the v0.8 engine:
+`results/v08/tables.md`, trials registry), the "+ intraday stops" trial gave a design mean
+Sharpe of 0.45 against the control's 0.47, a mean cumulative return of 44.10% against
+58.24%, a mean MDD of 12.67% against 13.31% and 292.20 trades per instrument against 254.20:
+a similar Sharpe for about a quarter less return, which is why stops are off by default.
 
 ### 31. Backtest a multi-asset portfolio
 
-Each symbol is a sleeve with 1/N of the capital and its own costs, carry and positions. The
-portfolio return is the daily mean of the sleeves, and equity and FX calendars are aligned.
+Each symbol is a sleeve with 1/N of the capital and its own costs, carry, positions and market
+impact charged at the sleeve's own capital. The portfolio return is the daily mean of the
+sleeves, and equity and FX calendars are aligned.
 
 ```python
 from agentic_trader import make_config, run_portfolio_backtest
@@ -596,6 +608,10 @@ Two questions to ask of any backtest before believing it:
   and a value around 2 or more is needed.
 - **Did the strategy add value beyond holding less?** Compare it with `B&H vol-target`,
   buy & hold scaled to the same volatility target from trailing volatility.
+
+Sharpe and `t(SR)` are computed on returns in excess of the cash leg (`cash_leg`: the constant
+`risk_free_annual` on synthetic and CSV data, the 3-month T-bill from FRED on real data), so a
+strategy that sits in cash is credited the bill rate rather than zero.
 
 ```python
 from agentic_trader import make_config, run_agent_backtest
@@ -778,35 +794,64 @@ print(len(ex.evidence), "evidence records, including the failures")
 ### 42. Queue an order for human approval
 
 `execution.submit_order` is state-changing and high risk, so it always needs approval. With
-the queued gateway the call parks until a person decides.
+the queued gateway the call parks until a person decides. A ticket is the plan `execution.plan`
+produced, not a bare number: the quantity in its unit (whole shares, or whole lots of the
+pair's base currency), the notional in the account currency, the reference price and the
+`plan_id` that binds them (an edited field fails to verify). `ticket_from_plan` turns the plan
+payload into the call's arguments; the notional is checked against the per-order cap
+(`execution.max_order_notional`, default `initial_capital × risk.max_position`; 0 freezes
+ticketing) by policy before anyone is asked to approve, and the plan payload already says
+whether the order is `ticketable` against that `order_cap`. `submit_order` accepts only a
+plan this desk produced, with exactly its fields (`plan_known`; the plan id is a checksum
+anyone can compute, so it is not authentication by itself; `execution.allow_external_plans`
+admits tickets planned elsewhere), and a ticket moves the desk's book to `position_after`,
+so a later plan in the same session sizes from it.
 
 ```python
 from datetime import date
 from agentic_trader import TradingGraph, make_config
 from agentic_trader.agentic import AgentHarness, QueuedApprovalGateway, Role, Task
+from agentic_trader.agentic.servers import ticket_from_plan
 from agentic_trader.memory import DecisionMemory
 
 h = AgentHarness(TradingGraph(make_config(), memory=DecisionMemory(None), on_event=lambda *_: None),
                  gateway=QueuedApprovalGateway())
 run = h.submit(Task("AAPL", date(2024, 3, 1), Role.TRADER))
 ex = h._executor(run)
-first = ex.call("execution.submit_order", symbol="AAPL", side="buy", quantity=100)
+plan = ex.call("execution.plan", symbol="AAPL", as_of="2024-03-01", target_weight=0.5).payload   # read-only: runs at once
+print(plan["side"], plan["quantity"], plan["quantity_unit"], round(plan["notional"]), plan["notional_currency"], plan["plan_id"])
+ticket = ticket_from_plan(plan, note="morning run")            # the submit_order arguments, unchanged
+first = ex.call("execution.submit_order", **ticket)
 print(first.ok, first.error)
 pending = h.pending_approvals(run.id)
 print([(a.id, a.request.tool, a.reason) for a in pending])
 h.gateway.resolve(pending[0].id, approve=True, decided_by="risk", note="within limits")
-second = ex.call("execution.submit_order", symbol="AAPL", side="buy", quantity=100)
+second = ex.call("execution.submit_order", **ticket)
 print(second.ok, second.payload)          # the ticket; no broker is involved
 ```
 
+```
+buy 223.0 shares 49778 USD PLAN-064e3ec3a337
+False awaiting approval (read_only): execution.submit_order changes state; approval required
+[('APPROVAL-7e4a9252', 'execution.submit_order', 'execution.submit_order changes state; approval required')]
+True {'id': 'ORD-00001', 'plan_id': 'PLAN-064e3ec3a337', 'symbol': 'AAPL', 'side': 'buy', 'intent': 'open_long', 'quantity': 223.0, 'quantity_unit': 'shares', 'notional': 49777.900624837486, 'notional_currency': 'USD', 'price': 223.21928531317258, 'position_before': 0.0, 'position_after': 0.497779, 'plan_known': True, 'note': 'morning run', 'status': 'ticketed'}
+```
+
+The ticket records the position before and after against the desk's book, and `intent` says
+whether it opens, adds, reduces, closes or shorts; a sell that would take a long-only book
+short is refused at execution.
+
 ### 43. Write a policy rule
 
-A rule is a callable that returns a decision or `None` to pass. Put it before `allow_rule`.
+A rule is a callable that returns a decision or `None` to pass. Rules run in order and the first
+decision wins: the defaults are deny list, capability, argument guards, then `read_only_rule`,
+which parks every state-changing tool for approval. A rule that denies therefore goes first; a
+rule that merely allows goes just before `allow_rule`.
 
 ```python
 from agentic_trader.agentic import PolicyEngine, PolicyOutcome, Role
 from agentic_trader.agentic.domain import PolicyDecision, ToolRequest
-from agentic_trader.agentic.policy import DEFAULT_RULES, allow_rule
+from agentic_trader.agentic.policy import DEFAULT_RULES
 from agentic_trader.agentic import DeskTools, build_registry
 from agentic_trader import make_config
 from agentic_trader.data import SyntheticProvider
@@ -817,12 +862,14 @@ def no_fx_after_hours(ctx):
         return PolicyDecision(PolicyOutcome.DENY, "desk_hours", "no order tickets after hours")
     return None
 
-rules = tuple(r for r in DEFAULT_RULES if r is not allow_rule) + (no_fx_after_hours, allow_rule)
-engine = PolicyEngine({"max_position": 1.0}, rules=rules)
+engine = PolicyEngine({"max_position": 1.0}, rules=(no_fx_after_hours,) + DEFAULT_RULES)
 cfg = make_config()
 tool = build_registry(DeskTools(SyntheticProvider(cfg), cfg)).get("execution.submit_order").descriptor
-d = engine.evaluate(ToolRequest("execution.submit_order", {"symbol": "EURUSD", "side": "buy", "quantity": 1, "note": "after-hours"}, "C"), tool, Role.TRADER)
-print(d.outcome.value, d.rule, d.reason)
+args = {"symbol": "EURUSD", "side": "buy", "quantity": 1000, "note": "after-hours"}
+d = engine.evaluate(ToolRequest("execution.submit_order", args, "C"), tool, Role.TRADER)
+print(d.outcome.value, d.rule, d.reason)            # DENY desk_hours ...
+d = engine.evaluate(ToolRequest("execution.submit_order", {**args, "note": "open"}, "C"), tool, Role.TRADER)
+print(d.outcome.value, d.rule, d.reason)            # REQUIRE_APPROVAL read_only ...
 ```
 
 ### 44. Validate a model-proposed plan
@@ -940,7 +987,10 @@ print(c.get("/tools", headers={"X-API-Key": "dev-viewer-key"}).json()[0]["name"]
 *(needs the `mcp` extra; spawns a subprocess)*
 
 ```bash
-agentic-trader mcp                        # stdio server for any MCP client
+agentic-trader mcp                        # stdio server for any MCP client; every call runs under policy,
+                                          # approval and evidence for --role (trader) and --approval
+agentic-trader mcp --approval deny        # locked down: every state-changing call is refused
+agentic-trader mcp --role viewer          # read-only tools only; --approval queued is refused (exit 2)
 ```
 
 ```python
@@ -950,11 +1000,22 @@ from agentic_trader.agentic.mcp_server import call, discover, registry_from_stdi
 tools = discover()
 print(len(tools), tools[1]["name"], tools[1]["read_only"])
 print(call("knowledge__list_documents", {}))
-reg = registry_from_stdio()                              # remote tools as a local registry
+reg = registry_from_stdio()                              # remote tools as a local registry, over one server session
 ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER)
 r = ex.call("quant.technical", symbol="AAPL", as_of="2024-03-01")
 print(r.ok, round(r.payload["rsi14"], 1), "evidence:", len(ex.evidence))   # policy and evidence apply to remote tools
+reg.session.close()                                      # ends the server process (also on garbage collection)
 ```
+
+A discovered tool is classified fail-closed whatever the server annotates: state-changing,
+high risk, trader-only, data evidence. The `overrides` map is the only relaxation; by default
+it is the desk's own catalogue, since the client only launches this package's server, and
+`overrides={}` relaxes nothing. `registry_from_stdio(server_args=None, overrides=None,
+call_timeout_s=None, config=None)`: the per-call deadline defaults to `agentic.tool_timeout_s`
+(30 s), `math.inf` waits without limit, and a timeout only sends the SDK's cancellation
+notice, which is as far as it reaches. A state-changing call that times out may still have
+landed its ticket on the server: its outcome is unknown, so reconcile through
+`portfolio.position`, which lists pending tickets.
 
 ### 50. Trace a run and export metrics
 
@@ -988,11 +1049,17 @@ p = SyntheticProvider(make_config())
 ins = Instrument.parse("USDJPY")
 df = p.history(ins, date(2020, 1, 1), date(2024, 3, 28))
 rep = alpha_report(df, ins, horizon=10, carry_series=p.carry_series(ins, df.index))
-print(rep.table[["IC", "t(IC)", "hit%", "autocorr"]])
+print(rep.table[["IC", "t(IC)", "hit%", "up%", "tercile spread%", "autocorr"]])
 print(rep.decay)                                          # IC by horizon: pick the rebalance frequency
 print(rep.correlations.round(2))
 print("best by IC:", rep.best())
 ```
+
+`t(IC)` is overlap-aware: with forward returns over `horizon` bars only every `horizon`-th pair
+is new, so the t-statistic uses `n / horizon` effective observations (`information_coefficient`
+also offers `method="newey_west"`). `up%` is the share of positive forward returns on the same
+pairs, the base rate a `hit%` must beat; the tercile spread assigns terciles by rank, so a signal
+stuck at one value on most bars still has a top and a bottom third.
 
 On real prices: `agentic-trader alpha USDJPY --data yahoo --start 2016-01-04 --end 2021-12-31`.
 
@@ -1020,14 +1087,27 @@ print(state.reports["alpha"].summary)
 print(state.reports["alpha"].key_points)
 ```
 
-The alpha analyst is off by default because it measured as noise on the design period
-(see the evaluation). Adding a new alpha changes the composite, so re-run `evaluate` on the
-design period before adopting it.
+The alpha analyst is off by default because, with the corrected gate, it measures as nothing
+on the core design period: agent mean Sharpe with it minus without −0.00 [−0.05, +0.05]
+p 0.90, and on the holdout −0.00 [−0.04, +0.02] p 0.79 (`results/v08/tables.md`, "with the
+alpha analyst, corrected gate (a) vs default (b)"; a paired bootstrap over instruments,
+`scheme=instruments`, recipe 67, printed with p and no BH flag; how often the gate speaks on
+real data was not recorded). Adding a new alpha changes the composite, so re-run `evaluate`
+on the design period before adopting it.
 
 ### 53. Plan and simulate an execution
 
+The order is sized at the as-of close (`notional = |target − current| × capital` in the
+account currency, rounded down once to whole shares or, for FX, to whole lots of the base
+currency) and worked on the *next* session, the first one a decision at the close can trade
+in. A change that rounds down to zero shares or lots is nothing to trade, not an error:
+`plan_execution` returns `None`, as it does for an unchanged target. `simulate_execution`
+takes the requested quantity so an unfilled remainder shows up as a completion below 100%
+and as opportunity cost inside the implementation shortfall.
+
 ```python
 from datetime import date
+import pandas as pd
 from agentic_trader import Instrument, make_config
 from agentic_trader.algo import plan_execution, simulate_execution, synthetic_intraday_bars
 from agentic_trader.data import SyntheticProvider
@@ -1035,45 +1115,124 @@ from agentic_trader.state import Action, FinalDecision
 
 p = SyntheticProvider(make_config())
 ins = Instrument.parse("AAPL")
-df = p.history(ins, date(2024, 1, 1), date(2024, 3, 1))
-last, adv = float(df["Close"].iloc[-1]), float(df["Volume"].tail(20).mean())
-decision = FinalDecision("AAPL", date(2024, 3, 1), Action.BUY, 0.6, 0.5, None, None, "")
+as_of = date(2024, 3, 1)
+df = p.history(ins, date(2024, 1, 1), date(2024, 3, 8))
+known = df[df.index <= pd.Timestamp(as_of)]                       # what the desk sees at the as-of close
+last, adv = float(known["Close"].iloc[-1]), float(known["Volume"].tail(20).mean())
+decision = FinalDecision("AAPL", as_of, Action.BUY, 0.6, 0.5, None, None, "")
 plan = plan_execution(decision, ins, current_weight=0.1, capital=50_000_000, last_price=last, adv=adv)
-print(plan.side, round(plan.quantity), plan.algo, plan.slices, plan.reason)
-bars = synthetic_intraday_bars(df.iloc[-1], plan.slices, "equity", seed=1)
+print(f"{plan.side} {plan.quantity:,.0f} {plan.quantity_unit} (notional {plan.notional:,.0f} {plan.notional_currency} "
+      f"at {plan.price:.2f}) via {plan.algo} in {plan.slices} slices; {plan.reason}; intent {plan.intent}; {plan.id}")
+session = df[df.index > pd.Timestamp(as_of)].iloc[0]              # the first session the order can trade in
+bars = synthetic_intraday_bars(session, plan.slices, "equity", seed=0)
 rep = simulate_execution(plan.schedule(bars), bars, plan.side, plan.algo, spread_bps=2.0, impact_coeff=1.0,
-                         daily_vol=float(df["Close"].pct_change().tail(20).std()), adv=adv)
-print(f"filled {rep.completion:.0%}; IS {rep.is_bps:+.1f} bps; vs VWAP {rep.vs_vwap_bps:+.1f} bps; "
-      f"spread {rep.spread_cost_bps:.1f} + impact {rep.impact_cost_bps:.1f} bps; max participation {rep.max_participation:.1%}")
+                         daily_vol=float(known["Close"].pct_change().tail(20).std()), adv=adv, requested=plan.quantity)
+print(f"executed {rep.executed:,.0f} of {rep.requested:,.0f} ({rep.completion:.0%}) on {session.name.date()}; "
+      f"IS {rep.is_bps:+.1f} bps; vs VWAP {rep.vs_vwap_bps:+.1f} bps; spread {rep.spread_cost_bps:.1f} + impact "
+      f"{rep.impact_cost_bps:.1f} bps; max participation {rep.max_participation:.1%}")
 ```
 
-CLI: `agentic-trader execute AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 50000000`.
+```
+buy 111,997 shares (notional 24,999,890 USD at 223.22) via vwap in 78 slices; weight +0.10 -> +0.60; intent add_long; PLAN-eccd6b94ec5b
+executed 111,997 of 111,997 (100%) on 2024-03-04; IS +74.2 bps; vs VWAP +12.6 bps; spread 1.0 + impact 11.6 bps; max participation 0.3%
+```
+
+The CLI does the same. `--capital` defaults to the config's `initial_capital` (100,000, the
+convention the desk tools, `task` and the API share); FX quantities are in the base currency
+(a USD/JPY order for 50,000 USD is 50,000 USD, not a count of JPY-priced units), and an
+order larger than the day's liquidity reports what it filled:
+
+```
+$ agentic-trader execute AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 50000000
+BUY 111,997 shares (notional 24,999,890 USD at 223.22) via VWAP in 78 slices; weight +0.10 -> +0.60; intent add_long; PLAN-eccd6b94ec5b
+order is 0.27% of 20-day ADV
+executed 111,997 of 111,997 shares (100%) on 2024-03-04; arrival 223.16, avg fill 224.82, session VWAP 224.53, close 228.44
+implementation shortfall +74.2 bps, vs VWAP +12.6 bps (spread 1.0 bps, impact 11.6 bps), max slice participation 0.3%
+
+$ agentic-trader execute AAPL --date 2024-03-01 --target 0.6 --current 0.1
+BUY 223 shares (notional 49,778 USD at 223.22) via VWAP in 78 slices; weight +0.10 -> +0.60; intent add_long; PLAN-064e3ec3a337
+order is 0.00% of 20-day ADV
+executed 223 of 223 shares (100%) on 2024-03-04; arrival 223.16, avg fill 224.57, session VWAP 224.53, close 228.44
+implementation shortfall +63.0 bps, vs VWAP +1.5 bps (spread 1.0 bps, impact 0.5 bps), max slice participation 0.0%
+
+$ agentic-trader execute USDJPY --date 2024-03-01 --target 0.5
+BUY 50,000 USD (notional 50,000 USD at 133.78) via TWAP in 288 slices; weight +0.00 -> +0.50; intent open_long; PLAN-9fffc0aea2da
+executed 50,000 of 50,000 USD (100%) on 2024-03-04; arrival 133.7, avg fill 133.75, session VWAP 133.75, close 132.96
+implementation shortfall +3.8 bps, vs VWAP +0.3 bps (spread 0.3 bps, impact 0.0 bps)
+
+$ agentic-trader execute NVDA --date 2024-03-01 --target 1.0 --capital 1000000000
+BUY 27,588,377 shares (notional 999,999,966 USD at 36.247) via POV in 78 slices; weight +0.00 -> +1.00; 133.6% of ADV exceeds 10% -> POV; intent open_long; PLAN-794907a342fe
+order is 133.56% of 20-day ADV
+executed 1,473,029 of 27,588,377 shares (5%) on 2024-03-04; arrival 36.071, avg fill 36.49, session VWAP 36.3, close 36.7
+implementation shortfall +171.3 bps, vs VWAP +52.4 bps (spread 1.0 bps, impact 51.4 bps, opportunity cost of 26,115,348 unfilled +165.1 bps), max slice participation 10.0%
+
+$ agentic-trader execute AAPL --date 2024-03-01 --target 0.1001 --current 0.1
+nothing to trade: the change +0.1000 -> +0.1001 (10 USD) is below one share
+
+$ agentic-trader execute AAPL --date 2024-03-01 --target 0.5 --algo ac --ac-kappa inf
+error: --ac-kappa must be finite and >= 0
+```
+
+Most of the AAPL shortfall is the next session's own rise from the open, timing rather than
+cost; the cost is the line against VWAP. The unfilled clause is printed only when at least
+one share or lot went unfilled (a closed-form schedule can leave 1e-14 of a share). A
+negative equity target under the default long-only policy is truncated to flat
+(`--allow-short` lifts it; when the truncated change is itself below one share the message
+sizes that change, not the one asked for, and says why), and `--ac-kappa` sets the
+Almgren-Chriss urgency for `--algo ac` (dimensionless,
+`costs.ac_kappa` 3.0; 0 is TWAP; an infinite, NaN or negative value exits 2).
 
 ### 54. Compare execution algorithms on the same day
 
+Each slice pays temporary impact `impact_coeff × daily_vol × √(q_i / V_i)` on its own share
+of the bar's volume, the same square-root law the daily backtester charges, so a schedule
+that matches the volume curve (VWAP) pays the least impact for a given quantity and a
+front-loaded one pays more. The shortfall against arrival differs from seed to seed because
+it contains the session's own drift; the impact column does not.
+
 ```python
 from datetime import date
-import numpy as np
-from agentic_trader import Instrument, make_config
-from agentic_trader.algo import (almgren_chriss_schedule, pov_schedule, simulate_execution,
-                                 synthetic_intraday_bars, twap_schedule, vwap_schedule)
+import math
+from agentic_trader import Instrument, make_config, quant
+from agentic_trader.algo import pov_schedule, simulate_execution, synthetic_intraday_bars, twap_schedule, vwap_schedule
 from agentic_trader.data import SyntheticProvider
 
 p = SyntheticProvider(make_config())
-df = p.history(Instrument.parse("NVDA"), date(2024, 2, 1), date(2024, 3, 1))
-day = df.iloc[-1]
-adv = float(df["Volume"].tail(20).mean())
-qty = 0.02 * adv                                            # a 2%-of-ADV order
+df = p.history(Instrument.parse("NVDA"), date(2024, 2, 1), date(2024, 3, 4))
+session, history = df.iloc[-1], df.iloc[:-1]                 # decide at the 2024-03-01 close, trade on 2024-03-04
+adv = float(history["Volume"].tail(20).mean())
+daily_vol = float(history["Close"].pct_change().tail(20).std())
+qty = math.floor(0.02 * adv)                                 # a 2%-of-ADV order, whole shares
 for seed in (1, 2, 3):
-    bars = synthetic_intraday_bars(day, 78, "equity", seed)
+    bars = synthetic_intraday_bars(session, 78, "equity", seed)
     vols = bars["Volume"].to_numpy()
-    sigma = float(bars["Close"].std())
     for name, sched in (("TWAP", twap_schedule(qty, 78)), ("VWAP", vwap_schedule(qty, vols)),
                         ("POV 10%", pov_schedule(qty, vols, 0.10)),
-                        ("AC", almgren_chriss_schedule(qty, 78, sigma, eta=sigma * 1e-6, risk_aversion=1e-5))):
-        r = simulate_execution(sched, bars, "buy", name, 2.0, 1.0, 0.02, adv)
-        print(f"seed {seed} {name:<8} filled {r.completion:5.0%}  IS {r.is_bps:+6.1f} bps  vs VWAP {r.vs_vwap_bps:+6.1f} bps")
+                        ("AC k=3", quant.almgren_chriss(qty, 78, 3.0))):   # dimensionless urgency; 0 = TWAP, inf/nan/negative raise
+        r = simulate_execution(sched, bars, "buy", name, 2.0, 1.0, daily_vol, adv, requested=qty)
+        print(f"seed {seed} {name:<8} filled {r.completion:5.0%}  IS {r.is_bps:+6.1f} bps  vs VWAP {r.vs_vwap_bps:+6.1f} bps"
+              f"  impact {r.impact_cost_bps:4.1f} bps")
 ```
+
+```
+seed 1 TWAP     filled  100%  IS +137.3 bps  vs VWAP  +31.0 bps  impact 28.9 bps
+seed 1 VWAP     filled  100%  IS +134.4 bps  vs VWAP  +28.2 bps  impact 27.2 bps
+seed 1 POV 10%  filled  100%  IS  +92.7 bps  vs VWAP  -13.1 bps  impact 51.2 bps
+seed 1 AC k=3   filled  100%  IS +108.9 bps  vs VWAP   +2.9 bps  impact 31.3 bps
+seed 2 TWAP     filled  100%  IS +117.1 bps  vs VWAP  +29.2 bps  impact 28.9 bps
+seed 2 VWAP     filled  100%  IS +116.1 bps  vs VWAP  +28.2 bps  impact 27.2 bps
+seed 2 POV 10%  filled  100%  IS  +59.8 bps  vs VWAP  -27.6 bps  impact 51.2 bps
+seed 2 AC k=3   filled  100%  IS  +79.4 bps  vs VWAP   -8.1 bps  impact 31.3 bps
+seed 3 TWAP     filled  100%  IS +133.4 bps  vs VWAP  +37.9 bps  impact 28.9 bps
+seed 3 VWAP     filled  100%  IS +123.6 bps  vs VWAP  +28.2 bps  impact 27.2 bps
+seed 3 POV 10%  filled  100%  IS  +55.9 bps  vs VWAP  -38.9 bps  impact 51.2 bps
+seed 3 AC k=3   filled  100%  IS  +90.4 bps  vs VWAP   -4.6 bps  impact 31.3 bps
+```
+
+On this rising session the schedules that trade early (POV at its 10% cap, the front-loaded
+Almgren-Chriss) beat the session VWAP and pay a smaller shortfall against arrival, at a higher
+impact cost; on a falling one the ordering of the shortfall flips and the impact column does
+not. `ExecutionPlan.schedule(bars, kappa=...)` is the same choice inside a plan.
 
 ### 55. Construct a portfolio and read its risk
 
@@ -1095,6 +1254,11 @@ for method in ("equal", "inverse_vol", "risk_parity", "min_variance"):
 print(pw.contributions)                                   # allocation, weight, vol, marginal, component, pct_of_risk
 ```
 
+`allocation` is the split before vol-targeting (it sums to the gross cap, every sleeve at most
+`max_weight`); `weights = allocation × target × scale`, and the scale is capped so no sleeve
+exceeds `max_weight` after scaling up. The shrinkage intensity on the EWMA covariance is the
+weighted Ledoit-Wolf constant-correlation estimate (`ledoit_wolf_shrink(..., weights=)`).
+
 In a backtest: `run_portfolio_backtest(syms, start, end, cfg, weighting="risk_parity")` or
 `agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start ... --end ... --weighting risk_parity`.
 
@@ -1115,7 +1279,14 @@ print(selection_report(chosen, tried))
 ```
 
 `agentic-trader stats returns.csv --trials 8 --trial-sharpes 0.4,0.9,1.1,0.7,0.2,0.95,0.85,0.6`
-does the same from a CSV. The evaluation applies this to the desk's own 16-variant rule search.
+does the same from a CSV. The evaluation applies this to the desk's own rule search:
+`agentic_trader.evaluation.TRIALS` lists every variant judged on the design period (26 as of
+v0.8: 24 re-measured under the current engine by `scripts/measure_v08.py`, 2 historical), and
+the design-period mean Sharpes of those trials are the `trial_sharpes` of the published report.
+That report (`results/v08/tables.md`, "selection statistics for the frozen rules", rendered
+from `results/v08/trials.json` and `portfolio_design.csv`) gives, for 26 trials, an expected
+maximum null Sharpe of 0.161 and a deflated Sharpe probability of 0.998 — an upper bound, as
+the report's own caveat says, because the trial Sharpes' dispersion understates the search.
 
 ## v0.5: execution-aware evaluation, cross-sectional research, operations
 
@@ -1123,8 +1294,10 @@ does the same from a CSV. The evaluation applies this to the desk's own 16-varia
 
 Backtests assume costless closes-to-close fills unless you say otherwise. `costs.impact_coeff`
 charges the execution simulator's square-root impact per trade, to the agent and to every
-baseline, and trade sizes scale with `initial_capital`, so the same strategy gets cheaper or
-dearer with the account. `Impact%` is the cumulative cost paid.
+baseline. The charge follows the notional actually traded: the coefficient scales with
+`initial_capital` and, bar by bar, with √(equity / initial capital), so the same strategy gets
+cheaper or dearer with the account and a compounding account pays for what it trades.
+`Impact%` is the cumulative cost paid.
 
 ```python
 from agentic_trader import make_config, run_agent_backtest
@@ -1235,15 +1408,27 @@ For the real thing: `make_config(fred_vintages=True, fred_cache_dir="results/fre
 
 `max_llm_calls` caps calls; an Opus call costs about fifteen Haiku calls, so a call count
 does not bound the bill. `max_llm_cost_usd` caps the estimated spend (list prices,
-cache-aware) and is checked before every call, so the overshoot is at most one call.
+cache-aware). Before a call is dispatched its reservation (`estimate_cost`) is taken, and
+calls in flight count against the cap, so parallel workers sharing one budget cannot each
+slip a call past it. What is reserved is `llm_budget_mode`: in the default `"hard"` mode it
+is the most the call can cost (the input estimate plus a full `max_tokens` reply, which is
+also what a timed-out attempt is billed at), so spend stays within the cap and a cap that
+cannot afford one such call refuses that tier before any spend; in `"estimate"` mode it is
+the input estimate plus `llm_reserve_output_tokens` (2000), which admits more concurrent
+calls but makes the cap soft by what replies exceed the reserve. `exhausted_for(deep)` says
+whether a tier's next call would be refused, and `exhausted` asks about the deep tier. A
+served model id without a list price exhausts the budget instead of spending unbounded, and
+a configured id without one is refused at construction.
 
 ```python
 from agentic_trader import TradingGraph, make_config
-from agentic_trader.llm import BudgetedLLM, ModelUsage, UsageTracker
+from agentic_trader.llm import BudgetedLLM, ModelUsage, UsageTracker, estimate_call_cost
 
 class Priced:                                   # stands in for AnthropicLLM: 16k output tokens per call
     def __init__(self):
         self.usage = UsageTracker()
+    def estimate_cost(self, deep):              # the most one call can cost; reserved before dispatch
+        return estimate_call_cost("claude-opus-5", 16_000)
     def complete(self, system, prompt, *, deep):
         u = self.usage.by_model.setdefault("claude-opus-5", ModelUsage())
         u.calls += 1
@@ -1253,7 +1438,7 @@ class Priced:                                   # stands in for AnthropicLLM: 16
 llm = BudgetedLLM(Priced(), max_cost_usd=1.0)
 for _ in range(6):
     llm.complete("system", "prompt", deep=True)
-print(f"calls {llm.calls}, refused {llm.refused}, spent ${llm.spent_usd:.2f}, exhausted {llm.exhausted}")
+print(f"calls {llm.calls}, refused {llm.refused}, spent ${llm.spent_usd:.2f}")   # the third call's reservation would cross $1
 
 g = TradingGraph(make_config(max_llm_cost_usd=0.0), llm=Priced())   # a zero budget: rules only
 print(g.propagate("AAPL", "2024-03-01")[1].source)
@@ -1265,8 +1450,13 @@ stops at whichever cap comes first.
 ### 62. Keep tasks across restarts
 
 Without a store the harness forgets every task when the process ends. `agentic.task_db`
-writes each run to SQLite at every state transition; a new process serves the old records
-through the same API, and anything left mid-flight is failed, not resumed.
+writes each run to SQLite at every state transition and a new process serves the old records
+through the same API. Nothing is resumed: each live run is owned and heartbeated by its
+instance, and a record whose owner has not heartbeated for `agentic.lease_s` (90 s, at least
+1) is failed by whichever live instance sweeps next. The configured `agentic.instance_id`
+never widens the sweep: a restart under the same id does not fail its predecessor's
+in-flight records at once but once their lease has passed, and a live sibling sharing the id
+keeps its runs because it keeps heartbeating them.
 
 ```python
 import os
@@ -1279,6 +1469,7 @@ from agentic_trader.agentic.store import TaskStore
 db = os.path.join(tempfile.mkdtemp(), "tasks.sqlite")
 first = AgentHarness(TradingGraph(make_config(memory_path=None)), store=TaskStore(db))
 run = first.run(Task("EURUSD", date(2024, 3, 1), Role.TRADER, 0.2))
+first.close()                                                                           # stops its heartbeat
 first.store.close()
 
 second = AgentHarness(TradingGraph(make_config(memory_path=None)), store=TaskStore(db))   # "after a restart"
@@ -1318,9 +1509,11 @@ agentic-trader serve --host 0.0.0.0 --ssl-cert cert.pem --ssl-key key.pem --task
 ### 64. Evaluate the extended universe and the reserve period
 
 Every rule choice through v0.4 was made on the 15 *core* instruments. The 45 *extended* ones
-(sector equities, rates / credit / commodity ETFs, FX crosses) were never consulted, so they
-are out of sample on every period, and the `reserve` period is untouched by every published
-number. Rows carry a `universe` tag so the two can be read separately.
+(sector equities, rates / credit / commodity ETFs, FX crosses) and the `reserve` period were
+the unseen data that judged the v0.5.1 carry rule and the v0.6 EDGAR and cross-sectional
+decisions, and v0.8 re-measures every period under the corrected engine, so no held-out data
+remains: the next unseen data is the future. Rows carry a `universe` tag so core and extended
+can still be read separately.
 
 ```python
 from agentic_trader import make_config
@@ -1347,7 +1540,10 @@ backtest can see exactly what the market could. The SEC requires a contact in th
 `agentic_trader.cli.load_dotenv()` first. With it, the Yahoo provider serves historical
 fundamentals and a filing-stream news feed for every real-data equity; without it, both fall
 back to the old behaviour with one warning. Per-share figures use the close *as traded* on the
-date and EDGAR's prints rebased across every later stock split.
+date and EDGAR's prints rebased across every later stock split. Quarters are reconstructed per
+XBRL tag and per reporting basis, as known at the as-of date, and a ratio whose inputs are
+stale (a share count older than 400 days, a flow series ending more than a quarter before
+the report) is absent rather than wrong.
 
 ```python
 from datetime import date
@@ -1400,7 +1596,11 @@ it is on by default is decided by the protocol, not by taste: see the evaluation
 The time-series bootstrap asks whether one instrument's Sharpe is real. Across a universe the
 question is different: is the *mean* difference between two strategies more than the luck of
 which instruments were drawn? `paired_bootstrap` resamples instruments with replacement, pairs
-kept together, and every evaluation prints the table.
+kept together. With five or more (asset class, universe) groups it draws whole groups first
+and instruments within them (`scheme=clusters`, so a shock shared by a group counts once);
+below that it is the plain instrument bootstrap (`scheme=instruments`), and the table's
+`scheme` and `groups` columns say which. Every evaluation prints the table, with
+Benjamini-Hochberg `significant` flags computed on the unrounded p-values.
 
 ```python
 import numpy as np
@@ -1408,9 +1608,9 @@ from agentic_trader import make_config
 from agentic_trader.evaluation import evaluate
 from agentic_trader.stats import paired_bootstrap
 
-rng = np.random.default_rng(0)
-base = rng.normal(0.5, 0.3, 30)
-print(paired_bootstrap(base + 0.02, base))                                     # not distinguishable from zero
+rng = np.random.default_rng(1)
+base = rng.normal(0.5, 0.3, 30)                                                # 30 instruments' Sharpes
+print(paired_bootstrap(base + rng.normal(0.02, 0.3, 30), base))                # a small edge lost in the noise
 print(paired_bootstrap(base + 0.25 + rng.normal(0, 0.05, 30), base).significant)
 
 res = evaluate(["AAPL", "MSFT", "NVDA", "META", "GOOGL", "EURUSD", "USDJPY"], {"q": ("2024-01-02", "2024-03-28")},

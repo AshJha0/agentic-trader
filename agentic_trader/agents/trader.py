@@ -93,7 +93,8 @@ class Trader(Agent):
         if not shorts:
             w = max(w, 0.0)
         hit = state.track_record.get("hit_rate")
-        if hit is not None and state.track_record.get("n", 0) >= 5 and hit < 0.4:
+        if (cfg.get("rules", {}).get("track_record_cut", True) and hit is not None
+                and state.track_record.get("n", 0) >= 5 and hit < 0.4):
             w *= 0.75  # recent calls on this instrument have been poor: trade smaller
         d = float(np.sign(w))
         stop, tp = protective_levels(d, price, atr, risk)
@@ -103,8 +104,9 @@ class Trader(Agent):
                      + f". Stops at {risk['stop_atr_mult']}x ATR (ATR = {atr / price:.2%} of price).")
         if hit is not None:
             rationale += f" Track record hit rate {hit:.0%} over {int(state.track_record['n'])} calls."
+        untrusted = state.untrusted_inputs or debate.untrusted
         proposal = TradeProposal(action_for(w, score, thr), w, debate.conviction, price, stop, tp,
-                                 10, rationale)
+                                 10, rationale, untrusted=untrusted)
 
         facts = {"last_close": state.px(price), "atr14": state.px(atr), "short_selling_allowed": shorts,
                  "max_position": risk["max_position"], "debate_winner": debate.winner,
@@ -115,16 +117,17 @@ class Trader(Agent):
         prompt = (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}), as of "
             f"{state.as_of.isoformat()}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
-            f"Debate verdict: {debate.summary}\n\nTrading facts:\n{fmt_facts(facts)}\n"
-            + ("\nLessons from past decisions:\n" + "\n".join(state.lessons) + "\n"
-               if state.lessons else "")
+            f"{state.verdict_block()}\n\nTrading facts:\n{fmt_facts(facts)}\n"
+            + state.lessons_block()
             + policy_passages(state)
             + '\nJSON keys: "action" ("BUY", "SELL" or "HOLD"), "target_weight" (signed '
               'fraction of capital in [-1, 1]; negative = short), "confidence" ([0, 1]), '
               '"stop_loss" (price or null), "take_profit" (price or null), "horizon_days" '
-              '(int), "rationale" (2-4 sentences).'
+              '(int, trading days), "rationale" (2-4 sentences).'
         )
-        data = self.ask_json(prompt, ("action", "target_weight", "rationale"), state=state)
+        data = self.ask_json(prompt, ("action", "target_weight", "rationale"), state=state,
+                             numeric=("target_weight", "confidence", "stop_loss", "take_profit",
+                                      "horizon_days"))
         if data:
             w = clip(data["target_weight"], -1, 1)
             if not shorts:
@@ -139,7 +142,7 @@ class Trader(Agent):
                 Action(act) if act in Action.__members__ else action_for(w, score, thr),
                 w, clip(data.get("confidence"), 0, 1, debate.conviction), price, stop, tp,
                 int(clip(data.get("horizon_days"), 1, 90, 10)), str(data["rationale"]),
-                source="llm")
+                source="llm", untrusted=untrusted)
         state.proposal = proposal
         return proposal
 

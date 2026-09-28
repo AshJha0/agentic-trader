@@ -234,7 +234,9 @@ _PREFIX = {EvidenceType.DATA: "DATA", EvidenceType.CALCULATION: "CALC",
 
 @dataclass
 class Finding:
-    """A claim by an agent. ``evidence_ids`` must resolve in the task's store."""
+    """A claim by an agent. ``evidence_ids`` must resolve in the task's store. ``untrusted``
+    carries the source document's flag: the claim was written from third-party text (or text
+    derived from it) and is shown fenced in every later prompt."""
     id: str
     agent: str
     claim: str
@@ -242,12 +244,14 @@ class Finding:
     evidence_ids: tuple[str, ...]
     numbers: dict[str, float] = field(default_factory=dict)  # figures the claim rests on
     tags: tuple[str, ...] = ()
+    untrusted: bool = False
 
     @staticmethod
     def make(agent: str, claim: str, confidence: float, evidence_ids: list[str] | tuple[str, ...],
-             numbers: dict[str, float] | None = None, tags: tuple[str, ...] = ()) -> "Finding":
+             numbers: dict[str, float] | None = None, tags: tuple[str, ...] = (),
+             untrusted: bool = False) -> "Finding":
         return Finding(new_id("FIND"), agent, claim, float(confidence), tuple(evidence_ids),
-                       dict(numbers or {}), tags)
+                       dict(numbers or {}), tags, bool(untrusted))
 
 
 # ----------------------------------------------------------------- policy

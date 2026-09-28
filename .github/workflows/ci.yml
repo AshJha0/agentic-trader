@@ -47,6 +47,49 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+  lock:
+    # Proves requirements-lock.txt (the set the published numbers were measured with) still
+    # installs, is internally consistent, and passes the suite -- on the one Python it is
+    # valid for. The other jobs resolve fresh from pyproject's lower bounds on purpose.
+    name: Locked dependencies (Python 3.12, numpy backend)
+    runs-on: ubuntu-latest
+    env:
+      AGENTIC_TRADER_BACKEND: python
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+      - name: Install from the lock
+        run: |
+          python -m pip install -r requirements-lock.txt
+          python -m pip install -e . --no-deps
+          python -m pip check
+      - name: Installed versions equal the lock's pins
+        run: |
+          python - <<'EOF'
+          from importlib import metadata
+          from packaging.requirements import Requirement
+          bad = []
+          for line in open("requirements-lock.txt", encoding="utf-8"):
+              line = line.split("#", 1)[0].strip()
+              if not line:
+                  continue
+              req = Requirement(line)
+              if req.marker is not None and not req.marker.evaluate():
+                  continue
+              pinned = next(iter(req.specifier)).version
+              have = metadata.version(req.name)
+              if have != pinned:
+                  bad.append(f"{req.name}: lock {pinned}, installed {have}")
+          assert not bad, "\n".join(bad)
+          print("lock honoured")
+          EOF
+      - name: Run tests
+        run: python -m pytest -ra
+
   cpp:
     name: C++ core (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

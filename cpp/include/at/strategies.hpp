@@ -8,6 +8,8 @@
 namespace at {
 
 Series strat_buy_hold(const Series& close);
+// Crossovers hold no position while the two lines are within 1e-12 (relative) of each
+// other: rounding noise on a flat window is not a signal, and both backends agree.
 Series strat_sma_cross(const Series& close, int fast = 20, int slow = 50, bool allow_short = false);
 Series strat_macd(const Series& close, int fast = 12, int slow = 26, int signal = 9,
                   bool allow_short = false);

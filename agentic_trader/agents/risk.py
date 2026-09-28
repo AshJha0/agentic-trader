@@ -23,8 +23,13 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         "proposed_weight": p.target_weight if p else 0.0,
         "current_position": state.current_weight,
         "realized_vol_20d_annual": float(rv[-1]) if len(rv) and not math.isnan(rv[-1]) else None,
+        # Long and short sides are different tails: a long loses on the left tail (-q05 of r),
+        # a short on the right (q95 of r = -q05 of -r). Sizing a short with the long-side
+        # number under-caps it on right-skewed series and over-caps it on left-skewed ones.
         "var_95_1d": quant.historical_var(r, 0.95),
+        "var_95_1d_short": quant.historical_var(-r, 0.95),
         "cvar_95_1d": quant.historical_cvar(r, 0.95),
+        "cvar_95_1d_short": quant.historical_cvar(-r, 0.95),
         "drawdown_from_60d_high": float(1.0 - c[-1] / peak) if peak > 0 else 0.0,
         "atr14": atr14(state),
         "target_vol": config["risk"]["target_vol"],
@@ -38,6 +43,17 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         # weight's own effect on it -- a plain fact dict can only report a number, not act.
         "book_var_95_now": (_book_var_now(state) if state.book is not None else None),
     }
+
+
+def position_var(f: dict[str, Any], w: float) -> float:
+    """1-day 95% VaR per unit of |weight| for a position of sign ``w``: the left tail of the
+    instrument's returns for a long, the right tail (``var_95_1d_short``) for a short."""
+    return f["var_95_1d_short"] if w < 0 else f["var_95_1d"]
+
+
+def position_cvar(f: dict[str, Any], w: float) -> float:
+    """1-day 95% CVaR on the same side as ``position_var``."""
+    return f["cvar_95_1d_short"] if w < 0 else f["cvar_95_1d"]
 
 
 def _book_var_now(state: TradingState) -> float | None:
@@ -79,12 +95,13 @@ class RiskAnalyst(Agent):
             w = vt
         else:
             w = float(np.sign(w0)) * min(abs(w0), abs(vt)) * 0.5
+            var = position_var(f, w)
             # historical_var is always >= 0 (quant.historical_var returns max(0, -q)), so the
             # left side of this chained comparison is 0 or NaN only when there is no VaR to
             # scale by, and it then evaluates false: the division below is never reached with
-            # a zero or NaN var_95_1d, whatever max_var_95 is.
-            if f["var_95_1d"] * abs(w) > f["max_var_95"] > 0:
-                w *= f["max_var_95"] / (f["var_95_1d"] * abs(w))
+            # a zero or NaN VaR, whatever max_var_95 is.
+            if var * abs(w) > f["max_var_95"] > 0:
+                w *= f["max_var_95"] / (var * abs(w))
         return clip(w, -mx, mx)
 
     def speak(self, state: TradingState, f: dict[str, Any], rnd: int,
@@ -95,27 +112,27 @@ class RiskAnalyst(Agent):
             if others:
                 w = 0.75 * w + 0.25 * float(np.mean(others))
         text = (f"{self.stance.title()} view: size {w:+.2f} (proposal {f['proposed_weight']:+.2f}); "
-                f"20d vol {_pct(f['realized_vol_20d_annual'])}, 1-day VaR95 {f['var_95_1d']:.2%}, "
-                f"CVaR95 {f['cvar_95_1d']:.2%}, drawdown from 60d high "
+                f"20d vol {_pct(f['realized_vol_20d_annual'])}, 1-day VaR95 (position side) "
+                f"{position_var(f, f['proposed_weight']):.2%}, "
+                f"CVaR95 {position_cvar(f, f['proposed_weight']):.2%}, drawdown from 60d high "
                 f"{f['drawdown_from_60d_high']:.1%}.")
-        view = RiskView(self.stance, w, text, rnd)
+        untrusted = state.untrusted_inputs or state.proposal.untrusted or any(v.untrusted for v in history)
+        view = RiskView(self.stance, w, text, rnd, untrusted=untrusted)
 
-        p = state.proposal
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}.\n"
-            f"Trader proposal: {p.action.value} weight {p.target_weight:+.2f}; {p.rationale}\n\n"
+            f"{state.proposal_block()}\n\n"
             f"Risk facts:\n{fmt_facts(state.prompt_facts(f))}\n"
-            + ("\nDiscussion so far:\n" + "\n".join(
-                f"{v.stance} (round {v.round}, {v.recommended_weight:+.2f}): {v.argument}"
-                for v in history) if history else "")
+            + ("\nDiscussion so far:\n" + state.risk_views_block(history) if history else "")
             + f'\n\nRound {rnd}. JSON keys: "recommended_weight" (signed fraction of capital), '
               '"argument" (<= 120 words, respond to the other analysts).'
         )
-        data = self.ask_json(prompt, ("recommended_weight", "argument"), state=state)
+        data = self.ask_json(prompt, ("recommended_weight", "argument"), state=state,
+                             numeric=("recommended_weight",))
         if data:
             mx = f["max_position"]
             view = RiskView(self.stance, clip(data["recommended_weight"], -mx, mx),
-                            str(data["argument"]), rnd, source="llm")
+                            str(data["argument"]), rnd, source="llm", untrusted=untrusted)
         return view
 
 
@@ -140,8 +157,9 @@ class PortfolioManager(Agent):
         if abs(w) > mx:
             notes.append(f"capped at max position {mx:.2f}")
             w = math.copysign(mx, w)
-        if lim > 0 and f["var_95_1d"] * abs(w) > lim:
-            new = math.copysign(lim / f["var_95_1d"], w)
+        var = position_var(f, w)
+        if lim > 0 and var * abs(w) > lim:
+            new = math.copysign(lim / var, w)
             notes.append(f"VaR limit {lim:.2%}: {w:+.2f} -> {new:+.2f}")
             w = new
         if book is not None and symbol is not None and f.get("max_book_var_95") and w != 0:
@@ -170,18 +188,16 @@ class PortfolioManager(Agent):
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}, last "
             f"close {state.fmt_px(state.last_price)}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
-            f"Debate verdict: {state.debate.summary}\n\nTrader proposal: {p.action.value} "
-            f"{p.target_weight:+.2f}. {p.rationale}\n\nRisk discussion:\n"
-            + "\n".join(f"{v.stance} (round {v.round}, {v.recommended_weight:+.2f}): {v.argument}"
-                        for v in state.risk_views)
+            f"{state.verdict_block()}\n\n{state.proposal_block()}\n\nRisk discussion:\n"
+            + state.risk_views_block(state.risk_views)
             + f"\n\nRisk facts and firm limits:\n{fmt_facts(state.prompt_facts(f))}\n"
-            + ("\nLessons from past decisions:\n" + "\n".join(state.lessons) + "\n"
-               if state.lessons else "")
+            + state.lessons_block()
             + policy_passages(state)
             + '\nJSON keys: "target_weight" (final signed fraction of capital), "confidence" '
               '([0, 1]), "rationale" (2-4 sentences explaining approval/resizing/rejection).'
         )
-        data = self.ask_json(prompt, ("target_weight", "rationale"), state=state)
+        data = self.ask_json(prompt, ("target_weight", "rationale"), state=state,
+                             numeric=("target_weight", "confidence"))
         if data:
             w = clip(data["target_weight"], -1, 1)
             conf = clip(data.get("confidence"), 0, 1, conf)
@@ -205,7 +221,8 @@ class PortfolioManager(Agent):
             stop, take = fallback
         d = FinalDecision(state.instrument.symbol, state.as_of,
                           action_for(w, state.debate.score, thr), round(w, 4), conf,
-                          stop, take, rationale, bool(approved), notes, source)
+                          stop, take, rationale, bool(approved), notes, source,
+                          kept=band_note is not None)
         state.decision = d
         return d
 
@@ -215,7 +232,9 @@ class PortfolioManager(Agent):
 
         Small target changes cost spread and commission without changing the risk
         materially. The current position is kept only if it would itself pass every
-        firm limit today, so the band can never hold a position the limits forbid.
+        firm limit today, so the band can never hold a position the limits forbid. A
+        note is returned exactly when the position is kept (``FinalDecision.kept``); any
+        other outcome is a target the backtester trades, cap included.
         """
         band = f.get("rebalance_band", 0.0)
         if current is None or band <= 0 or w == current or abs(w - current) >= band:

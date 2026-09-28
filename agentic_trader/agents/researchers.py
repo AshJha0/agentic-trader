@@ -72,14 +72,12 @@ class Researcher(Agent):
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}, last "
             f"close {state.fmt_px(state.last_price)}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
-            + ("Debate so far:\n" + "\n".join(f"{t.speaker}: {t.argument}" for t in history)
-               if history else "You open the debate.")
-            + (f"\n\nLessons from past decisions:\n" + "\n".join(state.lessons)
-               if state.lessons else "")
+            + ("Debate so far:\n" + state.debate_block(history) if history else "You open the debate.")
+            + ("\n" + state.lessons_block() if state.lessons else "")
             + f"\n\nRound {rnd}: give your {self.side} argument."
         )
         text = self.ask_text(prompt, state) or self.rules_argument(state, rnd, history)
-        return DebateTurn(self.side, rnd, text.strip())
+        return DebateTurn(self.side, rnd, text.strip(), untrusted=state.untrusted_inputs)
 
 
 class BullResearcher(Researcher):
@@ -110,29 +108,31 @@ class DebateFacilitator(Agent):
         n_bull = sum(r.signal > 0.02 for r in voting)
         n_bear = sum(r.signal < -0.02 for r in voting)
         n_abs = len(state.reports) - len(voting)
+        untrusted = state.untrusted_inputs or any(t.untrusted for t in turns)
         outcome = DebateOutcome(
             winner, score, conviction,
             f"Weighted analyst consensus {score:+.2f} ({n_bull} bullish vs {n_bear} bearish "
             f"reports, mean confidence {avg_conf:.2f}"
             + (f", {n_abs} without data" if n_abs else "") + f"); prevailing view: {winner}.",
-            turns)
+            turns, untrusted=untrusted)
 
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}.\n\n"
             f"Analyst reports:\n{state.reports_digest()}\n\nDebate transcript:\n"
-            + "\n".join(f"{t.speaker} (round {t.round}): {t.argument}" for t in turns)
+            + state.debate_block(turns, rounds=True)
             + '\n\nJSON keys: "winner" ("bull", "bear" or "balanced"), "score" (number in '
               '[-1, 1]; the direction and strength of the prevailing view), "conviction" '
               '(number in [0, 1]), "summary" (2-4 sentences recording the decisive arguments).'
         )
-        data = self.ask_json(prompt, ("winner", "score", "summary"), state=state)
+        data = self.ask_json(prompt, ("winner", "score", "summary"), state=state,
+                             numeric=("score", "conviction"))
         if data:
             w = str(data["winner"]).lower()
             outcome = DebateOutcome(
                 w if w in ("bull", "bear", "balanced") else winner,
                 clip(data["score"], -1, 1),
                 clip(data.get("conviction"), 0, 1, conviction),
-                str(data["summary"]), turns, source="llm")
+                str(data["summary"]), turns, source="llm", untrusted=untrusted)
         return outcome
 
 

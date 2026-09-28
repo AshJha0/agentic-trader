@@ -275,7 +275,15 @@ def test_records_are_visible_across_processes_through_the_store(tmp_path):
     live = a.submit(Task("MSFT", _date(2024, 3, 1), Role.TRADER))
     AgentHarness(TradingGraph(CFG, **QUIET), store=TaskStore(db), sweep_interrupted=False)
     assert TaskStore(db).load(live.id)["state"] == "CREATED"
-    AgentHarness(TradingGraph(CFG, **QUIET), store=TaskStore(db))                                # a real restart sweeps
+    # v0.8 (review finding 53): a new instance's default sweep spares a live sibling's run (its
+    # owner still heartbeats it); only a record whose lease expired is failed.
+    AgentHarness(TradingGraph(CFG, **QUIET), store=TaskStore(db))
+    assert TaskStore(db).load(live.id)["state"] == "CREATED"
+    stale = TaskStore(db)
+    with stale._lock:
+        stale._conn.execute("UPDATE tasks SET heartbeat=? WHERE task_id=?", (0.0, live.id))
+        stale._conn.commit()
+    AgentHarness(TradingGraph(CFG, **QUIET), store=TaskStore(db))                                # a dead owner's run is swept
     assert TaskStore(db).load(live.id)["state"] == "FAILED"
 
 

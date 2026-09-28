@@ -74,52 +74,58 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 </header>
 
 <div class="wrap">
-<!-- v0.6 strip -->
-  <h2>What changed in v0.6.0</h2>
+<!-- v0.8 strip -->
+  <h2>What changed in v0.8.0</h2>
   <div class="grid">
-    <div class="card"><h3>The idle analysts got real data</h3>
-      <p>Fundamentals and news now come from <strong>SEC EDGAR</strong>, point in time by
-         construction (every fact carries its filing date; first prints kept). Measured: on the
-         core equities the rules were chosen on, per-name Sharpe 0.00 (design) and
-         +0.01 (holdout) with intervals ±0.1, exposure +4–7 pts,
-         drawdown +3–4 pts; on the extended equities the rules never saw,
-         +0.02 and +0.07 with intervals that exclude zero. The 15-sleeve
-         portfolio's holdout Sharpe went 1.16 → 1.09. The data stays on; the rules that read it are the next thing to put through the protocol.</p></div>
-    <div class="card"><h3>Cross-sectional analyst, measured</h3>
-      <p>The v0.5 cross-sectional research finally feeds an analyst: names ranked against their peers on
-         every date, significance-gated like the alpha analyst. Core design period: -0.01 of Sharpe
-         [-0.02, 0.00], holdout 0.00; extended universe holdout -0.01, reserve -0.03.
-         It spoke on 2.6% of sampled decisions (never on FX): no alpha clears the cross-sectional gate on most dates. Verdict under the protocol: <strong>kept off by default</strong>.</p></div>
-    <div class="card"><h3>Power across instruments</h3>
-      <p>A bootstrap over <em>instruments</em> (pairs kept together) now sits under every table. Core holdout,
-         desk minus buy &amp; hold: -0.08 [-0.19, +0.02], p 0.12;
-         minus the vol-targeted control: -0.09 [-0.20, +0.01]; 45 extended names
-         vs buy &amp; hold: -0.04 [-0.10, +0.01]. The per-name edge is noise; the drawdown is not.</p></div>
-    <div class="card"><h3>The model's judgement, instrumented</h3>
-      <p>Repeated runs (<code>--repeats</code>) measure the model's own variance; a calibration harness runs one frozen
-         state n times per anchor for dispersion, anchoring on the book and drift; a prompt registry hashes every prompt
-         into each result. The multi-year LLM run (Opus, Sonnet and Haiku tiers on the core universe over design and
-         holdout, repeats, calibration) is staged with a dollar cap per stage but has not been run yet -- the
-         five-stock, one-quarter result above remains the only measured one.</p></div>
+    <div class="card"><h3>Every number re-measured</h3>
+      <p>A tier-1 review of v0.7 (91 findings) changed the engine: constant units between decisions with
+         post-cost sizing, a <strong>cash leg</strong> (idle capital earns the 3-month bill; Sharpe on excess
+         returns), equity-scaled impact with each sleeve paying at its own capital, the desk told its true
+         position after a stop, gap-through-take fills at the open, a two-stage cluster bootstrap. No number
+         from v0.7 is carried forward: <code>scripts/measure_v08.py</code> re-measures every published table
+         into <code>results/v08/</code> (each file carries its provenance) and
+         <code>scripts/render_v08_tables.py</code> prints what the documents paste.</p></div>
+    <div class="card"><h3>The cash leg decided the headline</h3>
+      <p>Holdout 15-sleeve portfolio, cash leg on: desk Sharpe 0.80 vs 0.86 plain buy &amp; hold vs 0.99
+         vol-targeted (desk − B&amp;H −0.06 [−0.41, +0.30] p 0.748; desk − vol-target −0.19 [−0.53, +0.16]
+         p 0.297, paired block bootstrap over days). Cash leg off, the v0.7 convention: 1.04 / 1.05 / 1.24.
+         The order is the same either way, so the v0.7 "beats plain buy &amp; hold" (1.09 vs 1.06) is
+         <strong>retracted</strong>.</p></div>
+    <div class="card"><h3>Drawdown against the fair control</h3>
+      <p>Core holdout mean max drawdown 17.40% (desk) vs 31.64% (buy &amp; hold) vs 18.98% (vol-target):
+         −14.24 points [−20.41, −8.70] p 0.00 against buy &amp; hold, BH-significant; −1.58 [−4.33, +1.14] p 0.27
+         against the control, not. On the 10 core equities the desk's drawdown is not lower than the
+         control's (+0.83 [−1.63, +3.21] p 0.50, not BH-significant); on the 45 extended names it is (−4.33 [−6.10, −2.55] p 0.00,
+         BH-significant). On FX the control sits at the shared position cap, so there is no control.</p></div>
+    <div class="card"><h3>Retracted</h3>
+      <p>The v0.7 stratified bootstrap (it could only narrow intervals; replaced by the cluster bootstrap);
+         the v0.7 execution-algorithm magnitudes (every sleeve was charged √15× too much — re-measured at the
+         sleeve's capital on the $1B holdout portfolio: VWAP 0.66%, TWAP 0.70%, Almgren–Chriss (κ=5) 0.87% of the
+         sleeve paid in impact, Sharpe 0.78 / 0.78 / 0.77); "the desk's own risk model is calibrated" (what was
+         tested was the portfolio's own returns — the desk's per-instrument forecast is now tested: Kupiec
+         rejects on 2 of 15 core instruments at 5%, Christoffersen independence on 6 of 15); and the
+         portfolio's "beats plain buy &amp; hold".</p></div>
     <div class="card"><h3>Engineering</h3>
-      <p>Hypothesis fuzzing of the agentic layer (tool arguments, plans, policy, model replies, untrusted text);
-         a bounded task pool with a queue limit (503 when full) and multi-process serving over the task store;
-         cookbook, diagrams and links checked in CI; one knob for the alpha window. The C++ boundary fuzzer found a
-         real <code>sma</code> divergence on tiny values, fixed on both backends — 19 of 1,680 published rows moved,
-         all but a few at the last digit, and every table was re-run.</p></div>
+      <p>832 tests collected on both backends (C++ 832 passed; numpy 796 passed, 36 C++-only skipped), 95% line
+         coverage, 25 C++ test functions; every result carries <code>provenance</code> (version, commit,
+         backend, dependency versions) and a <code>*.provenance.json</code> sidecar; the lock file is
+         Python-3.12-only. The measurement driver hands each run its own provider settings — a first run had
+         shared one provider, leaving EDGAR and the cash leg on in the "off" runs, and those five files were
+         re-measured. Nothing remains unseen: the reserve period and the extended universe were consulted for
+         earlier decisions, and v0.8 re-measured every period.</p></div>
   </div>
 
   <h2>Measured, not claimed</h2>
   <div class="numbers">
-    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 319 pytest tests green (94% line coverage) — 21 hypothesis fuzz properties on the C++ boundary + 7 on the agentic layer · 37 v0.7 features · 20 v0.6 features · 11 EDGAR · 19 v0.5 features · 30 agentic · 15 adversarial · 7 services (FastAPI client + a real MCP stdio round trip) · 20 quant research · 38 quant edge cases · 27 agent · 17 workflow · 13 data · 11 LLM-eval · 26 pipeline/quant · 14 C++ groups (44 checks)<br>
+    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 832 pytest tests collected on both backends (C++ backend 832 passed; numpy fallback 796 passed, 36 C++-only skipped) · 95% line coverage on the numpy backend (weakest file <code>data/yahoo.py</code> 75%) — 105 v0.8 fixes + 17 CLI · 68 v0.8 agents · 59 hypothesis fuzz properties on the C++ boundary + 7 on the agentic layer · 57 v0.8 engine · 57 v0.8 data · 41 v0.8 execution · 41 v0.8 agentic · 38 quant edge cases · 37 v0.7 · 35 agent · 30 v0.8 portfolio · 30 agentic · 21 v0.8 CLI · 20 v0.6 · 20 quant research · 19 v0.5 · 19 pipeline · 17 workflow · 15 adversarial · 13 data · 12 v0.8 stats · 11 LLM-eval · 11 EDGAR · 10 v0.8 protocol · 8 v0.8 alpha · 7 services (FastAPI client + a real MCP stdio round trip) · 7 quant · 25 C++ test functions (one ctest test)<br>
     One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans · every transition written to SQLite when a task store is configured<br>
     Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 16 tools on 5 servers (market_data · quant incl. cross-sectional alphas · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
     Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → read-only → argument guards → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API · a bounded task pool per process (503 + Retry-After when full) and multi-process serving over the task store<br>
-    Knowledge (RAG)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 runbooks and policies · 59 chunks · dependency-free hashed TF-IDF · served as DOCUMENT evidence and shown to the trader and PM<br>
+    Knowledge (RAG)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 runbooks and policies · 76 chunks · dependency-free hashed TF-IDF · served as DOCUMENT evidence and shown to the trader and PM<br>
     Quant research&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 9 alphas, time-series and cross-sectional (per-date IC, quantile spreads, breadth) · 4 execution algorithms + intraday simulator · square-root impact inside the backtester · 5 weighting schemes with Ledoit-Wolf covariance, cross-asset risk budgets and attribution · bootstrap, probabilistic and deflated Sharpe · a paired bootstrap across instruments · ALFRED vintages · SEC EDGAR point-in-time fundamentals and filing news<br>
-    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every choice) + 45 never consulted · design 2016–21 · holdout 2022–26 run once · reserve from 2026-07 untouched · 16-variant rule ablation · alpha analyst measured three times and kept off · impact sweep at $100k / $10M / $1B · first LLM run: 5 stocks × Q1 2024, 271 Claude calls, $4 · EDGAR data change and the cross-sectional analyst measured on all 60 names × 4 periods with bootstrap intervals · prompt hashes in every result · a calibration harness · the multi-year LLM run staged (not yet executed) with a dollar cap per stage<br>
-    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; v0.6 defaults (EDGAR on): 15-sleeve portfolio holdout Sharpe 1.09 vs 1.06 buy &amp; hold vs 1.24 vol-targeted B&amp;H, max drawdown 7.8% vs 20.8% · extended 45 names: mean Sharpe 0.45 vs 0.50 B&amp;H (-0.04 [-0.10, +0.01]), lower drawdown on 42 of 45 · v0.5.1 FX carry rule: chosen on core design, better on every unseen slice<br>
-    Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈9.2k lines of Python in <code>agentic_trader</code> (50 files; 2.7k in the agentic layer, 1.1k research, 0.6k EDGAR / prompts / calibration) · ≈1.2k lines of C++17 · ≈3.0k lines of tests · MSVC /W4 and GCC -Wall -Wextra clean · CI on Linux, Windows, macOS, Python 3.10–3.14
+    Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every rule choice) + 45 extended (no rule tuned on them) · design 2016–21 · holdout 2022–26 · reserve 2026-07 → 2026-09, spent: it and the extended universe were consulted for the v0.5.1 and v0.6 decisions, and v0.8 re-measured every period, so the next unseen data is the future · 26-trial registry (24 re-measured under the v0.8 engine) · alpha and cross-sectional analysts measured on the design period and kept off · impact sweep at $100k / $10M / $1B, equity-scaled · first LLM run: 5 stocks × Q1 2024, 271 Claude calls, $4 (pre-v0.8 engine, not re-derived) · EDGAR on/off, the carry rule, the track-record cut and the cross-sectional analyst re-checked on all 60 names × 4 periods (cluster-bootstrap intervals on the all-60 rows, instrument bootstrap on the core and extended rows); the v0.2 rules and the alpha analyst re-checked on the 15 core names × 4 periods (instrument-bootstrap intervals) · VaR coverage of the desk's own forecast · prompt hashes and provenance in every result · a calibration harness · the multi-year LLM run staged (not yet executed) with a dollar cap per stage<br>
+    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; v0.8 (cash leg on, Sharpe on excess returns): 15-sleeve portfolio holdout Sharpe 0.80 vs 0.86 plain buy &amp; hold vs 0.99 vol-targeted B&amp;H (desk − B&amp;H −0.06 [−0.41, +0.30] p 0.748; desk − vol-target −0.19 [−0.53, +0.16] p 0.297, block bootstrap over days), max drawdown 7.80% vs 20.43% vs 9.17% · extended 45 names: median Sharpe 0.25 vs 0.39 B&amp;H (mean difference −0.07 [−0.12, −0.02] p 0.01, BH-significant, bootstrap over instruments) vs 0.27 vol-target (−0.03 [−0.09, +0.02] p 0.19, not BH-significant); mean max drawdown 15.46% vs 26.39% vs 19.79% · v0.5.1 FX carry rule: chosen on the core design period; on minus off positive on every slice, small, with intervals touching zero on most<br>
+    Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈13.7k non-empty lines of Python in <code>agentic_trader</code> (57 files; 3.9k in the agentic layer, 2.0k research, 1.1k EDGAR / prompts / calibration) · ≈1.7k lines of C++17 incl. its tests · ≈10.9k lines of tests · MSVC /W4 and GCC -Wall -Wextra clean · CI on Linux, Windows, macOS, Python 3.10–3.14
   </div>
 
   <div class="honest">
@@ -130,18 +136,29 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     attached as a warning — the adversarial suite feeds a fabricated "350 bps / 88% / CALC-badbadba"
     narrative, an injected headline that tries to close the untrusted block, a rogue plan with an order
     and a shell command, and a model that returns a 5.0 weight, and checks that each is contained.
-    The performance figures above are from the <em>rule-based</em> desk. Out of sample it does not beat
-    buy &amp; hold on Sharpe per instrument — on the 15 names its rules were chosen on, and again on 45
-    names they never saw, and the v0.6 bootstrap across instruments says the difference is noise either
-    way; it takes about half the drawdown on both. Giving its untuned fundamentals and news rules real
-    point-in-time filings (v0.6) added exposure and drawdown on the core names for no Sharpe, and a small
-    interval-clearing gain on the extended names; the portfolio's holdout Sharpe went 1.16 → 1.09,
-    and the data stays on anyway. Adding the alpha library as an analyst measured as noise three times
-    and stays off; the cross-sectional analyst is kept off by default. With market impact on, the verdict
-    holds at $100k and $10M and the desk loses 0.09 of Sharpe at $1B. The LLM desk has been measured once
-    (v0.5.1: five stocks, one quarter, Claude Opus, anonymised prompts, $4): the same Sharpe as the
-    rules, less than half the exposure, return and drawdown — a single quarter shows what it does, not
-    whether it has an edge; the multi-year run is staged, dollar-capped per stage, and has not been executed.
+    The performance figures above are from the <em>rule-based</em> desk, re-measured in v0.8 with idle
+    cash credited at the 3-month bill and Sharpe on excess returns (every number is copied from
+    <code>results/v08/tables.md</code>). Out of sample it is <strong>below buy &amp; hold on Sharpe</strong>:
+    per instrument on the 15 names its rules were chosen on (core holdout median 0.30 vs 0.51; mean
+    difference −0.10 [−0.21, −0.00] p 0.04, not BH-significant, bootstrap over instruments) and on the 45
+    names it was never tuned on, where the deficit clears the BH bar (0.25 vs 0.39; −0.07 [−0.12, −0.02]
+    p 0.01), and as a 15-sleeve portfolio inside the noise (0.80 vs 0.86; −0.06 [−0.41, +0.30] p 0.748,
+    block bootstrap over days). It takes about half of buy &amp; hold's drawdown (core holdout 17.40% vs
+    31.64%; −14.24 points [−20.41, −8.70] p 0.00, BH-significant), which buy &amp; hold scaled to the same
+    volatility also achieves (18.98%; desk − vol-target −1.58 [−4.33, +1.14] p 0.27); on the core equities
+    the desk's drawdown is not lower than that control's (+0.83 [−1.63, +3.21] p 0.50, not BH-significant). The v0.7 claim that
+    the portfolio beat plain buy &amp; hold (1.09 vs 1.06) is retracted; with the cash leg off the holdout
+    order is the same (1.04 / 1.05 / 1.24). Giving its untuned fundamentals and news rules point-in-time
+    filings adds exposure and drawdown on the core names for about no Sharpe (+0.01 [−0.03, +0.04] p 0.72
+    on the design period) and a small gain on the extended names (holdout +0.03 [+0.01, +0.06] p 0.00;
+    all 60 with the cluster bootstrap +0.02 [−0.02, +0.05] p 0.39; the on/off tables carry no BH flag),
+    and the data stays on. The alpha analyst (design −0.00 [−0.05, +0.05] p 0.90) and the cross-sectional
+    analyst (−0.01 [−0.02, +0.00] p 0.36) measure as nothing on the design period and stay off. With market
+    impact on, the desk keeps its Sharpe at $100k and $10M and loses 0.05 (design) / 0.03 (holdout) at
+    $1B. The LLM desk has been measured once (v0.5.1: five stocks, one quarter, Claude Opus, anonymised
+    prompts, $4): the same Sharpe as the rules, less than half the exposure, return and drawdown — produced
+    under the pre-v0.8 engine and not re-derived; a single quarter shows what it does, not whether it has
+    an edge; the multi-year run is staged, dollar-capped per stage, and has not been executed.
   </div>
 
   <h2>The architectural boundary</h2>
@@ -155,6 +172,60 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
   </div>
 
 
+  <h2>Real prices, out of sample (v0.8: every number re-measured; cash leg on, Sharpe on excess returns)</h2>
+  <p class="caption">Holdout 2022-01-03 → 2026-06-30, Yahoo Finance total-return prices, SEC EDGAR point-in-time
+     fundamentals and filings, FRED point-in-time FX carry and 3-month bill, costs included, rules frozen before the run.
+     Portfolio = 15 equal-capital sleeves. Every cell is copied from <code>results/v08/tables.md</code>
+     (sections "portfolio: holdout", "cash leg on vs off: holdout", "portfolio Sharpe difference: holdout").</p>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Portfolio (holdout)</th><th>Sharpe</th><th>t(SR)</th><th>Return</th><th>Max DD</th><th>Exposure</th><th>Sharpe, cash leg off</th><th>Desk − this, Sharpe [95% CI], p</th></tr>
+    <tr class="agent"><td>AgenticTrader v0.8</td><td>0.80</td><td>1.70</td><td>50.62%</td><td>7.80%</td><td>59.10%</td><td>1.04</td><td>—</td></tr>
+    <tr><td>Buy &amp; hold</td><td>0.86</td><td>1.82</td><td>96.91%</td><td>20.43%</td><td>94.96%</td><td>1.05</td><td>−0.06 [−0.41, +0.30], 0.748</td></tr>
+    <tr><td>B&amp;H vol-target (fair control)</td><td>0.99</td><td>2.10</td><td>61.48%</td><td>9.17%</td><td>72.12%</td><td>1.24</td><td>−0.19 [−0.53, +0.16], 0.297</td></tr>
+    <tr><td>SMA(20/50)</td><td>0.64</td><td>1.36</td><td>49.35%</td><td>11.98%</td><td>71.51%</td><td>0.85</td><td>—</td></tr>
+    <tr><td>MACD</td><td>0.38</td><td>0.80</td><td>35.29%</td><td>16.02%</td><td>65.35%</td><td>0.54</td><td>—</td></tr>
+  </table></div>
+  <p class="caption">Portfolio intervals: paired block bootstrap over days (block 10, n 1167). With the cash leg off
+     (the v0.7 convention) the order desk &lt; buy &amp; hold &lt; vol-target is unchanged. Shifting the 5-bar
+     rebalance phase (offsets 0–4) moves the desk's holdout Sharpe across 0.80 / 0.85 / 0.86 / 0.80 / 0.84
+     (spread 0.06) against a fixed 0.99 and 0.86: the cadence noise floor is as large as the differences quoted.</p>
+  <p class="caption">The 15 core instruments every rule choice was made on, median Sharpe and means over instruments,
+     with the paired bootstrap of the desk minus each control (<code>scheme=instruments</code>, 2 groups; "BH" is the
+     Benjamini–Hochberg flag on the unrounded p across the table). Sections "summary: core (15), design / holdout",
+     "head to head: core (15)", "paired Sharpe ... core (15)", "paired MDD% ... core (15)".</p>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Core universe, 15 names</th><th>Design median Sharpe</th><th>Holdout median Sharpe</th><th>Holdout mean max DD</th><th>Holdout mean exposure</th><th>Desk beats it on Sharpe (holdout)</th><th>Desk − this, holdout Sharpe [95% CI], p, BH</th><th>Desk − this, holdout max DD (pts) [95% CI], p, BH</th></tr>
+    <tr class="agent"><td>AgenticTrader v0.8</td><td>0.67</td><td>0.30</td><td>17.40%</td><td>60.51%</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Buy &amp; hold</td><td>0.73</td><td>0.51</td><td>31.64%</td><td>97.39%</td><td>3 / 15</td><td>−0.10 [−0.21, −0.00], 0.04, not significant</td><td>−14.24 [−20.41, −8.70], 0.00, significant</td></tr>
+    <tr><td>B&amp;H vol-target (fair control)</td><td>0.69</td><td>0.52</td><td>18.98%</td><td>73.67%</td><td>4 / 15</td><td>−0.11 [−0.21, −0.00], 0.04, not significant</td><td>−1.58 [−4.33, +1.14], 0.27, not significant</td></tr>
+  </table></div>
+  <p class="caption">The 45 extended instruments no rule was tuned on (they were consulted for the v0.5.1 and v0.6
+     decisions; nothing remains unseen), same layout (<code>scheme=instruments</code>, 3 groups). Sections "summary:
+     extended (45), design / holdout", "head to head: extended (45)", "paired Sharpe ... extended (45)",
+     "paired MDD% ... extended (45)".</p>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Extended universe, 45 names</th><th>Design median Sharpe</th><th>Holdout median Sharpe</th><th>Holdout mean max DD</th><th>Holdout mean exposure</th><th>Desk beats it on Sharpe (holdout)</th><th>Desk − this, holdout Sharpe [95% CI], p, BH</th><th>Desk − this, holdout max DD (pts) [95% CI], p, BH</th></tr>
+    <tr class="agent"><td>AgenticTrader v0.8</td><td>0.51</td><td>0.25</td><td>15.46%</td><td>64.73%</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Buy &amp; hold</td><td>0.55</td><td>0.39</td><td>26.39%</td><td>97.87%</td><td>12 / 45</td><td>−0.07 [−0.12, −0.02], 0.01, significant</td><td>−10.93 [−13.41, −8.64], 0.00, significant</td></tr>
+    <tr><td>B&amp;H vol-target (fair control)</td><td>0.58</td><td>0.27</td><td>19.79%</td><td>81.32%</td><td>16 / 45</td><td>−0.03 [−0.09, +0.02], 0.19, not significant</td><td>−4.33 [−6.10, −2.55], 0.00, significant</td></tr>
+  </table></div>
+  <p class="caption">The cross-sectional analyst under the protocol, re-measured: per-instrument Sharpe with the analyst
+     minus without (both with EDGAR), <code>scheme=instruments</code>; the on/off tables print p without a BH flag.
+     Section "with the cross-sectional analyst (a) vs default (b)". Off by default stands.</p>
+  <div class="tablewrap"><table class="results">
+    <tr><th>Cross-sectional analyst</th><th>Core design</th><th>Core holdout</th><th>Extended 45, holdout</th><th>Extended 45, reserve</th></tr>
+    <tr class="agent"><td>Mean Sharpe difference [95% CI]</td><td>−0.01 [−0.02, +0.00]</td><td>0.00 [−0.01, +0.02]</td><td>−0.00 [−0.01, +0.00]</td><td>−0.02 [−0.06, +0.01]</td></tr>
+    <tr><td>p</td><td>0.36</td><td>0.60</td><td>0.23</td><td>0.20</td></tr>
+    <tr><td>Better on</td><td>5 / 15</td><td>9 / 15</td><td>18 / 45</td><td>14 / 45</td></tr>
+  </table></div>
+
+  <details>
+  <summary><strong>Earlier tables (v0.6, v0.5.1 and v0.5, EDGAR on or off as labelled): holdout portfolio, extended universe, cross-sectional analyst, impact sweep, first LLM run, alpha analyst</strong></summary>
+  <p class="caption"><strong>Measured under the v0.7-and-earlier engine</strong> (constant weight between decisions,
+     no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8
+     re-measurement — see <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/evaluation.md#v08-engine-and-protocol-corrections-and-every-number-re-measured">v0.8</a>.
+     The tables stay as the historical record; where a v0.8 number contradicts a table's conclusion, the line under
+     it says so.</p>
   <h2>Real prices, out of sample (v0.6 defaults: EDGAR on, cross-sectional analyst off)</h2>
   <p class="caption">Holdout 2022-01-03 → 2026-06-30, Yahoo Finance total-return prices, SEC EDGAR point-in-time
      fundamentals and filings, FRED point-in-time FX carry, costs included, rules frozen before the run.
@@ -166,24 +237,27 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <tr><td>Buy &amp; hold</td><td>1.06</td><td>2.24</td><td>86.6%</td><td>20.8%</td><td>98%</td></tr>
     <tr><td>B&amp;H vol-target (fair control)</td><td>1.24</td><td>2.63</td><td>46.3%</td><td>9.8%</td><td>74%</td></tr>
   </table></div>
-  <p class="caption">The 45 extended instruments that no rule choice ever consulted, mean over instruments, with the
-     cross-instrument bootstrap of the desk's Sharpe minus buy &amp; hold's.</p>
+  <p class="caption">v0.8 contradicts this table's conclusion: re-measured with the cash leg the holdout portfolio is
+     0.80 (desk) vs 0.86 (buy &amp; hold) vs 0.99 (vol-target), and 1.04 / 1.05 / 1.24 with it off; "beats plain
+     buy &amp; hold" is retracted (the v0.8 table above).</p>
+  <p class="caption">The 45 extended instruments, mean over instruments, with the v0.6 cross-instrument bootstrap of the
+     desk's Sharpe minus buy &amp; hold's (<code>scheme=instruments</code>, no BH flag was printed then).</p>
   <div class="tablewrap"><table class="results">
     <tr><th>Extended universe, 45 names</th><th>Design mean Sharpe</th><th>Holdout mean Sharpe</th><th>Holdout mean max DD</th><th>Beats B&amp;H (holdout)</th><th>Lower DD than B&amp;H</th><th>Holdout Sharpe − B&amp;H, 95% CI</th></tr>
     <tr class="agent"><td>AgenticTrader v0.6 defaults</td><td>0.52</td><td>0.45</td><td>17.6%</td><td>14 / 45</td><td>42 / 45</td><td>-0.04 [-0.10, +0.01]</td></tr>
     <tr><td>Buy &amp; hold</td><td>0.56</td><td>0.50</td><td>27.2%</td><td>—</td><td>—</td><td>—</td></tr>
     <tr><td>B&amp;H vol-target (fair control)</td><td>0.61</td><td>0.47</td><td>21.1%</td><td>—</td><td>—</td><td>—</td></tr>
   </table></div>
-  <p class="caption">The cross-sectional analyst under the protocol: chosen on the core design period, judged on the
-     unseen slices (per-instrument Sharpe with the analyst minus without, both with EDGAR).</p>
+  <p class="caption">v0.8: holdout median Sharpe 0.25 vs 0.39, desk − buy &amp; hold −0.07 [−0.12, −0.02] p 0.01 and
+     BH-significant — the "noise" reading of this table does not survive; the drawdown gap against the fair control
+     does (−4.33 [−6.10, −2.55] p 0.00, BH-significant).</p>
+  <p class="caption">The cross-sectional analyst under the v0.6 measurement (per-instrument Sharpe with the analyst
+     minus without, both with EDGAR).</p>
   <div class="tablewrap"><table class="results">
     <tr><th>Cross-sectional analyst</th><th>Core design</th><th>Core holdout</th><th>Extended 45, holdout</th><th>Extended 45, reserve</th></tr>
     <tr class="agent"><td>Mean Sharpe difference [95% CI]</td><td>-0.01 [-0.02, 0.00]</td><td>0.00 [-0.02, +0.01]</td><td>-0.01 [-0.01, 0.00]</td><td>-0.03 [-0.07, 0.00]</td></tr>
     <tr><td>Better on</td><td>5 / 15</td><td>8 / 15</td><td>15 / 45</td><td>10 / 45</td></tr>
   </table></div>
-
-  <details>
-  <summary><strong>Earlier tables (v0.5 / v0.5.1: EDGAR off): holdout portfolio, extended universe, impact sweep, first LLM run, alpha analyst</strong></summary>
   <h2>Real prices, out of sample (v0.5.1 rules, EDGAR off)</h2>
   <p class="caption">Holdout 2022-01-03 → 2026-06-30, Yahoo Finance total-return prices, FRED point-in-time
      FX carry, costs included, rules frozen before the run. Portfolio = 15 equal-capital sleeves.</p>
@@ -197,8 +271,11 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <tr><td>SMA(20/50)</td><td>0.84</td><td>1.79</td><td>34.6%</td><td>13.3%</td><td>72%</td></tr>
     <tr><td>MACD</td><td>0.54</td><td>1.14</td><td>20.2%</td><td>16.3%</td><td>66%</td></tr>
   </table></div>
-  <p class="caption">v0.5: the 45 extended instruments (sector equities, rates / credit / commodity ETFs, FX crosses)
-     that no rule choice ever consulted, same frozen rules, mean over instruments.</p>
+  <p class="caption">v0.8 contradicts this table's conclusion: with the cash leg the holdout portfolio is 0.80 (desk)
+     vs 0.86 (buy &amp; hold) vs 0.99 (vol-target); the desk does not beat plain buy &amp; hold on Sharpe under
+     either convention.</p>
+  <p class="caption">v0.5: the 45 extended instruments (sector equities, rates / credit / commodity ETFs, FX crosses),
+     same frozen rules, mean over instruments (they were later consulted for the v0.5.1 and v0.6 decisions).</p>
   <div class="tablewrap"><table class="results">
     <tr><th>Extended universe, 45 names</th><th>Design mean Sharpe</th><th>Holdout mean Sharpe</th><th>Holdout mean max DD</th><th>Beats B&amp;H (holdout)</th><th>Lower DD than B&amp;H</th></tr>
     <tr class="agent"><td>AgenticTrader v0.5.1 rules</td><td>0.51</td><td>0.42</td><td>17.7%</td><td>15 / 45</td><td>40 / 45</td></tr>
@@ -213,9 +290,13 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <tr><td>Buy &amp; hold</td><td>0.62</td><td>0.62</td><td>0.62</td><td>0.62</td><td>1.0%</td></tr>
     <tr><td>MACD</td><td>0.42</td><td>0.41</td><td>0.35</td><td>−0.24</td><td>75.4%</td></tr>
   </table></div>
+  <p class="caption">v0.8 re-measured the sweep with equity-scaled impact: the desk 0.66 → 0.66 → 0.66 → 0.61 at $1B on
+     the design period (4.24% of equity paid), holdout 0.34 → 0.31 (2.53%); the vol-targeted control 0.64 → 0.57;
+     MACD 0.40 → −0.18 (64.71% paid). The magnitudes here are the v0.5 record.</p>
   <p class="caption">v0.5.1: the first LLM measurement — the same desk with Claude Opus (medium effort, one debate round)
      in every reasoning role, anonymised prompts, Q1 2024, five stocks, a decision every 10 bars, against the
-     rule-based desk on identical bars. 271 calls, 0 refusals, 0 fallbacks, $4.12.</p>
+     rule-based desk on identical bars. 271 calls, 0 refusals, 0 fallbacks, $4.12. Produced under the pre-v0.8
+     engine and not re-derived under v0.8; still the only LLM measurement.</p>
   <div class="tablewrap"><table class="results">
     <tr><th>Q1 2024, mean over AAPL · NVDA · MSFT · META · GOOGL</th><th>Sharpe</th><th>Return</th><th>Max DD</th><th>Exposure</th><th>Trades</th></tr>
     <tr class="agent"><td>LLM desk (Claude Opus)</td><td>2.19</td><td>6.9%</td><td>2.2%</td><td>23%</td><td>2.4</td></tr>
@@ -230,6 +311,12 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <tr><td>+ alpha analyst (significance-gated, window fixed)</td><td>0.65</td><td>0.62</td><td>8 / 15</td><td>6 / 15</td></tr>
     <tr><td>alpha analyst replaces technical</td><td>0.57</td><td>0.59</td><td>5 / 15</td><td>5 / 15</td></tr>
   </table></div>
+  <p class="caption">v0.8, alpha analyst with the corrected gate minus default, design core: −0.00 [−0.05, +0.05]
+     p 0.90 — the conclusion (off by default) stands. The rows here are the v0.4 and v0.5.0 record:
+     "+ alpha analyst (v0.4.0)" is one of the two historical trials the current engine cannot re-run
+     (registry: 0.60 recorded); the significance-gated, window-fixed row is the v0.5 trial the registry
+     re-measured under v0.8 at 0.66 (0.65 recorded); "alpha analyst replaces technical" is not a
+     registered trial.</p>
 
   </details>
 
@@ -304,14 +391,15 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
          from the full covariance, with budget vs realised share reported.</p></div>
     <div class="card"><h3>Operations</h3>
       <p>A SQLite task store that writes every run at each state transition and serves old
-         records after a restart (in-flight runs are failed, never silently resumed); a dollar
+         records after a restart (in-flight runs are failed once their heartbeat lease expires, never
+         silently resumed); a dollar
          LLM budget next to the call budget; TLS on the API and a refusal to bind a public
          interface with the shipped development keys; ALFRED vintages so revised macro series
          enter the backtest as first published.</p></div>
     <div class="card"><h3>Backtest statistics</h3>
       <p>Block-bootstrap Sharpe confidence intervals, the probabilistic Sharpe ratio, the
          deflated Sharpe ratio for the number of variants tried, and the minimum track record
-         length — applied to the desk's own 16-variant rule search.</p></div>
+         length — applied to the desk's own 26-trial registry of variants judged on the design period.</p></div>
     <div class="card"><h3>HTTP API &amp; observability</h3>
       <p>FastAPI gateway with API-key roles: 202-accepted tasks run in the background; reports as
          JSON or markdown; traces; evidence; cancel; an approvals queue for the risk role; the tool
@@ -361,7 +449,7 @@ risk team's views were aggressive 0.00, neutral 0.00, conservative 0.00. The cri
 trace: {'spans': 18, 'errors': 0, 'ms_by_kind': {'plan': 0.1, 'prepare': 8.7, 'tool': 12.4, 'agent': 4.9, ...}}</pre>
 
   <h2>The same tools over MCP, and the API</h2>
-<pre>$ agentic-trader mcp                      # stdio server: 16 tools with read-only / risk / capability annotations
+<pre>$ agentic-trader mcp --approval deny      # stdio server: 16 tools with read-only / risk / capability annotations; locked down (tools needing approval refused); --role picks the role every call is evaluated for
 $ agentic-trader serve --task-db results/tasks.sqlite      # http://127.0.0.1:8000/docs, records survive restarts
 $ curl -s -X POST http://127.0.0.1:8000/tasks -H "X-API-Key: dev-trader-key" \
        -H "Content-Type: application/json" -d '{"symbol": "AAPL", "as_of": "2024-03-01", "current_weight": 0.1}'
@@ -401,7 +489,7 @@ agentic-trader task EURUSD --date 2024-03-01 --position 0.2
 # the catalogue, the API and the MCP server
 agentic-trader tools
 agentic-trader serve                      # docs at http://127.0.0.1:8000/docs
-agentic-trader mcp
+agentic-trader mcp --approval deny        # the MCP stdio server, locked down; --role viewer|analyst|trader|risk|admin
 
 # research: alphas (per name and cross-sectional), execution, portfolio construction, statistics
 agentic-trader alpha USDJPY --start 2021-01-04 --end 2024-03-28
@@ -409,7 +497,7 @@ agentic-trader xalpha AAPL,MSFT,NVDA,JPM,XOM --start 2021-01-04 --end 2024-03-28
 agentic-trader execute AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 5000000
 agentic-trader portfolio AAPL,JPM,XOM,EURUSD,USDJPY --start 2023-01-02 --end 2023-12-29 --weighting risk_parity --class-budgets equity=0.6,fx=0.4
 agentic-trader backtest NVDA --start 2024-01-02 --end 2024-03-28 --impact 1.0 --capital 1e9
-agentic-trader stats returns.csv --trials 16
+agentic-trader stats returns.csv --trials 26
 
 # the evaluation on real prices: 60 instruments, design / holdout / Q1 2024 / reserve
 agentic-trader evaluate --data yahoo --universe all --periods design,holdout,q1_2024,reserve

@@ -113,7 +113,11 @@ classDiagram
         list~str~ lessons
         list knowledge
         dict alpha
+        Book book
+        str provider_name
+        str price_basis
         reports_digest()
+        lessons_block()
         to_markdown()
     }
     class AnalystReport {
@@ -126,6 +130,7 @@ classDiagram
         str source
         bool abstained
         float rule_signal
+        bool untrusted
         tuple evidence_ids
     }
     class DebateOutcome {
@@ -175,9 +180,9 @@ flowchart TD
     SC["debate score s in [-1, 1]"] --> TH{"abs(s) > decision_threshold?"}
     TH -- no --> NW["w = neutral weight<br/>equity 1.0 · FX clip(carry% / 2, ±0.5)"]
     TH -- yes --> TL["w = clip(neutral + 2s, -1, 1)"]
-    NW --> SH["floor at 0 if shorting not allowed<br/>x0.75 if hit rate < 40% over 5+ calls"]
+    NW --> SH["floor at 0 if shorting not allowed<br/>x0.75 if hit rate < 40% over 5+ resolved calls<br/>(rules.track_record_cut, on by default)"]
     TL --> SH
-    SH --> RV["risk team<br/>aggressive: max(1.25 abs(w), vol-target)<br/>neutral: w x 15% / realised vol<br/>conservative: half the smaller, VaR-capped"]
+    SH --> RV["risk team<br/>aggressive: max(1.25 abs(w), vol-target)<br/>neutral: w x 15% / realised vol<br/>conservative: half the smaller, VaR-capped<br/>(the tail chosen by the sign of w)"]
     RV --> BL["PM blend 25 / 50 / 25<br/>(or Claude's weight)"]
     BL --> LIM["firm limits (diagram 5)"]
     LIM --> BD["no-trade band vs current position"]
@@ -194,17 +199,20 @@ flowchart TD
     S -- no --> C{"abs(w) > max_position?"}
     Z1 --> C
     C -- yes --> C1["w = ±max_position"]
-    C -- no --> V{"VaR95 · abs(w) > max_var_95?"}
+    C -- no --> V{"VaR95 · abs(w) > max_var_95?<br/>(VaR of w's own tail: left for a long,<br/>right for a short)"}
     C1 --> V
     V -- yes --> V1["w = ±max_var_95 / VaR95"]
-    V -- no --> MN{"0 < abs(w) < min_trade_weight?"}
-    V1 --> MN
+    V -- no --> BK{"max_book_var_95 set<br/>and w ≠ 0?"}
+    V1 --> BK
+    BK -- yes --> BV["book_var_scale: grid search over (0, 1] of w<br/>largest size that keeps the book within the limit;<br/>flat if none does, or if the book VaR cannot be<br/>evaluated (fails closed, note recorded)"]
+    BK -- no --> MN{"0 < abs(w) < min_trade_weight?"}
+    BV --> MN
     MN -- yes --> Z2[w = 0]
     MN -- no --> BAND
     Z2 --> BAND{"current position within<br/>rebalance_band of w?"}
     BAND -- no --> F[final weight = w]
     BAND -- yes --> LEGAL{"would the current position<br/>pass every limit today?"}
-    LEGAL -- yes --> KEEP[final weight = current position]
+    LEGAL -- yes --> KEEP["final weight = current position<br/>(FinalDecision.kept = true: the backtester<br/>executes it as no trade, even past the cap)"]
     LEGAL -- no --> F
     F --> A["action = BUY / SELL / HOLD<br/>every adjustment recorded"]
     KEEP --> A
@@ -335,13 +343,13 @@ flowchart TD
     REG -- yes --> POL["policy.evaluate(request, descriptor, role)"]
     POL --> OUT{outcome}
     OUT -- DENY --> FAILD["error: denied by policy (rule)<br/>+ FAILED evidence"]
-    OUT -- REQUIRE_APPROVAL --> GW{gateway.decide}
+    OUT -- "ALLOW / REQUIRE_APPROVAL" --> CO["coerce_arguments(schema)<br/>dates · ints · bounds · no extras<br/>(before any approver sees the request)"]
+    CO -- invalid --> FAILA["error: denied by policy (argument_guard):<br/>bad arguments + FAILED evidence"]
+    CO -- "valid, REQUIRE_APPROVAL" --> GW{gateway.decide}
     GW -- pending --> WAIT["error: awaiting approval<br/>executor.pending_approval = True"]
     GW -- rejected --> FAILR["error: approval rejected"]
-    GW -- approved --> APPR["APPROVAL evidence"] --> CO
-    OUT -- ALLOW --> CO["coerce_arguments(schema)<br/>dates · ints · bounds · no extras"]
-    CO -- invalid --> FAILA["error: bad arguments"]
-    CO -- valid --> RUN["run in a worker thread<br/>timeout · retry transient errors"]
+    GW -- approved --> APPR["APPROVAL evidence"] --> RUN
+    CO -- "valid, ALLOW" --> RUN["run on its own thread under a deadline<br/>read-only: retry transient errors (max_attempts)<br/>state-changing: one attempt, 'outcome unknown, not retried'<br/>timeout: the worker is abandoned and counted"]
     RUN -- error --> FAILX["error + FAILED evidence"]
     RUN -- ok --> EVD["evidence record<br/>type from annotations, args, digest"]
     EVD --> RES["ToolResult ok<br/>metrics + span"]
@@ -355,13 +363,13 @@ flowchart TD
     D1 -- yes --> DENY1[DENY deny_list]
     D1 -- no --> D2{"role holds every<br/>required capability?"}
     D2 -- no --> DENY2[DENY required_capabilities]
-    D2 -- yes --> D3{"tool read-only?"}
+    D2 -- yes --> D4{"arguments pass the guards?<br/>symbol (and every symbols entry, at most 60) valid and in universe ·<br/>dates not in the future · proposed weights finite and within cap<br/>(current_weight: finite, never capped — a fact about the book) ·<br/>lookback bounded · quantity finite and positive · notional ≤ cap"}
+    D4 -- no --> DENY4[DENY argument_guard]
+    D4 -- yes --> D3{"tool read-only?"}
     D3 -- no --> D3b{"role can propose trades?"}
     D3b -- no --> DENY3[DENY read_only]
     D3b -- yes --> REQ1[REQUIRE_APPROVAL read_only]
-    D3 -- yes --> D4{"arguments pass the guards?<br/>symbol valid and in universe · dates not in the future ·<br/>weights finite and within cap · lookback bounded"}
-    D4 -- no --> DENY4[DENY argument_guard]
-    D4 -- yes --> D5{"risk level HIGH?"}
+    D3 -- yes --> D5{"risk level HIGH?"}
     D5 -- yes --> REQ2[REQUIRE_APPROVAL risk_level]
     D5 -- no --> ALLOW[ALLOW default_allow]
     NR["custom rule set with<br/>no terminal rule"] -.-> DENYN[DENY no_rule: fail closed]
@@ -382,10 +390,12 @@ sequenceDiagram
     EX-->>T: awaiting approval
     T->>T: state = AWAITING_APPROVAL, pending_step recorded
     P->>API: GET /approvals (X-API-Key: risk)
-    API-->>P: [{id, task_id, tool, arguments, reason}]
+    Note over API: 409 unless the gateway is queued
+    API-->>P: [{id, task_id, tool, arguments (the full ticket), reason, created_at}]
     P->>API: POST /approvals/{id} {approve: true}
     API->>Q: resolve(id, approved, by, note)
-    API->>T: harness.decide_approval -> APPROVAL evidence -> resume
+    API->>T: harness.decide_approval -> APPROVAL evidence
+    Note over API,T: a continuation is scheduled only when the run is parked and nobody drives it, and the reply says so (resumed true or false)
     T->>EX: execution.submit_order(...) again (same identity)
     EX->>Q: decide -> approved
     EX-->>T: ticket
@@ -400,7 +410,7 @@ flowchart TD
     EACH --> TYPE{type}
     TYPE -- tool --> KNOWN{"tool in catalogue?"}
     KNOWN -- no --> DROP1[drop + note]
-    KNOWN -- yes --> ARGS["keep only schema arguments<br/>pin symbol and as_of to the task"]
+    KNOWN -- yes --> ARGS["keep only schema arguments<br/>pin symbol and as_of to the task<br/>drop current_weight when the run's book holds the symbol<br/>symbols: string → list, other shapes drop the step,<br/>clip to the universe and max_symbols_per_call"]
     ARGS --> RO{"read-only?"}
     RO -- no --> DROP2["drop + note:<br/>a plan may not schedule state changes"]
     RO -- yes --> KEEPT[keep tool step]
@@ -503,18 +513,18 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph Proc["agentic-trader process"]
-        REG["ToolRegistry<br/>15 descriptors"]
+        REG["ToolRegistry<br/>16 descriptors"]
         DT["DeskTools<br/>provider · quant · knowledge · positions"]
         REG --- DT
         HAR["AgentHarness"] --> REG
         API["FastAPI app<br/>X-API-Key → role"] --> HAR
     end
     subgraph MCPProc["MCP server process (stdio)"]
-        MS["MCPServer<br/>market_data__news, quant__technical, ...<br/>read-only / risk / capability annotations"]
+        MS["MCPServer<br/>market_data__news, quant__technical, ...<br/>read-only / risk / capability annotations<br/>every call through a governed ToolExecutor<br/>(policy · approval gateway · evidence, one role per session)"]
     end
     REG -.->|"build_mcp_server()"| MS
     CLIENT["any MCP client<br/>IDE · assistant · another agent"] <-->|JSON-RPC over stdio| MS
-    REMOTE["registry_from_stdio()<br/>remote tools as local descriptors"] <-->|stdio| MS
+    REMOTE["registry_from_stdio()<br/>remote tools as local descriptors, one server session<br/>(every remote tool state-changing, high risk,<br/>whatever the server claims; operator overrides only,<br/>the desk's own catalogue by default)"] <-->|stdio| MS
     REMOTE --> HAR2["a second harness<br/>policy + evidence unchanged"]
     OPS["operator / OMS"] -->|"POST /tasks · GET /report · /approvals · /metrics"| API
 ```
@@ -523,30 +533,29 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    Q["macro(EURUSD, as_of)"] --> SRC{"fx_macro_source"}
-    SRC -- "auto + synthetic data / static" --> ST["static illustrative table<br/>(part of the synthetic world)"]
-    SRC -- "auto + real data / fred" --> F["FRED series per currency<br/>DFF · ECBDFR · IUDSOIA · monthly OECD"]
+    Q["macro(EURUSD, as_of)<br/>and carry_series(EURUSD, dates)"] --> SRC{"fx_macro_source"}
+    SRC -- "auto + synthetic data / static" --> ST["static illustrative table<br/>(part of the synthetic world)<br/>macro_source = static"]
+    SRC -- "auto + real data / fred" --> F["fx_rates(): one resolver for both callers<br/>FRED series per currency<br/>DFF · ECBDFR · IUDSOIA · monthly OECD<br/>(no SEK series)"]
     F --> LAG["shift each observation<br/>by its publication lag<br/>daily +1d · monthly +40d · CPI +45d / +120d"]
-    LAG --> LAST["last value published<br/>on or before as_of"]
+    LAG --> LAST["last value published<br/>on or before the date"]
     LAST --> AGE{"older than max age?<br/>daily 10d · monthly 100d"}
-    AGE -- no --> USE["rate_diff = base - quote<br/>(+ inflation if both fresh)"]
-    AGE -- yes --> REC{"as_of within 180 days<br/>of today?"}
-    REC -- yes --> ST
-    REC -- no --> NONE["{} : macro analyst abstains,<br/>carry = 0 for that bar"]
+    AGE -- no --> USE["rate_diff = base - quote<br/>(+ inflation if both fresh)<br/>macro_source = fred"]
+    AGE -- yes --> NONE["{} : macro analyst abstains,<br/>strategic FX weight 0,<br/>carry NaN → 0 credited on that bar<br/>(never the static table, whatever today's date)"]
     USE --> CARRY["same series, vectorised:<br/>per-bar carry in the backtest"]
+    CASH["risk_free_series(dates)<br/>cash_leg auto: DTB3 (+1d lag) on real data,<br/>risk_free_annual on synthetic / CSV"] --> ENG["backtester: idle cash credited,<br/>metrics on excess returns"]
 ```
 
 ## 18. Walk-forward backtest timing
 
 ```mermaid
 flowchart LR
-    subgraph t0["bar t (rebalance)"]
-        C0[close t] --> DEC["propagate(as_of = t,<br/>current_weight = held)<br/>data <= close t"]
+    subgraph t0["bar t (decision)"]
+        C0[close t] --> DEC["propagate(as_of = t,<br/>current_weight = the position actually held:<br/>0 after a stop / take, else the drifted weight)<br/>data <= close t"]
     end
-    DEC -->|"target weight w_t,<br/>stop / take levels"| H["held from close t<br/>to next rebalance"]
-    H --> R["earns return t → t+1, …<br/>minus abs(Δw) × (cost + slippage)<br/>plus carry(t) / minus borrow"]
+    DEC -->|"target weight w_t (clamped to the cap),<br/>or a marked keep (FinalDecision.kept): no trade,<br/>stop / take levels"| H["units bought at close t<br/>held to the next decision"]
+    H --> R["costs on abs(Δw) out of equity first,<br/>then w_t × price return + carry on the notional<br/>+ cash rate on the idle fraction − borrow;<br/>on hold bars the weight drifts: no trade, no cost"]
     H -.->|"use_stops"| ST["intraday stop / target<br/>check on each bar (diagram 19)"]
-    R --> N["bar t+k: next rebalance"]
+    R --> N["bar t+k: next decision<br/>(earlier if the target changes)"]
     ST --> N
 ```
 
@@ -556,20 +565,22 @@ flowchart LR
 flowchart TD
     POS["long position held over (t, t+1]<br/>stop s, target k"] --> O1{"open(t+1) <= s?"}
     O1 -- yes --> GAPS["exit at the open<br/>(gapped through the stop)"]
-    O1 -- no --> L1{"low(t+1) <= s?"}
-    L1 -- yes --> STOP["exit at s<br/>(stop checked before target:<br/>pessimistic when both trade)"]
-    L1 -- no --> O2{"open(t+1) >= k?"}
-    O2 -- yes --> GAPT["exit at the open"]
-    O2 -- no --> H1{"high(t+1) >= k?"}
+    O1 -- no --> O2{"open(t+1) >= k?"}
+    O2 -- yes --> GAPT["exit at the open<br/>(gapped through the target)"]
+    O2 -- no --> L1{"low(t+1) <= s?"}
+    L1 -- yes --> STOP["exit at s<br/>(inside the range the stop is checked<br/>before the target: pessimistic when both trade)"]
+    L1 -- no --> H1{"high(t+1) >= k?"}
     H1 -- yes --> TAKE[exit at k]
     H1 -- no --> HOLD["hold to close(t+1)"]
-    GAPS --> FLAT["pay exit cost · flat until<br/>the next rebalance re-arms"]
+    GAPS --> FLAT["pay exit cost · flat until<br/>the next decision re-arms;<br/>the desk is told it holds 0"]
     STOP --> FLAT
     GAPT --> FLAT
     TAKE --> FLAT
 ```
 
-Shorts mirror this: stop above the entry (open ≥ s or high ≥ s), target below it.
+Shorts mirror this: stop above the entry (open ≥ s or high ≥ s), target below it. The open
+is resolved against both levels first; only then does the stop-first rule apply to the
+intrabar range (`_exit_fill` in `quant/pycore.py`, the same order in `backtest.hpp`).
 
 ## 20. Alpha research pipeline
 
@@ -577,37 +588,50 @@ Shorts mirror this: stop above the entry (open ≥ s or high ≥ s), target belo
 flowchart LR
     OHLC["OHLCV + carry<br/>(point in time)"] --> SIG["9 signals in [-1, 1]<br/>tsmom_12_1 · mom_20_vol · reversal_5 · high_52w ·<br/>donchian_20 · macd_norm · rsi_contrarian · low_vol · carry"]
     SIG --> FWD["forward returns<br/>horizons 1 · 5 · 10 · 21 · 42"]
-    SIG --> IC["Spearman IC + t-stat (C++)"]
+    SIG --> IC["Spearman IC (C++) + overlap-aware t:<br/>IC · sqrt(n / horizon)"]
     FWD --> IC
     IC --> DEC["IC decay by horizon"]
-    SIG --> HIT["hit rate · tercile spread ·<br/>autocorrelation (turnover) · coverage"]
+    SIG --> HIT["hit rate beside the base rate (up%) ·<br/>tercile spread by rank ·<br/>autocorrelation (turnover) · coverage"]
     SIG --> CORR["signal correlations"]
-    IC --> COMB["combine(): weights = max(IC, 0)"]
-    COMB --> SNAP["alpha snapshot<br/>quant.alpha tool → AlphaAnalyst"]
+    SIG --> SNAP["alpha snapshot: latest values<br/>+ equal-weighted 'combined' (ungated)<br/>quant.alpha tool"]
+    IC --> GATE["significant_alpha_signal():<br/>keep alphas with abs(t) ≥ 2 and n ≥ 30,<br/>abs(IC)-weighted mean, else abstain"]
+    SNAP --> GATE
+    GATE --> AN["AlphaAnalyst (opt-in, off by default)"]
     DEC --> REP[/AlphaReport/]
     HIT --> REP
     CORR --> REP
-    SNAP -.->|"measured on the design period:<br/>noise → off by default"| EVAL["evaluate()"]
+    XS["cross-sectional scores<br/>(diagram 26) through the same gate"] --> XAN["XAlphaAnalyst (opt-in)"]
+    AN -.->|"measured on the design period<br/>under the protocol"| EVAL["evaluate()"]
+    XAN -.-> EVAL
 ```
 
 ## 21. Execution: decision to fills
 
 ```mermaid
 flowchart TD
-    D["FinalDecision target weight<br/>+ current weight + capital + last price + ADV"] --> PL["plan_execution()"]
-    PL --> Q["quantity = |Δw| × capital / price<br/>shares or base-currency units"]
-    Q --> ALG{"algorithm"}
+    D["FinalDecision target weight<br/>+ current weight (from the run's position book)<br/>+ capital + last close + ADV"] --> PL["plan_execution()<br/>long-only policy: a negative equity target<br/>is truncated to flat; a change below one<br/>share or lot is nothing to trade (trade: false)"]
+    PL --> N["notional = abs(Δw) × capital<br/>in the account currency (USD)"]
+    N --> Q{"instrument"}
+    Q -- equity --> QE["shares = floor(notional / price)"]
+    Q -- "FX, base = account" --> QB["base units = notional<br/>(USDJPY: 500,000 USD)"]
+    Q -- "FX, quote = account" --> QQ["base units = notional / price"]
+    Q -- "FX cross" --> QX["base units = notional / (base→account rate)<br/>fetched point in time, or refused"]
+    QE --> LOT["rounded down once, here: whole shares or<br/>whole lots (fx_lot_size 1000) · notional recomputed ·<br/>intent · plan reference (checksum)"]
+    QB --> LOT
+    QQ --> LOT
+    QX --> LOT
+    LOT --> ALG{"algorithm"}
     ALG -- "FX" --> TWAP["TWAP · 288 slices"]
     ALG -- "equity, order ≤ 10% ADV" --> VWAP["VWAP · 78 slices<br/>U-shaped volume profile"]
     ALG -- "equity, order > 10% ADV" --> POV["POV · participation ≤ 20% per slice"]
-    ALG -- "on request" --> AC["Almgren-Chriss<br/>kappa = sqrt(λσ²/η) (C++)"]
+    ALG -- "on request" --> AC["Almgren-Chriss (C++)<br/>dimensionless urgency κ (costs.ac_kappa, 3.0; 0 = TWAP):<br/>independent of price level and seed"]
     TWAP --> SIM
     VWAP --> SIM
     POV --> SIM
-    AC --> SIM["simulate_execution()<br/>intraday bars: Brownian bridge inside [low, high]<br/>fill at bar VWAP + half spread + sqrt impact<br/>slice capped at bar volume"]
-    SIM --> OUT["ExecutionReport<br/>IS vs arrival · slippage vs VWAP ·<br/>spread and impact bps · completion · max participation"]
-    OUT -.->|"execution.plan tool<br/>(read-only simulation)"| EV[(evidence)]
-    D -.->|"execution.submit_order<br/>HIGH risk → approval"| TICKET["order ticket (no broker)"]
+    AC --> SIM["simulate_execution() on the next session<br/>(arrival = its open; no fill if none exists yet)<br/>intraday bars: Brownian bridge inside [low, high]<br/>fill at bar VWAP + half spread<br/>+ impact_coeff · vol · sqrt(q_i / V_i) per slice<br/>slice capped at the bar's volume"]
+    SIM --> OUT["ExecutionReport<br/>IS on the requested quantity (unfilled marked at the close) ·<br/>opportunity cost · slippage vs VWAP · spread and impact bps ·<br/>executed X of Y · max participation"]
+    OUT -.->|"execution.plan tool<br/>(read-only simulation; payload says<br/>ticketable and order_cap)"| EV[(evidence)]
+    D -.->|"execution.submit_order<br/>HIGH risk → notional cap by policy, then approval;<br/>the plan must be one this desk produced"| TICKET["order ticket (no broker):<br/>quantity + unit · notional + currency · price ·<br/>plan_id (verified) · intent · position before / after;<br/>the run's book moves to position_after"]
 ```
 
 ## 22. Portfolio construction
@@ -615,24 +639,26 @@ flowchart TD
 ```mermaid
 flowchart TD
     T["signed desk targets per sleeve"] --> ACT["active sleeves (target ≠ 0)"]
-    R["trailing instrument returns<br/>(no look-ahead)"] --> COV["EWMA covariance (60d half-life)<br/>shrunk to constant correlation<br/>(Ledoit-Wolf intensity)"]
-    COV --> SCH{"weighting scheme"}
+    R["trailing instrument returns<br/>(no look-ahead)"] --> COV["EWMA covariance (60d half-life)<br/>shrunk to constant correlation<br/>(weighted Ledoit-Wolf intensity at the EWMA's<br/>effective sample size 1 / Σw²)"]
+    COV --> DEG{"no active sleeve<br/>with variance?"}
+    DEG -- yes --> ERR["ValueError: the portfolio backtest<br/>keeps its previous allocation"]
+    DEG -- no --> SCH{"weighting scheme"}
     ACT --> SCH
     SCH -- equal --> A1["1/k"]
     SCH -- inverse_vol --> A2["∝ 1/σ_i"]
     SCH -- risk_parity --> A3["equal risk contributions<br/>(cyclical coordinate descent)"]
     SCH -- min_variance --> A4["argmin w'Σw, w ≥ 0, w ≤ cap"]
     SCH -- mean_variance --> A5["argmax μ'w − λ/2 w'Σw<br/>on the capped simplex"]
-    A1 --> CAP["cap per sleeve · gross ≤ 1"]
+    A1 --> CAP["projection onto the capped simplex:<br/>each ≤ max_weight · sum = gross cap<br/>(= allocation, before vol targeting)"]
     A2 --> CAP
     A3 --> CAP
     A4 --> CAP
     A5 --> CAP
-    CAP --> SIGN["weights = allocation × sign(target) × min(|target|, 1)"]
+    CAP --> SIGN["w = allocation × sign(target) × min(abs(target), 1)"]
     SIGN --> VT{"expected vol < target?"}
-    VT -- yes --> SCALE["scale up, never above gross cap"]
+    VT -- yes --> SCALE["scale = min(target / vol, gross cap / Σabs(w),<br/>cap × gross cap / max abs(w)), never below 1"]
     VT -- no --> RISK
-    SCALE --> RISK["risk attribution<br/>marginal · component · pct · diversification ratio"]
+    SCALE --> RISK["risk attribution<br/>marginal · component · pct · diversification ratio ·<br/>converged flag"]
     RISK --> OUT[/PortfolioWeights/]
 ```
 
@@ -642,21 +668,21 @@ flowchart TD
 flowchart LR
     V02["v0.2 rules<br/>(RULES_V02 reproduces them)"] --> ABL
     subgraph Design["design period 2016 - 2021 (only data used for choices)"]
-        ABL["v0.3: 16 rule variants<br/>v0.4: + alpha analyst (2 variants)"] --> PICK["keep what helps:<br/>strategic weight 1.0 + band 0.10<br/>drop: momentum, filter, abstain, stops, alpha analyst"]
-        PICK --> DSR["selection report:<br/>bootstrap CI · PSR · deflated Sharpe<br/>for the 16 trials"]
+        ABL["v0.3: 16 rule variants<br/>v0.4 / v0.5: + 3 alpha-analyst variants<br/>v0.5.1: 4 FX-carry settings · v0.6: xalpha, EDGAR off<br/>v0.8: track-record cut off"] --> PICK["keep what helps:<br/>strategic weight 1.0 + band 0.10 + FX carry / 2<br/>drop: momentum, filter, abstain, stops, alpha analysts"]
+        PICK --> DSR["selection report:<br/>bootstrap CI · PSR · deflated Sharpe<br/>for the 26 registered trials (evaluation.TRIALS)"]
     end
     PICK --> FREEZE["freeze defaults<br/>in config.py"]
     FREEZE --> HO["holdout 2022 - 2026<br/>run once (core 15)"]
     FREEZE --> PW["Q1 2024 window"]
-    HO --> REP["report whatever it shows<br/>vs B&H and vol-targeted B&H"]
+    HO --> REP["report whatever it shows<br/>vs B&H and vol-targeted B&H<br/>(idle cash credited, excess Sharpe, since v0.8)"]
     PW --> REP
     REP -. "v0.4 reported the holdout:<br/>it is now seen" .-> FRESH
-    subgraph FRESH["v0.5: what 'unseen' means from here"]
-        EXT["extended universe (45 names)<br/>never consulted, every period"]
-        RES["reserve period<br/>2026-07-01 onwards, grows"]
+    subgraph FRESH["v0.5 declared what 'unseen' meant; v0.8 records that it is spent"]
+        EXT["extended universe (45 names), every period:<br/>judged the v0.5.1 carry rule and<br/>the v0.6 EDGAR / xalpha decisions"]
+        RES["reserve period 2026-07-01 → 2026-09-25:<br/>used for the same judgements"]
+        V08["v0.8: engine corrected, every period<br/>re-measured (results/v08):<br/>no held-out data remains"]
     end
-    NEXT["next rule change:<br/>choose on core design only"] --> EXT
-    NEXT --> RES
+    NEXT["next rule change:<br/>choose on core design only;<br/>the next unseen data is the future"] -.-> FRESH
 ```
 
 ## 24. Package dependencies
@@ -709,16 +735,16 @@ flowchart LR
         VOL["daily vol_t<br/>(trailing 20 bars)"]
         ADV["ADV_t<br/>(trailing 20-bar volume)"]
         PX["price_t"]
-        CAP["initial_capital"]
+        CAP["initial_capital<br/>(× the sleeve's capital share<br/>in a portfolio: K ∝ sqrt(capital))"]
     end
-    VOL --> K["K_t = coeff · vol_t · sqrt(capital / (price_t · ADV_t))"]
+    VOL --> K["K_t = coeff · vol_t · sqrt(capital / (price_t · ADV_t))<br/>× algo_cost_ratio when costs.execution_algo is twap / ac"]
     ADV --> K
     PX --> K
     CAP --> K
-    K --> ENG["run_backtest(..., impact=K)<br/>C++ / numpy twin"]
+    K --> ENG["run_backtest(..., impact=K)<br/>C++ / numpy twin<br/>K_t rescaled by sqrt(equity_t / initial_capital)<br/>at each trade: the notional actually traded"]
     W["target weights<br/>(agent or any baseline)"] --> ENG
-    ENG --> T["trade |dw| at bar t<br/>cost = |dw|^1.5 · K_t"]
-    ENG --> X["stop / target exit at t+1<br/>cost = |w|^1.5 · K_t+1"]
+    ENG --> T["trade abs(dw) at bar t<br/>cost = abs(dw)^1.5 · K_t · sqrt(E_t / E_0)"]
+    ENG --> X["stop / target exit at t+1<br/>cost = abs(w)^1.5 · K_t+1 · sqrt(E_t / E_0)"]
     T --> R["equity, returns,<br/>impact_paid"]
     X --> R
     R --> TAB["table(): Impact% per strategy"]
@@ -776,11 +802,11 @@ flowchart LR
     CIK --> SUB["submissions/CIK.json<br/>every filing: form, filed, 8-K items"]
     CIK --> FACTS["companyfacts/CIK.json<br/>every XBRL fact with its filed date"]
     SUB --> NEWS["news(as_of, lookback):<br/>filed in (as_of − lookback, as_of]<br/>8-K item → headline + tone<br/>10-K/Q, 13D/G, NT · Form 4 counts"]
-    FACTS --> KNOWN["facts with filed ≤ as_of<br/>first print per span"]
-    KNOWN --> Q["quarterly_series:<br/>direct quarters · YTD differencing<br/>Q4 = FY − 9M · 12/16-week quarters"]
-    Q --> TTM["ttm: four contiguous quarters"]
-    TTM --> F["fundamentals: growth, margin,<br/>EPS, leverage, FCF"]
-    PX["point-in-time close"] --> F2["P/E, FCF yield"]
+    FACTS --> KNOWN["facts with filed ≤ as_of<br/>latest print per span known at as_of"]
+    KNOWN --> Q["quarterly_table, per concept and per basis generation:<br/>concept = a tag, or tags proven equivalent by an identical span<br/>direct quarters · YTD differencing · Q4 = FY − 9M · 12/16-week quarters<br/>re-print within 5%: revision, latest wins ·<br/>material change: needs two spans or a first print's comparative,<br/>reconciling with its own annual span, else mis-tagged and rejected ·<br/>a lone material re-print is ignored and remembered,<br/>taken in place once a later filing repeats it ·<br/>direct Q4 of an additive flow cross-checked against FY (not per-share) ·<br/>concepts and bases are never mixed"]
+    Q --> TTM["ttm: four contiguous quarters<br/>of one concept on one basis<br/>(the concept already reported is kept while it covers;<br/>rank decides only where none does)"]
+    TTM --> F["fundamentals: growth (same concept and basis),<br/>margin (windows ending together), EPS, leverage,<br/>FCF (OCF and capex windows ending together)<br/>guards: instants ≤ 400d; a flow series is dead only when<br/>no filing in 120d printed it — a lagging live window is<br/>kept and flagged (*_period_end) for the analyst to skip"]
+    PX["as-traded close, split-rebased prints"] --> F2["P/E, FCF yield<br/>sanity: market cap ≥ 1% of revenue, EPS ≤ ½ price<br/>share-class ratio first (BRK-B)"]
     F --> F2
     F2 --> FA["Fundamentals analyst"]
     NEWS --> NA["News analyst<br/>(published ≤ as_of guard)"]
@@ -822,9 +848,11 @@ flowchart LR
     subgraph P2["process 2"]
         H2["harness"] --> POOL2["thread pool"]
     end
-    POOL1 --> DB[("task store (SQLite)<br/>every transition")]
+    POOL1 --> DB[("task store (SQLite)<br/>every transition · owner · heartbeat every lease_s / 3<br/>on the runs this instance drives")]
     POOL2 --> DB
-    DB --> R1["GET /tasks/{id}, /report, /evidence<br/>served from any process"]
-    C["POST /tasks/{id}/cancel · /approvals"] -->|"owning process"| H1
+    DB --> R1["GET /tasks/{id}, /report, /evidence<br/>served from any process<br/>(non-terminal records re-read, never cached)"]
+    DB --> SW["lease-only sweep (parent at start, then periodic):<br/>only records whose heartbeat is older than lease_s,<br/>or with no owner at all, are failed (compare-and-swap);<br/>the owner never widens it"]
+    C["POST /tasks/{id}/cancel · /approvals<br/>(GET /approvals → 409 unless queued)"] -->|"owning process"| H1
     C -->|"other process → 409"| H2
+    HL["GET /health: approval mode · instance id ·<br/>workers · queue · in-flight"] --> H1
 ```

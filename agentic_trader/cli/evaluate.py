@@ -3,9 +3,8 @@ judgement calibration, both of which run many decisions and take a while."""
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
 
-from .common import _config, _header, _print_usage, _symbols
+from .common import _config, _header, _print_usage, _symbols, default_as_of
 
 
 def cmd_evaluate(args) -> int:
@@ -47,7 +46,7 @@ def cmd_calibrate(args) -> int:
     cfg = _config(args)
     cfg["memory_path"] = None
     anchors = tuple(None if a.lower() == "none" else float(a) for a in args.anchors.split(","))
-    as_of = args.date or (date.today() - timedelta(days=1)).isoformat()
+    as_of = args.date or default_as_of().isoformat()
     _header(f"calibrate {args.symbol} as of {as_of}: {args.n} runs x anchors {list(anchors)}", cfg)
     rep = calibrate(TradingGraph(cfg), args.symbol, as_of, args.n, anchors,
                     progress=lambda m: print("  " + m, flush=True))

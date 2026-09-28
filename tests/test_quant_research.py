@@ -150,7 +150,11 @@ def test_combine_and_information_coefficient():
     fwd = forward_returns([100, 101, 102, 103, 104.0], 2)
     assert np.isnan(fwd[-2:]).all() and fwd[0] == pytest.approx(0.02)
     ic, t, n = information_coefficient([1, 2, 3, 4, 5], [1, 3, 2, 5, 4])
-    assert 0 < ic < 1 and t == pytest.approx(ic * math.sqrt(5)) and n == 5
+    assert 0 < ic < 1 and t == pytest.approx(ic * math.sqrt(5)) and n == 5   # horizon 1: pairs are independent
+    # v0.8: an h-bar forward return sampled every bar has only n/h independent pairs, so the
+    # t-statistic must shrink by sqrt(h) -- the same rule xalpha.ic_summary applies.
+    assert information_coefficient([1, 2, 3, 4, 5], [1, 3, 2, 5, 4], horizon=2)[1] == pytest.approx(ic * math.sqrt(2.5))
+    assert information_coefficient([1, 2, 3, 4, 5], [1, 3, 2, 5, 4], horizon=5)[1] == pytest.approx(ic)
     assert math.isnan(information_coefficient([1, NAN], [1, 2])[0])
 
 

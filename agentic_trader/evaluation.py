@@ -18,6 +18,7 @@ cost, and how many agent outputs came from the model rather than the rules.
 from __future__ import annotations
 
 import json
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 import pandas as pd
 
 from .backtest import AGENT, run_agent_backtest
@@ -32,6 +34,7 @@ from .config import make_config
 from .data import MarketDataProvider, get_provider
 from .instruments import Instrument
 from .llm import LLM, get_llm, llm_usage
+from .provenance import provenance
 
 # The core universe: the 15 instruments every rule choice through v0.4 was made on.
 CORE_UNIVERSE: dict[str, list[str]] = {
@@ -64,6 +67,86 @@ UNIVERSES: dict[str, list[str]] = {
     "extended": EXTENDED_UNIVERSE["equity"] + EXTENDED_UNIVERSE["macro_etf"] + EXTENDED_UNIVERSE["fx"],
 }
 UNIVERSES["all"] = UNIVERSES["core"] + UNIVERSES["extended"]
+
+
+@dataclass(frozen=True)
+class Trial:
+    """One variant judged on the design period: what it was called, which release judged it,
+    the config overrides that reproduce it under the current engine (``None`` when it is not
+    reproducible from config alone -- it still counts as a trial) and the design-period mean
+    Sharpe recorded at the time (v0.3 engine, for the historical record only)."""
+    name: str
+    version: str
+    overrides: dict | None
+    recorded_mean_sharpe: float | None = None
+
+
+_CTRL_RULES = {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False,
+               "fx_carry_neutral": False}
+_CTRL_RISK = {"rebalance_band": 0.0, "neutral_weight": {"equity": 0.0, "fx": 0.0}}
+_SIGNALS = {"tsmom": True, "trend_filtered_reversal": True, "abstain_without_data": True}
+
+
+def _v03_trial(rules: dict | None = None, risk: dict | None = None, stops: bool = False) -> dict:
+    """A v0.3 ablation variant: the v0.2 control plus the named changes (FX carry rule off, as then)."""
+    return {"rules": {**_CTRL_RULES, **(rules or {})}, "risk": {**_CTRL_RISK, **(risk or {})},
+            "backtest": {"use_stops": stops}}
+
+
+def _eq(w: float) -> dict:
+    return {"neutral_weight": {"equity": w, "fx": 0.0}}
+
+
+# Every variant ever judged on the design period, in the order it was tried. The deflated
+# Sharpe's trial count is the length of this registry (docs/evaluation "Selection statistics"),
+# and scripts/measure_v08.py re-measures every reproducible one under the current engine.
+TRIALS: tuple[Trial, ...] = (
+    Trial("v0.2 (control)", "v0.3", _v03_trial(), 0.50),
+    Trial("+ 12-1 month time-series momentum", "v0.3", _v03_trial(rules={"tsmom": True}), 0.47),
+    Trial("+ trend-filtered reversal", "v0.3", _v03_trial(rules={"trend_filtered_reversal": True}), 0.48),
+    Trial("+ abstain without data", "v0.3", _v03_trial(rules={"abstain_without_data": True}), 0.51),
+    Trial("+ no-trade band 0.10", "v0.3", _v03_trial(risk={"rebalance_band": 0.10}), 0.50),
+    Trial("+ intraday stops", "v0.3", _v03_trial(stops=True), 0.47),
+    Trial("signal changes (momentum + filter + abstain)", "v0.3", _v03_trial(rules=_SIGNALS), 0.51),
+    Trial("signal changes + band", "v0.3", _v03_trial(rules=_SIGNALS, risk={"rebalance_band": 0.10}), 0.51),
+    Trial("all five", "v0.3", _v03_trial(rules=_SIGNALS, risk={"rebalance_band": 0.10}, stops=True), 0.50),
+    Trial("strategic equity weight 0.25", "v0.3", _v03_trial(risk=_eq(0.25)), 0.54),
+    Trial("strategic equity weight 0.50", "v0.3", _v03_trial(risk=_eq(0.50)), 0.58),
+    Trial("strategic equity weight 1.00", "v0.3", _v03_trial(risk=_eq(1.00)), 0.66),
+    Trial("strategic 0.50 + band", "v0.3", _v03_trial(risk={**_eq(0.50), "rebalance_band": 0.10}), 0.58),
+    Trial("strategic 0.50 + signal changes + band", "v0.3",
+          _v03_trial(rules=_SIGNALS, risk={**_eq(0.50), "rebalance_band": 0.10}), 0.58),
+    Trial("strategic 0.50 + abstain + band", "v0.3",
+          _v03_trial(rules={"abstain_without_data": True}, risk={**_eq(0.50), "rebalance_band": 0.10}), 0.56),
+    Trial("frozen v0.3: strategic 1.00 + band", "v0.3", _v03_trial(risk={**_eq(1.00), "rebalance_band": 0.10}), 0.65),
+    Trial("+ alpha analyst (IC-weighted, all signals)", "v0.4", None, 0.60),
+    Trial("+ alpha analyst (significance-gated, 400-day window)", "v0.4", None, 0.58),
+    Trial("+ alpha analyst (significance-gated, 900-day window)", "v0.5",
+          {"analysts": ["technical", "sentiment", "macro", "fundamentals", "news", "alpha"]}, 0.65),
+    Trial("FX carry / 4, cap 0.5", "v0.5.1",
+          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 4.0, "fx_carry_neutral_cap": 0.5}}),
+    Trial("FX carry / 2, cap 0.5 (adopted)", "v0.5.1",
+          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 2.0, "fx_carry_neutral_cap": 0.5}}),
+    Trial("FX carry / 4, cap 1.0", "v0.5.1",
+          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 4.0, "fx_carry_neutral_cap": 1.0}}),
+    Trial("FX carry / 8, cap 0.25", "v0.5.1",
+          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 8.0, "fx_carry_neutral_cap": 0.25}}),
+    Trial("+ cross-sectional alpha analyst", "v0.6",
+          {"analysts": ["technical", "fundamentals", "news", "sentiment", "xalpha"], "xalpha_universe": UNIVERSES["all"]}),
+    Trial("EDGAR filings off", "v0.6", {"edgar": False}),
+    Trial("track-record size cut off", "v0.8", {"rules": {"track_record_cut": False}}),
+)
+
+
+def reproducible_trials() -> list[Trial]:
+    return [t for t in TRIALS if t.overrides is not None]
+
+
+def trial_slug(name: str) -> str:
+    s = "".join(ch if ch.isalnum() else "_" for ch in name.lower())
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s.strip("_")
 
 
 def universe_group(symbol: str) -> str:
@@ -142,16 +225,19 @@ class EvaluationResult:
 
     def paired(self, baseline: str = "Buy&Hold", metric: str = "Sharpe", period: str | None = None,
                universe: str | None = None, strategy: str = AGENT, n_boot: int = 10_000, seed: int = 0,
-               stratify: bool = True):
+               cluster: bool = True):
         """Cross-instrument bootstrap of ``strategy - baseline`` on one metric (see ``stats.paired_bootstrap``).
 
         With repeated agent runs, each instrument contributes its mean over runs.
-        ``stratify`` (default on) resamples within (asset class, universe) groups rather than
-        the whole set at once -- the extended universe mixes clusters of correlated
-        instruments (nine rate/credit/commodity ETFs that mostly move together, next to
-        unrelated equities), and plain resampling treats them as if they moved independently,
-        understating the interval's true width. Pass ``stratify=False`` to reproduce the
-        unstratified v0.6 numbers.
+        ``cluster`` (default on) hands the (asset class, universe) label of every instrument
+        to ``paired_bootstrap`` as its group: the extended universe mixes clusters of
+        correlated instruments (nine rate/credit/commodity ETFs that mostly move together,
+        next to unrelated equities), and resampling whole clusters is what carries their
+        shared shock into the interval. The cluster scheme only engages with at least
+        ``stats.MIN_CLUSTER_GROUPS`` distinct labels among the paired instruments (the core
+        universe has two, ``--universe all`` five); below that the plain instrument bootstrap
+        is used and the result's ``scheme``/``n_groups`` say so. Pass ``cluster=False`` for
+        the plain scheme regardless (the v0.6 numbers).
         """
         from .stats import paired_bootstrap
         rows = self.rows
@@ -164,25 +250,28 @@ class EvaluationResult:
             raise ValueError(f"need both {strategy!r} and {baseline!r} in the rows")
         both = piv[[strategy, baseline]].dropna()
         groups = None
-        if stratify and {"asset_class", "universe"} <= set(rows.columns):
+        if cluster and {"asset_class", "universe"} <= set(rows.columns):
             key = rows.drop_duplicates("symbol").set_index("symbol")
             key = (key["asset_class"].astype(str) + ":" + key["universe"].astype(str))
             aligned = key.reindex(both.index)
-            if aligned.notna().all() and aligned.nunique() > 1:
+            if aligned.notna().all():
                 groups = aligned.to_numpy()
         return paired_bootstrap(both[strategy].to_numpy(), both[baseline].to_numpy(), n_boot=n_boot, seed=seed,
                                 groups=groups)
 
     def paired_table(self, metric: str = "Sharpe", universe: str | None = None, strategy: str = AGENT,
-                     fdr_q: float = 0.05, stratify: bool = True) -> pd.DataFrame:
+                     fdr_q: float = 0.05, cluster: bool = True) -> pd.DataFrame:
         """Per period and baseline: mean paired difference, 95% CI and two-sided p across
-        instruments, plus ``significant`` corrected for the number of rows in *this table*
+        instruments, which resampling ``scheme`` produced them over how many ``groups``, plus
+        ``significant`` corrected for the number of tested rows in *this table*
         (Benjamini-Hochberg false discovery rate at ``fdr_q``). Printing many paired tests side
         by side is a multiple-comparisons problem exactly like choosing among rule variants;
         the raw per-row ``p`` is still reported, but ``significant`` is the one to read when
-        the table has more than a couple of rows.
+        the table has more than a couple of rows. BH runs on the unrounded p-values; a row
+        with fewer than three paired instruments was never tested, shows ``p`` as NaN and
+        neither counts towards nor can win a share of the false-discovery budget.
         """
-        out = []
+        out, p_raw = [], []
         rows = self.rows if universe is None or "universe" not in self.rows else self.rows[self.rows.universe == universe]
         for period in sorted(rows.period.unique()):
             for base in sorted(rows.strategy.unique()):
@@ -190,16 +279,18 @@ class EvaluationResult:
                     continue
                 try:
                     pb = self.paired(base, metric, period=period, universe=universe, strategy=strategy,
-                                     stratify=stratify)
+                                     cluster=cluster)
                 except ValueError:
                     continue
+                p = pb.p_value if math.isfinite(pb.ci_low) else float("nan")
+                p_raw.append(p)
                 out.append({"period": period, "baseline": base, "n": pb.n, f"mean {metric} diff": round(pb.mean_diff, 3),
                             "ci95 low": round(pb.ci_low, 3), "ci95 high": round(pb.ci_high, 3),
-                            "p": round(pb.p_value, 3), "wins": pb.wins})
+                            "p": round(p, 3), "wins": pb.wins, "scheme": pb.scheme, "groups": pb.n_groups})
         df = pd.DataFrame(out)
         if len(df):
             from .stats import benjamini_hochberg
-            df["significant"] = benjamini_hochberg(df["p"].to_numpy(), fdr_q)
+            df["significant"] = benjamini_hochberg(np.asarray(p_raw), fdr_q)
         return df
 
     def run_dispersion(self, metric: str = "Sharpe", strategy: str = AGENT) -> pd.DataFrame:
@@ -256,6 +347,9 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     symbols = symbols or UNIVERSES["all"]
     periods = periods or {p: PERIODS[p] for p in DEFAULT_PERIODS}
     provider = provider or get_provider(cfg)
+    macro_sources = getattr(provider, "macro_sources", None)
+    if isinstance(macro_sources, dict):
+        macro_sources.clear()   # this run's tally only: the provider may be shared across runs
     llm = llm if llm is not None else get_llm(cfg)
     if workers < 1:
         raise ValueError("workers must be >= 1")
@@ -347,7 +441,9 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             "neutral_weight": cfg["risk"].get("neutral_weight"),
             "use_stops": cfg.get("backtest", {}).get("use_stops"),
             "errors": errors, "seconds": round(time.perf_counter() - t0, 1),
-            "agent_sources": sources, "timings": timings}
+            "agent_sources": sources,
+            "macro_sources": dict(macro_sources) if isinstance(macro_sources, dict) else {},
+            "timings": timings, "provenance": provenance()}
     if llm is not None:
         meta.update(models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
                     effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},

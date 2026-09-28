@@ -1,17 +1,23 @@
 #include "at/strategies.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace at {
 
 Series strat_buy_hold(const Series& close) { return Series(close.size(), 1.0); }
 
+// Crossover dead band: two averages of the same window of identical prices differ only
+// by summation-order noise (~1e-16 relative), whose sign differs between backends. A
+// gap at or below 1e-12 of the price level is no cross: the position is flat.
 Series strat_sma_cross(const Series& close, int fast, int slow, bool allow_short) {
     const Series f = sma(close, fast);
     const Series s = sma(close, slow);
     Series out(close.size(), 0.0);
     for (std::size_t i = 0; i < close.size(); ++i) {
         if (std::isnan(f[i]) || std::isnan(s[i])) continue;
+        const double band = 1e-12 * std::max(std::fabs(f[i]), std::fabs(s[i]));
+        if (std::fabs(f[i] - s[i]) <= band) continue;
         out[i] = f[i] > s[i] ? 1.0 : (allow_short ? -1.0 : 0.0);
     }
     return out;
@@ -22,6 +28,7 @@ Series strat_macd(const Series& close, int fast, int slow, int signal, bool allo
     Series out(close.size(), 0.0);
     for (std::size_t i = 0; i < close.size(); ++i) {
         if (std::isnan(m.hist[i])) continue;
+        if (std::fabs(m.hist[i]) <= 1e-12 * std::fabs(close[i])) continue;
         out[i] = m.hist[i] > 0.0 ? 1.0 : (allow_short ? -1.0 : 0.0);
     }
     return out;

@@ -12,6 +12,7 @@ that findings and reports can be audited.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from enum import Enum
@@ -20,6 +21,21 @@ from typing import Any
 import pandas as pd
 
 from .instruments import Instrument
+
+_TAG = "untrusted_data"
+
+
+def untrusted_block(label: str, lines: list[str]) -> str:
+    """Wrap third-party (or previously model-written) text so the model can tell data
+    from instructions.
+
+    Any attempt inside the text to open or close the tag is neutralised, so a
+    crafted headline cannot end the block early and smuggle instructions out.
+    """
+    # Neutralised on the joined body, and without requiring a closing ">": a tag split
+    # over two lines, or left unterminated for the model to complete, is caught too.
+    body = re.sub(rf"<\s*/?\s*{_TAG}\b[^>]*>?", "[removed tag]", "\n".join(str(line) for line in lines), flags=re.I)
+    return f'<{_TAG} source="{label}">\n{body}\n</{_TAG}>'
 
 
 class Action(str, Enum):
@@ -45,14 +61,27 @@ class AnalystReport:
     # The rule-based signal when a model reply replaced it (None otherwise). The
     # critic flags a model view that diverges too far from the rules on the same facts.
     rule_signal: float | None = None
+    # True when the analyst read third-party text (headlines, social posts): its summary
+    # and key points may quote that text, so downstream prompts show them fenced.
+    untrusted: bool = False
     evidence_ids: tuple[str, ...] = ()
 
 
+def fenced(label: str, lines: list[str], untrusted: bool) -> str:
+    """``lines`` for a prompt: inside an ``untrusted_block`` when they descend from
+    third-party text, plain otherwise."""
+    return untrusted_block(label, lines) if untrusted else "\n".join(lines)
+
+
+# ``untrusted`` on the documents below: the text was written (by a model or a rule) from a
+# prompt that carried fenced third-party material, so it may quote that material and is shown
+# inside an ``<untrusted_data>`` block in every later prompt, whoever wrote it.
 @dataclass
 class DebateTurn:
     speaker: str
     round: int
     argument: str
+    untrusted: bool = False
 
 
 @dataclass
@@ -64,6 +93,7 @@ class DebateOutcome:
     turns: list[DebateTurn] = field(default_factory=list)
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
+    untrusted: bool = False
 
 
 @dataclass
@@ -74,10 +104,11 @@ class TradeProposal:
     entry_price: float
     stop_loss: float | None
     take_profit: float | None
-    horizon_days: int
+    horizon_days: int      # holding horizon in trading days (bars), not calendar days
     rationale: str
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
+    untrusted: bool = False
 
 
 @dataclass
@@ -88,6 +119,7 @@ class RiskView:
     round: int = 1
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
+    untrusted: bool = False
 
 
 @dataclass
@@ -104,6 +136,7 @@ class FinalDecision:
     adjustments: list[str] = field(default_factory=list)
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
+    kept: bool = False   # the desk held its current position (the no-trade band): not a target
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -149,6 +182,10 @@ class TradingState:
     knowledge: list[dict[str, Any]] = field(default_factory=list)
     alpha: dict[str, Any] = field(default_factory=dict)
     book: "Book | None" = None  # other current positions + returns, for a book-level VaR check
+    # Which provider priced ``history`` and on what basis: stamped on the memory record so
+    # an outcome is only ever valued on the same kind of series.
+    provider_name: str = ""
+    price_basis: str = ""
 
     @property
     def last_price(self) -> float:
@@ -168,7 +205,13 @@ class TradingState:
         return self.anon.facts(facts) if self.anon is not None else facts
 
     def reports_digest(self) -> str:
-        """Compact text of all analyst reports, used in downstream prompts."""
+        """Compact text of all analyst reports, used in downstream prompts.
+
+        A report built from third-party text (``untrusted``) keeps its numbers in the
+        open but its summary and key points inside an ``<untrusted_data>`` block: the
+        news analyst's key points quote headlines verbatim, and a model-written summary
+        may too, so the fence has to travel with the text into every later prompt.
+        """
         lines = []
         if self.current_weight is not None:
             lines.append(f"[portfolio] current position weight {self.current_weight:+.2f}")
@@ -176,9 +219,60 @@ class TradingState:
             if r.abstained:
                 lines.append(f"[{r.analyst}] no data - abstains: {r.summary}")
                 continue
-            lines.append(f"[{r.analyst}] signal={r.signal:+.2f} conf={r.confidence:.2f}: {r.summary}")
-            lines.extend(f"  - {p}" for p in r.key_points[:6])
+            head = f"[{r.analyst}] signal={r.signal:+.2f} conf={r.confidence:.2f}"
+            if r.untrusted:
+                lines.append(f"{head}: report text (written from third-party material) follows")
+                lines.append(untrusted_block(f"{r.analyst} report (from third-party text)",
+                                             [r.summary, *(f"- {p}" for p in r.key_points[:6])]))
+            else:
+                lines.append(f"{head}: {r.summary}")
+                lines.extend(f"  - {p}" for p in r.key_points[:6])
         return "\n".join(lines)
+
+    def lessons_block(self) -> str:
+        """The memory lessons for a prompt, fenced: a lesson quotes an earlier decision's
+        rationale, which may itself have been model-written from third-party text."""
+        if not self.lessons:
+            return ""
+        return ("\nLessons from past decisions:\n"
+                + untrusted_block("memory lessons (earlier decisions on this instrument)", self.lessons)
+                + "\n")
+
+    @property
+    def untrusted_inputs(self) -> bool:
+        """True when a prompt built from this state carries fenced text: a report written from
+        third-party material, or memory lessons (earlier model-written text). Whatever is then
+        written from that prompt -- a debate turn, the verdict, the proposal's rationale, a
+        risk argument -- may quote it, so the document is marked ``untrusted`` and every later
+        prompt shows it fenced too."""
+        return bool(self.lessons) or any(r.untrusted and not r.abstained for r in self.reports.values())
+
+    def debate_block(self, turns: list[DebateTurn], rounds: bool = False) -> str:
+        """The debate turns for a prompt, fenced as one block when any of them is untrusted."""
+        lines = [f"{t.speaker} (round {t.round}): {t.argument}" if rounds else f"{t.speaker}: {t.argument}"
+                 for t in turns]
+        return fenced("debate turns (written from third-party material)", lines, any(t.untrusted for t in turns))
+
+    def verdict_block(self) -> str:
+        d = self.debate
+        return "Debate verdict: " + fenced("debate verdict (written from third-party material)", [d.summary],
+                                           d.untrusted)
+
+    def proposal_block(self) -> str:
+        """The trader's proposal for a prompt: its numbers in the open, its rationale fenced
+        when it descends from third-party text."""
+        p = self.proposal
+        return (f"Trader proposal: {p.action.value} weight {p.target_weight:+.2f}; "
+                + fenced("trader rationale (written from third-party material)", [p.rationale], p.untrusted))
+
+    def risk_views_block(self, views: list[RiskView]) -> str:
+        """The risk team's views for a prompt: when any argument is untrusted the recommended
+        sizes stay in the open and the arguments go inside one fenced block."""
+        if not any(v.untrusted for v in views):
+            return "\n".join(f"{v.stance} (round {v.round}, {v.recommended_weight:+.2f}): {v.argument}" for v in views)
+        sizes = "\n".join(f"{v.stance} (round {v.round}) recommends {v.recommended_weight:+.2f}" for v in views)
+        return sizes + "\n" + untrusted_block("risk analysts' arguments (written from third-party material)",
+                                              [f"{v.stance} (round {v.round}): {v.argument}" for v in views])
 
     def to_markdown(self) -> str:
         ins = self.instrument

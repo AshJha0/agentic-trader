@@ -58,12 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
                         default=None, help="effort for the deep-tier model")
         sp.add_argument("-v", "--verbose", action="store_true")
 
-    def backtest_opts(sp):
-        sp.add_argument("--start", required=True)
-        sp.add_argument("--end", required=True)
-        sp.add_argument("--every", type=int, default=5, help="rebalance every N bars")
-        sp.add_argument("--stops", choices=["on", "off"], default=None,
-                        help="enforce decision stop-loss / take-profit (default: config)")
+    def cost_opts(sp):
         sp.add_argument("--impact", type=float, default=None,
                         help="square-root market-impact coefficient (0 = off, 1.0 = textbook)")
         sp.add_argument("--capital", type=float, default=None,
@@ -72,6 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="how the day's trade is worked, for --impact's cost (default: vwap-equivalent)")
         sp.add_argument("--ac-kappa", type=float, default=None,
                         help="Almgren-Chriss urgency for --execution-algo ac (default 3.0)")
+
+    def backtest_opts(sp):
+        sp.add_argument("--start", required=True)
+        sp.add_argument("--end", required=True)
+        sp.add_argument("--every", type=int, default=5, help="rebalance every N bars")
+        sp.add_argument("--stops", choices=["on", "off"], default=None,
+                        help="enforce decision stop-loss / take-profit (default: config)")
+        cost_opts(sp)
         sp.add_argument("--out", default=None, help="CSV path for the curves / returns")
 
     a = sub.add_parser("analyze", help="run the desk for one date")
@@ -88,6 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     common(t)
     t.add_argument("--date", default=None, help="YYYY-MM-DD (default: yesterday)")
     t.add_argument("--position", type=float, default=None, help="current position weight")
+    t.add_argument("--capital", type=float, default=None,
+                   help="account size the desk tools size orders from (default: config initial_capital)")
     t.add_argument("--role", choices=["viewer", "analyst", "trader", "risk", "admin"], default="trader")
     t.add_argument("--approval", choices=["auto", "queued", "deny"], default=None,
                    help="what happens to tool calls that need approval")
@@ -133,6 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run the agent this many times per (period, symbol) to measure model variance")
     ev.add_argument("--workers", type=int, default=1,
                     help="backtests run in parallel (useful with --llm anthropic)")
+    cost_opts(ev)
     ev.add_argument("--out", default=None, help="JSON path for all rows")
     ev.set_defaults(func=cmd_evaluate)
 
@@ -168,9 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--date", default=None, help="YYYY-MM-DD (default: yesterday)")
     ex.add_argument("--target", type=float, required=True, help="target weight")
     ex.add_argument("--current", type=float, default=0.0, help="current weight")
-    ex.add_argument("--capital", type=float, default=1_000_000.0)
+    ex.add_argument("--capital", type=float, default=None,
+                    help="order-sizing capital in the account currency (default: config initial_capital, "
+                         "the same convention as the desk tools, task and API)")
     ex.add_argument("--algo", choices=["twap", "vwap", "pov", "ac"], default=None)
     ex.add_argument("--participation", type=float, default=0.10, help="POV participation")
+    ex.add_argument("--ac-kappa", type=float, default=None,
+                    help="Almgren-Chriss urgency for --algo ac, dimensionless: 0 = TWAP, larger = more "
+                         "front-loaded (default: config costs.ac_kappa, 3.0)")
     ex.add_argument("--spread-bps", type=float, default=2.0, help="equity quoted spread")
     ex.add_argument("--impact", type=float, default=1.0, help="square-root impact coefficient")
     ex.add_argument("--seed", type=int, default=0, help="intraday path seed")
@@ -199,6 +210,8 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
     sv.add_argument("--approval", choices=["auto", "queued", "deny"], default="queued")
+    sv.add_argument("--capital", type=float, default=None,
+                    help="account size the desk tools size orders from (default: config initial_capital)")
     sv.add_argument("--task-db", default=None, help="SQLite file for a persistent task store")
     sv.add_argument("--ssl-cert", default=None, help="TLS certificate (PEM); needs --ssl-key")
     sv.add_argument("--ssl-key", default=None, help="TLS private key (PEM)")
@@ -211,6 +224,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     mc = sub.add_parser("mcp", help="MCP server over stdio (needs the [mcp] extra)")
     common(mc, symbol_required=None)
+    mc.add_argument("--role", choices=["viewer", "analyst", "trader", "risk", "admin"], default="trader",
+                    help="the role every call is evaluated for (stdio carries no identity)")
+    mc.add_argument("--approval", choices=["auto", "queued", "deny"], default=None,
+                    help="gateway for tools that need approval (default: config agentic.approval); "
+                         "queued is refused: nothing can answer on a stdio server")
     mc.set_defaults(func=cmd_mcp)
 
     i = sub.add_parser("info", help="show quant backend and default config")

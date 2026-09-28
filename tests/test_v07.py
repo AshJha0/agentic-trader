@@ -1,6 +1,7 @@
-"""v0.7 features: VaR coverage backtesting, book-level risk aggregation, a stratified
-cross-instrument bootstrap, execution-aware cost scheduling, FDR-corrected significance,
-solver convergence flags, dependency lock, and CLI restructuring."""
+"""v0.7 features: VaR coverage backtesting, book-level risk aggregation, a grouped
+cross-instrument bootstrap (stratified in v0.7, a cluster bootstrap since v0.8),
+execution-aware cost scheduling, FDR-corrected significance, solver convergence flags,
+dependency lock, and CLI restructuring."""
 import math
 from pathlib import Path
 
@@ -65,7 +66,7 @@ def test_paired_table_significance_is_fdr_corrected(monkeypatch):
     fake_p = {"b0": 0.01, "b1": 0.04, "b2": 0.03, "b3": 0.005, "b4": 0.5, "b5": 0.7}
 
     def fake_paired(self, baseline, metric="Sharpe", period=None, universe=None, strategy=AGENT, n_boot=10_000,
-                    seed=0, stratify=True):
+                    seed=0, cluster=True):
         return PairedBootstrap(10, 0.1, -0.05, 0.2, fake_p[baseline], 6)
     monkeypatch.setattr(EvaluationResult, "paired", fake_paired)
     tab = res.paired_table()
@@ -91,7 +92,9 @@ def test_mean_variance_convergence_flag():
     mu = np.array([0.1, 0.05, -0.02])
     w, info = mean_variance_weights(mu, cov, risk_aversion=2.0, cap=0.6, return_info=True)
     assert info.converged
-    assert isinstance(w, np.ndarray) and abs(w.sum() - 1.0) < 1e-6 or w.sum() <= 1.0 + 1e-9
+    # the cap binds on the first asset, so the solve is [0.6, 0.4, 0]: a full simplex, capped
+    assert isinstance(w, np.ndarray) and w.sum() == pytest.approx(1.0) and w.max() <= 0.6 + 1e-9
+    assert w.min() >= 0.0
 
 
 def test_construct_surfaces_non_convergence(caplog):
@@ -106,34 +109,37 @@ def test_construct_surfaces_non_convergence(caplog):
     assert pw_equal.converged is True   # closed-form schemes are always reported converged
 
 
-# ---------------------------------------------------- stratified bootstrap
-def test_paired_bootstrap_stratifies_by_group():
-    """Two clusters of near-identical (highly correlated) instruments: an unstratified
-    bootstrap can by chance draw far more of one cluster than the other, widening its
-    interval beyond what stratified-by-cluster resampling (fixed count per cluster every
-    replicate) would give."""
+# ---------------------------------------------------- grouped (cluster) bootstrap
+# The v0.7 release shipped a *stratified* scheme here (fixed count per group every replicate)
+# and these tests asserted nothing that could tell it from plain resampling. v0.8 replaced it
+# with a cluster bootstrap that needs at least MIN_CLUSTER_GROUPS groups; the sensitivity
+# tests live in tests/test_v08_stats.py, these cover the fallback paths.
+def test_paired_bootstrap_with_two_groups_falls_back_to_plain_and_says_so():
+    """Two clusters cannot be resampled as clusters (a two-point bootstrap of the between-
+    cluster shock is meaningless), so the plain instrument bootstrap is used and reported;
+    the v0.7 stratified scheme silently narrowed this interval from 0.35 to 0.05."""
     rng = np.random.default_rng(4)
     cluster_a = rng.normal(0.5, 0.05, 10)   # ten near-identical "instruments"
     cluster_b = rng.normal(-0.3, 0.05, 10)
     a = np.concatenate([cluster_a, cluster_b])
     b = np.zeros_like(a)
     groups = np.array(["A"] * 10 + ["B"] * 10)
-    strat = paired_bootstrap(a, b, n_boot=5000, groups=groups, seed=1)
+    grouped = paired_bootstrap(a, b, n_boot=5000, groups=groups, seed=1)
     plain = paired_bootstrap(a, b, n_boot=5000, groups=None, seed=1)
-    assert strat.n == plain.n == 20 and strat.mean_diff == pytest.approx(plain.mean_diff)
-    # both should already be significant here (a genuinely mixed-sign, low-variance-within-
-    # cluster case), but the *stratified* interval should not be narrower than warranted --
-    # check it is a proper interval and reruns are stable across seeds
-    strat2 = paired_bootstrap(a, b, n_boot=5000, groups=groups, seed=2)
-    assert abs(strat.ci_low - strat2.ci_low) < 0.05 and abs(strat.ci_high - strat2.ci_high) < 0.05
+    assert grouped.scheme == "instruments" and grouped.n_groups == 2
+    assert plain.scheme == "instruments" and plain.n_groups == 0
+    assert grouped.n == plain.n == 20 and grouped.mean_diff == pytest.approx(plain.mean_diff)
+    assert (grouped.ci_low, grouped.ci_high, grouped.p_value) == (plain.ci_low, plain.ci_high, plain.p_value)
+    assert grouped.ci_high - grouped.ci_low > 0.3   # not the 0.05-wide stratified interval
 
 
-def test_paired_bootstrap_single_group_matches_unstratified():
+def test_paired_bootstrap_single_group_matches_plain():
     rng = np.random.default_rng(2)
     a, b = rng.normal(0.5, 0.2, 15), rng.normal(0.3, 0.2, 15)
     groups = np.array(["only"] * 15)
     with_one_group = paired_bootstrap(a, b, groups=groups, seed=9, n_boot=4000)
     without = paired_bootstrap(a, b, groups=None, seed=9, n_boot=4000)
+    assert with_one_group.scheme == "instruments" and with_one_group.n_groups == 1
     assert with_one_group.ci_low == pytest.approx(without.ci_low)
     assert with_one_group.ci_high == pytest.approx(without.ci_high)
 
@@ -143,15 +149,20 @@ def test_paired_bootstrap_groups_validation():
         paired_bootstrap([1, 2, 3], [1, 2, 3], groups=["a", "b"])   # wrong length
 
 
-def test_evaluation_paired_defaults_to_stratified_and_can_reproduce_v06():
-    res = evaluate_full_universe()
-    strat = res.paired("Buy&Hold", period="q")
-    unstrat = res.paired("Buy&Hold", period="q", stratify=False)
-    assert strat.n == unstrat.n == 6   # same pairs, only the resampling scheme differs
-    assert strat.mean_diff == pytest.approx(unstrat.mean_diff)   # the point estimate never changes
+def test_evaluation_paired_reports_the_fallback_below_five_groups_and_can_reproduce_v06():
+    res = evaluate_full_universe()   # three (asset_class, universe) groups: below the cluster threshold
+    grouped = res.paired("Buy&Hold", period="q")
+    plain = res.paired("Buy&Hold", period="q", cluster=False)
+    assert grouped.n == plain.n == 6   # same pairs
+    assert grouped.scheme == "instruments" and grouped.n_groups == 3   # the labels were seen, then declined
+    assert plain.scheme == "instruments" and plain.n_groups == 0       # cluster=False passes no labels
+    assert grouped.mean_diff == pytest.approx(plain.mean_diff)   # the point estimate never changes
+    assert (grouped.ci_low, grouped.ci_high) == (plain.ci_low, plain.ci_high)   # identical draws
     tab = res.paired_table()
-    tab_old = res.paired_table(stratify=False)
+    tab_old = res.paired_table(cluster=False)
     assert list(tab.columns) == list(tab_old.columns)
+    assert {"scheme", "groups"} <= set(tab.columns)
+    assert (tab.scheme == "instruments").all() and (tab.groups == 3).all() and (tab_old.groups == 0).all()
 
 
 def evaluate_full_universe():
@@ -338,20 +349,37 @@ def test_book_field_is_excluded_from_the_llm_prompt():
 
 
 # ------------------------------------------------------------------ CI config
+def _workflow_steps(text: str) -> dict[str, str]:
+    """``name -> body`` of every ``- name:`` step in a GitHub workflow, by indentation alone
+    (no PyYAML: the dev extra does not install it, and an ``importorskip`` here made this
+    test skip in the very CI it guards)."""
+    steps, name, body = {}, None, []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- name:"):
+            if name is not None:
+                steps[name] = "\n".join(body)
+            name, body = stripped.split(":", 1)[1].strip(), []
+        elif name is not None:
+            body.append(line)
+    if name is not None:
+        steps[name] = "\n".join(body)
+    return steps
+
+
 def test_ci_collects_coverage_as_a_report_not_a_gate():
-    yaml = pytest.importorskip("yaml")
-    doc = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    steps = doc["jobs"]["python"]["steps"]
-    run_tests = next(s for s in steps if s.get("name") == "Run tests")
-    assert "--cov=agentic_trader" in run_tests["run"]
-    assert "--cov-fail-under" not in run_tests["run"]   # a report, never a merge-blocking gate
-    upload = next(s for s in steps if s.get("name") == "Upload coverage report")
-    assert upload["with"]["path"] == "coverage.xml"
+    text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    python_job = text.split("\n  python:", 1)[1].split("\n  lock:", 1)[0]   # the python matrix job only
+    steps = _workflow_steps(python_job)
+    run_tests = steps["Run tests"]
+    assert "--cov=agentic_trader" in run_tests
+    assert "--cov-fail-under" not in run_tests   # a report, never a merge-blocking gate
+    assert "path: coverage.xml" in steps["Upload coverage report"]
 
 
 # ---------------------------------------------------------- job timing
-def test_evaluate_records_per_job_timings():
-    from agentic_trader.evaluation import evaluate
+def test_evaluate_records_per_job_timings(tmp_path):
+    from agentic_trader.evaluation import EvaluationResult, evaluate
     res = evaluate(["AAPL", "MSFT", "EUR/XYZ"], {"q": ("2024-01-02", "2024-03-28")}, CFG, rebalance_every=10)
     timings = res.meta["timings"]
     assert len(timings) == 3
@@ -360,9 +388,12 @@ def test_evaluate_records_per_job_timings():
     assert any(t["error"] for t in timings) and sum(t["error"] for t in timings) == 1
     slow = res.slowest(2)
     assert len(slow) == 2 and list(slow["seconds"]) == sorted(slow["seconds"], reverse=True)
-    # round-trips through JSON (meta is dumped verbatim)
-    back = res.to_json
-    assert callable(back)
+    # round-trips through JSON (meta is dumped verbatim): every timing value must be a JSON
+    # scalar, not a numpy one that json.dumps(default=str) would silently stringify
+    res.to_json(tmp_path / "e.json")
+    back = EvaluationResult.from_json(tmp_path / "e.json")
+    assert back.meta["timings"] == timings
+    assert all(type(t["seconds"]) is float and type(t["error"]) is bool for t in back.meta["timings"])
 
 
 def test_slowest_with_no_timings_is_a_typed_empty_frame():
@@ -408,11 +439,13 @@ def test_algo_cost_ratio_rejects_pov_and_unknown_algos():
         algo_cost_ratio("vwip", 78, "equity")
 
 
-def test_algo_cost_ratio_is_size_and_capital_independent():
-    # dimensionless: depends only on how the order is spread relative to the volume curve.
+def test_algo_cost_ratio_ignores_kappa_outside_ac():
+    # The ratio is dimensionless by construction (algo_cost_ratio takes no size or capital),
+    # so the only parameter that could leak between algos is kappa: it must not.
     r1 = algo_cost_ratio("twap", 78, "equity")
     r2 = algo_cost_ratio("twap", 78, "equity", kappa=999.0)  # kappa is unused outside "ac"
     assert r1 == r2
+    assert algo_cost_ratio("vwap", 78, "equity", kappa=999.0) == algo_cost_ratio("vwap", 78, "equity")
 
 
 def test_impact_coefficients_scale_by_execution_algo_and_default_is_unchanged():

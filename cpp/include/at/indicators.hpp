@@ -4,6 +4,14 @@
 //   * Every function returns a vector the same length as its input.
 //   * Warm-up values that cannot be computed are NaN.
 //   * Rolling standard deviations use the population estimator (ddof = 0).
+//   * NaN rule: a missing input yields NaN output for every window it touches and
+//     the series recovers once the window has passed. Windowed functions (sma,
+//     rolling_std, zscore, rolling_max/min, realized_vol, kdj) are NaN while their
+//     window contains the gap; the recursions (ema, and Wilder's in rsi and atr)
+//     reset at the gap and re-seed from the next n valid inputs, so a NaN at index k
+//     gives NaN for k..k+n-1 (rsi and atr: k..k+n, since a missing close also
+//     removes the next bar's change / true range). Nothing is ever silently treated
+//     as a zero change.
 #pragma once
 
 #include <vector>
@@ -32,7 +40,8 @@ struct KDJ {
 };
 
 Series sma(const Series& x, int n);
-// EMA seeded with the SMA of the first n valid points; leading NaNs are skipped.
+// EMA seeded with the SMA of the first n valid points; leading NaNs are skipped and a
+// NaN inside the series resets the recursion (see the NaN rule above).
 Series ema(const Series& x, int n);
 Series rolling_std(const Series& x, int n);
 Series zscore(const Series& x, int n);
@@ -57,7 +66,9 @@ double spearman(const Series& x, const Series& y);
 // Almgren-Chriss optimal liquidation schedule: the quantity to trade in each of
 // n equal slices when kappa = sqrt(lambda * sigma^2 / eta) (risk aversion times
 // variance over temporary impact). kappa -> 0 gives TWAP; larger kappa
-// front-loads. Returns n non-negative quantities summing to `total`.
+// front-loads. Returns n non-negative quantities summing to `total`, finite for any
+// finite kappa >= 0 (computed in an overflow-free form; a huge kappa puts everything in
+// slice 1); a negative or non-finite kappa throws std::invalid_argument.
 Series almgren_chriss(double total, int n, double kappa);
 
 }  // namespace at

@@ -9,10 +9,11 @@ from .config import DEFAULT_CONFIG, RULES_V02, RULES_V03, make_config
 from .evaluation import EvaluationResult, evaluate
 from .graph import TradingGraph
 from .instruments import Instrument
+from .provenance import package_version
 from .state import Action, FinalDecision, TradingState
 
-__version__ = "0.5.1"
+__version__ = package_version()
 
 __all__ = ["TradingGraph", "run_agent_backtest", "run_portfolio_backtest", "ComparisonReport",
            "PortfolioReport", "evaluate", "EvaluationResult", "DEFAULT_CONFIG", "RULES_V02", "RULES_V03",
-           "make_config", "Instrument", "Action", "FinalDecision", "TradingState"]
+           "make_config", "Instrument", "Action", "FinalDecision", "TradingState", "__version__"]

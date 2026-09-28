@@ -7,11 +7,20 @@ optional MCP server.
 
 The **ToolExecutor** is the only way agents reach data. Every call:
 
-1. is checked by the policy engine for the calling role (ALLOW / DENY / REQUIRE_APPROVAL);
-2. runs with a per-call timeout and bounded retry on transient errors;
+1. is checked by the policy engine for the calling role (ALLOW / DENY / REQUIRE_APPROVAL),
+   and its arguments are bound to the tool's schema (unknown, missing or mistyped
+   arguments are a denial) before any approval is asked for, so a person is never
+   asked to approve a request the tool could not even accept;
+2. runs on its own worker thread with a hard deadline; a read-only tool is retried
+   once on a timeout or transient error, a state-changing tool is never retried
+   (one approval, at most one side effect) and a timed-out one is reported as
+   ``outcome unknown`` for a person to reconcile;
 3. yields an **Evidence** record (arguments, correlation id, SHA-256 digest of the
    payload) in the task's evidence store, whether it succeeded or failed;
 4. is traced and counted.
+
+A timed-out worker cannot be killed in-process; it is abandoned (it never blocks
+another call, its result is discarded) and counted in ``tool_calls_abandoned_total``.
 """
 from __future__ import annotations
 
@@ -21,7 +30,6 @@ import logging
 import threading
 import time
 import typing
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Callable
@@ -205,6 +213,36 @@ class ToolRegistry:
 TRANSIENT = (ConnectionError, TimeoutError, OSError)
 
 
+class ToolTimeout(Exception):
+    pass
+
+
+def invoke_with_deadline(fn: Callable[..., Any], args: dict[str, Any], timeout_s: float,
+                         name: str = "tool") -> Any:
+    """Run ``fn(**args)`` on a fresh daemon thread and wait at most ``timeout_s``.
+
+    Raises ``ToolTimeout`` when the deadline passes; the worker is then abandoned
+    (no pool worker is held hostage and its late result is ignored).
+    """
+    box: dict[str, Any] = {}
+    done = threading.Event()
+
+    def runner():
+        try:
+            box["value"] = fn(**args)
+        except BaseException as e:  # noqa: BLE001 - re-raised on the calling thread
+            box["error"] = e
+        finally:
+            done.set()
+
+    threading.Thread(target=runner, name=f"tool:{name}", daemon=True).start()
+    if not done.wait(timeout_s):
+        raise ToolTimeout(f"timed out after {timeout_s}s")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 @dataclass
 class ExecutorConfig:
     timeout_s: float = 30.0
@@ -223,7 +261,6 @@ class ToolExecutor:
     tracer: Tracer = field(default_factory=Tracer)
     config: ExecutorConfig = field(default_factory=ExecutorConfig)
     task_id: str = "adhoc"
-    _pool: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=8), repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     pending_approval: bool = False
 
@@ -245,6 +282,16 @@ class ToolExecutor:
                 self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="denied")
                 return self._fail(req, f"denied by policy ({decision.rule}): {decision.reason}",
                                   evidence_type=tool.descriptor.annotations.evidence_type)
+            # Bind the arguments before the approval decision: a request the tool cannot
+            # accept is refused as an argument-guard denial, never parked for a person.
+            try:
+                args = coerce_arguments(tool.descriptor.input_schema, req.arguments)
+            except (ValueError, TypeError, OverflowError) as e:   # any coercion failure is a bad argument, never a crash
+                span.fail(str(e))
+                span.set(policy=PolicyOutcome.DENY.value, rule="argument_guard")
+                self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="bad_arguments")
+                return self._fail(req, f"denied by policy (argument_guard): bad arguments: {e}",
+                                  evidence_type=tool.descriptor.annotations.evidence_type)
             if decision.outcome is PolicyOutcome.REQUIRE_APPROVAL:
                 verdict = self.gateway.decide(self.task_id, req, decision.reason)
                 if verdict is None:
@@ -260,30 +307,28 @@ class ToolExecutor:
                                      f"approved {name} ({decision.rule})", {"request": req.request_id,
                                                                             "reason": decision.reason}, cid)
 
-            try:
-                args = coerce_arguments(tool.descriptor.input_schema, req.arguments)
-            except (ValueError, TypeError, OverflowError) as e:   # any coercion failure is a bad argument, never a crash
-                span.fail(str(e))
-                self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="bad_arguments")
-                return self._fail(req, f"bad arguments: {e}",
-                                  evidence_type=tool.descriptor.annotations.evidence_type)
-
             t0 = time.perf_counter()
             payload, error, attempts = None, None, 0
-            for attempt in range(1, self.config.max_attempts + 1):
+            # A state-changing tool gets exactly one attempt: after a timeout or a dropped
+            # connection its side effect may already have landed, and a second attempt
+            # would turn one approval into two orders.
+            idempotent = tool.descriptor.annotations.read_only
+            max_attempts = self.config.max_attempts if idempotent else 1
+            for attempt in range(1, max_attempts + 1):
                 attempts = attempt
                 try:
-                    payload = self._pool.submit(tool.fn, **args).result(timeout=self.config.timeout_s)
+                    payload = invoke_with_deadline(tool.fn, args, self.config.timeout_s, name)
                     error = None
                     break
-                except FutureTimeout:
-                    error = f"timed out after {self.config.timeout_s}s"
+                except ToolTimeout as e:
+                    self.tracer.metrics.inc("tool_calls_abandoned_total", tool=name)
+                    error = str(e) if idempotent else f"{e}; outcome unknown, not retried"
                 except TRANSIENT as e:
-                    error = f"transient error: {e}"
+                    error = f"transient error: {e}" if idempotent else f"transient error: {e}; outcome unknown, not retried"
                 except Exception as e:  # a bug or a bad input: do not retry
                     error = f"{type(e).__name__}: {e}"
                     break
-                if attempt < self.config.max_attempts:
+                if attempt < max_attempts:
                     time.sleep(self.config.retry_backoff_s * attempt)
             elapsed = (time.perf_counter() - t0) * 1000
             self.tracer.metrics.observe("tool_latency_ms", elapsed, tool=name)
@@ -314,8 +359,14 @@ class ToolExecutor:
         return None
 
 
+_TICKET_KEYS = ("quantity_unit", "notional", "notional_currency", "price")
+
+
 def _summarise(name: str, args: dict[str, Any], payload: Any) -> str:
-    keys = ", ".join(f"{k}={v}" for k, v in list(args.items())[:3])
+    # The first three arguments, plus the fields that say what an order's numbers are, so
+    # the one-line evidence summary of a ticket reads with its unit, notional and price.
+    shown = list(args)[:3] + [k for k in _TICKET_KEYS if k in args and k not in list(args)[:3]]
+    keys = ", ".join(f"{k}={args[k]}" for k in shown)
     if isinstance(payload, list):
         size = f"{len(payload)} items"
     elif isinstance(payload, dict):
