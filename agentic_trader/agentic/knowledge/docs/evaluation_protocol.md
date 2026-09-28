@@ -33,8 +33,9 @@ buy and hold, so the FX drawdown comparison has no separate control.
 
 Every published number is measured under one engine: units are constant between
 decisions and the weight drifts with the market; costs and impact come out of equity before
-a target is sized; equity is floored at zero (ruin); a gap through a protective level fills
-at the open; market impact scales with the square root of current equity, and a portfolio
+a target is sized; equity is floored at zero (ruin, declared per factor: an entry cost, a
+move or an exit cost that alone consumes the whole account is ruin, never two such factors
+multiplying into a surviving account); a gap through a protective level fills at the open; market impact scales with the square root of current equity, and a portfolio
 sleeve pays the impact of the capital it actually receives. Idle cash earns the cash leg:
 on real data the 3-month Treasury bill rate per bar, on funded positions (equities) the
 uninvested fraction of the account, on currency forwards the whole account. Synthetic data
@@ -48,7 +49,13 @@ Sharpe, Sortino and the t-statistic are computed on excess returns over the per-
 rate; annualised return, cumulative return and Calmar remain total-return quantities.
 Portfolio metrics annualise with the largest periods-per-year among the sleeves (260 when a
 currency pair is present). The t-statistic is the mean daily excess return over its
-standard error; about two is needed before a Sharpe ratio is distinguishable from zero.
+standard error; about two is needed before a Sharpe ratio is distinguishable from zero. An
+excess-return series that is constant to rounding (a flat book, or one earning exactly the
+cash rate) has no dispersion to divide by: its Sharpe, Sortino, t-statistic and volatility
+are reported as zero on both backends rather than as noise over noise, Sortino alone is
+zero when only the downside is rounding noise, and the portfolio-level Sharpe difference
+and the bootstrap helpers apply the same rule. The Sharpe difference pairs each bar's
+return with the cash rate credited over that bar, exactly as the metrics do.
 
 ## Statistics
 

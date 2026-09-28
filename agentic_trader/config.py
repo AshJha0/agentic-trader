@@ -225,11 +225,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # deployment slot is safe across a rolling restart: the sweep fails only records whose
         # heartbeat lease has expired, never a live sibling's just because it shares the id.
         "instance_id": None,
-        "lease_s": 90.0,                     # a live run's heartbeat lease; only expired records are swept
+        "lease_s": 90.0,                     # a live run's heartbeat lease (>= 1 s); only expired records are swept
         "task_db": None,             # SQLite path for a persistent task store (None = in memory only)
         "workers": 4,                # task threads per API process
         "queue_limit": 64,           # tasks accepted but unfinished per process; beyond it POST /tasks -> 503
-        "sweep_interrupted": True,   # mark in-flight store records FAILED at startup (the parent does it once for --processes N)
+        # At startup, mark FAILED the store records whose heartbeat lease has expired or that have no
+        # owner (never a live sibling's, whatever instance id it shares); the parent does it once for
+        # --processes N. The periodic sweep runs regardless.
+        "sweep_interrupted": True,
         # API keys -> roles for `agentic-trader serve`. Development values only.
         "api_keys": {"dev-viewer-key": "viewer", "dev-analyst-key": "analyst",
                      "dev-trader-key": "trader", "dev-risk-key": "risk", "dev-admin-key": "admin"},

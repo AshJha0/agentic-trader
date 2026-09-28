@@ -432,6 +432,14 @@ print(state.reports["seasonality"].summary)
 
 ### 24. Persist memory across runs
 
+An entry is valued only by the provider and price basis that recorded it, on the history
+the desk holds, from its entry bar to the bar `horizon_days` trading days later, and only
+when the decision day sat within the desk's `max_data_staleness_days` of its entry bar
+(`DecisionMemory(path, max_staleness_days=7)`; `TradingGraph` passes its own setting to
+the memory it builds and to every `resolve`). An entry the series cannot value expires
+without a verdict after twice its horizon; entries written before v0.8 carry no provider,
+are never valued, and are expired by any named provider's visit.
+
 ```python
 import os
 import tempfile
@@ -788,8 +796,13 @@ produced, not a bare number: the quantity in its unit (whole shares, or whole lo
 pair's base currency), the notional in the account currency, the reference price and the
 `plan_id` that binds them (an edited field fails to verify). `ticket_from_plan` turns the plan
 payload into the call's arguments; the notional is checked against the per-order cap
-(`execution.max_order_notional`, default `initial_capital × risk.max_position`) by policy
-before anyone is asked to approve.
+(`execution.max_order_notional`, default `initial_capital × risk.max_position`; 0 freezes
+ticketing) by policy before anyone is asked to approve, and the plan payload already says
+whether the order is `ticketable` against that `order_cap`. `submit_order` accepts only a
+plan this desk produced, with exactly its fields (`plan_known`; the plan id is a checksum
+anyone can compute, so it is not authentication by itself; `execution.allow_external_plans`
+admits tickets planned elsewhere), and a ticket moves the desk's book to `position_after`,
+so a later plan in the same session sizes from it.
 
 ```python
 from datetime import date
@@ -973,6 +986,8 @@ print(c.get("/tools", headers={"X-API-Key": "dev-viewer-key"}).json()[0]["name"]
 ```bash
 agentic-trader mcp                        # stdio server for any MCP client; every call runs under policy,
                                           # approval and evidence for --role (trader) and --approval
+agentic-trader mcp --approval deny        # locked down: every state-changing call is refused
+agentic-trader mcp --role viewer          # read-only tools only; --approval queued is refused (exit 2)
 ```
 
 ```python
@@ -982,11 +997,22 @@ from agentic_trader.agentic.mcp_server import call, discover, registry_from_stdi
 tools = discover()
 print(len(tools), tools[1]["name"], tools[1]["read_only"])
 print(call("knowledge__list_documents", {}))
-reg = registry_from_stdio()                              # remote tools as a local registry
+reg = registry_from_stdio()                              # remote tools as a local registry, over one server session
 ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER)
 r = ex.call("quant.technical", symbol="AAPL", as_of="2024-03-01")
 print(r.ok, round(r.payload["rsi14"], 1), "evidence:", len(ex.evidence))   # policy and evidence apply to remote tools
+reg.session.close()                                      # ends the server process (also on garbage collection)
 ```
+
+A discovered tool is classified fail-closed whatever the server annotates: state-changing,
+high risk, trader-only, data evidence. The `overrides` map is the only relaxation; by default
+it is the desk's own catalogue, since the client only launches this package's server, and
+`overrides={}` relaxes nothing. `registry_from_stdio(server_args=None, overrides=None,
+call_timeout_s=None, config=None)`: the per-call deadline defaults to `agentic.tool_timeout_s`
+(30 s), `math.inf` waits without limit, and a timeout only sends the SDK's cancellation
+notice, which is as far as it reaches. A state-changing call that times out may still have
+landed its ticket on the server: its outcome is unknown, so reconcile through
+`portfolio.position`, which lists pending tickets.
 
 ### 50. Trace a run and export metrics
 
@@ -1067,8 +1093,10 @@ design period before adopting it.
 The order is sized at the as-of close (`notional = |target − current| × capital` in the
 account currency, rounded down once to whole shares or, for FX, to whole lots of the base
 currency) and worked on the *next* session, the first one a decision at the close can trade
-in. `simulate_execution` takes the requested quantity so an unfilled remainder shows up as a
-completion below 100% and as opportunity cost inside the implementation shortfall.
+in. A change that rounds down to zero shares or lots is nothing to trade, not an error:
+`plan_execution` returns `None`, as it does for an unchanged target. `simulate_execution`
+takes the requested quantity so an unfilled remainder shows up as a completion below 100%
+and as opportunity cost inside the implementation shortfall.
 
 ```python
 from datetime import date
@@ -1123,19 +1151,29 @@ implementation shortfall +63.0 bps, vs VWAP +1.5 bps (spread 1.0 bps, impact 0.5
 $ agentic-trader execute USDJPY --date 2024-03-01 --target 0.5
 BUY 50,000 USD (notional 50,000 USD at 133.78) via TWAP in 288 slices; weight +0.00 -> +0.50; intent open_long; PLAN-9fffc0aea2da
 executed 50,000 of 50,000 USD (100%) on 2024-03-04; arrival 133.7, avg fill 133.75, session VWAP 133.75, close 132.96
-implementation shortfall +3.8 bps, vs VWAP +0.3 bps (spread 0.3 bps, impact 0.0 bps, opportunity cost of 0 unfilled -0.0 bps)
+implementation shortfall +3.8 bps, vs VWAP +0.3 bps (spread 0.3 bps, impact 0.0 bps)
 
 $ agentic-trader execute NVDA --date 2024-03-01 --target 1.0 --capital 1000000000
 BUY 27,588,377 shares (notional 999,999,966 USD at 36.247) via POV in 78 slices; weight +0.00 -> +1.00; 133.6% of ADV exceeds 10% -> POV; intent open_long; PLAN-794907a342fe
 order is 133.56% of 20-day ADV
 executed 1,473,029 of 27,588,377 shares (5%) on 2024-03-04; arrival 36.071, avg fill 36.49, session VWAP 36.3, close 36.7
 implementation shortfall +171.3 bps, vs VWAP +52.4 bps (spread 1.0 bps, impact 51.4 bps, opportunity cost of 26,115,348 unfilled +165.1 bps), max slice participation 10.0%
+
+$ agentic-trader execute AAPL --date 2024-03-01 --target 0.1001 --current 0.1
+nothing to trade: the change +0.1000 -> +0.1001 (10 USD) is below one share
+
+$ agentic-trader execute AAPL --date 2024-03-01 --target 0.5 --algo ac --ac-kappa inf
+error: --ac-kappa must be finite and >= 0
 ```
 
 Most of the AAPL shortfall is the next session's own rise from the open, timing rather than
-cost; the cost is the line against VWAP. A negative equity target under the default long-only
-policy is truncated to flat (`--allow-short` lifts it), and `--ac-kappa` sets the
-Almgren-Chriss urgency for `--algo ac` (dimensionless, `costs.ac_kappa` 3.0; 0 is TWAP).
+cost; the cost is the line against VWAP. The unfilled clause is printed only when at least
+one share or lot went unfilled (a closed-form schedule can leave 1e-14 of a share). A
+negative equity target under the default long-only policy is truncated to flat
+(`--allow-short` lifts it; when the truncated change is itself below one share the message
+sizes that change, not the one asked for, and says why), and `--ac-kappa` sets the
+Almgren-Chriss urgency for `--algo ac` (dimensionless,
+`costs.ac_kappa` 3.0; 0 is TWAP; an infinite, NaN or negative value exits 2).
 
 ### 54. Compare execution algorithms on the same day
 
@@ -1163,7 +1201,7 @@ for seed in (1, 2, 3):
     vols = bars["Volume"].to_numpy()
     for name, sched in (("TWAP", twap_schedule(qty, 78)), ("VWAP", vwap_schedule(qty, vols)),
                         ("POV 10%", pov_schedule(qty, vols, 0.10)),
-                        ("AC k=3", quant.almgren_chriss(qty, 78, 3.0))):   # dimensionless urgency; 0 = TWAP
+                        ("AC k=3", quant.almgren_chriss(qty, 78, 3.0))):   # dimensionless urgency; 0 = TWAP, inf/nan/negative raise
         r = simulate_execution(sched, bars, "buy", name, 2.0, 1.0, daily_vol, adv, requested=qty)
         print(f"seed {seed} {name:<8} filled {r.completion:5.0%}  IS {r.is_bps:+6.1f} bps  vs VWAP {r.vs_vwap_bps:+6.1f} bps"
               f"  impact {r.impact_cost_bps:4.1f} bps")
@@ -1359,11 +1397,17 @@ For the real thing: `make_config(fred_vintages=True, fred_cache_dir="results/fre
 
 `max_llm_calls` caps calls; an Opus call costs about fifteen Haiku calls, so a call count
 does not bound the bill. `max_llm_cost_usd` caps the estimated spend (list prices,
-cache-aware). Before a call is dispatched its maximum cost (a full `max_tokens` reply,
-`estimate_cost`) is reserved, and calls in flight count against the cap, so parallel workers
-sharing one budget cannot each slip a call past it: spend stays within the cap. A served model
-id without a list price exhausts the budget instead of spending unbounded, and a configured id
-without one is refused at construction.
+cache-aware). Before a call is dispatched its reservation (`estimate_cost`) is taken, and
+calls in flight count against the cap, so parallel workers sharing one budget cannot each
+slip a call past it. What is reserved is `llm_budget_mode`: in the default `"hard"` mode it
+is the most the call can cost (the input estimate plus a full `max_tokens` reply, which is
+also what a timed-out attempt is billed at), so spend stays within the cap and a cap that
+cannot afford one such call refuses that tier before any spend; in `"estimate"` mode it is
+the input estimate plus `llm_reserve_output_tokens` (2000), which admits more concurrent
+calls but makes the cap soft by what replies exceed the reserve. `exhausted_for(deep)` says
+whether a tier's next call would be refused, and `exhausted` asks about the deep tier. A
+served model id without a list price exhausts the budget instead of spending unbounded, and
+a configured id without one is refused at construction.
 
 ```python
 from agentic_trader import TradingGraph, make_config
@@ -1397,9 +1441,11 @@ stops at whichever cap comes first.
 Without a store the harness forgets every task when the process ends. `agentic.task_db`
 writes each run to SQLite at every state transition and a new process serves the old records
 through the same API. Nothing is resumed: each live run is owned and heartbeated by its
-instance, a record whose owner has not heartbeated for `agentic.lease_s` (90 s) is failed by
-any live instance, and a restart with a configured `agentic.instance_id` fails its own
-predecessor's in-flight records at once. A live sibling's runs are left alone.
+instance, and a record whose owner has not heartbeated for `agentic.lease_s` (90 s, at least
+1) is failed by whichever live instance sweeps next. The configured `agentic.instance_id`
+never widens the sweep: a restart under the same id does not fail its predecessor's
+in-flight records at once but once their lease has passed, and a live sibling sharing the id
+keeps its runs because it keeps heartbeating them.
 
 ```python
 import os

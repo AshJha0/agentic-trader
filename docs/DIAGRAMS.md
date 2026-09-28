@@ -212,7 +212,7 @@ flowchart TD
     Z2 --> BAND{"current position within<br/>rebalance_band of w?"}
     BAND -- no --> F[final weight = w]
     BAND -- yes --> LEGAL{"would the current position<br/>pass every limit today?"}
-    LEGAL -- yes --> KEEP[final weight = current position]
+    LEGAL -- yes --> KEEP["final weight = current position<br/>(FinalDecision.kept = true: the backtester<br/>executes it as no trade, even past the cap)"]
     LEGAL -- no --> F
     F --> A["action = BUY / SELL / HOLD<br/>every adjustment recorded"]
     KEEP --> A
@@ -343,13 +343,13 @@ flowchart TD
     REG -- yes --> POL["policy.evaluate(request, descriptor, role)"]
     POL --> OUT{outcome}
     OUT -- DENY --> FAILD["error: denied by policy (rule)<br/>+ FAILED evidence"]
-    OUT -- REQUIRE_APPROVAL --> GW{gateway.decide}
+    OUT -- "ALLOW / REQUIRE_APPROVAL" --> CO["coerce_arguments(schema)<br/>dates · ints · bounds · no extras<br/>(before any approver sees the request)"]
+    CO -- invalid --> FAILA["error: denied by policy (argument_guard):<br/>bad arguments + FAILED evidence"]
+    CO -- "valid, REQUIRE_APPROVAL" --> GW{gateway.decide}
     GW -- pending --> WAIT["error: awaiting approval<br/>executor.pending_approval = True"]
     GW -- rejected --> FAILR["error: approval rejected"]
-    GW -- approved --> APPR["APPROVAL evidence"] --> CO
-    OUT -- ALLOW --> CO["coerce_arguments(schema)<br/>dates · ints · bounds · no extras"]
-    CO -- invalid --> FAILA["error: bad arguments"]
-    CO -- valid --> RUN["run on its own thread under a deadline<br/>read-only: retry transient errors (max_attempts)<br/>state-changing: one attempt, 'outcome unknown, not retried'<br/>timeout: the worker is abandoned and counted"]
+    GW -- approved --> APPR["APPROVAL evidence"] --> RUN
+    CO -- "valid, ALLOW" --> RUN["run on its own thread under a deadline<br/>read-only: retry transient errors (max_attempts)<br/>state-changing: one attempt, 'outcome unknown, not retried'<br/>timeout: the worker is abandoned and counted"]
     RUN -- error --> FAILX["error + FAILED evidence"]
     RUN -- ok --> EVD["evidence record<br/>type from annotations, args, digest"]
     EVD --> RES["ToolResult ok<br/>metrics + span"]
@@ -363,7 +363,7 @@ flowchart TD
     D1 -- yes --> DENY1[DENY deny_list]
     D1 -- no --> D2{"role holds every<br/>required capability?"}
     D2 -- no --> DENY2[DENY required_capabilities]
-    D2 -- yes --> D4{"arguments pass the guards?<br/>symbol (and every symbols entry, at most 60) valid and in universe ·<br/>dates not in the future · weights finite and within cap ·<br/>lookback bounded · quantity finite and positive · notional ≤ cap"}
+    D2 -- yes --> D4{"arguments pass the guards?<br/>symbol (and every symbols entry, at most 60) valid and in universe ·<br/>dates not in the future · proposed weights finite and within cap<br/>(current_weight: finite, never capped — a fact about the book) ·<br/>lookback bounded · quantity finite and positive · notional ≤ cap"}
     D4 -- no --> DENY4[DENY argument_guard]
     D4 -- yes --> D3{"tool read-only?"}
     D3 -- no --> D3b{"role can propose trades?"}
@@ -410,7 +410,7 @@ flowchart TD
     EACH --> TYPE{type}
     TYPE -- tool --> KNOWN{"tool in catalogue?"}
     KNOWN -- no --> DROP1[drop + note]
-    KNOWN -- yes --> ARGS["keep only schema arguments<br/>pin symbol and as_of to the task"]
+    KNOWN -- yes --> ARGS["keep only schema arguments<br/>pin symbol and as_of to the task<br/>drop current_weight when the run's book holds the symbol<br/>symbols: string → list, other shapes drop the step,<br/>clip to the universe and max_symbols_per_call"]
     ARGS --> RO{"read-only?"}
     RO -- no --> DROP2["drop + note:<br/>a plan may not schedule state changes"]
     RO -- yes --> KEEPT[keep tool step]
@@ -524,7 +524,7 @@ flowchart LR
     end
     REG -.->|"build_mcp_server()"| MS
     CLIENT["any MCP client<br/>IDE · assistant · another agent"] <-->|JSON-RPC over stdio| MS
-    REMOTE["registry_from_stdio()<br/>remote tools as local descriptors<br/>(no annotations → not read-only, high risk;<br/>operator overrides only)"] <-->|stdio| MS
+    REMOTE["registry_from_stdio()<br/>remote tools as local descriptors, one server session<br/>(every remote tool state-changing, high risk,<br/>whatever the server claims; operator overrides only,<br/>the desk's own catalogue by default)"] <-->|stdio| MS
     REMOTE --> HAR2["a second harness<br/>policy + evidence unchanged"]
     OPS["operator / OMS"] -->|"POST /tasks · GET /report · /approvals · /metrics"| API
 ```
@@ -552,7 +552,7 @@ flowchart LR
     subgraph t0["bar t (decision)"]
         C0[close t] --> DEC["propagate(as_of = t,<br/>current_weight = the position actually held:<br/>0 after a stop / take, else the drifted weight)<br/>data <= close t"]
     end
-    DEC -->|"target weight w_t,<br/>stop / take levels"| H["units bought at close t<br/>held to the next decision"]
+    DEC -->|"target weight w_t (clamped to the cap),<br/>or a marked keep (FinalDecision.kept): no trade,<br/>stop / take levels"| H["units bought at close t<br/>held to the next decision"]
     H --> R["costs on abs(Δw) out of equity first,<br/>then w_t × price return + carry on the notional<br/>+ cash rate on the idle fraction − borrow;<br/>on hold bars the weight drifts: no trade, no cost"]
     H -.->|"use_stops"| ST["intraday stop / target<br/>check on each bar (diagram 19)"]
     R --> N["bar t+k: next decision<br/>(earlier if the target changes)"]
@@ -609,7 +609,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    D["FinalDecision target weight<br/>+ current weight (from the position book)<br/>+ capital + last close + ADV"] --> PL["plan_execution()<br/>long-only policy: a negative equity target<br/>is truncated to flat"]
+    D["FinalDecision target weight<br/>+ current weight (from the run's position book)<br/>+ capital + last close + ADV"] --> PL["plan_execution()<br/>long-only policy: a negative equity target<br/>is truncated to flat; a change below one<br/>share or lot is nothing to trade (trade: false)"]
     PL --> N["notional = abs(Δw) × capital<br/>in the account currency (USD)"]
     N --> Q{"instrument"}
     Q -- equity --> QE["shares = floor(notional / price)"]
@@ -624,14 +624,14 @@ flowchart TD
     ALG -- "FX" --> TWAP["TWAP · 288 slices"]
     ALG -- "equity, order ≤ 10% ADV" --> VWAP["VWAP · 78 slices<br/>U-shaped volume profile"]
     ALG -- "equity, order > 10% ADV" --> POV["POV · participation ≤ 20% per slice"]
-    ALG -- "on request" --> AC["Almgren-Chriss (C++)<br/>dimensionless urgency κ (costs.ac_kappa, 3.0):<br/>independent of price level and seed"]
+    ALG -- "on request" --> AC["Almgren-Chriss (C++)<br/>dimensionless urgency κ (costs.ac_kappa, 3.0; 0 = TWAP):<br/>independent of price level and seed"]
     TWAP --> SIM
     VWAP --> SIM
     POV --> SIM
     AC --> SIM["simulate_execution() on the next session<br/>(arrival = its open; no fill if none exists yet)<br/>intraday bars: Brownian bridge inside [low, high]<br/>fill at bar VWAP + half spread<br/>+ impact_coeff · vol · sqrt(q_i / V_i) per slice<br/>slice capped at the bar's volume"]
     SIM --> OUT["ExecutionReport<br/>IS on the requested quantity (unfilled marked at the close) ·<br/>opportunity cost · slippage vs VWAP · spread and impact bps ·<br/>executed X of Y · max participation"]
-    OUT -.->|"execution.plan tool<br/>(read-only simulation)"| EV[(evidence)]
-    D -.->|"execution.submit_order<br/>HIGH risk → notional cap by policy, then approval"| TICKET["order ticket (no broker):<br/>quantity + unit · notional + currency · price ·<br/>plan_id (verified) · intent · position before / after"]
+    OUT -.->|"execution.plan tool<br/>(read-only simulation; payload says<br/>ticketable and order_cap)"| EV[(evidence)]
+    D -.->|"execution.submit_order<br/>HIGH risk → notional cap by policy, then approval;<br/>the plan must be one this desk produced"| TICKET["order ticket (no broker):<br/>quantity + unit · notional + currency · price ·<br/>plan_id (verified) · intent · position before / after;<br/>the run's book moves to position_after"]
 ```
 
 ## 22. Portfolio construction
@@ -803,9 +803,9 @@ flowchart LR
     CIK --> FACTS["companyfacts/CIK.json<br/>every XBRL fact with its filed date"]
     SUB --> NEWS["news(as_of, lookback):<br/>filed in (as_of − lookback, as_of]<br/>8-K item → headline + tone<br/>10-K/Q, 13D/G, NT · Form 4 counts"]
     FACTS --> KNOWN["facts with filed ≤ as_of<br/>latest print per span known at as_of"]
-    KNOWN --> Q["quarterly_table, per tag and per basis generation:<br/>direct quarters · YTD differencing<br/>Q4 = FY − 9M · 12/16-week quarters<br/>(a re-print more than 5% away opens a new basis;<br/>tags and bases are never mixed)"]
-    Q --> TTM["ttm: four contiguous quarters<br/>of one tag on one basis<br/>(highest-ranked tag that covers the window)"]
-    TTM --> F["fundamentals: growth (same tag and basis),<br/>margin, EPS, leverage, FCF<br/>recency guards: instants ≤ 400d, flows ≤ 1 quarter"]
+    KNOWN --> Q["quarterly_table, per concept and per basis generation:<br/>concept = a tag, or tags proven equivalent by an identical span<br/>direct quarters · YTD differencing · Q4 = FY − 9M · 12/16-week quarters<br/>re-print within 5%: revision, latest wins ·<br/>material change: needs two spans or a first print's comparative,<br/>reconciling with its own annual span, else mis-tagged and rejected ·<br/>a lone material re-print is ignored and remembered,<br/>taken in place once a later filing repeats it ·<br/>direct Q4 of an additive flow cross-checked against FY (not per-share) ·<br/>concepts and bases are never mixed"]
+    Q --> TTM["ttm: four contiguous quarters<br/>of one concept on one basis<br/>(the concept already reported is kept while it covers;<br/>rank decides only where none does)"]
+    TTM --> F["fundamentals: growth (same concept and basis),<br/>margin (windows ending together), EPS, leverage,<br/>FCF (OCF and capex windows ending together)<br/>guards: instants ≤ 400d; a flow series is dead only when<br/>no filing in 120d printed it — a lagging live window is<br/>kept and flagged (*_period_end) for the analyst to skip"]
     PX["as-traded close, split-rebased prints"] --> F2["P/E, FCF yield<br/>sanity: market cap ≥ 1% of revenue, EPS ≤ ½ price<br/>share-class ratio first (BRK-B)"]
     F --> F2
     F2 --> FA["Fundamentals analyst"]
@@ -848,10 +848,10 @@ flowchart LR
     subgraph P2["process 2"]
         H2["harness"] --> POOL2["thread pool"]
     end
-    POOL1 --> DB[("task store (SQLite)<br/>every transition · owner · heartbeat every lease_s / 3")]
+    POOL1 --> DB[("task store (SQLite)<br/>every transition · owner · heartbeat every lease_s / 3<br/>on the runs this instance drives")]
     POOL2 --> DB
     DB --> R1["GET /tasks/{id}, /report, /evidence<br/>served from any process<br/>(non-terminal records re-read, never cached)"]
-    DB --> SW["lease-gated sweep (parent at start, then periodic):<br/>only records whose owner's lease expired,<br/>or written by the same instance_id, are failed"]
+    DB --> SW["lease-only sweep (parent at start, then periodic):<br/>only records whose heartbeat is older than lease_s,<br/>or with no owner at all, are failed (compare-and-swap);<br/>the owner never widens it"]
     C["POST /tasks/{id}/cancel · /approvals<br/>(GET /approvals → 409 unless queued)"] -->|"owning process"| H1
     C -->|"other process → 409"| H2
     HL["GET /health: approval mode · instance id ·<br/>workers · queue · in-flight"] --> H1

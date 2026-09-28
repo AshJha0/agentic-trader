@@ -17,7 +17,8 @@ rate (the 3-month Treasury bill on real data) in addition to the position's carr
 The rate differential the macro analyst is shown and the carry the backtester credits come
 from one function, so on every bar they agree or both are absent. What the desk sizes on is
 what the backtester credits. The command-line backtest header prints the mean carry
-credited over all bars, counting a bar with no known rate as zero, and how many bars had no
+credited over the accruing bars (every bar but the last, which has no following bar to
+accrue into), counting a bar with no known rate as zero, and how many accruing bars had no
 point-in-time rate.
 
 ## Point-in-time rates and publication lag
@@ -33,7 +34,10 @@ days for monthly) is treated as unavailable rather than carried forward, because
 OECD series stopped updating and a stale value must not stand in for the present. SEK has
 no series (its OECD series stopped in October 2020), so USDSEK has no macro view at any
 date on real data. Every macro answer names its source, and the provider keeps a tally per
-run so a run can state whether any decision used the static table.
+run, recorded in the evaluation result's metadata, so a run can state whether any decision
+used the static table. A cached FRED series that cannot be re-downloaded is served stale
+with a warning naming the series and its last observation, so an offline re-run of a
+historical period keeps the macro view it had online.
 
 ## Inflation
 

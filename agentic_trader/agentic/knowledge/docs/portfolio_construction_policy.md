@@ -27,10 +27,13 @@ one over its volatility so that each contributes similar standalone risk. Risk p
 solves for weights whose risk contributions are equal under the full covariance. Minimum
 variance and mean-variance with the desk's signals as expected returns are available for
 long-only mandates. Every scheme produces a non-negative allocation of capital that
-multiplies the signed desk targets, so a flat sleeve stays flat. A window on which no
-active sleeve has positive variance, or on which a scheme returns a non-finite allocation,
-raises an error, and the portfolio backtest keeps its previous allocation rather than hold
-NaN.
+multiplies the signed desk targets, so a flat sleeve stays flat. An active sleeve whose
+returns have zero variance in the window (a forward-filled or frozen series) is a data
+artefact, not a risk-free asset: every scheme allocates it nothing, with a warning, and a
+budgeted group whose only sleeves are flat drops out of the cross-group step. Only a window
+on which no active sleeve has positive variance, or on which a scheme returns a non-finite
+allocation, raises an error, and the portfolio backtest then keeps its previous allocation
+rather than hold NaN.
 
 ## Constraints
 

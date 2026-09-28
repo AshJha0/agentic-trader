@@ -10,7 +10,11 @@ divided by the price of one unit in the account currency, rounded down once, at 
 to whole shares for equities or to whole lots of the pair's base currency for FX
 (`execution.fx_lot_size`, 1,000 by default). The notional reported is that of the rounded
 quantity, and the schedule, the plan payload, the ticket and the command all carry that same
-quantity. An order below one lot is refused rather than ticketed.
+quantity. A change that rounds down to zero shares or zero lots is nothing to trade, not an
+error: the `execution.plan` tool answers `trade: false` with the reason, as it does for a
+target equal to the current position, and the `execute` command prints the change it
+sized (the change actually planned, after any long-only truncation, with a note saying so)
+and that it is below one share or one lot.
 
 FX quantities are in the base currency. When the base is the account currency the quantity
 equals the notional (USDJPY on a USD account: 500,000 USD is 500,000 USD). When the quote is
@@ -19,8 +23,13 @@ cross (EURJPY on a USD account) the plan needs the base-to-account rate, read po
 from the provider's direct or inverse pair, and refuses to size the order without it.
 Equities are assumed to be quoted in the account currency.
 
-The current position comes from the desk's position book. A caller may supply it only when
-the book does not know the symbol; a value that disagrees with the book is refused. Under the
+The current position comes from the desk's position book. Inside a task run the book is the
+run's own: seeded from the task's declared position and any positions map submitted with
+the task, moved by every ticket the run writes, and read by the plan tool, the position
+report, the planner and the agents alike, so there is one position and it is a fact, never
+a proposal. A caller may supply the current position only when the book does not know the
+symbol; a value that disagrees with the book is refused, and the plan validator drops a
+model-written value whenever the book holds the symbol. Under the
 long-only equity policy a negative target is truncated to flat, so a long-only book only ever
 reduces; the plan's reason and its intent (open, add, reduce, close, sell short, buy to
 cover, reverse) say so.
@@ -33,9 +42,10 @@ for equities. Participation-of-volume trades a fixed fraction of each slice's ob
 volume (10% by default, never above 20%) and is chosen automatically when the order exceeds
 10% of the instrument's 20-day average daily volume. The Almgren-Chriss schedule front-loads
 execution according to a dimensionless urgency kappa (`costs.ac_kappa`, 3.0 by default; 0 is
-TWAP), trading market impact against timing risk; the schedule depends on kappa alone, not
-on the price level. A session is sliced into 5-minute bars: 78 for an equity session, 288
-for a 24-hour FX day.
+TWAP, in the plan tool and the backtester alike; an infinite, undefined or negative kappa is
+refused), trading market impact against timing risk; the schedule depends on kappa alone,
+not on the price level. A session is sliced into 5-minute bars: 78 for an equity session,
+288 for a 24-hour FX day.
 
 ## Fills and timing
 
@@ -71,12 +81,20 @@ a submitted order is a ticket recorded as evidence and nothing else.
 
 A ticket is the plan the desk produced, not a bare number: the quantity in its unit, the
 notional in the account currency, the reference price, and a plan reference that binds those
-fields together, so an edited number fails verification. The ticket is refused when the
-fields do not match the reference, the quantity is not whole shares or whole lots, the
-notional exceeds the per-order cap (`execution.max_order_notional`, or capital times the
-maximum position weight when unset), or it would take a long-only book short. The same cap
-and the symbol universe are checked by the policy engine before any approval is requested,
-so an oversized or out-of-universe order is denied, never parked for a person to approve.
-The ticket records the position before and after, and the position report lists tickets
-pending against a symbol. The plan reference is a checksum over the ticket's fields, not
-proof that the desk produced the plan.
+fields together, so an edited number fails verification. The plan payload says whether the
+order is ticketable (`ticketable`) against the desk's per-order cap (`order_cap`:
+`execution.max_order_notional`, or capital times the maximum position weight when unset;
+a cap of 0 freezes ticketing); a plan over the cap is returned with the cap and a note so
+the caller can reduce or split it, and is not one the desk will ticket. The ticket is
+refused when the fields do not match the reference, the quantity is not whole shares or
+whole lots, the notional exceeds the cap, it would take a long-only book short, or the plan
+is not one this desk produced with exactly these fields: the plan reference is a checksum
+anyone can compute, and what authenticates a ticket is that this desk planned it
+(`execution.allow_external_plans`, off by default, admits tickets planned elsewhere). The
+same cap and the symbol universe are checked by the policy engine before any approval is
+requested, and so are the arguments themselves, so an oversized, out-of-universe or
+malformed order is denied, never parked for a person to approve. The ticket records the
+position before and after and moves the book to the position after, pending the fill, so
+the second leg of a split order plans from the reduced book and a second reduction cannot
+sell the same shares twice; the position report lists tickets pending against a symbol and
+its weight already counts them.

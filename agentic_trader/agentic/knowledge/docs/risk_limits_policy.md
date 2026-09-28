@@ -52,7 +52,8 @@ equity target under the long-only policy becomes flat.
 If the new target is within 0.10 of the current position, the current position is kept.
 The band applies only when the current position itself passes every limit today; the band
 never keeps a position that the VaR cap, the book VaR cap or the position cap would now
-forbid.
+forbid. A decision the band keeps is marked as a keep (`FinalDecision.kept`), and that mark
+is the only thing the backtester executes as no trade; every other decision is a target.
 
 ## Order of application
 
@@ -66,4 +67,9 @@ the band so a small legitimate position is not kept by accident.
 The backtester holds units, not a constant weight, between decisions: the held weight
 drifts with the market and can sit above the cap until the next decision bar, where the
 cap binds on the target. The desk is told the position it actually holds, drifted or flat
-after a protective exit, and every limit and the band are evaluated against it.
+after a protective exit, and every limit and the band are evaluated against it. A keep is
+executed as no trade; any other decision, including one equal to the cap while the held
+weight has drifted past it (a losing short, a capped long with negative carry), is clamped
+to the cap and traded, so a position past the cap is trimmed back to it at the next
+decision bar. Because the band never keeps a position the cap forbids, a drifted position
+past the cap is never held by a keep.

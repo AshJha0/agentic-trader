@@ -41,6 +41,20 @@ is told it holds is the previous decision's units drifted with the market, or fl
 stop or take-profit exit. The no-trade band and the execution plan start from that true
 position, so a decision to keep it trades nothing.
 
+## What the fundamentals analyst refuses to score
+
+The fundamentals score, one input to the debate the trader sizes on, is built only from
+figures current at the decision date. A point-in-time report older than 120 days at the
+decision date (a skipped periodic filing) is not scored at all: the analyst abstains and
+says how old the report is. A term whose four-quarter window ends more than 100 days behind
+the report period, as the provider flags it (revenue growth on `revenue_period_end`, net
+margin on `net_income_period_end`, P/E and the negative-earnings penalty on
+`eps_period_end`, free-cash-flow yield on `ocf_period_end`), is skipped with a key point
+naming the window's end and its lag; a window one quarter behind is scored as before. When
+every term is skipped the analyst abstains, and a report carrying only its date and age,
+no figure, abstains too. The summary names every lagging window. Providers without lag
+flags (synthetic data) are scored exactly as before.
+
 ## Track record adjustment
 
 When the decision memory shows a hit rate below 40% over the last resolved calls on the
