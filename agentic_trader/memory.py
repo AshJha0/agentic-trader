@@ -119,29 +119,53 @@ class DecisionMemory:
         self._by_key: dict[str, MemoryEntry] = {}
         self.skipped_lines = 0
         self._lock = threading.RLock()
+        self._offset = 0                      # bytes of the log already read into memory
+        self._line_no = 0
         if self.path and self.path.exists():
             self._load()
 
     # ------------------------------------------------------------ persistence
     def _load(self) -> None:
-        for n, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            try:
-                obj = json.loads(line)
-                if not isinstance(obj, dict):
-                    raise TypeError("not an object")
-                if "resolve" in obj:
-                    e = self._by_key.get(str(obj["resolve"]))
-                    if e is not None:
-                        for k in _RESOLUTION_FIELDS:
-                            setattr(e, k, obj.get(k, getattr(e, k)))
-                    continue
-                self._put(MemoryEntry(**{k: v for k, v in obj.items() if k in _FIELDS}))
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
-                # A torn write or a hand edit must not make every later run crash.
-                self.skipped_lines += 1
-                log.warning("memory %s line %d unreadable, skipped: %s", self.path, n, e)
+        self._catch_up()
+
+    def _catch_up(self, upto: int | None = None) -> None:
+        """Read the lines a sibling process appended since this instance last looked (the log
+        is append-only and every writer fsyncs a whole line under the file lock, so bytes up to
+        the size seen now are complete lines; a partial tail is left for the next call)."""
+        if not self.path or not self.path.exists():
+            return
+        end = self.path.stat().st_size if upto is None else upto
+        if end <= self._offset:
+            return
+        with open(self.path, "rb") as f:
+            f.seek(self._offset)
+            chunk = f.read(end - self._offset)
+        cut = chunk.rfind(b"\n")
+        if cut < 0:
+            return
+        for line in chunk[:cut].decode("utf-8", errors="replace").split("\n"):
+            self._line_no += 1
+            self._ingest(line, self._line_no)
+        self._offset += cut + 1
+
+    def _ingest(self, line: str, n: int) -> None:
+        if not line.strip():
+            return
+        try:
+            obj = json.loads(line)
+            if not isinstance(obj, dict):
+                raise TypeError("not an object")
+            if "resolve" in obj:
+                e = self._by_key.get(str(obj["resolve"]))
+                if e is not None:
+                    for k in _RESOLUTION_FIELDS:
+                        setattr(e, k, obj.get(k, getattr(e, k)))
+                return
+            self._put(MemoryEntry(**{k: v for k, v in obj.items() if k in _FIELDS}))
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            # A torn write or a hand edit must not make every later run crash.
+            self.skipped_lines += 1
+            log.warning("memory %s line %d unreadable, skipped: %s", self.path, n, e)
 
     def _put(self, e: MemoryEntry) -> None:
         old = self._by_key.get(e.key)
@@ -159,13 +183,18 @@ class DecisionMemory:
         try:
             _lock_file(fd)
             try:
-                os.lseek(fd, 0, os.SEEK_END)
+                end = os.lseek(fd, 0, os.SEEK_END)
                 os.write(fd, data)
                 os.fsync(fd)
             finally:
                 _unlock_file(fd)
         finally:
             os.close(fd)
+        # Lines other processes appended before ours are read now; our own line is already in
+        # memory, so the cursor moves past it.
+        self._catch_up(upto=end)
+        self._line_no += 1
+        self._offset = end + len(data)
 
     def _append_resolution(self, e: MemoryEntry) -> None:
         self._append({"resolve": e.key, **{k: getattr(e, k) for k in _RESOLUTION_FIELDS}})
@@ -176,6 +205,7 @@ class DecisionMemory:
         e = MemoryEntry(symbol, as_of.isoformat(), action, weight, price, int(horizon_days),
                         summary[:400], provider, price_basis)
         with self._lock:
+            self._catch_up()
             self._put(e)
             self._append(asdict(e))
 
@@ -200,6 +230,7 @@ class DecisionMemory:
         tolerance = self.max_staleness_days if max_staleness_days is None else int(max_staleness_days)
         n = 0
         with self._lock:
+            self._catch_up()
             for e in self.entries:
                 if e.symbol != symbol or e.resolved_on is not None:
                     continue
@@ -250,6 +281,7 @@ class DecisionMemory:
     # a synthetic session's outcomes are not a track record for a live one.
     def lessons(self, symbol: str, as_of: date, k: int = 3, provider: str | None = None) -> list[str]:
         with self._lock:
+            self._catch_up()
             done = [e for e in self.entries if e.symbol == symbol and e.lesson
                     and (provider is None or e.provider == provider)
                     and e.resolved_on and date.fromisoformat(e.resolved_on) <= as_of]
@@ -258,6 +290,7 @@ class DecisionMemory:
     def track_record(self, symbol: str, as_of: date, k: int = 20,
                      provider: str | None = None) -> dict[str, float]:
         with self._lock:
+            self._catch_up()
             done = [e for e in self.entries if e.symbol == symbol and e.pnl is not None
                     and (provider is None or e.provider == provider)
                     and e.weight != 0 and date.fromisoformat(e.resolved_on) <= as_of][-k:]

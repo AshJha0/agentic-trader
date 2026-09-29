@@ -322,6 +322,9 @@ class AnthropicLLM:
         # Credentials: ANTHROPIC_API_KEY or an `ant auth login` profile. The client makes no
         # retries of its own: ``complete`` runs the loop, so every attempt is observed and billed.
         self.client = anthropic.Anthropic(timeout=float(config.get("llm_timeout_s", 300)), max_retries=0)
+        # set by BudgetedLLM: called before every retry so that each attempt, not each call, is
+        # reserved against the dollar cap (a timed-out attempt is billed at its maximum)
+        self.admit_retry = None
         self.config = config
         self.usage = UsageTracker()
 
@@ -337,7 +340,7 @@ class AnthropicLLM:
                              self.config["deep_effort" if deep else "quick_effort"],
                              self.config["max_tokens"])
 
-    def estimate_cost(self, deep: bool) -> float:
+    def estimate_cost(self, deep: bool, prompt_chars: int = 0) -> float:
         """What one call on this tier is reserved at before it is dispatched. Under
         ``llm_budget_mode="hard"`` it is the most the call can cost -- a typical prompt plus a
         full ``max_tokens`` reply, which is also what a timed-out attempt is billed at -- so the
@@ -345,7 +348,10 @@ class AnthropicLLM:
         ``llm_reserve_output_tokens`` of reply: a realistic size that admits more concurrent
         calls but lets spend overshoot the cap by what replies exceed the reserve."""
         out = self.config["max_tokens"] if self.budget_mode == "hard" else self.reserve_output_tokens
-        return estimate_call_cost(self.model_for(deep), int(out))
+        # the prompt is priced at what it is when known (about 3 characters a token), never below
+        # the typical size, so a long prompt cannot slip under a reservation made for a short one
+        tokens_in = max(ESTIMATED_INPUT_TOKENS, int(prompt_chars) // 3)
+        return estimate_call_cost(self.model_for(deep), int(out), tokens_in)
 
     def _create(self, kwargs: dict[str, Any]) -> Any:
         if self.config.get("use_refusal_fallback") and kwargs["model"] in _FALLBACK_MODELS:
@@ -383,6 +389,10 @@ class AnthropicLLM:
                 retry = True
             if not retry or attempt > self.max_retries:
                 log.warning("%s; giving up after %d attempt(s)", problem, attempt)
+                self.usage.count("errors")
+                return None
+            if self.admit_retry is not None and not self.admit_retry(deep):
+                log.warning("%s; retry refused by the spend budget after %d attempt(s)", problem, attempt)
                 self.usage.count("errors")
                 return None
             log.warning("%s; retry %d of %d", problem, attempt, self.max_retries)
@@ -431,6 +441,7 @@ class BudgetedLLM:
         self.refused = 0
         self.in_flight = 0
         self.reserved_usd = 0.0
+        self._call = threading.local()        # the reservation of the call in flight on each thread
         self._lock = threading.Lock()
 
     @property
@@ -454,12 +465,27 @@ class BudgetedLLM:
         with self._lock:
             return self._why_exhausted(self._reserve(deep)) is not None
 
-    def _estimate(self, deep: bool) -> float:
+    def _estimate(self, deep: bool, prompt_chars: int = 0) -> float:
         est = getattr(self.inner, "estimate_cost", None)
-        return float(est(deep)) if callable(est) else 0.0
+        if not callable(est):
+            return 0.0
+        try:
+            return float(est(deep, prompt_chars))
+        except TypeError:                       # an LLM whose estimate takes only the tier
+            return float(est(deep))
 
-    def _reserve(self, deep: bool) -> float:
-        return self._estimate(deep) if self.max_cost_usd is not None else 0.0
+    def _reserve(self, deep: bool, prompt_chars: int = 0) -> float:
+        return self._estimate(deep, prompt_chars) if self.max_cost_usd is not None else 0.0
+
+    def _admit_retry(self, deep: bool) -> bool:
+        """Reserve one more attempt of the call in flight on this thread, or refuse the retry."""
+        reserve = getattr(self._call, "reserve", 0.0)
+        with self._lock:
+            if self._why_exhausted(reserve) is not None:
+                return False
+            self.reserved_usd += reserve
+            self._call.extra = getattr(self._call, "extra", 0) + 1
+        return True
 
     def _why_exhausted(self, reserve: float = 0.0) -> str | None:
         if self.max_calls is not None and self.calls >= self.max_calls:
@@ -477,7 +503,7 @@ class BudgetedLLM:
         return None
 
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
-        reserve = self._reserve(deep)
+        reserve = self._reserve(deep, len(system) + len(prompt))
         with self._lock:
             why = self._why_exhausted(reserve)
             if why is not None:
@@ -488,12 +514,16 @@ class BudgetedLLM:
             self.calls += 1
             self.in_flight += 1
             self.reserved_usd += reserve
+        self._call.reserve, self._call.extra = reserve, 0
+        if hasattr(self.inner, "admit_retry"):
+            self.inner.admit_retry = self._admit_retry
         try:
             return self.inner.complete(system, prompt, deep=deep)
         finally:
             with self._lock:
                 self.in_flight -= 1
-                self.reserved_usd -= reserve
+                self.reserved_usd -= reserve * (1 + getattr(self._call, "extra", 0))
+            self._call.reserve, self._call.extra = 0.0, 0
 
 
 def budget_llm(llm: LLM, config: dict) -> LLM:

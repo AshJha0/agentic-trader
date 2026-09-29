@@ -55,6 +55,16 @@ def fmt_facts(facts: dict[str, Any]) -> str:
     return json.dumps({k: conv(v) for k, v in facts.items()}, indent=1, default=str)
 
 
+def complete_anon(llm, system: str, prompt: str, state, *, deep: bool = True):
+    """One model call through the state's anonymiser (``state.anon``) when anonymisation is
+    on: names and dates are scrubbed on the way out and restored on the way back, exactly as
+    ``Agent.complete`` does for the analysts, so the critic, reporter and planner cannot leak
+    the instrument or the calendar the analysts were kept from seeing."""
+    anon = getattr(state, "anon", None)
+    text = llm.complete(system, anon.scrub(prompt) if anon is not None else prompt, deep=deep)
+    return anon.restore(text) if anon is not None and text is not None else text
+
+
 class Agent:
     name = "agent"
     role = "agent"

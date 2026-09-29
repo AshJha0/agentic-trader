@@ -90,7 +90,13 @@ class RiskAnalyst(Agent):
         vt = quant.vol_target_weight(w0, f["realized_vol_20d_annual"] or float("nan"),
                                      f["target_vol"], mx) if w0 else 0.0
         if self.stance == "aggressive":
-            w = float(np.sign(w0)) * max(abs(w0) * 1.25, abs(vt))
+            if self.config["risk"].get("aggressive_vol_scaled", True):
+                # 1.25x the vol-targeted size: the aggressive view scales with volatility like the
+                # others, so the blended book is a proportional vol target (0.9375 x vt before the
+                # cap) instead of a fixed floor at the cap (the v0.8 rule, kept as a trial).
+                w = float(np.sign(w0)) * 1.25 * abs(vt)
+            else:
+                w = float(np.sign(w0)) * max(abs(w0) * 1.25, abs(vt))
         elif self.stance == "neutral":
             w = vt
         else:

@@ -71,6 +71,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # calls is below 40%. On in every published backtest so far (never measured
         # separately); the switch exists so the docs pass can measure it on the design period.
         "track_record_cut": True,
+        # v0.11: the news analyst's confidence grows with the tone carried by the headlines
+        # (sum |score|), not with their count, so a window of neutral filings is an abstention
+        # rather than a zero vote at confidence 0.7 (trial "news confidence by count (v0.8 rule)").
+        "news_tone_mass": True,
     },
 
     # ---- Data ----------------------------------------------------------------
@@ -89,6 +93,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "risk": {
         "max_position": 1.0,       # |target weight| cap (1.0 = 100% of equity notional)
         "target_vol": 0.15,        # annualised vol target used by the neutral risk analyst
+        # v0.11: the aggressive risk analyst sizes at 1.25x the vol-targeted weight instead of
+        # max(1.25 x proposal, vol target); under the 1.0 cap the old rule pinned the aggressive
+        # view at the cap and gave the blended book a fixed 25% floor. Chosen on the design
+        # period (trial "aggressive stance at the cap (v0.8 rule)").
+        "aggressive_vol_scaled": True,
         "max_var_95": 0.02,        # cap on 1-day 95% historical VaR of the position
         # Book-level risk aggregation (off by default: None). Per-instrument VaR above is
         # exactly that -- per instrument; a desk running several sleeves at once (TradingGraph
@@ -262,8 +271,9 @@ def _merge(base: dict, over: dict) -> dict:
 # Settings that reproduce v0.2 rule behaviour, for before/after comparisons.
 RULES_V02: dict[str, Any] = {
     "rules": {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False,
-              "fx_carry_neutral": False},
-    "risk": {"rebalance_band": 0.0, "neutral_weight": {"equity": 0.0, "fx": 0.0}},
+              "fx_carry_neutral": False, "news_tone_mass": False},
+    "risk": {"rebalance_band": 0.0, "neutral_weight": {"equity": 0.0, "fx": 0.0},
+             "aggressive_vol_scaled": False},   # v0.11 sizing rule off: the v0.2 desk sized at the cap
     "backtest": {"use_stops": False},
 }
 

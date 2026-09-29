@@ -24,6 +24,7 @@ from typing import Any
 
 import numpy as np
 
+from ..agents.base import complete_anon
 from ..agents.base import clip
 from ..llm import LLM, extract_json
 from ..state import TradingState, fenced, untrusted_block
@@ -223,9 +224,9 @@ class Critic:
             'JSON keys: "concerns" (list of short strings; empty if none), "confidence_multiplier" '
             "(number in [0, 1]: 1 = no concern, lower = less confident). You may only lower confidence."
         )
-        text = self.llm.complete(
-            FENCE_NOTE + "You are the independent critic of a trading desk. Find weaknesses, contradictions and "
-            "unsupported claims. Be specific and brief.", prompt, deep=True)
+        text = complete_anon(
+            self.llm, FENCE_NOTE + "You are the independent critic of a trading desk. Find weaknesses, "
+            "contradictions and unsupported claims. Be specific and brief.", prompt, state, deep=True)
         data = extract_json(text)
         if not isinstance(data, dict) or not data:
             return [], None, ["reply is not a JSON object"]

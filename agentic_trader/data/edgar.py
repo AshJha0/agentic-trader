@@ -149,6 +149,32 @@ SHARE_CLASS_RATIO: dict[str, float] = {"BRK-B": 1500.0}
 _QUARTER = (75, 120)
 # Filers that are funds or trusts, not operating companies: their XBRL facts are not
 # fundamentals in the analyst's sense, so they return nothing rather than nonsense.
+MARKET_CLOSE_ET = 16          # a filing accepted after 16:00 Eastern is public from the next session
+
+
+def visible_dates(filed: pd.Series, accepted: pd.Series | None) -> pd.Series:
+    """The first session whose close could know each filing.
+
+    The submissions feed's ``acceptanceDateTime`` is UTC (a Form 4 accepted at 00:33Z carries
+    the previous day's filing date, which only a UTC clock allows). It is converted to Eastern
+    time. Accepted before 16:00 ET on the filing date: visible that day. Accepted at or after
+    16:00 ET, or on a later day: the next business day after the acceptance date. With no
+    acceptance time known (synthetic fixtures; the SEC feed always carries one) the filing date
+    stands, as before v0.11.
+    """
+    filed = pd.to_datetime(filed)
+    if accepted is None:
+        return filed
+    acc = pd.to_datetime(accepted, errors="coerce", utc=True)
+    acc = acc.dt.tz_convert("America/New_York").dt.tz_localize(None)
+    known = acc.notna()
+    day = acc.dt.normalize()
+    late = known & ((acc.dt.hour >= MARKET_CLOSE_ET) | (day > filed))
+    after = (day.where(known, filed) + pd.offsets.BDay(1))
+    out = np.where(late, after, filed)
+    return pd.Series(out, index=filed.index).astype("datetime64[ns]")
+
+
 NON_OPERATING_SIC = {"6221"}   # commodity contracts brokers & dealers (GLD, SLV, USO, DBC)
 _YEAR = (350, 380)
 # Four consecutive quarters span this many days from the first end to the last.
@@ -293,10 +319,15 @@ class EdgarClient:
                 "fiscal_year_end": sub.get("fiscalYearEnd")} if sub else {}
 
     def filings(self, ticker: str) -> pd.DataFrame:
-        """All filings for ``ticker``: form, filed, report, items, accession (sorted by filed)."""
+        """All filings for ``ticker``: form, filed, report, items, accession, accepted (the SEC
+        acceptance timestamp, Eastern time) and ``visible`` (the first session whose close could
+        know the filing), sorted by filed."""
         cik = self.cik(ticker)
         if cik is None:
-            return pd.DataFrame(columns=["form", "filed", "report", "items", "accession"])
+            return pd.DataFrame(columns=["form", "filed", "report", "items", "accession", "accepted", "visible"])
+        return self.filings_by_cik(cik)
+
+    def filings_by_cik(self, cik: str) -> pd.DataFrame:
         key = f"filings:{cik}"
         if key not in self._mem:
             sub = self._get_json(SUBMISSIONS_URL.format(name=f"CIK{cik}.json"))
@@ -310,17 +341,20 @@ class EdgarClient:
             for p in pages:
                 p = p.get("filings", {}).get("recent", p) if "form" not in p else p
                 if not p or "form" not in p:   # a missing or malformed page loses its filings, not the ticker
-                    log.warning("EDGAR submissions page for %s is missing or malformed; skipped", ticker)
+                    log.warning("EDGAR submissions page for CIK %s is missing or malformed; skipped", cik)
                     continue
                 n = len(p["form"])
+                accepted = pd.to_datetime(p.get("acceptanceDateTime", [None] * n), errors="coerce")
                 frames.append(pd.DataFrame({
                     "form": p["form"], "filed": pd.to_datetime(p["filingDate"]),
                     "report": pd.to_datetime(p.get("reportDate", [""] * n), errors="coerce"),
-                    "items": p.get("items", [""] * n), "accession": p["accessionNumber"]}))
+                    "items": p.get("items", [""] * n), "accession": p["accessionNumber"],
+                    "accepted": accepted}))
             if not frames:
                 self._mem[key] = pd.DataFrame(columns=["form", "filed", "report", "items", "accession"])
                 return self._mem[key]
             df = pd.concat(frames, ignore_index=True).sort_values("filed", kind="stable").reset_index(drop=True)
+            df["visible"] = visible_dates(df["filed"], df["accepted"])
             self._mem[key] = df
         return self._mem[key]
 
@@ -328,7 +362,7 @@ class EdgarClient:
         """Every XBRL fact as a long frame: tag, unit, start, end, val, filed, form, fy, fp."""
         cik = self.cik(ticker)
         if cik is None:
-            return pd.DataFrame(columns=["tag", "unit", "start", "end", "val", "filed", "form", "fy", "fp"])
+            return pd.DataFrame(columns=["tag", "unit", "start", "end", "val", "filed", "form", "fy", "fp", "accn"])
         key = f"facts:{cik}"
         if key not in self._mem:
             raw = self._get_json(FACTS_URL.format(cik=cik)) or {}
@@ -339,13 +373,31 @@ class EdgarClient:
                     for unit, entries in body.get("units", {}).items():
                         for e in entries:
                             rows.append((name, unit, e.get("start"), e["end"], e["val"], e["filed"],
-                                         e.get("form", ""), e.get("fy"), e.get("fp", "")))
-            df = pd.DataFrame(rows, columns=["tag", "unit", "start", "end", "val", "filed", "form", "fy", "fp"])
+                                         e.get("form", ""), e.get("fy"), e.get("fp", ""), e.get("accn", "")))
+            df = pd.DataFrame(rows, columns=["tag", "unit", "start", "end", "val", "filed", "form", "fy", "fp", "accn"])
             for c in ("start", "end", "filed"):
                 df[c] = pd.to_datetime(df[c], errors="coerce")
             df["val"] = pd.to_numeric(df["val"], errors="coerce")
-            self._mem[key] = df.dropna(subset=["end", "filed", "val"]).reset_index(drop=True)
+            df = df.dropna(subset=["end", "filed", "val"]).reset_index(drop=True)
+            # A fact is public when its filing was accepted, not on the filing date: the day's
+            # close came before a filing accepted after 16:00 ET. ``filed`` is replaced by the
+            # visible date (the acceptance day, or the next business day when accepted after the
+            # close or when no acceptance time is known), so every downstream cut-off is honest.
+            df["filed"] = visible_dates(df["filed"], self._acceptance_for(cik, df["accn"]))
+            self._mem[key] = df
         return self._mem[key]
+
+    def _acceptance_for(self, cik: str, accn: pd.Series) -> pd.Series:
+        """Acceptance timestamps of the company's filings by accession number (the facts file
+        names the accession of every print); NaT where the submissions feed has no entry."""
+        try:
+            fl = self.filings_by_cik(cik)
+        except Exception:
+            return pd.Series(pd.NaT, index=accn.index)
+        if fl.empty or "accepted" not in fl:
+            return pd.Series(pd.NaT, index=accn.index)
+        by_accn = fl.drop_duplicates("accession").set_index("accession")["accepted"]
+        return pd.Series(by_accn.reindex(accn.astype(str)).to_numpy(), index=accn.index)
 
     # ---------------------------------------------------------------- news
     def news(self, ticker: str, as_of: date, lookback_days: int) -> list[NewsItem]:
@@ -353,11 +405,12 @@ class EdgarClient:
         if df.empty:
             return []
         lo, hi = pd.Timestamp(as_of - timedelta(days=lookback_days)), pd.Timestamp(as_of)
-        win = df[(df["filed"] > lo) & (df["filed"] <= hi)]
+        seen = df["visible"] if "visible" in df else df["filed"]
+        win = df[(seen > lo) & (seen <= hi)]
         out: list[NewsItem] = []
         insiders: dict[date, int] = {}
         for r in win.itertuples(index=False):
-            d = r.filed.date()
+            d = getattr(r, "visible", r.filed).date()     # the session whose close could know it
             if r.form == "8-K" or r.form == "8-K/A":
                 codes = [c.strip() for c in str(r.items or "").split(",") if c.strip()]
                 codes = [c for c in codes if c not in _EXHIBIT_ONLY] or codes

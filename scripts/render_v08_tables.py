@@ -24,7 +24,8 @@ from agentic_trader.evaluation import EvaluationResult, trial_slug  # noqa: E402
 from agentic_trader.stats import paired_bootstrap, paired_sharpe_block_bootstrap, selection_report  # noqa: E402
 
 PERIODS = ("design", "holdout", "q1_2024", "reserve")
-BASELINES = ("Buy&Hold", "B&H vol-target", "SMA(20/50)", "MACD", "KDJ+RSI", "ZMR")
+BASELINES = ("Buy&Hold", "B&H vol-target", "SMA(20/50)", "MACD", "KDJ+RSI", "ZMR", "TSMOM(12-1)", "Carry")
+CONTROLS = ("Buy&Hold", "B&H vol-target")   # the two rows the control tables print; BH runs over them alone
 OUT: list[str] = []
 
 
@@ -87,8 +88,7 @@ def section_headline(res: EvaluationResult) -> None:
              md(view.paired_table("Sharpe"), index=False))
     for metric in ("MDD%", "Calmar"):
         for label, universes in SLICES[:2]:
-            t = subset(res, universes).paired_table(metric)
-            t = t[t["baseline"].isin(["Buy&Hold", "B&H vol-target"])] if "baseline" in t else t
+            t = subset(res, universes).paired_table(metric, baselines=CONTROLS)   # BH over the two printed rows
             emit(f"paired {metric}, agent minus control: {label}", md(t, index=False))
 
 
@@ -107,8 +107,7 @@ def section_asset_class(res: EvaluationResult) -> None:
                 if len(s):
                     emit(f"summary by asset class: {label} {ac} ({n}), {period}", md(s))
             for metric in ("Sharpe", "MDD%"):
-                t = sub.paired_table(metric)
-                t = t[t["baseline"].isin(["Buy&Hold", "B&H vol-target"])] if "baseline" in t else t
+                t = sub.paired_table(metric, baselines=CONTROLS)
                 emit(f"paired {metric} by asset class, agent minus control: {label} {ac} ({n})", md(t, index=False))
 
 
@@ -164,13 +163,16 @@ def section_cash_leg(on: dict, off: dict, title: str) -> None:
 
 
 def section_exec_algo(files: dict[str, dict]) -> None:
+    from agentic_trader.instruments import Instrument
     rows = []
     for label, p in files.items():
         t = p["table"][AGENT]
-        imp = np.mean([s[AGENT]["impact_paid"] for s in p["sleeves"].values()])
+        paying = [s[AGENT]["impact_paid"] for sym, s in p["sleeves"].items() if not Instrument.parse(sym).is_fx]
         rows.append({"execution algo": label, "Sharpe": t["Sharpe"], "CR%": t["CR%"], "MDD%": t["MDD%"],
-                     "mean sleeve impact paid %": 100 * imp})
-    emit("execution algorithm, $1B holdout portfolio (sleeve impact at the sleeve's capital)", md(pd.DataFrame(rows), index=False))
+                     "mean equity-sleeve impact paid %": 100 * float(np.mean(paying)) if paying else float("nan"),
+                     "equity sleeves": len(paying)})
+    emit("execution algorithm, $1B holdout portfolio (sleeve impact at the sleeve's capital; FX sleeves pay no impact "
+         "without costs.fx_adv_notional and are excluded from the mean)", md(pd.DataFrame(rows), index=False))
 
 
 def section_impact(main: EvaluationResult, sweeps: dict[str, EvaluationResult]) -> None:
@@ -211,21 +213,33 @@ def trial_means(d: Path, name: str) -> dict:
     return {f"design mean {c}": float(rows[c].mean()) for c in ("CR%", "MDD%", "Exp%", "Trades")} if len(rows) else {}
 
 
+PORTFOLIO_PPY = 260.0   # the 15-sleeve portfolio annualises at the largest sleeve ppy (FX present)
+
+
 def section_selection(trials: dict, design_csv: Path, d: Path) -> None:
+    """The deflated Sharpe on one statistic: every trial's design-period 15-sleeve portfolio
+    Sharpe (measured under the current engine for reproducible trials, the recorded value for
+    the v0.9/v0.10 books) against the chosen rules' portfolio Sharpe from the same series and
+    the same pairing of rf[t-1] with the return over (t-1, t]. Trials without a portfolio
+    Sharpe (the two historical v0.4 alpha-analyst variants) are counted in the table and
+    excluded from the statistic, and the exclusion is printed."""
     frame = pd.read_csv(design_csv, index_col=0, parse_dates=True)
     r = frame[AGENT].to_numpy(float)[1:]
-    rf = frame["rf"].to_numpy(float)[1:] if "rf" in frame else 0.0
-    excess = r - (np.where(np.isfinite(rf), rf, 0.0) / 252.0 if np.ndim(rf) else rf / 252.0)
-    sharpes = [t["mean_sharpe"] if t["mean_sharpe"] is not None else t["recorded_mean_sharpe_v03_engine"]
-               for t in trials["trials"]]
-    sharpes = [s for s in sharpes if s is not None]
-    rep = selection_report(excess, sharpes, 252.0)
+    rf = frame["rf"].to_numpy(float)[:-1] if "rf" in frame else 0.0
+    excess = r - (np.where(np.isfinite(rf), rf, 0.0) / PORTFOLIO_PPY if np.ndim(rf) else rf / PORTFOLIO_PPY)
+    rows = trials["trials"]
+    with_sharpe = [t for t in rows if t.get("portfolio_sharpe") is not None]
+    rep = selection_report(excess, [t["portfolio_sharpe"] for t in with_sharpe], PORTFOLIO_PPY)
+    rep["trials_in_registry"] = len(rows)
+    rep["trials_without_portfolio_sharpe"] = [t["name"] for t in rows if t.get("portfolio_sharpe") is None]
     t = pd.DataFrame([{"trial": t["name"], "version": t["version"],
+                       "design portfolio Sharpe": t.get("portfolio_sharpe"),
                        "design mean Sharpe (v0.8 engine)": t["mean_sharpe"],
                        "recorded (v0.3 engine)": t["recorded_mean_sharpe_v03_engine"],
-                       "re-measured": t["reproducible"], **trial_means(d, t["name"])} for t in trials["trials"]])
-    emit(f"trials registry: {len(trials['trials'])} variants judged on the design period", md(t, index=False))
-    emit("selection statistics for the frozen rules (design-period portfolio, all trials)",
+                       "re-measured": t["reproducible"], **trial_means(d, t["name"])} for t in rows])
+    emit(f"trials registry: {len(rows)} variants judged on the design period", md(t, index=False))
+    emit("selection statistics for the frozen rules (design-period 15-sleeve portfolio Sharpe, 260 periods/year, "
+         "every trial's portfolio Sharpe as the benchmark)",
          "```json\n" + json.dumps(rep, indent=1, default=str) + "\n```")
 
 
@@ -300,6 +314,11 @@ def main(argv=None) -> int:
     if ps is not None and want("phase"):
         section_phase_sweep(ps)
     text = "\n".join(OUT)
+    if args.section is not None:                       # one section never overwrites the full tables
+        out_path = d / f"tables_{args.section}.md"
+        out_path.write_text(text, encoding="utf-8")
+        print(f"wrote {out_path}")
+        return 0
     (d / "tables.md").write_text(text, encoding="utf-8")
     print(text)
     return 0

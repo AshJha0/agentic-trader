@@ -204,22 +204,32 @@ def run_trials(out: Path, provider) -> None:
         log(f"trial {t.name!r} ...")
         t0 = time.time()
         cfg = base_config(**t.overrides)
-        res = evaluate(CORE, design, cfg, EVERY, provider=provider_for(cfg, t.overrides, provider), workers=4)
+        prov = provider_for(cfg, t.overrides, provider)
+        res = evaluate(CORE, design, cfg, EVERY, provider=prov, workers=4)
+        # the statistic the deflated Sharpe is computed on: the same 15-sleeve design-period
+        # portfolio Sharpe (equal capital, 260 periods/year) as the chosen rules' own
+        port = run_portfolio_backtest(CORE, design["design"][0], design["design"][1], cfg, rebalance_every=EVERY,
+                                      provider=prov)
         res.meta["measurement"] = {"trial": t.name, "version": t.version, "overrides": _jsonable(t.overrides),
-                                   "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1)}
+                                   "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1),
+                                   "portfolio_sharpe": float(port.metrics[AGENT].sharpe)}
         res.to_json(path)
         log(f"trial {t.name!r}: done in {time.time() - t0:.0f}s")
     rows = []
     for t in TRIALS:
         path = out / f"trial_{trial_slug(t.name)}.json"
-        mean = None
+        mean, port_sharpe = None, None
         if path.exists():
             data = json.load(open(path, encoding="utf-8"))
             vals = [r["Sharpe"] for r in data["rows"]
                     if r.get("strategy") == AGENT and r.get("period") == "design" and r.get("Sharpe") is not None]
             mean = float(np.mean(vals)) if vals else None
+            port_sharpe = data.get("meta", {}).get("measurement", {}).get("portfolio_sharpe")
+        if port_sharpe is None:
+            port_sharpe = t.recorded_portfolio_sharpe
         rows.append({"name": t.name, "version": t.version, "reproducible": t.overrides is not None,
-                     "recorded_mean_sharpe_v03_engine": t.recorded_mean_sharpe, "mean_sharpe": mean})
+                     "recorded_mean_sharpe_v03_engine": t.recorded_mean_sharpe, "mean_sharpe": mean,
+                     "portfolio_sharpe": port_sharpe})
     json.dump({"trials": rows, "provenance": provenance()}, open(out / "trials.json", "w", encoding="utf-8"), indent=1)
     log(f"trials: {sum(r['mean_sharpe'] is not None for r in rows)} of {len(rows)} measured")
 
