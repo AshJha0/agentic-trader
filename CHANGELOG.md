@@ -32,6 +32,7 @@ mean was written before it ran ([docs/evaluation/v09_preregistration.md](docs/ev
   a summary with block-bootstrap intervals after 60 sessions, and a `runs.jsonl` line with
   provenance and any revision of an earlier return. A candidate is adopted only when its
   forward Sharpe minus its control's clears an interval that excludes zero.
+- **Change 1, the desk's tilt at size lam (`scripts/overlay_v09.py`, [docs/evaluation/v010_overlay.md](docs/evaluation/v010_overlay.md))**: the control plus lam times the tilt, lam from 0 to 1. The design period cannot tell the sizes apart (Sharpe 1.40 to 1.44, every interval straddling zero), so nothing is adopted; the forward record decides.
 - Drivers: `scripts/measure_v09.py` (`--period design|holdout`), `scripts/combine_v09.py`
   (risk parity across streams, drawdown overlay), `scripts/render_v09_tables.py`,
   `scripts/render_v09_doc.py`. Tests: `tests/test_v09.py`, `tests/test_v09_paper.py`.
