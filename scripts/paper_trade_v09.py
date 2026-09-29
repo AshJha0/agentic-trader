@@ -145,7 +145,15 @@ def main(argv=None) -> int:
     provider = get_provider(cfg)
     t0 = time.time()
     log(f"recomputing {freeze} -> {as_of} on {a.data}")
-    frame = recompute(as_of, cfg, provider, freeze)
+    try:
+        frame = recompute(as_of, cfg, provider, freeze)
+    except ValueError as e:
+        if "fewer than 2 bars" not in str(e):
+            raise
+        # The freeze session is the first bar; a return needs a second. Until it is complete
+        # (the run after the next close) there is nothing to record, and that is not a failure.
+        log(f"fewer than 2 complete sessions since the freeze date {freeze} (as-of {as_of}): nothing to record yet")
+        return 0
     ledger = out / "ledger.csv"
     old = pd.read_csv(ledger, index_col=0, parse_dates=True) if ledger.exists() else None
     rev = revisions(old, frame)

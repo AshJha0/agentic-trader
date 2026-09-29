@@ -20,6 +20,9 @@ def test_paper_record_is_recomputed_appended_and_revisions_are_logged(tmp_path):
     out = tmp_path / "paper"
     assert mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2023-12-29", "--out", str(out)]) == 0
     assert not (out / "ledger.csv").exists()                      # before the freeze: nothing recorded
+    # on the freeze session itself there is one bar and no return yet: a clean no-op, not a crash
+    assert mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2024-01-02", "--out", str(out)]) == 0
+    assert not (out / "ledger.csv").exists()
     assert mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2024-02-15", "--out", str(out)]) == 0
     first = pd.read_csv(out / "ledger.csv", index_col=0, parse_dates=True)
     cols = {"core15/AgenticTrader", "core15/B&H vol-target", "core15/Buy&Hold", "etf11/B&H vol-target",
