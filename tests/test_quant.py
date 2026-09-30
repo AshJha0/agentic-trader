@@ -69,6 +69,8 @@ def test_cpp_matches_python_reference():
         (quant.realized_vol(c, 20, 252), pycore.realized_vol(c, 20, 252)),
         (quant.strat_kdj_rsi(h, l, c), pycore.strat_kdj_rsi(h, l, c)),
         (quant.strat_zmr(c, allow_short=True), pycore.strat_zmr(c, allow_short=True)),
+        (quant.strat_tsmom(c, (5, 21, 63)), pycore.strat_tsmom(c, (5, 21, 63))),
+        (quant.strat_tsmom(c, (63,), 5, False), pycore.strat_tsmom(c, (63,), 5, False)),
     ]
     pairs += list(zip(quant.macd(c), pycore.macd(c)))
     pairs += list(zip(quant.kdj(h, l, c), pycore.kdj(h, l, c)))

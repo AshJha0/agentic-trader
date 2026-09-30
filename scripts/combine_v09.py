@@ -45,8 +45,15 @@ from agentic_trader.provenance import provenance  # noqa: E402
 from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_stats  # noqa: E402
 
 PPY = 260.0
-STREAMS = {"beta": ("etf11_rp", "B&H vol-target"), "trend_etf": ("etf11_rp", "TSMOM(12-1)"),
-           "trend_fx": ("fx15_rp", "TSMOM(12-1)"), "carry": ("fx15_rp", "Carry")}
+TREND = "TSMOM(12-1)"          # --trend "TSMOM(L/S)" selects the v0.12 long/short multi-horizon stream
+
+
+def stream_map(trend: str = TREND) -> dict:
+    return {"beta": ("etf11_rp", "B&H vol-target"), "trend_etf": ("etf11_rp", trend),
+            "trend_fx": ("fx15_rp", trend), "carry": ("fx15_rp", "Carry")}
+
+
+STREAMS = stream_map()
 BOOKS = {
     "beta (base)": ["beta"],
     "beta + trend_etf": ["beta", "trend_etf"],
@@ -57,9 +64,9 @@ BOOKS = {
 }
 
 
-def load_streams(inp: Path) -> tuple[pd.DataFrame, pd.Series]:
+def load_streams(inp: Path, trend: str = TREND) -> tuple[pd.DataFrame, pd.Series]:
     frames, rfs = {}, []
-    for name, (run, col) in STREAMS.items():
+    for name, (run, col) in stream_map(trend).items():
         f = pd.read_csv(inp / f"{run}.csv", index_col=0, parse_dates=True)
         frames[name] = f[col]
         rfs.append(f["rf"])
@@ -118,12 +125,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--in", dest="inp", default=str(ROOT / "results" / "v09"))
     ap.add_argument("--window", type=int, default=120)
+    ap.add_argument("--trend", default=TREND, help="the trend stream's column: TSMOM(12-1) or TSMOM(L/S)")
+    ap.add_argument("--tag", default="", help="suffix for the output files (combine<tag>.md/json)")
     ap.add_argument("--every", type=int, default=5)
     ap.add_argument("--dd-window", type=int, default=60)
     ap.add_argument("--dd-limit", type=float, default=0.10)
     a = ap.parse_args(argv)
     inp = Path(a.inp)
-    streams, rf = load_streams(inp)
+    streams, rf = load_streams(inp, a.trend)
     ex = excess(streams, rf)                                       # (T-1, k) excess returns
     names = list(streams.columns)
     base = ex[:, names.index("beta")]
@@ -142,7 +151,7 @@ def main(argv=None) -> int:
         entry["with_drawdown_overlay"] = {"metrics": metrics(ro), "share_of_days_halved": float((sc < 1).mean()),
                                           "vs_base": asdict(paired_sharpe_block_bootstrap(ro, base, PPY, block=10, n_boot=5000))}
         out["books"][book] = entry
-    (inp / "combine.json").write_text(json.dumps(out, indent=1, default=float), encoding="utf-8")
+    (inp / f"combine{a.tag}.json").write_text(json.dumps(out, indent=1, default=float), encoding="utf-8")
     period = f"{streams.index[0].date()} -> {streams.index[-1].date()}"
     lines = [f"# v0.9 phase 3: strategy combination, {period}, 260 periods/year\n",
              "## streams (excess returns)\n", "| stream | Sharpe | t | vol % | excess return %/yr | MDD % | n |", "|:--|--:|--:|--:|--:|--:|--:|"]
@@ -162,7 +171,7 @@ def main(argv=None) -> int:
                      f"| {od['diff']:+.2f} [{od['ci_low']:+.2f}, {od['ci_high']:+.2f}] p {od['p_value']:.3f} |")
     lines.append("")
     text = "\n".join(lines) + "\n"
-    (inp / "combine.md").write_text(text, encoding="utf-8")
+    (inp / f"combine{a.tag}.md").write_text(text, encoding="utf-8")
     print(text)
     return 0
 

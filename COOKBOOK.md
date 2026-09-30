@@ -86,6 +86,35 @@ on synthetic data and is executed as-is when the docs are checked.
   70. [Pin the prompts: the registry hash](#70-pin-the-prompts-the-registry-hash)
   71. [Serve with a bounded task pool and several processes](#71-serve-with-a-bounded-task-pool-and-several-processes)
   72. [Check the docs the way CI does](#72-check-the-docs-the-way-ci-does)
+- [v0.7 to v0.12: testing the risk model, fair controls, trend, and the forward record](#v07-to-v012-testing-the-risk-model-fair-controls-trend-and-the-forward-record)
+  73. [Backtest a VaR forecast: Kupiec and Christoffersen](#73-backtest-a-var-forecast-kupiec-and-christoffersen)
+  74. [Is one strategy's Sharpe really higher? The paired block bootstrap](#74-is-one-strategys-sharpe-really-higher-the-paired-block-bootstrap)
+  75. [Test a portfolio against the vol-target control](#75-test-a-portfolio-against-the-vol-target-control)
+  76. [Control the false discovery rate over a table of p-values](#76-control-the-false-discovery-rate-over-a-table-of-p-values)
+  77. [How long a track record does a Sharpe ratio need?](#77-how-long-a-track-record-does-a-sharpe-ratio-need)
+  78. [Put an interval on one Sharpe ratio](#78-put-an-interval-on-one-sharpe-ratio)
+  79. [Paired bootstrap across instruments, with clusters](#79-paired-bootstrap-across-instruments-with-clusters)
+  80. [Time-series momentum from the quant core](#80-time-series-momentum-from-the-quant-core)
+  81. [Backtest a long/short trend rule at the vol-target size](#81-backtest-a-longshort-trend-rule-at-the-vol-target-size)
+  82. [Read the trend and carry baselines next to the desk](#82-read-the-trend-and-carry-baselines-next-to-the-desk)
+  83. [Turn a carry series into weights](#83-turn-a-carry-series-into-weights)
+  84. [Blend the desk with its control: the overlay](#84-blend-the-desk-with-its-control-the-overlay)
+  85. [Combine return streams with a risk budget](#85-combine-return-streams-with-a-risk-budget)
+  86. [Cross-check the two backends on your own series](#86-cross-check-the-two-backends-on-your-own-series)
+  87. [Pin an older rule set](#87-pin-an-older-rule-set)
+  88. [Switch one rule off and see what it did](#88-switch-one-rule-off-and-see-what-it-did)
+  89. [List the trials registry](#89-list-the-trials-registry)
+  90. [See the evaluation periods and what each is for](#90-see-the-evaluation-periods-and-what-each-is-for)
+  91. [Save an evaluation and reload it later](#91-save-an-evaluation-and-reload-it-later)
+  92. [One table of the desk against every baseline](#92-one-table-of-the-desk-against-every-baseline)
+  93. [Keep a ledger append-only and record revisions](#93-keep-a-ledger-append-only-and-record-revisions)
+  94. [Price a model call before making it](#94-price-a-model-call-before-making-it)
+  95. [Read who carries the risk in a book](#95-read-who-carries-the-risk-in-a-book)
+  96. [Book-level VaR and the size a new position may take](#96-book-level-var-and-the-size-a-new-position-may-take)
+  97. [How much should a covariance matrix be shrunk?](#97-how-much-should-a-covariance-matrix-be-shrunk)
+  98. [Information coefficient with an honest t-statistic](#98-information-coefficient-with-an-honest-t-statistic)
+  99. [Rank and z-score a panel across names](#99-rank-and-z-score-a-panel-across-names)
+  100. [Reproduce the v0.12 research round](#100-reproduce-the-v012-research-round)
 
 ## Decisions
 
@@ -1714,3 +1743,425 @@ python scripts/run_cookbook.py --offline      # every recipe in a fresh process;
 python scripts/check_mermaid.py               # mermaid-cli renders every diagram (or --html for a browser page)
 python scripts/check_links.py                 # every relative link and anchor; --external requests the URLs too
 ```
+
+## v0.7 to v0.12: testing the risk model, fair controls, trend, and the forward record
+
+### 73. Backtest a VaR forecast: Kupiec and Christoffersen
+
+A 95% VaR should be breached on about 5% of days, and the breaches should not cluster.
+
+```python
+import numpy as np
+from agentic_trader.stats import rolling_var_forecast, var_backtest
+
+rng = np.random.default_rng(1)
+r = rng.standard_t(4, 1500) * 0.008                      # fat-tailed daily returns
+var = rolling_var_forecast(r, window=250, alpha=0.95)    # each day uses only the 250 days before it
+bt = var_backtest(r, var, alpha=0.95)
+print(f"n {bt.n}  breaches {bt.breaches}  rate {bt.breach_rate:.2%} (target {bt.expected_rate:.0%})")
+print(f"Kupiec p {bt.kupiec_p:.3f}  Christoffersen p {bt.christoffersen_p:.3f}  conditional coverage p {bt.conditional_coverage_p:.3f}")
+```
+
+`agentic-trader stats returns.csv --var-backtest` runs the same tests on a CSV of returns.
+
+### 74. Is one strategy's Sharpe really higher? The paired block bootstrap
+
+Two return series over the same days are resampled together in blocks, so the interval respects
+both their correlation and the autocorrelation of each.
+
+```python
+import numpy as np
+from agentic_trader.stats import paired_sharpe_block_bootstrap
+
+rng = np.random.default_rng(2)
+market = rng.normal(0.0003, 0.01, 1200)
+a = market + rng.normal(0.0001, 0.003, 1200)
+b = market + rng.normal(0.0, 0.003, 1200)
+d = paired_sharpe_block_bootstrap(a, b, block=10, n_boot=2000)
+print(f"Sharpe a {d.sharpe_a:.2f}  b {d.sharpe_b:.2f}  diff {d.diff:+.2f}  95% [{d.ci_low:+.2f}, {d.ci_high:+.2f}]  p {d.p_value:.3f}")
+```
+
+An interval that straddles zero means the data cannot tell the two apart, whichever is ahead.
+
+### 75. Test a portfolio against the vol-target control
+
+The control holds each sleeve at the same volatility target with no views. It is the fair
+comparison for a desk that sizes by volatility.
+
+```python
+from agentic_trader import make_config, run_portfolio_backtest
+
+rep = run_portfolio_backtest(["AAPL", "JPM", "XOM", "EURUSD", "USDJPY"], "2023-01-02", "2023-12-29", make_config())
+d = rep.sharpe_difference("AgenticTrader", "B&H vol-target", n_boot=1000)
+print(rep.table()[["Sharpe"]])
+print(f"desk minus control {d.diff:+.2f}  95% [{d.ci_low:+.2f}, {d.ci_high:+.2f}]  p {d.p_value:.3f}")
+```
+
+### 76. Control the false discovery rate over a table of p-values
+
+Eight comparisons at 5% each will flag something by luck. Benjamini-Hochberg keeps the expected
+share of false flags at `q`.
+
+```python
+from agentic_trader.stats import benjamini_hochberg
+
+p = [0.001, 0.012, 0.030, 0.041, 0.20, 0.35, 0.60, 0.90]
+print([x < 0.05 for x in p])                  # naive: four flags
+print(benjamini_hochberg(p, q=0.05).tolist()) # BH: fewer survive
+```
+
+`EvaluationResult.paired_table` applies this over the rows it prints.
+
+### 77. How long a track record does a Sharpe ratio need?
+
+```python
+from agentic_trader.stats import min_track_record, probabilistic_sharpe
+
+for sr_annual in (0.5, 1.0, 2.0):
+    sr_daily = sr_annual / 252 ** 0.5
+    n = min_track_record(sr_daily, confidence=0.95)
+    print(f"annual Sharpe {sr_annual}: {n:.0f} daily observations ({n / 252:.1f} years) to be 95% sure it is above 0")
+print(probabilistic_sharpe(0.9 / 252 ** 0.5, 252))   # one year at Sharpe 0.9: probability the true Sharpe is positive
+```
+
+This is why a three-month paper record settles nothing about a Sharpe near 1.
+
+### 78. Put an interval on one Sharpe ratio
+
+```python
+import numpy as np
+from agentic_trader.stats import sharpe_ci_bootstrap, sharpe_stats
+
+r = np.random.default_rng(3).normal(0.0004, 0.01, 1000)
+lo, hi = sharpe_ci_bootstrap(r, n_boot=2000, block=10)
+print(f"annual Sharpe {sharpe_stats(r).sharpe_annual:.2f}  95% [{lo:.2f}, {hi:.2f}]")
+```
+
+### 79. Paired bootstrap across instruments, with clusters
+
+Ten technology stocks are not ten independent tests. Pass `groups` and whole clusters are
+resampled together.
+
+```python
+import numpy as np
+from agentic_trader.stats import paired_bootstrap
+
+rng = np.random.default_rng(4)
+groups = np.repeat(["tech", "banks", "energy", "fx_usd", "fx_cross", "health"], 5)
+shock = {g: rng.normal(0, 0.15) for g in sorted(set(groups))}      # the edge differs by cluster, not by name
+base = rng.normal(0.4, 0.2, len(groups))
+desk = base + 0.05 + np.array([shock[g] for g in groups]) + rng.normal(0, 0.03, len(groups))
+for g in (None, groups):
+    b = paired_bootstrap(desk, base, n_boot=5000, groups=g)
+    print(f"{b.scheme:<12} mean diff {b.mean_diff:+.3f}  95% [{b.ci_low:+.3f}, {b.ci_high:+.3f}]  wins {b.wins}/{b.n}")
+```
+
+### 80. Time-series momentum from the quant core
+
+`strat_tsmom` is the average sign of the trailing return over the horizons you give it. It runs
+in C++ when the extension is built and in numpy otherwise, with the same result.
+
+```python
+from datetime import date
+import numpy as np
+from agentic_trader import Instrument, make_config, quant
+from agentic_trader.data import SyntheticProvider
+
+c = SyntheticProvider(make_config()).history(Instrument.parse("SPY"), date(2021, 1, 4), date(2023, 12, 29))["Close"].to_numpy()
+multi = quant.strat_tsmom(c, (21, 63, 252))                # 1, 3 and 12 months, long and short
+classic = quant.strat_tsmom(c, (252,), skip=21, allow_short=False)   # 12-1 momentum, long only
+print(quant.BACKEND, np.unique(multi).round(3), np.unique(classic))
+print("first live bar:", int(np.flatnonzero(multi)[0]))   # nothing before the longest horizon exists
+```
+
+### 81. Backtest a long/short trend rule at the vol-target size
+
+```python
+from datetime import date
+import numpy as np
+from agentic_trader import Instrument, make_config, quant
+from agentic_trader.backtest import tsmom_multi_weights
+from agentic_trader.data import SyntheticProvider
+
+c = SyntheticProvider(make_config()).history(Instrument.parse("EURUSD"), date(2020, 1, 1), date(2023, 12, 29))["Close"].to_numpy()
+vol = quant.realized_vol(c, 20, 260)
+vt = np.clip(0.15 / np.where(np.isnan(vol) | (vol <= 0), np.inf, vol), 0.0, 1.0)   # vol-target weight, capped at 1
+w = tsmom_multi_weights(c, vt)
+res = quant.run_backtest(c, w, quant.BacktestConfig(cost_bps=1.0, periods_per_year=260, allow_short=True))
+print(f"Sharpe {res.metrics.sharpe:.2f}  MDD {res.metrics.max_drawdown:.1%}  trades {res.metrics.num_trades}  short share {(w < 0).mean():.0%}")
+```
+
+### 82. Read the trend and carry baselines next to the desk
+
+Every backtest prints the same baseline rows, so a new idea is always seen beside the controls.
+
+```python
+from agentic_trader import make_config, run_agent_backtest
+
+rep = run_agent_backtest("USDJPY", "2022-01-03", "2023-12-29", make_config(), include_agent=False)
+print(rep.table().loc[["Buy&Hold", "B&H vol-target", "TSMOM(12-1)", "TSMOM(L/S)", "Carry"], ["CR%", "Sharpe", "MDD%", "Trades"]])
+```
+
+`TSMOM(L/S)` is allowed to go short whatever the desk's own mandate, because it is a reference
+stream, not the desk.
+
+### 83. Turn a carry series into weights
+
+```python
+import numpy as np
+from agentic_trader.backtest import carry_weights
+
+carry = np.array([0.045, 0.030, 0.010, 0.0, -0.020, np.nan])      # annual rate differential, base minus quote
+print(carry_weights(carry, len(carry), scale=0.03, cap=1.0))     # 3% maps to a full position; NaN is flat
+print(carry_weights(None, 4, scale=0.03, cap=1.0))               # no carry data: all flat
+```
+
+### 84. Blend the desk with its control: the overlay
+
+`lam = 0` is the control, `lam = 1` the desk. The blend is done on daily returns.
+
+```python
+import numpy as np
+from agentic_trader import make_config, run_portfolio_backtest
+
+rep = run_portfolio_backtest(["AAPL", "JPM", "EURUSD", "USDJPY"], "2023-01-02", "2023-12-29", make_config())
+r = rep.returns
+desk, control = r["AgenticTrader"].to_numpy(), r["B&H vol-target"].to_numpy()
+for lam in (0.0, 0.25, 0.5, 1.0):
+    x = lam * desk + (1 - lam) * control
+    print(f"lam {lam:.2f}  Sharpe {np.mean(x) / np.std(x, ddof=1) * 260 ** 0.5:+.2f}")
+```
+
+`scripts/overlay_v09.py` does this on the measured streams with excess returns and drawdowns.
+
+### 85. Combine return streams with a risk budget
+
+```python
+import numpy as np
+from agentic_trader.portfolio import estimate_cov, risk_contributions, risk_parity_weights
+
+rng = np.random.default_rng(5)
+streams = rng.normal(0, 1, (750, 3)) * np.array([0.010, 0.004, 0.006])    # base, trend, carry
+cov = estimate_cov(streams, halflife=60.0)
+w = risk_parity_weights(cov, budget=np.array([0.5, 0.25, 0.25]))
+rc = risk_contributions(w, cov)
+print("weights", w.round(3), " share of risk", rc["pct"].round(3))
+```
+
+The quiet stream gets the largest weight; the budget fixes each stream's share of risk instead.
+
+### 86. Cross-check the two backends on your own series
+
+```python
+import numpy as np
+from agentic_trader import quant
+from agentic_trader.quant import pycore
+
+c = 100 * np.exp(np.cumsum(np.random.default_rng(6).normal(0, 0.01, 600)))
+for name, args in (("rsi", (14,)), ("zscore", (20,)), ("strat_zmr", ()), ("strat_tsmom", ((21, 63),))):
+    a, b = getattr(quant, name)(c, *args), getattr(pycore, name)(c, *args)
+    np.testing.assert_allclose(a, b, rtol=1e-9, atol=1e-12, equal_nan=True)
+    print(f"{name:<12} {quant.BACKEND} matches numpy")
+```
+
+### 87. Pin an older rule set
+
+`RULES_V02` switches off every rule added since v0.2, including the two from v0.11.
+
+```python
+from agentic_trader import make_config, run_agent_backtest
+from agentic_trader.config import RULES_V02
+
+for label, cfg in (("current", make_config()), ("v0.2", make_config(RULES_V02))):
+    rep = run_agent_backtest("JPM", "2023-01-02", "2023-12-29", cfg)
+    print(label, rep.table().loc["AgenticTrader", ["CR%", "Sharpe", "MDD%"]].to_dict())
+```
+
+### 88. Switch one rule off and see what it did
+
+```python
+from agentic_trader import make_config, run_agent_backtest
+
+for label, over in (("default", {}), ("news tone mass off", {"rules": {"news_tone_mass": False}}),
+                    ("aggressive vol scaling off", {"risk": {"aggressive_vol_scaled": False}})):
+    rep = run_agent_backtest("AAPL", "2023-01-02", "2023-12-29", make_config(over))
+    print(f"{label:<26} Sharpe {rep.table().loc['AgenticTrader', 'Sharpe']}")
+```
+
+One instrument and one year is an illustration. A rule is chosen on the whole design period.
+
+### 89. List the trials registry
+
+Every variant ever judged on the design period is registered, so the deflated Sharpe counts
+the whole search and not only the winner.
+
+```python
+from collections import Counter
+from agentic_trader.evaluation import TRIALS
+
+print(len(TRIALS), "trials")
+print(Counter(t.version for t in TRIALS))
+print([t.name for t in TRIALS][-5:])
+```
+
+### 90. See the evaluation periods and what each is for
+
+```python
+from agentic_trader.evaluation import PERIODS, UNIVERSES
+
+for name, (start, end) in PERIODS.items():
+    print(f"{name:<12} {start} -> {end}")
+print({k: len(v) for k, v in UNIVERSES.items()})
+```
+
+`design` and `design_long` are for choosing. `holdout` and `reserve` have been looked at, so
+they are reported and never chosen on.
+
+### 91. Save an evaluation and reload it later
+
+```python
+from agentic_trader import make_config
+from agentic_trader.evaluation import EvaluationResult, evaluate
+
+res = evaluate(["AAPL", "JPM", "EURUSD"], {"y2023": ("2023-01-02", "2023-12-29")}, make_config())
+res.to_json("eval.json")
+again = EvaluationResult.from_json("eval.json")
+print(again.summary().round(2))
+```
+
+### 92. One table of the desk against every baseline
+
+```python
+from agentic_trader import make_config
+from agentic_trader.evaluation import evaluate
+
+syms = ["AAPL", "MSFT", "JPM", "XOM", "SPY", "EURUSD", "USDJPY", "GBPUSD"]
+res = evaluate(syms, {"y2023": ("2023-01-02", "2023-12-29")}, make_config())
+print(res.paired_table(metric="Sharpe").round(3))
+```
+
+Each row is the mean paired difference with a bootstrap interval, a p-value and the BH flag.
+
+### 93. Keep a ledger append-only and record revisions
+
+The paper-trading job recomputes history every day. Rows already written are never changed; a
+recomputed value that differs is logged as a revision.
+
+```python
+import pandas as pd
+from scripts.paper_trade_v09 import merge_append_only, revisions
+
+idx = pd.to_datetime(["2026-10-01", "2026-10-02"])
+old = pd.DataFrame({"desk": [0.0010, -0.0020], "control": [0.0008, -0.0015]}, index=idx)
+new = pd.DataFrame({"desk": [0.0010, -0.0030, 0.0040], "control": [0.0008, -0.0015, 0.0020]},
+                   index=idx.append(pd.to_datetime(["2026-10-05"])))
+print(revisions(old, new))                     # one cell changed on 2026-10-02
+print(merge_append_only(old, new))             # old rows kept as written, the new day appended
+```
+
+### 94. Price a model call before making it
+
+```python
+from agentic_trader.llm import estimate_call_cost, price_for
+
+for model in ("claude-haiku-4-5", "claude-opus-5-5"):
+    print(model, price_for(model), f"${estimate_call_cost(model, output_tokens=2000, input_tokens=8000):.4f} per call")
+```
+
+The budget wrapper reserves this estimate before each call and refuses the call that would go
+over, so a cap in dollars holds even when a response is larger than expected.
+
+### 95. Read who carries the risk in a book
+
+```python
+import numpy as np
+from agentic_trader.portfolio import risk_contributions, sample_cov
+
+rng = np.random.default_rng(7)
+r = rng.normal(0, 1, (500, 3)) * np.array([0.02, 0.01, 0.005])
+r[:, 1] += 0.5 * r[:, 0]                                  # the second sleeve follows the first
+rc = risk_contributions(np.array([1 / 3, 1 / 3, 1 / 3]), sample_cov(r))
+print("equal capital, share of risk:", rc["pct"].round(3))
+```
+
+Equal capital is not equal risk: the volatile sleeve and the one correlated with it dominate.
+
+### 96. Book-level VaR and the size a new position may take
+
+```python
+import numpy as np
+import pandas as pd
+from agentic_trader.portfolio import book_var_95, book_var_scale
+
+rng = np.random.default_rng(8)
+rets = pd.DataFrame(rng.normal(0, 0.012, (300, 3)), columns=["AAPL", "MSFT", "EURUSD"])
+rets["MSFT"] = 0.8 * rets["AAPL"] + 0.2 * rets["MSFT"]    # two names that move together
+held = {"AAPL": 0.8}
+print("book VaR now:", round(book_var_95(held, rets), 4))
+scale, var_after, note = book_var_scale("MSFT", 0.8, held, rets, max_var_95=0.02)
+print(f"MSFT at 0.8 is scaled by {scale:.2f}; book VaR after {var_after:.4f}; {note}")
+```
+
+### 97. How much should a covariance matrix be shrunk?
+
+```python
+import numpy as np
+from agentic_trader.portfolio import ledoit_wolf_shrink
+
+rng = np.random.default_rng(9)
+load = np.linspace(0.2, 1.2, 8)                                       # eight assets, unequal exposure to one factor
+for t in (40, 250, 2000):
+    r = 0.01 * (rng.normal(0, 1, (t, 1)) * load + rng.normal(0, 1, (t, 8)))
+    _, intensity = ledoit_wolf_shrink(r)
+    print(f"{t:>5} days x 8 assets: shrinkage intensity {intensity:.2f}")
+```
+
+Few observations per asset means a noisy sample matrix, so more weight goes to the structured target.
+
+### 98. Information coefficient with an honest t-statistic
+
+A 10-day forward return overlaps the next nine, so the observations are not independent. Two
+corrections are offered: an effective sample size, and Newey-West standard errors.
+
+```python
+from datetime import date
+from agentic_trader import Instrument, make_config
+from agentic_trader.alpha import compute_alphas, forward_returns, information_coefficient
+from agentic_trader.data import SyntheticProvider
+
+ins = Instrument.parse("AAPL")
+df = SyntheticProvider(make_config()).history(ins, date(2019, 1, 2), date(2023, 12, 29))
+sig = compute_alphas(df, ins, ["tsmom_12_1", "reversal_5"])
+fwd = forward_returns(df["Close"].to_numpy(), 10)
+for name in sig:
+    for method in ("n_eff", "newey_west"):
+        ic, t, n = information_coefficient(sig[name].to_numpy(), fwd, horizon=10, method=method)
+        print(f"{name:<12} {method:<11} IC {ic:+.3f}  t {t:+.2f}  n {n}")
+```
+
+### 99. Rank and z-score a panel across names
+
+```python
+import numpy as np
+import pandas as pd
+from agentic_trader.xalpha import cs_rank, cs_zscore
+
+rng = np.random.default_rng(10)
+panel = pd.DataFrame(rng.normal(0, 1, (3, 6)), columns=["AAPL", "MSFT", "NVDA", "JPM", "BAC", "C"])
+groups = {s: "tech" for s in ("AAPL", "MSFT", "NVDA")} | {s: "banks" for s in ("JPM", "BAC", "C")}
+print(cs_rank(panel).round(2))                    # rank across all six, in [-1, 1]
+print(cs_zscore(panel, groups=groups).round(2))   # z-score within each sector
+```
+
+### 100. Reproduce the v0.12 research round
+
+Nothing here needs a paid model. The measurement reads prices from the network, so it is not run in CI.
+
+```bash
+python scripts/measure_v09.py --period design_long --out results/v12        # 2008-07-01 to 2021-12-31
+python scripts/combine_v09.py --in results/v12 --trend "TSMOM(L/S)" --tag _ls
+python scripts/render_v12_doc.py                                            # writes docs/evaluation/v012_trend_core.md
+pytest tests/test_fuzz.py -k tsmom                                          # the new core routine, fuzzed on both backends
+```
+
+Every number in the v0.12 page is copied from the files these commands write.

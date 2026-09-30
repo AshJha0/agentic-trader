@@ -348,3 +348,108 @@ def test_backtester_rejects_multidimensional_optional_input():
                 except Exception as e:                                  # noqa: BLE001
                     violations.append(f"{label} {name}{shape}: {type(e).__name__}")
     assert not violations, violations
+
+
+@given(x=arrays, hs=st.lists(st.integers(-1, 40), max_size=4), skip=st.integers(-1, 5), short=st.booleans())
+@FUZZ
+def test_tsmom_survives_wild_input_and_backends_agree(x, hs, skip, short):
+    out, err = _run(quant.strat_tsmom, x, hs, skip, short)
+    ok = bool(hs) and min(hs) >= 1 and 0 <= skip < min(hs)
+    assert (err is None) == ok                          # refused exactly when the arguments are bad
+    if err is None:
+        assert len(out) == len(x) and np.all(np.abs(out) <= 1.0)
+        assert short or np.all(out >= 0.0)
+        assert not np.any(out[:max(hs)])                # flat until the longest horizon exists
+        _same(out, pycore.strat_tsmom(x, hs, skip, short))
+
+
+CLOSE_STRATEGIES = {"strat_buy_hold": (), "strat_sma_cross": (3, 7, True), "strat_macd": (3, 6, 2, True),
+                    "strat_zmr": (5, 1.0, 0.0, True)}
+
+
+@pytest.mark.parametrize("name", sorted(CLOSE_STRATEGIES))
+@given(x=arrays)
+@FUZZ
+def test_close_strategies_survive_wild_input(name, x):
+    args = CLOSE_STRATEGIES[name]
+    out, err = _run(getattr(quant, name), x, *args)
+    ref, ref_err = _run(getattr(pycore, name), x, *args)
+    assert (err is None) == (ref_err is None)
+    if err is None:
+        assert len(out) == len(x) == len(ref) and set(np.unique(out)) <= {-1.0, 0.0, 1.0}
+
+
+@pytest.mark.parametrize("name", sorted(CLOSE_STRATEGIES))
+@given(x=hnp.arrays(np.float64, st.integers(0, 60), elements=finite_pos))
+@FUZZ
+def test_close_strategies_backends_agree_on_prices(name, x):
+    if quant.BACKEND != "cpp":
+        pytest.skip("C++ extension not built")
+    args = CLOSE_STRATEGIES[name]
+    _same(getattr(quant, name)(x, *args), getattr(pycore, name)(x, *args))
+
+
+@given(n=st.integers(0, 60), data=st.data())
+@FUZZ
+def test_kdj_rsi_strategy_survives_and_backends_agree(n, data):
+    c = data.draw(hnp.arrays(np.float64, n, elements=finite_pos))
+    spread = data.draw(hnp.arrays(np.float64, n, elements=st.floats(0.0, 0.05)))
+    h, l = c * (1 + spread), c * (1 - spread)
+    out = quant.strat_kdj_rsi(h, l, c, 5, 5, 30.0, 70.0, True)
+    assert len(out) == n and set(np.unique(out)) <= {-1.0, 0.0, 1.0}
+    _same(out, pycore.strat_kdj_rsi(h, l, c, 5, 5, 30.0, 70.0, True))
+
+
+def _close(a, b, scale: float = 1.0) -> bool:
+    return (np.isnan(a) and np.isnan(b)) or a == pytest.approx(b, rel=1e-9, abs=1e-9 * max(1.0, scale))
+
+
+@given(x=hnp.arrays(np.float64, st.integers(0, 60), elements=finite_pos), n=windows)
+@FUZZ
+def test_realized_vol_survives_and_backends_agree(x, n):
+    out, err = _run(quant.realized_vol, x, n, 252.0)
+    ref, ref_err = _run(pycore.realized_vol, x, n, 252.0)
+    assert (err is None) == (ref_err is None) == (n >= 1)
+    if err is None:
+        assert len(out) == len(x)
+        _same(out, ref, _scale(ref))
+
+
+@given(total=st.floats(-1e6, 1e6), n=st.integers(-2, 40), kappa=st.one_of(floats, st.floats(0, 800)))
+@FUZZ
+def test_almgren_chriss_survives_and_backends_agree(total, n, kappa):
+    out, err = _run(quant.almgren_chriss, total, n, kappa)
+    ok = n >= 1 and np.isfinite(kappa) and kappa >= 0
+    assert (err is None) == ok
+    if err is None:
+        assert len(out) == n and np.all(np.isfinite(out))
+        assert float(np.sum(out)) == pytest.approx(total, rel=1e-9, abs=1e-6)     # the slices add up to the order
+        _same(out, pycore.almgren_chriss(total, n, kappa), abs(total))
+
+
+fin = st.floats(-1e6, 1e6, allow_nan=False, allow_infinity=False)
+
+
+@given(p=st.floats(0, 1), b=fin, sig=st.floats(-1, 1), vol=st.one_of(st.just(float("nan")), fin),
+       tv=st.floats(0, 1), lev=st.floats(0, 10), eq=fin, rf=st.floats(0, 1), entry=fin, stop=fin)
+@FUZZ
+def test_sizing_functions_survive_and_backends_agree(p, b, sig, vol, tv, lev, eq, rf, entry, stop):
+    for fn, args in ((quant.kelly_fraction, (p, b)), (quant.vol_target_weight, (sig, vol, tv, lev)),
+                     (quant.position_units, (eq, rf, entry, stop))):
+        out, ref = fn(*args), getattr(pycore, fn.__name__)(*args)
+        assert isinstance(out, float) and _close(out, ref, abs(ref) if np.isfinite(ref) else 1.0)
+    assert abs(quant.vol_target_weight(sig, vol, tv, lev)) <= lev
+
+
+@given(n=st.integers(2, 60), data=st.data())
+@FUZZ
+def test_compute_metrics_survives_and_backends_agree(n, data):
+    eq = data.draw(hnp.arrays(np.float64, n, elements=st.floats(1.0, 1e6)))
+    pos = data.draw(hnp.arrays(np.float64, n, elements=st.floats(-1, 1)))
+    traded = np.abs(np.diff(pos, prepend=0.0))
+    a = quant.compute_metrics(eq, pos, 252.0, 0.02, traded)
+    b = pycore.compute_metrics(eq, pos, 252.0, 0.02, traded)
+    assert _metrics_finite(a)
+    for field in ("cumulative_return", "max_drawdown", "sharpe", "annualized_vol"):
+        assert _close(getattr(a, field), getattr(b, field), abs(getattr(b, field)))
+    assert a.num_trades == b.num_trades

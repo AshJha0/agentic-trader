@@ -328,9 +328,10 @@ def strat_kdj_rsi(high, low, close, kdj_n: int = 9, rsi_n: int = 14, rsi_low: fl
     pos = 0.0
     for i in range(len(r)):
         if not (np.isnan(j[i]) or np.isnan(r[i])):
-            if r[i] < rsi_low or j[i] < 0.0:
+            # J saturates at exactly 0 or 100 up to rounding noise: a breach has to clear 1e-9 (mirrors C++).
+            if r[i] < rsi_low or j[i] < -1e-9:
                 pos = 1.0
-            elif r[i] > rsi_high or j[i] > 100.0:
+            elif r[i] > rsi_high or j[i] > 100.0 + 1e-9:
                 pos = -1.0 if allow_short else 0.0
         out[i] = pos
     return out
@@ -352,6 +353,30 @@ def strat_zmr(close, n: int = 20, entry: float = 1.0, exit: float = 0.0,
             elif z[i] > entry and allow_short:
                 pos = -1.0
         out[i] = pos
+    return out
+
+
+def strat_tsmom(close, horizons, skip: int = 0, allow_short: bool = True):
+    """Time-series momentum: the average over ``horizons`` of sign(close[i-skip]/close[i-h]-1),
+    0 until the longest horizon exists; a non-finite ratio votes 0 (mirrors C++)."""
+    c = _arr(close)
+    hs = [int(h) for h in horizons]
+    if not hs:
+        raise ValueError("horizons must not be empty")
+    if min(hs) < 1:
+        raise ValueError("horizon must be positive")
+    if skip < 0 or skip >= min(hs):
+        raise ValueError("skip must be in [0, min horizon)")
+    out = np.zeros(len(c))
+    longest = max(hs)
+    if len(c) > longest:
+        for h in hs:
+            with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+                r = c[longest - skip:len(c) - skip] / c[longest - h:len(c) - h] - 1.0
+            out[longest:] += np.where(np.isfinite(r), np.sign(r), 0.0)
+        out /= len(hs)
+        if not allow_short:
+            out = np.maximum(out, 0.0)
     return out
 
 

@@ -27,6 +27,7 @@ size (point-in-time rate differential / ``fx_carry_neutral_scale``, capped at
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from dataclasses import replace as dc_replace
 from datetime import date, timedelta
 from typing import Callable
 
@@ -205,17 +206,21 @@ def tsmom_weights(close: np.ndarray, vol_target_weight: np.ndarray, allow_short:
                   lookback: int = TSMOM_LOOKBACK, skip: int = TSMOM_SKIP) -> np.ndarray:
     """Time-series momentum at the vol-target size: sign(close[t-skip] / close[t-lookback] - 1)
     times the vol-target weight, 0 until ``lookback`` bars exist, long-only when shorts are
-    not allowed (a negative signal goes flat, not short)."""
-    c = np.asarray(close, dtype=float)
-    w = np.zeros_like(c)
-    if c.size > lookback:
-        with np.errstate(divide="ignore", invalid="ignore"):
-            mom = c[lookback - skip:-skip] / c[:-lookback] - 1.0
-        sign = np.sign(np.nan_to_num(mom, nan=0.0))
-        if not allow_short:
-            sign = np.maximum(sign, 0.0)
-        w[lookback:] = sign * vol_target_weight[lookback:]
-    return w
+    not allowed (a negative signal goes flat, not short). The sign is ``quant.strat_tsmom``."""
+    return quant.strat_tsmom(close, (lookback,), skip, allow_short) * vol_target_weight
+
+
+TSMOM_HORIZONS = (21, 63, 252)   # 1, 3 and 12 months, in trading days
+LONG_SHORT_STREAMS = frozenset({"TSMOM(L/S)"})   # run with shorts allowed whatever the desk's mandate
+
+
+def tsmom_multi_weights(close: np.ndarray, vol_target_weight: np.ndarray,
+                        horizons: tuple[int, ...] = TSMOM_HORIZONS) -> np.ndarray:
+    """Time-series momentum as in Moskowitz, Ooi and Pedersen (2012): the average sign of the
+    trailing return over several horizons (1, 3 and 12 months), long AND short, at the
+    vol-target size. 0 until the longest horizon exists. Each sign uses closes up to the bar
+    itself, the same information the vol-target weight uses. The score is ``quant.strat_tsmom``."""
+    return quant.strat_tsmom(close, horizons, 0, True) * vol_target_weight
 
 
 def carry_weights(carry_annual: np.ndarray | None, n: int, scale: float, cap: float) -> np.ndarray:
@@ -245,6 +250,7 @@ def baseline_weights(full: pd.DataFrame, allow_short: bool, target_vol: float = 
         "KDJ+RSI": quant.strat_kdj_rsi(h, l, c, 9, 14, 30.0, 70.0, allow_short),
         "ZMR": quant.strat_zmr(c, 20, 1.0, 0.0, allow_short),
         "TSMOM(12-1)": tsmom_weights(c, vt, allow_short),
+        "TSMOM(L/S)": tsmom_multi_weights(c, vt),
         "Carry": carry_weights(carry_annual, len(c), carry_scale, carry_cap),
     }
 
@@ -353,7 +359,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                                           carry_annual=carry_full,
                                           carry_scale=float(cfg["risk"].get("fx_carry_neutral_scale", 2.0)),
                                           carry_cap=float(cfg["risk"].get("fx_carry_neutral_cap", 0.5))).items():
-        results[name] = quant.run_backtest(prices, weights[mask], bt, carry=carry, impact=impact,
+        bt_name = dc_replace(bt, allow_short=True) if name in LONG_SHORT_STREAMS else bt
+        results[name] = quant.run_backtest(prices, weights[mask], bt_name, carry=carry, impact=impact,
                                            cash_rate=cash)
     return ComparisonReport(ins, window.index, results, decisions, bt, carry,
                             sources if include_agent else {}, prices, rf)

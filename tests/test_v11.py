@@ -57,7 +57,7 @@ def test_evaluation_rows_keep_full_precision_and_paired_tables_correct_over_prin
     # flagged among six naive rows at 1e-4 (its threshold rises to 5 x 0.05 / 8 = 0.031).
     from agentic_trader.stats import PairedBootstrap
     p_of = {"Buy&Hold": 0.03, "B&H vol-target": 0.06, "SMA(20/50)": 1e-4, "MACD": 1e-4, "KDJ+RSI": 1e-4, "ZMR": 1e-4,
-            "TSMOM(12-1)": 1e-4, "Carry": 1e-4}
+            "TSMOM(12-1)": 1e-4, "TSMOM(L/S)": 1e-4, "Carry": 1e-4}
 
     def fake_paired(self, base, metric="Sharpe", period=None, universe=None, strategy=AGENT, cluster=True):
         return PairedBootstrap(3, 0.1, 0.01, 0.2, p_of[base], 2, "instruments", 1)
@@ -177,8 +177,8 @@ def test_news_analyst_abstains_when_the_headlines_carry_no_tone():
 def test_trials_registry_counts_the_v09_v010_and_v011_variants():
     versions = [t.version for t in TRIALS]
     assert versions.count("v0.9") == 10 and versions.count("v0.10") == 5 and versions.count("v0.11") == 3
-    assert all(t.overrides is None and t.recorded_portfolio_sharpe is not None for t in TRIALS if t.version in ("v0.9", "v0.10"))
-    assert len({t.name for t in TRIALS}) == len(TRIALS) == 44
+    assert all(t.overrides is None and t.recorded_portfolio_sharpe is not None for t in TRIALS if t.version in ("v0.9", "v0.10", "v0.12"))
+    assert len({t.name for t in TRIALS}) == len(TRIALS) == 62
     for t in TRIALS:
         if t.version == "v0.11":
             make_config(t.overrides)

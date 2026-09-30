@@ -165,6 +165,28 @@ TRIALS: tuple[Trial, ...] = (
     Trial("aggressive stance at the cap (v0.8 rule)", "v0.11", {"risk": {"aggressive_vol_scaled": False}}),
     Trial("news confidence by count (v0.8 rule)", "v0.11", {"rules": {"news_tone_mass": False}}),
     Trial("strategic equity weight 0.8 (symmetric tilt)", "v0.11", {"risk": {"neutral_weight": {"equity": 0.8, "fx": 0.0}}}),
+    # v0.12 (docs/evaluation/v012_trend_core.md): judged on the longer design period (2008-07-01 ->
+    # 2021-12-31), so these Sharpes are not on the same sample as the rows above. The long/short
+    # multi-horizon trend stream on four runs, five return-level books built with it, and the
+    # interior overlay sizes on three runs; nothing adopted. Not reproducible from config.
+    Trial("v0.12 TSMOM(L/S) etf11_rp", "v0.12", None, recorded_portfolio_sharpe=0.40),
+    Trial("v0.12 TSMOM(L/S) etf11_equal", "v0.12", None, recorded_portfolio_sharpe=0.22),
+    Trial("v0.12 TSMOM(L/S) fx15_rp", "v0.12", None, recorded_portfolio_sharpe=-0.13),
+    Trial("v0.12 TSMOM(L/S) all26_rp", "v0.12", None, recorded_portfolio_sharpe=0.10),
+    Trial("v0.12 book beta + trend_etf (L/S trend)", "v0.12", None, recorded_portfolio_sharpe=0.81),
+    Trial("v0.12 book beta + carry (L/S trend)", "v0.12", None, recorded_portfolio_sharpe=0.51),
+    Trial("v0.12 book beta + trend_etf + carry (L/S trend)", "v0.12", None, recorded_portfolio_sharpe=0.62),
+    Trial("v0.12 book all four (L/S trend)", "v0.12", None, recorded_portfolio_sharpe=0.56),
+    Trial("v0.12 book trend + carry (no beta) (L/S trend)", "v0.12", None, recorded_portfolio_sharpe=0.26),
+    Trial("v0.12 overlay etf11_rp lam 0.25", "v0.12", None, recorded_portfolio_sharpe=0.88),
+    Trial("v0.12 overlay etf11_rp lam 0.50", "v0.12", None, recorded_portfolio_sharpe=0.86),
+    Trial("v0.12 overlay etf11_rp lam 0.75", "v0.12", None, recorded_portfolio_sharpe=0.83),
+    Trial("v0.12 overlay fx15_rp lam 0.25", "v0.12", None, recorded_portfolio_sharpe=-0.31),
+    Trial("v0.12 overlay fx15_rp lam 0.50", "v0.12", None, recorded_portfolio_sharpe=-0.31),
+    Trial("v0.12 overlay fx15_rp lam 0.75", "v0.12", None, recorded_portfolio_sharpe=-0.28),
+    Trial("v0.12 overlay all26_rp lam 0.25", "v0.12", None, recorded_portfolio_sharpe=0.29),
+    Trial("v0.12 overlay all26_rp lam 0.50", "v0.12", None, recorded_portfolio_sharpe=0.27),
+    Trial("v0.12 overlay all26_rp lam 0.75", "v0.12", None, recorded_portfolio_sharpe=0.22),
 )
 
 
@@ -198,6 +220,10 @@ PERIODS: dict[str, tuple[str, str]] = {
     # Untouched by every choice and every published number through v0.5. It grows with
     # time; together with the extended universe it is the fresh holdout for the next rule change.
     "reserve": ("2026-07-01", "2026-09-25"),
+    # v0.12: a longer design period for statistical power (2008-2021 adds the financial crisis,
+    # the 2011 and 2015 sell-offs and the 2013 taper); it starts where every ETF of the
+    # multi-asset universe has a year of history. Opt-in, like the reserve.
+    "design_long": ("2008-07-01", "2021-12-31"),
 }
 # The periods a plain `evaluate()` runs; `reserve` is opt-in because three months is a weak test.
 DEFAULT_PERIODS: tuple[str, ...] = ("design", "holdout", "q1_2024")

@@ -72,6 +72,8 @@ PYBIND11_MODULE(_atcore, m) {
           py::arg("rsi_high") = 70.0, py::arg("allow_short") = false);
     m.def("strat_zmr", &strat_zmr, py::arg("close"), py::arg("n") = 20, py::arg("entry") = 1.0,
           py::arg("exit") = 0.0, py::arg("allow_short") = false);
+    m.def("strat_tsmom", &strat_tsmom, py::arg("close"), py::arg("horizons"),
+          py::arg("skip") = 0, py::arg("allow_short") = true);
 
     // ---- backtest --------------------------------------------------------
     py::class_<BacktestConfig>(m, "BacktestConfig")

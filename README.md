@@ -7,9 +7,9 @@
 
 | Guide | For |
 |---|---|
-| [LEARN.md](LEARN.md) | 35 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 72 copy-pasteable recipes, including the agentic layer, quant research and operations; every offline one runs in CI |
-| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 30 diagrams |
+| [LEARN.md](LEARN.md) | 50 concepts: how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 100 copy-pasteable recipes, including the agentic layer, quant research, operations and the v0.7 to v0.12 research tools; every offline one runs in CI |
+| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 38 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
 
@@ -27,6 +27,13 @@ layer** for alphas, execution algorithms, portfolio construction and backtest st
 > produces fake prices, news and fundamentals. The framework never connects to a broker.
 
 ## Results in one paragraph
+
+*v0.12 research (unreleased, [docs/evaluation/v012_trend_core.md](docs/evaluation/v012_trend_core.md)):
+the three steps the review approved were run on design data only: a longer design period
+(2008-07-01 to 2021-12-31), a long/short multi-horizon trend stream (`TSMOM(L/S)`, now a
+baseline in every table, its signal `strat_tsmom` in the C++ core) and the vol-target book as
+the core with the desk's tilt as a sized overlay. None of them beat the vol-target control,
+every interval includes zero, and nothing was adopted. The forward paper record remains the test.*
 
 *v0.11 (unreleased, [docs/evaluation/v011_review.md](docs/evaluation/v011_review.md)): a second
 adversarial review's 89 confirmed findings are implemented and every table re-measured; the 15-sleeve
@@ -239,15 +246,17 @@ agentic_trader/
                            edgar.py (SEC EDGAR: point-in-time fundamentals, as known at as_of, and filing-stream news)
   agents/                  analysts (incl. alpha and cross-sectional xalpha), researchers + facilitator, trader, risk team + PM
   graph.py                 TradingGraph stages, propagate() and scan()
-  backtest.py              walk-forward agent backtest vs 6 baselines with optional market impact; portfolio backtest
-  evaluation.py            design / holdout / Q1-2024 / reserve evaluation over the core and extended universes; repeats, paired bootstraps,
+  backtest.py              walk-forward agent backtest vs 9 baselines (incl. vol-target, trend and carry streams) with optional market impact; portfolio backtest
+  evaluation.py            design / design_long / holdout / Q1-2024 / reserve evaluation over the core and extended universes; repeats, paired bootstraps,
                            the registry of every variant judged on the design period (TRIALS)
   memory.py · llm.py (call and dollar budgets) · anonymize.py · provenance.py (version, commit, backend and dependency versions in every result)
   cli/                     common.py, decisions.py (analyze/task/scan), research.py (backtest/portfolio/xalpha/alpha/execute/stats),
                            evaluate.py, services.py (tools/serve/mcp/info), parser.py (argparse wiring), __init__.py (main)
 scripts/                   measure_v08.py (re-measures every published table into results/v08/) · render_v08_tables.py (prints the tables from it)
+                           measure_v09.py · combine_v09.py · overlay_v09.py · attribution_v09.py (return streams, books, overlay, attribution; v0.9 to v0.12)
+                           render_v09_doc.py · render_v11_doc.py · render_v12_doc.py (write the evaluation pages from result files) · paper_trade_v09.py (the forward record)
                            run_cookbook.py · check_mermaid.py · check_links.py (the CI docs job) · build_cpp · set_api_key
-tests/                     832 pytest tests on both backends (v0.8 fixes 105 + 17 CLI, v0.8 agents 68, fuzz 59 C++ boundary + 7 agentic layer, v0.8 engine 57,
+tests/                     879 pytest tests on both backends (the breakdown that follows is the v0.8.0 one, 832 tests: v0.8 fixes 105 + 17 CLI, v0.8 agents 68, fuzz 59 C++ boundary + 7 agentic layer, v0.8 engine 57,
                            v0.8 data 57, v0.8 execution 41, v0.8 agentic 41, quant edges 38, v0.7 37, agents 35, v0.8 portfolio 30, agentic 30, ...)
 examples/                  equity, FX, baseline comparison
 ```
@@ -364,29 +373,43 @@ print(port.table())
 
 ## Extending
 
+Each line below was checked against the code for v0.12; `strat_tsmom` is the worked example
+of the last one.
+
 * **New tool:** add a method to `DeskTools`, register it in `build_registry` with the right
-  annotations (read-only, risk, required capabilities, evidence type). It is then callable
-  in-process, over MCP, and by the planner, under policy.
+  `ToolAnnotations` (read-only, risk, required capabilities, evidence type). It is then
+  callable in-process, over MCP, and by the planner, under policy.
 * **New policy rule:** a callable `PolicyContext -> PolicyDecision | None`; put it in the
-  rule tuple before `allow_rule`.
+  rule tuple before `allow_rule` and pass the tuple as `PolicyEngine(rules=...)` (the default
+  is `DEFAULT_RULES`). A tuple with no terminal rule fails closed.
 * **New analyst:** subclass `Analyst` with `gather()` and `rules()`, list free-text keys in
-  `untrusted_keys`, return `self.abstain(...)` without data, then register it in `ANALYSTS`.
-* **New alpha:** a function `AlphaInputs -> ndarray in [-1, 1]` added to `ALPHAS`.
-* **New rule change:** put it behind a `config["rules"]` switch, choose it on the *core*
-  design period with `evaluate --data yahoo --universe core --periods design`, then report
-  the extended universe and the reserve period (`evaluate --data yahoo --universe extended
-  --periods design,holdout,reserve`) as information: both were consulted for the v0.5.1 and
-  v0.6 decisions and v0.8 re-measured every period, so no held-out data remains — the next
-  unseen data is the future.
-* **New quant routine:** add it to `cpp/`, bind it in `module.cpp`, mirror it in `pycore.py`,
-  add a cross-check test, and add it to `tests/test_fuzz.py` so hypothesis fuzzes it.
+  `untrusted_keys`, return `self.abstain(...)` without data, register it in `ANALYSTS`, and
+  name it in `config["analysts"]` (or `DEFAULT_ANALYSTS`) so the graph runs it.
+* **New alpha:** a function `AlphaInputs -> ndarray in [-1, 1]` added to `ALPHAS`, and to
+  `EQUITY_ALPHAS` / `FX_ALPHAS` so the reports and the alpha analysts use it by default.
+* **New baseline stream:** a weight function added to `baseline_weights` in `backtest.py`
+  (as `TSMOM(12-1)`, `TSMOM(L/S)` and `Carry` are); it then appears, fully costed, in every
+  backtest, portfolio and evaluation table. Its signal belongs in the quant core (last line).
+* **New rule change:** put it behind a `config["rules"]` switch and choose it on a design
+  period only: `evaluate --data yahoo --universe core --periods design` for the desk's rules,
+  `scripts/measure_v09.py --period design_long` for a return stream on the multi-asset
+  universes. Adopt it only if its interval against `B&H vol-target` is above zero, and
+  register every variant tried in `evaluation.TRIALS`, adopted or not. The holdout, the
+  extended universe and the reserve period are spent (consulted for the v0.5.1 and v0.6
+  decisions, re-measured in v0.8): they are reports, never a basis for a choice. The next
+  unseen data is the forward paper-trading record.
+* **New quant routine:** declare it in `cpp/include/at/`, implement it in `cpp/src/`, bind it
+  in `cpp/bindings/module.cpp`, mirror it in `quant/pycore.py`, export it through
+  `quant/__init__.py` (which validates arguments so both backends refuse the same input), add
+  a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
+  function the facade exports is fuzzed on both backends.
 
 ## Tests
 
 ```bash
-pytest -q                                   # 832 tests collected on either backend (C++ backend: 832 passed) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
-pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend (a report, not a gate); weakest file data/yahoo.py at 75% (network branches)
-AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 796 passed, 36 skipped (C++-only tests)
-ctest --test-dir build -C Release           # 25 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests
+pytest -q                                   # 879 tests collected on either backend (C++ backend: 879 passed) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
+pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend at v0.8.0 (a report, not a gate); weakest file data/yahoo.py at 75% (network branches)
+AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 839 passed, 40 skipped (C++-only tests)
+ctest --test-dir build -C Release           # 26 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests
 python scripts/run_cookbook.py --offline && python scripts/check_mermaid.py && python scripts/check_links.py   # the docs, as CI runs them
 ```

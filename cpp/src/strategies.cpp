@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <vector>
 
 namespace at {
 
@@ -42,8 +44,10 @@ Series strat_kdj_rsi(const Series& high, const Series& low, const Series& close,
     double pos = 0.0;
     for (std::size_t i = 0; i < close.size(); ++i) {
         if (!std::isnan(k.j[i]) && !std::isnan(r[i])) {
-            const bool oversold = r[i] < rsi_low || k.j[i] < 0.0;
-            const bool overbought = r[i] > rsi_high || k.j[i] > 100.0;
+            // J saturates at exactly 0 or 100 (K = D at the bound) up to rounding noise whose
+            // sign differs between platforms; a breach has to clear 1e-9 to count.
+            const bool oversold = r[i] < rsi_low || k.j[i] < -1e-9;
+            const bool overbought = r[i] > rsi_high || k.j[i] > 100.0 + 1e-9;
             if (oversold)
                 pos = 1.0;
             else if (overbought)
@@ -68,6 +72,30 @@ Series strat_zmr(const Series& close, int n, double entry, double exit, bool all
                 pos = -1.0;
         }
         out[i] = pos;
+    }
+    return out;
+}
+
+Series strat_tsmom(const Series& close, const std::vector<int>& horizons, int skip,
+                   bool allow_short) {
+    if (horizons.empty()) throw std::invalid_argument("horizons must not be empty");
+    int longest = 0, shortest = horizons.front();
+    for (int h : horizons) {
+        if (h < 1) throw std::invalid_argument("horizon must be positive");
+        longest = std::max(longest, h);
+        shortest = std::min(shortest, h);
+    }
+    if (skip < 0 || skip >= shortest) throw std::invalid_argument("skip must be in [0, min horizon)");
+    Series out(close.size(), 0.0);
+    const double k = static_cast<double>(horizons.size());
+    for (std::size_t i = static_cast<std::size_t>(longest); i < close.size(); ++i) {
+        double score = 0.0;
+        for (int h : horizons) {
+            const double r = close[i - static_cast<std::size_t>(skip)] / close[i - static_cast<std::size_t>(h)] - 1.0;
+            if (std::isfinite(r)) score += (r > 0.0) - (r < 0.0);
+        }
+        score /= k;
+        out[i] = allow_short ? score : std::max(score, 0.0);
     }
     return out;
 }

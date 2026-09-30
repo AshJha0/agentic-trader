@@ -43,6 +43,17 @@ Mermaid 11 parser before release. The prose explanation is in
 29. [Calibration harness: dispersion, anchoring, drift](#29-calibration-harness-dispersion-anchoring-drift)
 30. [The API's task pool and multi-process serving](#30-the-apis-task-pool-and-multi-process-serving)
 
+**Research after v0.8** (31–38 are new in v0.12)
+
+31. [Attribution: the desk as its control plus a tilt](#31-attribution-the-desk-as-its-control-plus-a-tilt)
+32. [Return streams and books (v0.9, v0.12)](#32-return-streams-and-books-v09-v012)
+33. [Core and overlay: the tilt at size lam](#33-core-and-overlay-the-tilt-at-size-lam)
+34. [The forward paper-trading job and its append-only ledger](#34-the-forward-paper-trading-job-and-its-append-only-ledger)
+35. [When a filing becomes visible (v0.11)](#35-when-a-filing-becomes-visible-v011)
+36. [The research protocol once the holdout is spent](#36-the-research-protocol-once-the-holdout-is-spent)
+37. [Adding a quant routine to both backends](#37-adding-a-quant-routine-to-both-backends)
+38. [Evaluation periods and what each may be used for](#38-evaluation-periods-and-what-each-may-be-used-for)
+
 ## 1. Decision pipeline
 
 ```mermaid
@@ -855,4 +866,132 @@ flowchart LR
     C["POST /tasks/{id}/cancel · /approvals<br/>(GET /approvals → 409 unless queued)"] -->|"owning process"| H1
     C -->|"other process → 409"| H2
     HL["GET /health: approval mode · instance id ·<br/>workers · queue · in-flight"] --> H1
+```
+
+## 31. Attribution: the desk as its control plus a tilt
+
+```mermaid
+flowchart LR
+    D["desk daily excess return"] --> REG["regress on the control<br/>(same sleeves, same vol target, no views)"]
+    C["B&H vol-target<br/>daily excess return"] --> REG
+    REG --> B["beta: how much of the<br/>control the desk is"]
+    REG --> A["alpha: what the views added<br/>(annualised intercept, with t)"]
+    REG --> RES["residual vol: the risk<br/>the views took"]
+    A --> IR["information ratio<br/>= alpha / residual vol"]
+    RES --> IR
+    D --> T["tilt = desk - control<br/>(same day)"]
+    C --> T
+    T --> TS["tilt Sharpe with a<br/>block-bootstrap interval"]
+```
+
+## 32. Return streams and books (v0.9, v0.12)
+
+```mermaid
+flowchart TB
+    subgraph RUNS["costed runs (risk parity across sleeves)"]
+        E["etf11_rp<br/>11 multi-asset ETFs"]
+        F["fx15_rp<br/>15 FX pairs"]
+    end
+    E --> BETA["beta:<br/>B&H vol-target"]
+    E --> TE["trend_etf:<br/>TSMOM(12-1) or TSMOM(L/S)"]
+    F --> TF["trend_fx"]
+    F --> CA["carry"]
+    BETA --> RP["risk parity across streams<br/>120-day window, every 5 days,<br/>data up to the previous day"]
+    TE --> RP
+    TF --> RP
+    CA --> RP
+    RP --> BOOKS["books: base, base + trend,<br/>base + carry, all four, no beta"]
+    BOOKS --> CMP["paired block bootstrap<br/>of each book against the base"]
+    CMP --> V{"interval<br/>above zero?"}
+    V -->|"no (every round so far)"| KEEP["nothing adopted"]
+    V -->|"yes"| PRE["pre-register, then<br/>wait for the forward record"]
+```
+
+## 33. Core and overlay: the tilt at size lam
+
+```mermaid
+flowchart LR
+    CTRL["control stream<br/>(vol-target core)"] --> BL["r(lam) = control + lam x (desk - control)"]
+    DESK["desk stream"] --> BL
+    GRID["lam in 0, 0.25, 0.5, 0.75, 1<br/>(each is a registered trial)"] --> BL
+    BL --> DES["design period:<br/>the only basis for choosing lam"]
+    BL --> HO["holdout:<br/>printed as a report"]
+    DES --> Q{"sizes<br/>distinguishable?"}
+    Q -->|"no"| NA["nothing adopted;<br/>both endpoints stay in the paper ledger"]
+    Q -->|"yes"| AD["adopt the size,<br/>record the trial count"]
+```
+
+## 34. The forward paper-trading job and its append-only ledger
+
+```mermaid
+flowchart TB
+    SCH["scheduled task, daily"] --> CAL{"new SPY session<br/>since the freeze?"}
+    CAL -->|"no"| STOP["log and exit"]
+    CAL -->|"yes"| REC["recompute every stream<br/>from the freeze date,<br/>data up to the previous close"]
+    REC --> REV["revisions(old, new):<br/>cells that differ, rows that vanished"]
+    REV --> SHR{"rows would<br/>be dropped?"}
+    SHR -->|"yes, no --allow-shrink"| ERR["stop with an error"]
+    SHR -->|"no"| MRG["merge_append_only:<br/>written rows stay as written,<br/>new dates are appended"]
+    MRG --> L[("ledger.csv")]
+    REV --> RV[("revisions.csv")]
+    REC --> RC[("ledger_recomputed.csv")]
+    L --> SUM["summary: days, Sharpe and interval<br/>per stream; no decision before<br/>the pre-registered look"]
+```
+
+## 35. When a filing becomes visible (v0.11)
+
+```mermaid
+flowchart LR
+    SUB["EDGAR submissions feed:<br/>accession number,<br/>acceptance time (UTC)"] --> TZ["convert to New York time"]
+    TZ --> H{"accepted before<br/>16:00 ET on a session?"}
+    H -->|"yes"| SAME["visible from that session"]
+    H -->|"no"| NEXT["visible from the<br/>next business day"]
+    SUB -->|"no timestamp"| FD["fall back to the filing date"]
+    FACTS["company facts<br/>(values with accession number)"] --> JOIN["join on accession number"]
+    SAME --> JOIN
+    NEXT --> JOIN
+    FD --> JOIN
+    JOIN --> PIT["point-in-time fundamentals<br/>and filing news for the analysts"]
+```
+
+## 36. The research protocol once the holdout is spent
+
+```mermaid
+flowchart TB
+    IDEA["idea"] --> SW["behind a config switch<br/>or as a baseline stream"]
+    SW --> DP["measure on a design period only<br/>(2016-2021, or 2008-2021)"]
+    DP --> REG["register every variant<br/>in evaluation.TRIALS"]
+    REG --> CI{"interval against<br/>B&H vol-target<br/>above zero?"}
+    CI -->|"no"| NO["not adopted;<br/>result published"]
+    CI -->|"yes"| PR["pre-register:<br/>what is run, what counts"]
+    PR --> FW["forward paper record<br/>(the only unseen data)"]
+    HOLD["holdout, extended universe, reserve:<br/>spent; reports only"] -.->|"never a basis for choice"| CI
+    FW --> DSR["deflated Sharpe over<br/>all registered trials"]
+```
+
+## 37. Adding a quant routine to both backends
+
+```mermaid
+flowchart LR
+    H["cpp/include/at/*.hpp<br/>declaration and contract"] --> S["cpp/src/*.cpp<br/>implementation"]
+    S --> B["cpp/bindings/module.cpp<br/>m.def(...)"]
+    S --> CT["cpp/tests/test_core.cpp"]
+    B --> F["quant/__init__.py facade:<br/>validate arguments,<br/>dispatch to C++ or numpy"]
+    P["quant/pycore.py<br/>numpy twin"] --> F
+    F --> X["tests/test_quant.py<br/>cross-check: C++ equals numpy"]
+    F --> Z["tests/test_fuzz.py<br/>hypothesis: never crashes,<br/>both refuse the same bad input,<br/>both agree on good input"]
+    F --> U["callers: backtest baselines,<br/>analysts, alphas"]
+```
+
+## 38. Evaluation periods and what each may be used for
+
+```mermaid
+flowchart LR
+    DL["design_long<br/>2008-07-01 to 2021-12-31<br/>(ETF and FX runs)"] --> CH["choose"]
+    D["design<br/>2016-01-04 to 2021-12-31"] --> CH
+    HO["holdout<br/>2022-01-03 to 2026-06-30"] --> RP["report only (spent in v0.8)"]
+    RS["reserve<br/>2026-07-01 to 2026-09-25"] --> RP
+    EX["extended universe<br/>45 instruments"] --> RP
+    FW["forward record<br/>from 2026-09-29"] --> TEST["the test"]
+    CH --> TR["every variant registered as a trial"]
 ```

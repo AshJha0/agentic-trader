@@ -19,5 +19,11 @@ Series strat_kdj_rsi(const Series& high, const Series& low, const Series& close,
 // Z-score mean reversion: enter when |z| > entry, exit when z crosses back through exit.
 Series strat_zmr(const Series& close, int n = 20, double entry = 1.0, double exit = 0.0,
                  bool allow_short = false);
+// Time-series momentum (Moskowitz, Ooi and Pedersen 2012): the average over `horizons` of
+// sign(close[i - skip] / close[i - h] - 1), in [-1, 1] (clipped at 0 when allow_short is
+// false), 0 until the longest horizon exists; a non-finite ratio votes 0. Throws
+// std::invalid_argument on an empty horizon list, a horizon < 1, or skip outside [0, min h).
+Series strat_tsmom(const Series& close, const std::vector<int>& horizons, int skip = 0,
+                   bool allow_short = true);
 
 }  // namespace at

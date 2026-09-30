@@ -46,7 +46,7 @@ __all__ = [
     "pct_change", "realized_vol", "rolling_max", "rolling_min", "spearman", "almgren_chriss",
     "quantile", "historical_var", "historical_cvar",
     "kelly_fraction", "vol_target_weight", "position_units", "strat_buy_hold",
-    "strat_sma_cross", "strat_macd", "strat_kdj_rsi", "strat_zmr", "run_backtest",
+    "strat_sma_cross", "strat_macd", "strat_kdj_rsi", "strat_zmr", "strat_tsmom", "run_backtest",
     "compute_metrics", "max_drawdown",
 ]
 
@@ -161,6 +161,28 @@ def almgren_chriss(total: float, n: int, kappa: float) -> np.ndarray:
     if _cpp is None:
         return pycore.almgren_chriss(total, n, kappa)
     return _a(_cpp.almgren_chriss(float(total), n, float(kappa)))
+
+
+def strat_tsmom(close, horizons, skip: int = 0, allow_short: bool = True) -> np.ndarray:
+    """Time-series momentum score in [-1, 1] (see cpp/include/at/strategies.hpp): the average
+    sign of the trailing return over ``horizons``; ValueError on an empty horizon list, a
+    non-positive horizon, or ``skip`` outside [0, min horizon)."""
+    hs = [_window(h) for h in horizons]
+    if isinstance(skip, (bool, np.bool_)):
+        raise ValueError("skip must be an integer, not a bool")
+    try:
+        skip = operator.index(skip)
+    except TypeError:
+        raise ValueError(f"skip must be an integer, got {type(skip).__name__}") from None
+    if not hs:
+        raise ValueError("horizons must not be empty")
+    if skip < 0 or skip >= min(hs):
+        raise ValueError("skip must be in [0, min horizon)")
+    if _cpp is None:
+        return pycore.strat_tsmom(close, hs, skip, bool(allow_short))
+    return _a(_cpp.strat_tsmom(_l(close), hs, skip, bool(allow_short)))
+
+
 historical_var = _dispatch_scalar("historical_var", 1)
 historical_cvar = _dispatch_scalar("historical_cvar", 1)
 max_drawdown = _dispatch_scalar("max_drawdown", 1)
