@@ -44,8 +44,10 @@ Series strat_kdj_rsi(const Series& high, const Series& low, const Series& close,
     double pos = 0.0;
     for (std::size_t i = 0; i < close.size(); ++i) {
         if (!std::isnan(k.j[i]) && !std::isnan(r[i])) {
-            const bool oversold = r[i] < rsi_low || k.j[i] < 0.0;
-            const bool overbought = r[i] > rsi_high || k.j[i] > 100.0;
+            // J saturates at exactly 0 or 100 (K = D at the bound) up to rounding noise whose
+            // sign differs between platforms; a breach has to clear 1e-9 to count.
+            const bool oversold = r[i] < rsi_low || k.j[i] < -1e-9;
+            const bool overbought = r[i] > rsi_high || k.j[i] > 100.0 + 1e-9;
             if (oversold)
                 pos = 1.0;
             else if (overbought)

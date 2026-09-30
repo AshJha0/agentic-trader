@@ -24,6 +24,11 @@ adopted ([v012_trend_core.md](docs/evaluation/v012_trend_core.md), generated fro
   strategies, `realized_vol`, `almgren_chriss`, the sizing functions and `compute_metrics`
   were not, contrary to the README's *Extending* section, which is corrected and extended
   (baseline streams, the `analysts` config, `PolicyEngine(rules=...)`, the trials registry).
+- **`strat_kdj_rsi` dead band.** The new fuzz test found (on macOS in CI) that the two backends
+  disagreed when J sat at exactly 100 up to rounding noise (100.00000000000003 on one, not on
+  the other). A J breach now has to clear 1e-9 on both backends, as the crossovers already do.
+  The v0.12 tables were measured before this change; the `KDJ+RSI` baseline can differ only
+  on bars where J is within 1e-9 of 0 or 100.
 - **18 trials registered** (`evaluation.TRIALS`, version `v0.12`, 62 in all): the trend stream
   on four runs, five books, nine interior overlay sizes.
 - **Docs**: LEARN.md 35 → 50 concepts (Parts VIII and IX), COOKBOOK.md 72 → 100 recipes (every

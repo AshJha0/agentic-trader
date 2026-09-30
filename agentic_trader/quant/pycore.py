@@ -328,9 +328,10 @@ def strat_kdj_rsi(high, low, close, kdj_n: int = 9, rsi_n: int = 14, rsi_low: fl
     pos = 0.0
     for i in range(len(r)):
         if not (np.isnan(j[i]) or np.isnan(r[i])):
-            if r[i] < rsi_low or j[i] < 0.0:
+            # J saturates at exactly 0 or 100 up to rounding noise: a breach has to clear 1e-9 (mirrors C++).
+            if r[i] < rsi_low or j[i] < -1e-9:
                 pos = 1.0
-            elif r[i] > rsi_high or j[i] > 100.0:
+            elif r[i] > rsi_high or j[i] > 100.0 + 1e-9:
                 pos = -1.0 if allow_short else 0.0
         out[i] = pos
     return out
