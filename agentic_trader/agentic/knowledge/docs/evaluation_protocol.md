@@ -77,7 +77,7 @@ returns; book-level VaR was off in every published run and is not covered.
 ## Multiple testing
 
 When several variants are compared, the best one's Sharpe is inflated by selection. Every
-variant ever judged on the design period is registered (`evaluation.TRIALS`: 26 trials, 24
+variant ever judged on the design period is registered (`evaluation.TRIALS`: 62 trials as of v0.12; 26 at v0.8, 24
 reproducible under the current engine and two historical), and the registry's length is
 the trial count for the deflated Sharpe ratio, which adjusts for the number of trials and
 the dispersion of their Sharpe ratios; the probabilistic Sharpe ratio gives the probability

@@ -1309,7 +1309,7 @@ print(selection_report(chosen, tried))
 
 `agentic-trader stats returns.csv --trials 8 --trial-sharpes 0.4,0.9,1.1,0.7,0.2,0.95,0.85,0.6`
 does the same from a CSV. The evaluation applies this to the desk's own rule search:
-`agentic_trader.evaluation.TRIALS` lists every variant judged on the design period (26 as of
+`agentic_trader.evaluation.TRIALS` lists every variant judged on a design period (62 as of v0.12; 26 as of
 v0.8: 24 re-measured under the current engine by `scripts/measure_v08.py`, 2 historical), and
 the design-period mean Sharpes of those trials are the `trial_sharpes` of the published report.
 That report (`results/v08/tables.md`, "selection statistics for the frozen rules", rendered
