@@ -81,7 +81,7 @@ def render(res: dict) -> str:
     out = ["# Change 1: the vol-targeted book as the core, the desk's tilt at size lam (15 core sleeves, equal capital)\n",
            "r(lam) = control + lam * (desk - control); lam 0 is `B&H vol-target`, lam 1 the desk. Excess-return Sharpe, "
            "260 periods/year, paired block bootstrap over days. Chosen on the design period only.\n"]
-    for period in ("design", "holdout"):
+    for period in res["periods"]:
         p = res["periods"][period]
         label = "design (the choice basis)" if period == "design" else "holdout (a report, not a basis for the choice)"
         out += [f"## {period}: {label}, n = {p['n']} days\n",
@@ -98,12 +98,15 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--in", dest="inp", default=str(ROOT / "results" / "v08"))
     ap.add_argument("--out", default=str(ROOT / "results" / "v09"))
+    ap.add_argument("--files", default=None, help="comma list label=csv to run instead of portfolio_{design,holdout}.csv")
     a = ap.parse_args(argv)
     inp, out = Path(a.inp), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     res = {"grid": GRID, "ppy": PPY, "source": str(inp), "periods": {}, "provenance": provenance()}
-    for period in ("design", "holdout"):
-        res["periods"][period] = run_period(pd.read_csv(inp / f"portfolio_{period}.csv", index_col=0, parse_dates=True))
+    files = ({"design": inp / "portfolio_design.csv", "holdout": inp / "portfolio_holdout.csv"} if a.files is None
+             else {k: Path(v) for k, v in (item.split("=", 1) for item in a.files.split(","))})
+    for period, path in files.items():
+        res["periods"][period] = run_period(pd.read_csv(path, index_col=0, parse_dates=True))
     (out / "overlay.json").write_text(json.dumps(res, indent=1, default=float), encoding="utf-8")
     text = render(res)
     (out / "overlay.md").write_text(text, encoding="utf-8")

@@ -58,7 +58,7 @@ RUNS: dict[str, tuple[list[str], str, dict | None]] = {
     "all26_rp": (ETF11 + FX15, "risk_parity", {"equity": 0.6, "fx": 0.4}),
 }
 
-STREAMS = (AGENT, "Buy&Hold", "B&H vol-target", "TSMOM(12-1)", "Carry", "SMA(20/50)", "MACD", "KDJ+RSI", "ZMR")
+STREAMS = (AGENT, "Buy&Hold", "B&H vol-target", "TSMOM(12-1)", "TSMOM(L/S)", "Carry", "SMA(20/50)", "MACD", "KDJ+RSI", "ZMR")
 
 
 def base_config() -> dict:
@@ -119,7 +119,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=str(ROOT / "results" / "v09"))
     ap.add_argument("--only", default=None, help="comma list of run names (default: every run)")
-    ap.add_argument("--period", default="design", choices=("design", "holdout"))
+    ap.add_argument("--period", default="design", choices=("design", "holdout", "design_long"))
     a = ap.parse_args(argv)
     load_dotenv(str(ROOT / ".env"))
     out = Path(a.out)

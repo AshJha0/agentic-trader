@@ -198,6 +198,10 @@ PERIODS: dict[str, tuple[str, str]] = {
     # Untouched by every choice and every published number through v0.5. It grows with
     # time; together with the extended universe it is the fresh holdout for the next rule change.
     "reserve": ("2026-07-01", "2026-09-25"),
+    # v0.12: a longer design period for statistical power (2008-2021 adds the financial crisis,
+    # the 2011 and 2015 sell-offs and the 2013 taper); it starts where every ETF of the
+    # multi-asset universe has a year of history. Opt-in, like the reserve.
+    "design_long": ("2008-07-01", "2021-12-31"),
 }
 # The periods a plain `evaluate()` runs; `reserve` is opt-in because three months is a weak test.
 DEFAULT_PERIODS: tuple[str, ...] = ("design", "holdout", "q1_2024")

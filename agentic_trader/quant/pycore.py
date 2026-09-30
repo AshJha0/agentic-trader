@@ -355,6 +355,30 @@ def strat_zmr(close, n: int = 20, entry: float = 1.0, exit: float = 0.0,
     return out
 
 
+def strat_tsmom(close, horizons, skip: int = 0, allow_short: bool = True):
+    """Time-series momentum: the average over ``horizons`` of sign(close[i-skip]/close[i-h]-1),
+    0 until the longest horizon exists; a non-finite ratio votes 0 (mirrors C++)."""
+    c = _arr(close)
+    hs = [int(h) for h in horizons]
+    if not hs:
+        raise ValueError("horizons must not be empty")
+    if min(hs) < 1:
+        raise ValueError("horizon must be positive")
+    if skip < 0 or skip >= min(hs):
+        raise ValueError("skip must be in [0, min horizon)")
+    out = np.zeros(len(c))
+    longest = max(hs)
+    if len(c) > longest:
+        for h in hs:
+            with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+                r = c[longest - skip:len(c) - skip] / c[longest - h:len(c) - h] - 1.0
+            out[longest:] += np.where(np.isfinite(r), np.sign(r), 0.0)
+        out /= len(hs)
+        if not allow_short:
+            out = np.maximum(out, 0.0)
+    return out
+
+
 # ------------------------------------------------------------------ backtest
 @dataclass
 class BacktestConfig:

@@ -348,3 +348,16 @@ def test_backtester_rejects_multidimensional_optional_input():
                 except Exception as e:                                  # noqa: BLE001
                     violations.append(f"{label} {name}{shape}: {type(e).__name__}")
     assert not violations, violations
+
+
+@given(x=arrays, hs=st.lists(st.integers(-1, 40), max_size=4), skip=st.integers(-1, 5), short=st.booleans())
+@FUZZ
+def test_tsmom_survives_wild_input_and_backends_agree(x, hs, skip, short):
+    out, err = _run(quant.strat_tsmom, x, hs, skip, short)
+    ok = bool(hs) and min(hs) >= 1 and 0 <= skip < min(hs)
+    assert (err is None) == ok                          # refused exactly when the arguments are bad
+    if err is None:
+        assert len(out) == len(x) and np.all(np.abs(out) <= 1.0)
+        assert short or np.all(out >= 0.0)
+        assert not np.any(out[:max(hs)])                # flat until the longest horizon exists
+        _same(out, pycore.strat_tsmom(x, hs, skip, short))

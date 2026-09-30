@@ -547,7 +547,31 @@ void test_keep_at_cap_is_no_trade() {
 
 }  // namespace
 
+static void test_tsmom() {
+    at::Series up, down;
+    for (int i = 0; i < 12; ++i) {
+        up.push_back(100.0 + i);
+        down.push_back(100.0 - i);
+    }
+    const auto u = at::strat_tsmom(up, {2, 5});
+    check(u[4] == 0.0 && u[5] == 1.0 && u.back() == 1.0, "tsmom is flat until the longest horizon, then long a rise");
+    check(at::strat_tsmom(down, {2, 5}).back() == -1.0, "tsmom is short a fall");
+    check(at::strat_tsmom(down, {2, 5}, 0, false).back() == 0.0, "long-only tsmom goes flat, not short");
+    at::Series mixed = up;   // 12 bars up, then a dip shorter than the long horizon
+    mixed.push_back(108.0);
+    const auto m = at::strat_tsmom(mixed, {1, 10});
+    check(m.back() == 0.0, "opposed horizons average to zero");
+    bool threw = false;
+    try {
+        at::strat_tsmom(up, {5}, 5);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    check(threw, "skip at or beyond the shortest horizon is refused");
+}
+
 int main() {
+    test_tsmom();
     test_sma_ema();
     test_rsi_bounds();
     test_bollinger_atr_kdj();

@@ -38,7 +38,7 @@ def test_baseline_weights_carry_both_streams_and_keep_the_old_six():
     c = 100 * np.exp(np.cumsum(np.random.default_rng(0).normal(0.0005, 0.01, n)))
     full = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": 1e6}, index=idx)
     w = baseline_weights(full, allow_short=False, carry_annual=np.full(n, 0.03), carry_scale=2.0, carry_cap=0.5)
-    assert set(w) == {"Buy&Hold", "B&H vol-target", "SMA(20/50)", "MACD", "KDJ+RSI", "ZMR", "TSMOM(12-1)", "Carry"}
+    assert set(w) == {"Buy&Hold", "B&H vol-target", "SMA(20/50)", "MACD", "KDJ+RSI", "ZMR", "TSMOM(12-1)", "TSMOM(L/S)", "Carry"}
     assert np.all(np.abs(w["TSMOM(12-1)"]) <= w["B&H vol-target"] + 1e-12)
     assert np.all(w["Carry"] == 0.5)
     assert np.all(w["TSMOM(12-1)"] >= 0.0)
@@ -106,3 +106,18 @@ def test_overlay_blend_is_the_control_at_zero_and_the_desk_at_one():
     rf = np.linspace(0.01, 0.05, 300)
     assert mod.excess(ctl, rf).shape == (299,) and mod.excess(ctl, rf)[0] == pytest.approx(ctl[1] - rf[0] / mod.PPY)
     assert mod.mdd_pct(np.array([0.1, -0.2, 0.05])) == pytest.approx(20.0)
+
+
+def test_long_short_multi_horizon_trend_is_signed_and_runs_short_on_long_only_instruments():
+    from agentic_trader.backtest import TSMOM_HORIZONS, tsmom_multi_weights
+    n = max(TSMOM_HORIZONS) + 80
+    up = np.exp(np.linspace(0.0, 1.0, n)); vt = np.full(n, 0.6)
+    w = tsmom_multi_weights(up, vt)
+    assert np.all(w[:max(TSMOM_HORIZONS)] == 0.0) and np.allclose(w[max(TSMOM_HORIZONS):], 0.6)
+    assert np.allclose(tsmom_multi_weights(up[::-1].copy(), vt)[max(TSMOM_HORIZONS):], -0.6)   # short in a downtrend
+    mixed = up.copy(); mixed[-30:] = mixed[-31] * np.linspace(1.0, 0.97, 30)                    # 1-month down, 3/12-month up
+    assert tsmom_multi_weights(mixed, vt)[-1] == pytest.approx(0.6 / 3)
+    rep = run_agent_backtest("AAPL", "2024-01-02", "2024-06-28", CFG, rebalance_every=10)
+    assert "TSMOM(L/S)" in rep.results and rep.results["TSMOM(12-1)"].positions.min() >= 0.0
+    from agentic_trader.evaluation import PERIODS
+    assert PERIODS["design_long"] == ("2008-07-01", "2021-12-31")
