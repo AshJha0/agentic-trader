@@ -88,3 +88,21 @@ def test_drawdown_overlay_halves_after_a_loss_and_recovers():
     sc = mod.drawdown_overlay(r, dd_window=60, dd_limit=0.10)
     assert sc[50] == 1.0 and np.all(sc[51:110] == 0.5)             # halved the day after the loss, not on it
     assert np.all(sc[170:] == 1.0)                                  # the loss left the window and the book recovered
+
+
+def test_overlay_blend_is_the_control_at_zero_and_the_desk_at_one():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "overlay_v09.py"
+    spec = importlib.util.spec_from_file_location("overlay_v09", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    rng = np.random.default_rng(5)
+    desk, ctl = rng.normal(0.0004, 0.01, 300), rng.normal(0.0005, 0.008, 300)
+    assert np.array_equal(mod.blend(desk, ctl, 0.0), ctl) and np.allclose(mod.blend(desk, ctl, 1.0), desk)
+    assert np.allclose(mod.blend(desk, ctl, 0.5), 0.5 * (desk + ctl))
+    # excess pairs the bill credited over (t-1, t] with the return at t: bar 0 (flat) is dropped
+    rf = np.linspace(0.01, 0.05, 300)
+    assert mod.excess(ctl, rf).shape == (299,) and mod.excess(ctl, rf)[0] == pytest.approx(ctl[1] - rf[0] / mod.PPY)
+    assert mod.mdd_pct(np.array([0.1, -0.2, 0.05])) == pytest.approx(20.0)
