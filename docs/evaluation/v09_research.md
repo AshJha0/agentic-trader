@@ -18,7 +18,14 @@ capital shares every 5 bars from a 120-day covariance window with no look-ahead.
 new streams are baselines in every sleeve since this branch: `TSMOM(12-1)` (sign of the
 trailing 12-month return skipping the last month, at the vol-target size, long-only where
 shorts are not allowed) and `Carry` (the FX carry premium at the desk's strategic size;
-flat on equities, so its row is 0 in the ETF runs).
+flat on equities, so in the ETF runs its row is the idle-cash leg alone: the credited bill
+as return, Sharpe 0 on excess returns, and its 'difference against the control' is the
+control's own Sharpe with the sign reversed, not a measurement of carry). Two further
+reading notes: the stream-combination tables report the drawdown of *excess* returns on
+the union of the streams' calendars (a stream with no bar contributes 0 that day), so their
+'MDD %' is not the portfolio tables' total-return drawdown; and on FX the `B&H vol-target`
+control coincides with buy & hold under the shared 1.0 position cap, so the FX carry and
+trend rows are compared with an unmanaged long-base position, not with a vol-targeted one.
 
 ## Phase 0: attribution of the v0.8 desk (`scripts/attribution_v09.py`)
 

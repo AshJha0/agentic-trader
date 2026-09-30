@@ -393,7 +393,14 @@ class NewsAnalyst(Analyst):
         sig = clip(math.tanh(2.0 * tone), -1, 1)
         top = sorted(scored, key=lambda x: abs(x[1]), reverse=True)[:4]
         pts = [f"{it.published.isoformat()}: {it.headline} ({sc:+.2f})" for it, sc in top]
-        conf = clip(0.2 + 0.05 * len(items), 0, 0.7)
+        if self.config.get("rules", {}).get("news_tone_mass", True):
+            mass = float(sum(abs(sc) for _, sc in scored))
+            if mass < 0.05:
+                f["recency_weighted_tone"] = tone
+                return self.abstain(f"{len(items)} headlines in {f['lookback_days']}d carry no tone.", f)
+            conf = clip(0.2 + 0.1 * mass, 0, 0.7)
+        else:
+            conf = clip(0.2 + 0.05 * len(items), 0, 0.7)
         f["recency_weighted_tone"] = tone
         return AnalystReport(self.name, sig, conf,
                              f"{len(items)} headlines in {f['lookback_days']}d; recency-weighted "

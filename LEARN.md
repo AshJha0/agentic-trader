@@ -988,7 +988,7 @@ measured with impact charged at constant starting capital and does not survive; 
 renderer prints no trade counts for the sweep, so that comparison is not restated. Where
 size decides everything is the signal-flippers: SMA loses 0.19 and 0.14 at $1B (design
 0.57 → 0.38 paying 24.63%; holdout 0.18 → 0.04, 12.99%) and MACD 0.58 and 0.44 (0.40 →
-−0.18 paying 64.71% of equity in impact; 0.14 → −0.30, 39.01%), while buy & hold barely
+−0.18 with impact charges summing to 64.71% of equity over the period (added up daily, not a terminal loss); 0.14 → −0.30, 39.01%), while buy & hold barely
 notices (0.60 → 0.59, 0.97%; 0.45 → 0.44, 0.48%). The v0.7 claim that MACD "loses 75% to
 impact at $1B" is retracted: it read `impact_paid`, a sum of per-bar fractions that can
 exceed 100%, as an equity loss, and it charged a strategy that had already lost most of its

@@ -75,14 +75,18 @@ def governance_steps() -> list[PlanStep]:
 
 
 def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[str],
-                 registry: ToolRegistry) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Ask the model for a plan as JSON. Returns (raw steps, raw text)."""
+                 registry: ToolRegistry, anonymize: bool = False) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Ask the model for a plan as JSON. Returns (raw steps, raw text). With ``anonymize`` the
+    prompt names neither the instrument nor the date (the validator pins both from the task)
+    and the requester's question is clipped."""
     catalogue = [{"name": d.name, "description": d.description,
                   "arguments": list(d.input_schema.get("properties", {}))} for d in registry.descriptors()]
+    who = f"the instrument ({instrument.asset_class})" if anonymize else f"{instrument.display} ({instrument.asset_class})"
+    when = "the as-of date" if anonymize else task.as_of.isoformat()
+    question = (task.question or "")[:500]
     prompt = (
-        f"Plan a trading decision on {instrument.display} ({instrument.asset_class}) as of "
-        f"{task.as_of.isoformat()} for a {task.role.value}."
-        + (f" The requester asks: {task.question}" if task.question else "") + "\n\n"
+        f"Plan a trading decision on {who} as of {when} for a {task.role.value}."
+        + (f" The requester asks: {question}" if question else "") + "\n\n"
         f"Available tools (call with exact names and only these arguments):\n{json.dumps(catalogue, indent=1)}\n\n"
         f"Available agent stages: {', '.join(ANALYST_PREFIX + a for a in analysts)}, debate, trader, risk. "
         "Stages must appear in the order analysts -> debate -> trader -> risk. Governance steps "
@@ -286,7 +290,7 @@ def make_plan(task: Task, instrument: Instrument, analysts: list[str], config: d
               registry: ToolRegistry, llm: LLM | None, book: dict[str, float] | None = None) -> Plan:
     if llm is None or not config.get("agentic", {}).get("llm_planner", False):
         return canonical_plan(task, instrument, analysts, config, registry)
-    raw, _ = propose_plan(llm, task, instrument, analysts, registry)
+    raw, _ = propose_plan(llm, task, instrument, analysts, registry, anonymize=bool(config.get("llm_anonymize")))
     if raw is None:
         plan = canonical_plan(task, instrument, analysts, config, registry)
         return Plan(plan.steps, "canonical", ("model plan unusable: canonical plan used",))

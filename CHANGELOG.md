@@ -1,5 +1,75 @@
 # Changelog
 
+## Unreleased — v0.11: the tier-2 review
+
+A second adversarial review (337 agents: ten finders, a constructive alpha-proposal track,
+two or three verification lenses per finding, a gap round and a three-judge panel) produced
+110 findings, 89 confirmed (11 high, 56 medium, 22 low); the digest with every verifier's
+reasoning is the record. Nothing here changes a rule choice on published data; the behaviour
+changes below move the next re-measurement (`results/v11`, [v011_review.md](docs/evaluation/v011_review.md)).
+
+- **EDGAR is visible when it was accepted, not when it was dated.** A filing accepted at or
+  after 16:00 Eastern is public from the next session; the submissions feed's
+  `acceptanceDateTime` (UTC) is converted and joined to every XBRL fact by accession number.
+  Filings without a known acceptance time keep their filing date. Facts, fundamentals and the
+  filing news stream all use the visible date.
+- **Market impact prices dollar volume in the shares' own units**: the dollar ADV uses the
+  split-adjusted, dividend-unadjusted close (`MarketDataProvider.as_traded_closes`) instead of the
+  total-return close, which understated dollar volume on high-yield names.
+- **The aggressive risk analyst sizes at 1.25× the vol-targeted weight** (`risk.aggressive_vol_scaled`,
+  default on). The v0.8 rule, `max(1.25 × proposal, vol target)`, pinned the aggressive view at the
+  position cap and gave the blended book a fixed floor at a quarter of the cap; the old rule is a
+  registered trial and the v0.2 rule set keeps it.
+- **The news analyst's confidence follows the tone the headlines carry** (`rules.news_tone_mass`,
+  default on): a window of toneless filings is an abstention, not a zero vote at up to 0.7
+  confidence; the v0.8 count rule is a registered trial.
+- **Evaluation rows are stored at full precision** (`ComparisonReport.table(decimals=None)`); every
+  aggregate, interval and p in a re-measured table runs on unrounded per-instrument metrics.
+- **Benjamini–Hochberg runs over the rows a table prints** (`paired_table(baselines=...)`): the
+  control-only drawdown and Calmar tables were corrected over six baselines and then cut to two.
+- **The deflated Sharpe is computed on one statistic**: every reproducible trial's design-period
+  15-sleeve portfolio Sharpe (`scripts/measure_v08.py` measures it; `selection_report` warns when the
+  chosen Sharpe is more than three trial standard deviations above the best trial). The v0.8 number
+  is withdrawn as a "clears the bar" claim.
+- **The trials registry counts v0.9, v0.10 and the new switches**: 44 entries (`Trial.recorded_portfolio_sharpe`
+  for the return-level trials).
+- **Engine parity and validation**: a NaN risk-free rate reads as 0 on the numpy backend as it does
+  in C++; `BacktestConfig` fields are validated (finite non-negative costs, finite leverage and carry)
+  before either backend runs.
+- **The harness's critic, reporter and planner prompts are anonymised** with the analysts'
+  (`agents.base.complete_anon`); the reporter drops price levels from the prompt; the planner names
+  neither the instrument nor the date and clips the question.
+- **A plan is single-use**: `execution.submit_order` consumes the plan it ticketed and refuses the
+  same plan again (`DeskTools.ticketed`, a lock shared by every book view).
+- **The hard LLM budget admits every attempt**: `BudgetedLLM` reserves one more attempt before each
+  retry (`AnthropicLLM.admit_retry`) and prices the prompt at its actual size, so retried timeouts
+  cannot overshoot the cap.
+- **Decision memory catches up on a shared file**: every read and write first ingests lines other
+  processes appended (append-only log, byte offset), so `serve --processes N` shares lessons and the
+  track record.
+- **The forward record is append-only** (`scripts/paper_trade_v09.py`): recomputed sessions are added,
+  never rewritten; differences go to `revisions.csv`; a shrinking recomputation is refused; a sleeve
+  whose bars stop early is an error; the summary names the pre-registered decision look (3,600
+  sessions, see the amendment in `docs/evaluation/v09_preregistration.md`).
+- **Renderer**: `--section` writes its own file; the execution-algorithm table averages impact over
+  the sleeves that can pay it (FX sleeves pay none without `costs.fx_adv_notional`).
+- **Re-measured (`results/v11`, copied to `docs/results/v11/tables.md`; every file at a clean commit).**
+  15-sleeve portfolio, holdout: desk Sharpe 0.91 with a 6.41% drawdown (v0.8: 0.80 / 7.80%) against 0.86
+  buy & hold and 0.99 vol-target; desk − vol-target −0.08 [−0.46, +0.30] p 0.688, desk − buy & hold +0.05
+  [−0.40, +0.50] p 0.820. Core holdout median Sharpe 0.35 (v0.8: 0.30) against 0.52 for the control, paired
+  difference −0.08 [−0.18, +0.02] p 0.14; extended 0.21 (v0.8: 0.25) against 0.27. The desk still has no
+  measurable edge over the vol-targeted control. Design-period choice of the two rule changes: the
+  vol-scaled aggressive stance gives portfolio Sharpe 1.44 against 1.40 for the v0.8 rule; the news
+  tone-mass rule 1.44 against 1.44 (kept for correctness, not for Sharpe); a symmetric equity tilt 1.45
+  (inside noise, not adopted). Deflated Sharpe on one statistic: 42 trials with a portfolio Sharpe,
+  expected maximum 0.746, probability 0.949 (an upper bound; v0.8's 0.998 is withdrawn). The
+  cross-sectional analyst's four-period re-check was not re-measured in v0.11 (it is off by default and
+  its v0.8 result stands); its design-period trial was.
+- The rendered result tables are in the repository (`docs/results/v08`, `v09`, `v11`), so every published
+  number can be read without the machine that measured it.
+- Docs: survivorship's direction for the alpha library, eight baselines in the API reference, the
+  impact "% of equity" wording (a sum of daily charges, not a terminal loss).
+
 ## Unreleased — v0.9 research (branch `research/v0.9-multi-asset`)
 
 The Sharpe plan that followed v0.8: attribution first, then a multi-asset base, trend and

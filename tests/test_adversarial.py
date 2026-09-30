@@ -43,7 +43,7 @@ def test_injected_headline_is_fenced_and_bounded():
 
     class Evil(SyntheticProvider):
         def news(self, instrument, as_of, lookback_days):
-            return [NewsItem(date(2024, 2, 29), evil)]
+            return [NewsItem(date(2024, 2, 29), evil, sentiment=-0.6)]   # bearish tone: the analyst speaks (v0.11) and the hijacked view diverges from it
 
     def hijacked(system, prompt):
         if "News Analyst" in system:
@@ -102,13 +102,15 @@ def test_critic_cannot_raise_confidence():
 
 # fabricated numbers and evidence ids in a narrative are flagged
 def test_fabricated_narrative_is_audited():
-    rec = Recorder("Position +0.54 with confidence 0.51. Expected alpha 350 bps, hit rate 88%, see CALC-badbadba.")
     st, _ = TradingGraph(CFG, **QUIET).propagate("AAPL", AS_OF)
+    # the position and confidence are the decision's own numbers (traceable); the rest is invented
+    rec = Recorder(f"Position {st.decision.target_weight:+.2f} with confidence {st.decision.confidence:.2f}. "
+                   "Expected alpha 350 bps, hit rate 88%, see CALC-badbadba.")
     critic = Critic(make_config(CFG, agentic={"llm_critic": False})).review(st, [], EvidenceStore())
     rep = build_report(Task("AAPL", AS_OF), st, [], critic, EvidenceStore(), rec)
     joined = " ".join(rep.warnings)
     assert "350" in joined and "88%" in joined and "CALC-badbadba" in joined
-    assert "0.54" not in joined and "0.51" not in joined
+    assert f"{st.decision.target_weight:+.2f}" not in joined and f"{st.decision.confidence:.2f}" not in joined
 
 
 # findings citing evidence that does not exist are dropped before the report

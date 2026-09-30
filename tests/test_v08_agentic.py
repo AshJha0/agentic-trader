@@ -951,8 +951,9 @@ def test_remote_registry_keeps_one_server_session():
         pos = ex.call("portfolio.position", symbol="AAPL")
         assert pos.ok and pos.payload["pending"][0]["id"] == order.payload["id"]
         forged = dict(ticket_from_plan(plan.payload), note="edited")
-        assert ex.call("execution.submit_order", **forged).ok                           # note is not a plan field
-        assert len(ex.call("portfolio.position", symbol="AAPL").payload["pending"]) == 2
+        again = ex.call("execution.submit_order", **forged)                             # v0.11: a plan is single-use
+        assert not again.ok and "already ticketed" in (again.error or "")
+        assert len(ex.call("portfolio.position", symbol="AAPL").payload["pending"]) == 1
     finally:
         reg.session.close()
 

@@ -320,7 +320,7 @@ other; legacy whole-record files still load.
 
 #### `run_agent_backtest(symbol, start, end, config=None, rebalance_every=5, provider=None, llm=None, asset_class=None, on_decision=None, include_agent=True, capital_share=None, rebalance_offset=0) -> ComparisonReport`
 
-Walk-forward backtest of the desk plus six baselines. Before each decision the engine is
+Walk-forward backtest of the desk plus eight baselines (the six classic rules and, since v0.9, the `TSMOM(12-1)` and `Carry` streams). Before each decision the engine is
 replayed on the bars so far and the desk is told the position it actually holds coming into
 the bar: 0 after a stop, take-profit or ruin, otherwise the previous decision's units drifted
 with the market. A keep is only what the PM's no-trade band marks (`FinalDecision.kept`,

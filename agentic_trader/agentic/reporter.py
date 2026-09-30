@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..agents.base import complete_anon
 from ..llm import LLM
 from ..state import TradingState
 from .critic import FENCE_NOTE, CriticReport, findings_block
@@ -198,15 +199,21 @@ def template_narrative(state: TradingState, facts: dict[str, float], findings: l
     return " ".join(parts)
 
 
+PRICE_LEVEL_FACTS = ("last_close", "stop_loss", "take_profit", "entry_price")
+
+
 def llm_narrative(llm: LLM, state: TradingState, facts: dict[str, float], findings: list[Finding]) -> str | None:
+    # Under anonymisation the price levels identify the instrument and the date as surely as
+    # its name would; they stay in the template narrative and the number audit, not in the prompt.
+    shown = {k: v for k, v in facts.items() if getattr(state, "anon", None) is None or k not in PRICE_LEVEL_FACTS}
     prompt = (
         f"Write a 4-6 sentence executive summary of this decision for a portfolio manager.\n\n"
         f"Structured facts (use these figures and no others; quote them as given):\n"
-        + "\n".join(f"- {k}: {v:.4g}" for k, v in facts.items())
+        + "\n".join(f"- {k}: {v:.4g}" for k, v in shown.items())
         + "\n\nFindings:\n" + findings_block(findings, confidence=False)
         + "\n\nDo not invent numbers, dates or evidence ids. Plain prose, no headings."
     )
-    return llm.complete(FENCE_NOTE + "You are the reporting analyst of a trading desk.", prompt, deep=True)
+    return complete_anon(llm, FENCE_NOTE + "You are the reporting analyst of a trading desk.", prompt, state, deep=True)
 
 
 def build_report(task: Task, state: TradingState, findings: list[Finding], critic: CriticReport,

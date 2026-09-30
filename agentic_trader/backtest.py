@@ -60,7 +60,9 @@ class ComparisonReport:
     prices: np.ndarray | None = None  # closes over the window (for portfolio covariance)
     rf: np.ndarray | None = None  # annual risk-free rate per bar credited on cash and used for Sharpe
 
-    def table(self) -> pd.DataFrame:
+    def table(self, decimals: int | None = 2) -> pd.DataFrame:
+        """One row per strategy; ``decimals=None`` keeps the metrics unrounded (what
+        ``evaluate`` stores, so every aggregate and bootstrap runs on full precision)."""
         rows = {}
         for name, r in self.results.items():
             m = r.metrics
@@ -72,7 +74,8 @@ class ComparisonReport:
                 "Trades": m.num_trades, "Stops": r.stop_exits,
                 "Impact%": 100 * r.impact_paid,
             }
-        return pd.DataFrame(rows).T.round(2)
+        df = pd.DataFrame(rows).T
+        return df if decimals is None else df.round(decimals)
 
     def equity_curves(self) -> pd.DataFrame:
         return pd.DataFrame({k: r.equity for k, r in self.results.items()}, index=self.dates)
@@ -131,7 +134,8 @@ def _cash_rate(rf: np.ndarray) -> np.ndarray | None:
 
 
 def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
-                        periods_per_year: float | None = None) -> np.ndarray | None:
+                        periods_per_year: float | None = None,
+                        as_traded_close: np.ndarray | None = None) -> np.ndarray | None:
     """Per-bar square-root impact coefficient ``K_t`` for the backtester, or ``None`` when off.
 
     The execution simulator (``algo.simulate_execution``) prices a slice of ``q`` units at
@@ -145,6 +149,10 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
     (equities with missing volume, and FX unless ``costs.fx_adv_notional`` is set).
 
     This single-shot formula implicitly assumes the day's trade is spread across the session
+    ``as_traded_close`` (the split-adjusted, dividend-unadjusted close a provider can supply)
+    prices the dollar ADV in the share units the volume is quoted in; without it the
+    total-return close is used, which understates dollar volume on high-yield names by the
+    reinvested dividends. The single-shot formula implicitly assumes the day's trade is spread
     in proportion to volume (VWAP), which ``algo.algo_cost_ratio`` shows minimises impact cost
     under the square-root law -- so it is also exactly what ``costs.execution_algo`` unset (or
     ``"vwap"``) means here. Setting it to ``"twap"`` or ``"ac"`` (Almgren-Chriss, urgency
@@ -168,6 +176,10 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
     else:
         volume = full["Volume"].to_numpy(float) if "Volume" in full else np.zeros(len(close))
         adv = pd.Series(volume).rolling(20).mean().to_numpy()
+        if as_traded_close is not None:
+            atc = np.asarray(as_traded_close, dtype=float)
+            if atc.shape == close.shape:
+                close = np.where(np.isfinite(atc) & (atc > 0), atc, close)
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = np.where(adv > 0, capital / (close * adv), np.nan)
     k = coeff * vol * np.sqrt(ratio)
@@ -287,7 +299,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     cash = _cash_rate(rf)
     ohlc = dict(open=window["Open"].to_numpy(), high=window["High"].to_numpy(),
                 low=window["Low"].to_numpy())
-    k_full = impact_coefficients(full, ins, cfg)
+    atc = getattr(provider, "as_traded_closes", None)
+    k_full = impact_coefficients(full, ins, cfg, as_traded_close=atc(ins, full.index) if callable(atc) else None)
     impact = None if k_full is None else k_full[np.asarray(mask, dtype=bool)]
     if impact is not None and capital_share is not None:
         share = capital_share.reindex(window.index).to_numpy(dtype=float)

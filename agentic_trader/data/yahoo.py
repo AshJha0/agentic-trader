@@ -131,6 +131,18 @@ class YahooProvider(MarketDataProvider):
         s = a.loc[a["Split"] > 0, "Split"]
         return {ts.date(): float(r) for ts, r in s.items()}
 
+    def as_traded_closes(self, instrument: Instrument, dates: pd.DatetimeIndex) -> np.ndarray | None:
+        """``RawClose`` (split-adjusted to today, not dividend-adjusted) on ``dates``; NaN where
+        the corporate-action table has no bar, ``None`` on FX or when the download fails."""
+        if instrument.is_fx:
+            return None
+        try:
+            a = self._corporate_actions(instrument.yahoo_symbol)
+        except Exception as e:
+            log.warning("yahoo corporate actions failed for %s: %s", instrument.symbol, e)
+            return None
+        return a["RawClose"].reindex(pd.DatetimeIndex(dates)).to_numpy(dtype=float)
+
     def as_traded_close(self, instrument: Instrument, as_of: date) -> float | None:
         """The last close on or before ``as_of`` in the share units of that day: Yahoo's
         split-adjusted close multiplied back by every split after ``as_of``."""

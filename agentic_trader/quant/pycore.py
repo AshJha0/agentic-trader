@@ -485,7 +485,8 @@ def compute_metrics(equity, positions, periods_per_year: float,
             if m.cumulative_return > -1.0 else -1.0
         )
     if rf_series is None:
-        rf = np.full(n, float(risk_free_annual) if np.ndim(risk_free_annual) == 0 else 0.0)
+        rf0 = float(risk_free_annual) if np.ndim(risk_free_annual) == 0 else 0.0
+        rf = np.full(n, 0.0 if np.isnan(rf0) else rf0)   # NaN = unknown = 0, as the C++ core reads it
     else:
         rf = np.where(np.isnan(rf_series[:n]), 0.0, rf_series[:n])
     ex = r[:live] - rf[:live] / periods_per_year
@@ -567,6 +568,26 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
         raise ValueError("periods_per_year must be > 0")
     if not (config.initial_capital > 0) or np.isinf(config.initial_capital):
         raise ValueError("initial_capital must be positive and finite")
+    for name in ("cost_bps", "slippage_bps", "borrow_annual"):
+        v = float(getattr(config, name))
+        if not np.isfinite(v) or v < 0:
+            raise ValueError(f"{name} must be a finite non-negative number, got {v}")
+    if not np.isfinite(config.max_leverage) or config.max_leverage < 0:
+        raise ValueError(f"max_leverage must be finite and >= 0, got {config.max_leverage}")
+    if not np.isfinite(config.carry_annual):
+        raise ValueError(f"carry_annual must be finite, got {config.carry_annual}")
+    if np.isinf(config.risk_free_annual):
+        raise ValueError("risk_free_annual must be finite or NaN (unknown = 0)")
+    for name in ("cost_bps", "slippage_bps", "borrow_annual"):
+        v = float(getattr(config, name))
+        if not np.isfinite(v) or v < 0:
+            raise ValueError(f"{name} must be a finite non-negative number, got {v}")
+    if not np.isfinite(config.max_leverage) or config.max_leverage < 0:
+        raise ValueError(f"max_leverage must be finite and >= 0, got {config.max_leverage}")
+    if not np.isfinite(config.carry_annual):
+        raise ValueError(f"carry_annual must be finite, got {config.carry_annual}")
+    if np.isinf(config.risk_free_annual):
+        raise ValueError("risk_free_annual must be finite or NaN (unknown = 0)")
     unknown = set(extras) - set(_EXTRA_RULES)
     if unknown:
         raise TypeError(f"run_backtest: unknown inputs {sorted(unknown)}")

@@ -24,6 +24,9 @@ reproduce anything, see [Reproducing](#reproducing).
 
 ## Summary
 
+> v0.11 (after this release): the tier-2 review's fixes and the re-measurement of every table are in
+> [v011_review.md](v011_review.md); rendered tables for every release are under `docs/results/`.
+>
 > v0.9 research (after this release): the attribution, the multi-asset / trend / carry
 > candidates, the pre-registered holdout report and the forward paper-trading test are in
 > [v09_research.md](v09_research.md) and [v09_preregistration.md](v09_preregistration.md).
@@ -97,7 +100,7 @@ never called "excluding zero".
   unchanged at $100k and $10M (design 0.66 → 0.66 → 0.66, holdout 0.34 → 0.34 → 0.34) and
   goes to 0.61 (impact paid 4.24% of equity) and 0.31 (2.53%) at $1B; the vol-targeted
   control goes 0.64 → 0.57 and 0.45 → 0.41, SMA 0.57 → 0.38 and 0.18 → 0.04, MACD
-  0.40 → -0.18 and 0.14 → -0.30 (64.71% of equity paid on the design period). v0.7's "loses
+  0.40 → -0.18 and 0.14 → -0.30 (impact charges summing to 64.71% of equity over the design period -- the daily impact charges as fractions of equity, added up over the period, not a terminal loss). v0.7's "loses
   0.09 at $1B" is replaced by these. Execution algorithms on the $1B holdout portfolio, each
   sleeve paying impact at its own capital: VWAP 0.78 (impact paid 0.66%), TWAP 0.78 (0.70%),
   Almgren–Chriss κ=5 0.77 (0.87%); the v0.7 table charged √15 times too much and is
@@ -139,12 +142,14 @@ never called "excluding zero".
   that worked, a strategic (benchmark) equity weight, works by collecting the equity premium
   (0.47 → 0.63 at weight 1.00, CR 58.24% → 121.95%, exposure 43.99% → 60.37%), not by
   forecasting better.
-- **After correcting for the 26 variants tried, the chosen rule set still clears the bar on
-  the design period** (deflated Sharpe probability 0.998; annual Sharpe 1.375, t 3.42 —
-  annualised at 252 periods/year by the renderer; the same series is the 1.40, t 3.43 of the
-  portfolio tables at their 260 periods/year — bootstrap 95% interval [0.593, 2.17], expected
-  maximum of 26 null trials 0.161) — but that number is an *upper bound*, not the real figure:
-  the trials' dispersion is narrower than the true search space (details in
+- **The deflated Sharpe published here is not on a consistent statistic and is withdrawn as
+  a "clears the bar" claim** (tier-2 review, 2026-09-29): it benchmarked the 15-sleeve
+  portfolio's Sharpe (1.375 at 252 periods/year; 1.40 at the portfolio tables' 260) against
+  the dispersion of the trials' *per-instrument mean* Sharpes (expected maximum 0.161), two
+  different statistics, so the 0.998 probability is meaningless. v0.11 measures every
+  reproducible trial's design-period portfolio Sharpe and recomputes the statistic on that
+  (`results/v11`, [v011_review.md](v011_review.md)); the caveat that the trials' dispersion
+  understates the true search space still applies to the recomputed number (details in
   [selection statistics: 26 trials](#9-selection-statistics-26-trials)).
 - **VaR coverage, two labelled tests.** (a) The rolling historical VaR of the holdout
   portfolio's own returns: 120-day window 65 breaches in 1048 days (rate 0.0620; Kupiec
@@ -2074,7 +2079,7 @@ share (`portfolio_holdout_impact_1e9_{vwap,twap,ac}.json`).
 holdout 0.34 → 0.34 → 0.34) and goes to 0.61 on the design period (impact paid 4.24% of
 equity) and 0.31 on the holdout (2.53%) at $1B. The vol-targeted control goes 0.64 → 0.57 and
 0.45 → 0.41 at $1B; SMA 0.57 → 0.38 and 0.18 → 0.04; MACD 0.40 → -0.18 and 0.14 → -0.30 (MACD
-pays 64.71% of equity in impact on the design period at $1B). **v0.7's "loses 0.09 at $1B"
+pays impact charges summing to 64.71% of equity over the design period at $1B -- the daily impact charges as fractions of equity, added up over the period, not a terminal loss). **v0.7's "loses 0.09 at $1B"
 is replaced by these**; the ranking below institutional size is unchanged. Execution
 algorithms at $1B on the holdout portfolio: VWAP 0.78 Sharpe / CR 49.62% / MDD 7.83% / mean
 sleeve impact paid 0.66%; TWAP 0.78 / 49.56% / 7.83% / 0.70%; Almgren–Chriss κ=5 0.77 /
@@ -2511,7 +2516,11 @@ wall-clock timings, labelled as the first run).
   200-random-walk test
   (`tests/test_v08_alpha.py::test_alpha_analyst_gate_is_a_five_percent_test_on_pure_noise`,
   which bounds it at 35%). How often it spoke in the published runs was not recorded.
-- **Survivorship.** The equity universe is today's large caps, so it is biased towards
+- **Survivorship.** Both universes were chosen in 2025 with hindsight (no delisted or failed
+  name is present); conditioning on survival biases post-drawdown returns upward, which
+  flatters contrarian and low-volatility signals and penalises trend signals on the 28
+  single-name stocks (the ETFs and FX pairs are unaffected). The equity universe is today's
+  large caps, so it is biased towards
   names that did well. Buy & hold benefits from this at least as much as the agent.
 - **The core universe is a small sample.** Differences in mean Sharpe below about 0.1
   between variants on 15 instruments (about 0.06 on the 45 extended ones) should be read as

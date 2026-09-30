@@ -43,8 +43,10 @@ CORE_UNIVERSE: dict[str, list[str]] = {
     "fx": ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD"],
 }
 
-# The extended universe (v0.5): 42 instruments that no rule choice has ever consulted, so
-# they are an out-of-sample test set across *every* period, including the design period.
+# The extended universe (v0.5): 45 instruments (26 equities, 9 macro ETFs, 10 FX crosses) that
+# no rule choice was made on. They judged the v0.5.1 carry rule and the v0.6 EDGAR and
+# cross-sectional decisions and v0.8 re-measured them, so they are no longer unseen. Both lists
+# were chosen in 2025 with hindsight (survivors; see the evaluation's limitations).
 # Equities span sectors and styles; the "macro ETF" group adds rates, credit, commodities
 # and real estate exposure through exchange-traded funds (priced and traded as equities);
 # the FX pairs are crosses and dollar pairs whose both legs have FRED policy-rate series.
@@ -79,6 +81,10 @@ class Trial:
     version: str
     overrides: dict | None
     recorded_mean_sharpe: float | None = None
+    # v0.11: the design-period portfolio Sharpe the variant was judged on when it is a book or
+    # a return-level trial (v0.9 runs and books, v0.10 overlay sizes); the deflated Sharpe is
+    # computed on this statistic for every trial (measured for reproducible ones).
+    recorded_portfolio_sharpe: float | None = None
 
 
 _CTRL_RULES = {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False,
@@ -135,6 +141,30 @@ TRIALS: tuple[Trial, ...] = (
           {"analysts": ["technical", "fundamentals", "news", "sentiment", "xalpha"], "xalpha_universe": UNIVERSES["all"]}),
     Trial("EDGAR filings off", "v0.6", {"edgar": False}),
     Trial("track-record size cut off", "v0.8", {"rules": {"track_record_cut": False}}),
+    # v0.9 (docs/evaluation/v09_research.md): five risk-parity runs (the B&H vol-target row is
+    # the candidate base) and six return-level books, judged on the design-period portfolio
+    # Sharpe against the run's own control; nothing adopted. Not reproducible from config.
+    Trial("v0.9 run etf11_rp (multi-asset base)", "v0.9", None, recorded_portfolio_sharpe=1.02),
+    Trial("v0.9 run etf11_equal", "v0.9", None, recorded_portfolio_sharpe=1.02),
+    Trial("v0.9 run fx15_rp", "v0.9", None, recorded_portfolio_sharpe=0.08),
+    Trial("v0.9 run core15_rp", "v0.9", None, recorded_portfolio_sharpe=0.91),
+    Trial("v0.9 run all26_rp", "v0.9", None, recorded_portfolio_sharpe=0.71),
+    Trial("v0.9 book beta + trend_etf", "v0.9", None, recorded_portfolio_sharpe=0.78),
+    Trial("v0.9 book beta + carry", "v0.9", None, recorded_portfolio_sharpe=1.02),
+    Trial("v0.9 book beta + trend_etf + carry", "v0.9", None, recorded_portfolio_sharpe=0.88),
+    Trial("v0.9 book all four", "v0.9", None, recorded_portfolio_sharpe=0.57),
+    Trial("v0.9 book trend + carry (no beta)", "v0.9", None, recorded_portfolio_sharpe=0.11),
+    # v0.10 (docs/evaluation/v010_overlay.md): the desk tilt at size lam over the vol-target core.
+    Trial("v0.10 overlay lam 0.00", "v0.10", None, recorded_portfolio_sharpe=1.43),
+    Trial("v0.10 overlay lam 0.25", "v0.10", None, recorded_portfolio_sharpe=1.44),
+    Trial("v0.10 overlay lam 0.50", "v0.10", None, recorded_portfolio_sharpe=1.43),
+    Trial("v0.10 overlay lam 0.75", "v0.10", None, recorded_portfolio_sharpe=1.42),
+    Trial("v0.10 overlay lam 1.00", "v0.10", None, recorded_portfolio_sharpe=1.40),
+    # v0.11 (tier-2 review): the v0.8 sizing and news rules kept as trials against the new defaults,
+    # and a symmetric equity tilt (strategic weight below the cap).
+    Trial("aggressive stance at the cap (v0.8 rule)", "v0.11", {"risk": {"aggressive_vol_scaled": False}}),
+    Trial("news confidence by count (v0.8 rule)", "v0.11", {"rules": {"news_tone_mass": False}}),
+    Trial("strategic equity weight 0.8 (symmetric tilt)", "v0.11", {"risk": {"neutral_weight": {"equity": 0.8, "fx": 0.0}}}),
 )
 
 
@@ -260,7 +290,8 @@ class EvaluationResult:
                                 groups=groups)
 
     def paired_table(self, metric: str = "Sharpe", universe: str | None = None, strategy: str = AGENT,
-                     fdr_q: float = 0.05, cluster: bool = True) -> pd.DataFrame:
+                     fdr_q: float = 0.05, cluster: bool = True,
+                     baselines: tuple[str, ...] | None = None) -> pd.DataFrame:
         """Per period and baseline: mean paired difference, 95% CI and two-sided p across
         instruments, which resampling ``scheme`` produced them over how many ``groups``, plus
         ``significant`` corrected for the number of tested rows in *this table*
@@ -269,13 +300,16 @@ class EvaluationResult:
         the raw per-row ``p`` is still reported, but ``significant`` is the one to read when
         the table has more than a couple of rows. BH runs on the unrounded p-values; a row
         with fewer than three paired instruments was never tested, shows ``p`` as NaN and
-        neither counts towards nor can win a share of the false-discovery budget.
+        neither counts towards nor can win a share of the false-discovery budget. ``baselines``
+        restricts the table to those baselines *before* the correction, so a table that only
+        shows the two controls is corrected over the rows it prints (v0.8 printed flags decided
+        over all six baselines and then dropped four rows).
         """
         out, p_raw = [], []
         rows = self.rows if universe is None or "universe" not in self.rows else self.rows[self.rows.universe == universe]
         for period in sorted(rows.period.unique()):
             for base in sorted(rows.strategy.unique()):
-                if base == strategy:
+                if base == strategy or (baselines is not None and base not in baselines):
                     continue
                 try:
                     pb = self.paired(base, metric, period=period, universe=universe, strategy=strategy,
@@ -419,7 +453,7 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             continue
         for name, v in rep.agent_sources.items():
             sources[name] = sources.get(name, 0) + v
-        for strat, r in rep.table().iterrows():
+        for strat, r in rep.table(decimals=None).iterrows():   # full precision: aggregates and bootstraps run on these
             if strat != AGENT:   # baselines are deterministic: one row each, from the first run that succeeded
                 if (pname, sym) in baselines_done:
                     continue

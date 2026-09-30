@@ -44,3 +44,27 @@ any further change, the returns of: the v0.8 desk on the core 15 (the incumbent)
 record is the only unseen data; a candidate is adopted only when its forward Sharpe minus
 its control's clears a block-bootstrap interval that excludes zero over a period long
 enough for that to be possible (at Sharpe differences of the size seen here, years).
+
+## Amendment, 2026-09-29 (before the first forward session was recorded)
+
+The paragraph above names no sample size and no stopping rule, so a reader could look at
+the record whenever it flattered a candidate. This amendment fixes the decision design; the
+original text is left as written.
+
+- **Minimum detectable effect and sample size.** The holdout's paired block-bootstrap
+  half-width for the desk minus its control was 0.35 Sharpe over 1,167 sessions
+  (`results/v08/tables.md`, portfolio Sharpe difference, holdout). Half-widths scale as one
+  over the square root of the sample, so a 0.2 Sharpe difference is detectable at 95% after
+  about 1,167 × (0.35 / 0.2)² ≈ **3,600 sessions (about 14 years)**, and a 0.5 difference
+  after about 570 sessions (about 2.3 years).
+- **One decision look.** The adoption decision is taken once, at 3,600 sessions, on the
+  block-bootstrap interval of the forward Sharpe difference against the control, for each
+  candidate named above. No candidate is adopted before that look.
+- **What the interim numbers are.** `summary.md` prints descriptive Sharpes and, after 60
+  sessions, intervals, so the record can be read; those intervals are ±1.2 to ±1.5 Sharpe
+  at 60 sessions and are not decisions. The summary states the session of the decision look.
+- **Ledger integrity.** The ledger is append-only; a recomputation that differs from it is
+  logged (`revisions.csv`) and never absorbed; a recomputation that shrinks the record is
+  refused.
+- **Trials.** The 16 design-period judgements of v0.9 and v0.10 are registered in
+  `evaluation.TRIALS` (v0.11) so the deflated Sharpe counts them.

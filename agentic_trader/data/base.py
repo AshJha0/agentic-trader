@@ -96,6 +96,11 @@ class MarketDataProvider(ABC):
         b, q, _ = fx_rates(instrument, dates, self.config, real_world=self.real_world)
         return ((b - q) / 100.0).to_numpy(dtype=float)
 
+    def as_traded_closes(self, instrument: Instrument, dates: pd.DatetimeIndex) -> np.ndarray | None:
+        """Split-adjusted, dividend-unadjusted closes per date (the share units volume is quoted
+        in), for the impact model's dollar ADV; ``None`` when the provider has no such series."""
+        return None
+
     def risk_free_series(self, dates: pd.DatetimeIndex) -> np.ndarray:
         """Annual risk-free rate (fraction, 0.04 = 4%) known at each date; NaN where unknown.
 

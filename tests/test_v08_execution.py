@@ -297,10 +297,14 @@ def test_ticket_carries_units_notional_price_and_a_verifiable_plan_reference():
     with pytest.raises(ValueError, match="account currency"):
         tools.submit_order(**{**args, "notional_currency": "JPY",
                               "plan_id": plan_reference("USDJPY", "buy", 50_000.0, "USD", 50_000.0, "JPY", plan["price"])})
+    # the plan was consumed by its ticket (v0.11): the same ticket again is refused
+    with pytest.raises(ValueError, match="already ticketed"):
+        tools.submit_order(**args)
     # the evidence record and the ticket both say what the number is
+    plan2 = tools.plan("USDJPY", AS_OF, 0.6)
     ex = _executor(tools)
-    res = ex.call("execution.submit_order", **args)
-    assert res.ok and ex.evidence_for(res).arguments["notional"] == 50_000.0
+    res = ex.call("execution.submit_order", **ticket_from_plan(plan2))
+    assert res.ok and ex.evidence_for(res).arguments["notional"] == plan2["notional"] == 10_000.0
 
 
 def test_ticket_size_guard_before_approval_and_at_execution():

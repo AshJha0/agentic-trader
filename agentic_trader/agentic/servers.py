@@ -30,6 +30,7 @@ the next leg from it; ``portfolio.position`` lists the tickets behind the weight
 from __future__ import annotations
 
 import copy
+import threading
 import math
 from datetime import date, timedelta
 from typing import Any
@@ -112,6 +113,8 @@ class DeskTools:
         self.account_currency = str(config.get("account_currency", "USD")).upper()
         self.orders: list[dict[str, Any]] = []
         self.plans: dict[str, dict[str, Any]] = {}   # plan_id -> the plan execution.plan produced
+        self.ticketed: dict[str, str] = {}           # plan_id -> the ticket that consumed it (one plan, one order)
+        self._lock = threading.Lock()                # shared by every for_book view (copy.copy keeps it)
 
     @property
     def order_cap(self) -> float:
@@ -422,8 +425,14 @@ class DeskTools:
                              f"{notional:,.0f} {self.account_currency} would leave it at {after:+.4f} (short); "
                              f"at most {max(before, 0.0) * self.capital:,.0f} may be sold (reduce to flat)")
         # The plan reference is a checksum anyone can compute; what authenticates a ticket is
-        # that this desk planned it, with these numbers.
-        known = self.plans.get(plan_id)
+        # that this desk planned it, with these numbers. A plan is consumed by the ticket it
+        # produces: the same plan submitted again (a retried tool call, a replayed approval) is
+        # refused instead of doubling the position.
+        with self._lock:
+            already = self.ticketed.get(plan_id)
+            if already is not None:
+                raise ValueError(f"plan {plan_id} was already ticketed as {already}: plan again for a new order")
+            known = self.plans.get(plan_id)
         if known is None:
             if not self.config.get("execution", {}).get("allow_external_plans", False):
                 raise ValueError(f"plan {plan_id} is not one this desk produced: call execution.plan first and "
@@ -441,8 +450,13 @@ class DeskTools:
                   "quantity_unit": quantity_unit, "notional": notional, "notional_currency": self.account_currency,
                   "price": price, "position_before": before, "position_after": round(after, 6),
                   "plan_known": known is not None, "note": note, "status": "ticketed"}
-        self.orders.append(ticket)
-        self.positions[ins.symbol] = ticket["position_after"]
+        with self._lock:
+            if plan_id in self.ticketed:
+                raise ValueError(f"plan {plan_id} was already ticketed as {self.ticketed[plan_id]}")
+            self.ticketed[plan_id] = ticket["id"]
+            self.plans.pop(plan_id, None)
+            self.orders.append(ticket)
+            self.positions[ins.symbol] = ticket["position_after"]
         return ticket
 
 

@@ -28,6 +28,11 @@ layer** for alphas, execution algorithms, portfolio construction and backtest st
 
 ## Results in one paragraph
 
+*v0.11 (unreleased, [docs/evaluation/v011_review.md](docs/evaluation/v011_review.md)): a second
+adversarial review's 89 confirmed findings are implemented and every table re-measured; the 15-sleeve
+holdout portfolio is at Sharpe 0.91 against 0.86 buy & hold and 0.99 vol-target (desk − vol-target −0.08
+[−0.46, +0.30]), still no measurable edge over the control; the numbers below are the v0.8.0 release's.*
+
 *v0.9 research (unreleased, [docs/evaluation/v09_research.md](docs/evaluation/v09_research.md)):
 attribution shows the desk's active tilts add nothing over the vol-targeted control (alpha
 +0.41%/yr on design, −0.80%/yr on holdout, both inside noise); a multi-asset base, trend and
@@ -111,7 +116,7 @@ volatility-targeted control achieves too.**
   holdout 0.34 → 0.34 → 0.34) and loses 0.05 on the design period (0.66 → 0.61, 4.24% of
   equity paid in impact) and 0.03 on the holdout (0.34 → 0.31, 2.53%) at $1B; the
   vol-targeted control goes 0.64 → 0.57 (design) and 0.45 → 0.41 (holdout), SMA(20/50)
-  0.57 → 0.38 and 0.18 → 0.04, MACD 0.40 → −0.18 and 0.14 → −0.30 (64.71% of equity paid in
+  0.57 → 0.38 and 0.18 → 0.04, MACD 0.40 → −0.18 and 0.14 → −0.30 (impact charges summing to 64.71% of equity over the period, added up daily, not a terminal loss, paid in
   impact on the design period).
 - **VaR coverage:** the desk's own per-instrument forecast (250-day historical VaR) against
   next-day returns over the holdout: Kupiec rejects at 5% on 2 of the 15 core instruments
