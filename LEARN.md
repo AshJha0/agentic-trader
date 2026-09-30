@@ -1,6 +1,6 @@
 # Learn agentic-trader
 
-This guide works through the 35 ideas behind the project in order. For each concept it gives
+This guide works through the 50 ideas behind the project in order. For each concept it gives
 the idea, where the repository implements it, the real numbers it produces, and questions to
 test your understanding. Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
 [docs/architecture/overview.md](docs/architecture/overview.md); the measured results are in
@@ -68,6 +68,27 @@ evaluation is
 
 34. [Is the risk model telling the truth? VaR coverage backtesting](#34-is-the-risk-model-telling-the-truth-var-coverage-backtesting)
 35. [Constant units, idle cash and the fair comparison](#35-constant-units-idle-cash-and-the-fair-comparison)
+
+**Part VIII — v0.9 and v0.10: looking for an edge, and not finding one**
+
+36. [Attribution: whose return is it?](#36-attribution-whose-return-is-it)
+37. [The control that is hard to beat](#37-the-control-that-is-hard-to-beat)
+38. [A wider base: many asset classes, equal risk](#38-a-wider-base-many-asset-classes-equal-risk)
+39. [Trend as a return stream](#39-trend-as-a-return-stream)
+40. [Carry as a return stream](#40-carry-as-a-return-stream)
+41. [Combining streams with a risk budget](#41-combining-streams-with-a-risk-budget)
+42. [Core and overlay: how big should the view be?](#42-core-and-overlay-how-big-should-the-view-be)
+43. [Pre-registration: decide before you look](#43-pre-registration-decide-before-you-look)
+44. [The forward record is the only unseen data](#44-the-forward-record-is-the-only-unseen-data)
+45. [Append-only records and honest revisions](#45-append-only-records-and-honest-revisions)
+
+**Part IX — v0.11 and v0.12: a second review, and a longer test**
+
+46. [When did the market know?](#46-when-did-the-market-know)
+47. [Confidence should follow the evidence](#47-confidence-should-follow-the-evidence)
+48. [One statistic, every trial, every row](#48-one-statistic-every-trial-every-row)
+49. [A longer design period](#49-a-longer-design-period)
+50. [A negative result, and one routine in two languages](#50-a-negative-result-and-one-routine-in-two-languages)
 
 ---
 
@@ -1522,3 +1543,352 @@ was not re-derived and remains the only LLM measurement.
 - The desk now sees its drifted position and the no-trade band compares the new target to
   it. When the drifted position sits above a cap the band cannot keep it. Is that the band
   failing, or the cap working?
+
+---
+
+# Part VIII — v0.9 and v0.10: looking for an edge, and not finding one
+
+Every real-data figure in Parts VIII and IX is copied from a generated page:
+[v09_research.md](docs/evaluation/v09_research.md),
+[v010_overlay.md](docs/evaluation/v010_overlay.md),
+[v011_review.md](docs/evaluation/v011_review.md) and
+[v012_trend_core.md](docs/evaluation/v012_trend_core.md). Each page names the result file and
+the commit behind it.
+
+## 36. Attribution: whose return is it?
+
+**The idea.** A desk that holds the market most of the time will earn most of the market's
+return. That says nothing about its decisions. Attribution separates the two: regress the
+desk's daily excess return on a mechanical control that holds the same instruments at the
+same volatility target with no views. The slope (beta) is how much of the control the desk
+is. The intercept (alpha) is what its views added. The residual volatility is the risk those
+views took, and alpha divided by it is the information ratio.
+
+**In the repo.** `scripts/attribution_v09.py` reads the portfolio return files and writes
+`attribution.md`. The "tilt" is the desk's daily return minus the control's on the same day.
+Its Sharpe and the regression alpha are two views of the same thing.
+
+**The numbers.** On the design period the desk's beta on `B&H vol-target` is 0.92 with R²
+0.89, and alpha is +0.41% a year with a t of +0.40. On the holdout beta is 0.89, R² 0.86 and
+alpha −0.80% a year (t −0.68). Both alphas are inside the noise. The desk is roughly nine
+tenths of its control plus a tilt that earned nothing measurable.
+
+**Questions.**
+- The desk's Sharpe on the design period is close to the control's. Why is that weak
+  evidence of skill, given the beta?
+- Alpha has a t of +0.40. How many years at this alpha and residual volatility would it
+  take to reach a t of 2?
+- Against plain buy and hold the desk's beta is near 0.5. Why does the choice of benchmark
+  change the story so much?
+
+## 37. The control that is hard to beat
+
+**The idea.** Volatility targeting is a rule with no forecast of direction: hold less when
+recent volatility is high and more when it is low. It costs little, it cuts drawdowns, and
+on many assets it raises the Sharpe ratio because volatility clusters and high-volatility
+periods tend to have poor returns per unit of risk. Any strategy that sizes by volatility
+inherits this. So the honest benchmark for such a strategy is the vol-targeted holding, not
+the unmanaged one.
+
+**In the repo.** `baseline_weights` builds `B&H vol-target` for every sleeve with the same
+target volatility and cap the desk uses. Every table prints it, and every paired difference
+since v0.8 is taken against it as well as against buy and hold.
+
+**The numbers.** On the v0.11 re-measurement the 15-sleeve holdout portfolio has Sharpe 0.91
+for the desk, 0.86 for buy and hold and 0.99 for the control. Desk minus control is −0.08
+with a 95% interval of [−0.46, +0.30]. The desk beats the easy benchmark and not the fair one.
+
+**Questions.**
+- Why would a benchmark that uses no information about direction be harder to beat than
+  one that is always fully invested?
+- The desk's drawdown is smaller than buy and hold's. Which comparison tells you whether
+  that came from its views or from its sizing?
+- If the control were given a higher cap than the desk, which way would the comparison tilt?
+
+## 38. A wider base: many asset classes, equal risk
+
+**The idea.** Diversification is the one free improvement to a Sharpe ratio: combine return
+streams that are not perfectly correlated and the risk falls faster than the return. It
+works across asset classes (equities, government bonds, credit, gold, commodities, property)
+far better than across ten stocks. Risk parity sizes each sleeve so that each contributes the
+same share of portfolio risk, which stops the most volatile sleeve from dominating.
+
+**In the repo.** `run_portfolio_backtest(..., weighting="risk_parity")` re-estimates capital
+shares every five bars from a 120-day covariance window that ends the day before. The ETF
+universe of v0.9 is SPY, EFA, EEM, IWM, TLT, IEF, LQD, HYG, GLD, DBC and VNQ.
+
+**The numbers.** On 2016 to 2021 the ETF book's control has Sharpe 1.02 under risk parity
+and 1.02 under equal capital. The core-15 control on the same period has 1.43. The wider
+base was not better on that sample: a period in which large US technology stocks led
+everything rewards concentration.
+
+**Questions.**
+- Risk parity gave the bond ETFs the largest capital shares. Why, and what does that imply
+  about the book's sensitivity to interest rates?
+- The wider universe had the lower Sharpe on 2016 to 2021. Give one reason that is about
+  the sample and one that would be a real weakness.
+- Why must the covariance window end the day before the shares are applied?
+
+## 39. Trend as a return stream
+
+**The idea.** Time-series momentum holds an asset long when its own past return is positive
+and short when it is negative. The published evidence is across dozens of futures markets
+over decades. Two things matter in the definition. The horizon: one, three and twelve months
+are the usual set, and averaging their signs is steadier than any one. And the short side: a
+long-only trend rule on equities is mostly a way of being out of the market some of the time.
+
+**In the repo.** `quant.strat_tsmom(close, horizons, skip, allow_short)` returns the average
+sign, in C++ with a numpy twin. `TSMOM(12-1)` is the v0.9 stream (one horizon, the last month
+skipped, long-only where the desk may not short). `TSMOM(L/S)` is the v0.12 stream (three
+horizons, long and short on every instrument). Both are baselines in every backtest at the
+vol-target size, with full costs.
+
+**The numbers.** On the 2016 to 2021 ETF run `TSMOM(12-1)` is below the control by 0.52, with
+an interval of [−0.89, −0.15]. On the longer 2008 to 2021 run it is 0.72 against the
+control's 0.87, and `TSMOM(L/S)` is 0.40. Neither beats the control on either sample.
+
+**Questions.**
+- The long/short version did worse than the long-only one on the ETF universe. What does a
+  short position in a bond or equity ETF cost over a period in which both rose?
+- Why is a universe of 11 ETFs a weak test of a result reported on about 60 futures markets?
+- The signal uses closes up to the bar itself. What makes that free of look-ahead in the
+  backtester?
+
+## 40. Carry as a return stream
+
+**The idea.** Carry is what a position earns if prices do not move. In FX it is the interest
+rate differential: long the high-rate currency, short the low-rate one. It is paid for a
+risk. Carry trades lose together, quickly, when markets are under stress.
+
+**In the repo.** `carry_weights` maps the annual differential to a position (a differential
+equal to `scale` is a full position) and the `Carry` baseline runs it on every FX sleeve with
+the carry accrued daily by the backtester. On equities the stream is flat, so in an ETF run
+its row is idle cash and not a measurement of carry.
+
+**The numbers.** On the 2008 to 2021 FX run the `Carry` stream has Sharpe −0.05 on excess
+returns and a drawdown of 8.22%. Against the FX control the difference is +0.22 with an
+interval of [−0.44, +0.85]. No evidence of a premium on these 15 pairs in that period.
+
+**Questions.**
+- The period starts in July 2008. What happened to carry trades in the following months,
+  and how much of a 13-year Sharpe can one quarter decide?
+- Most of the 15 pairs are between developed markets with similar rates after 2009. What
+  does that do to the size of the signal?
+- Why is the ETF run's `Carry` row not evidence about carry at all?
+
+## 41. Combining streams with a risk budget
+
+**The idea.** Given several return streams, the combination is chosen on risk and not on
+past return, because past return is the least stable input. Risk parity across streams gives
+each the same share of the book's risk. The combined Sharpe rises only if the streams have
+positive expected return and low correlation. Adding a stream with no return lowers it.
+
+**In the repo.** `scripts/combine_v09.py` builds books from fully costed streams at the
+return level, with shares re-estimated every five days from the trailing 120 days. Each
+book is compared with the base by a paired block bootstrap.
+
+**The numbers.** On 2008 to 2021, with the long/short trend stream, the base has Sharpe 0.87.
+Base plus ETF trend has 0.81 with a lower drawdown (5.94% against 9.89%). All four streams
+together have 0.56. No book's interval against the base is above zero.
+
+**Questions.**
+- The book with all four streams has the lowest volatility and drawdown. Why is that not
+  enough to prefer it?
+- The carry stream took the largest mean share in every book that held it. Why does risk
+  parity favour the quietest stream, and when is that a problem?
+- What would the table look like if the trend stream had a true Sharpe of 0.5 and zero
+  correlation with the base?
+
+## 42. Core and overlay: how big should the view be?
+
+**The idea.** If the desk is mostly its control plus a small tilt, make that explicit. Hold
+the control as the core and add the tilt at a chosen size: `r(lam) = control + lam × (desk −
+control)`. At `lam = 0` you hold the control, at 1 the desk. If the tilt has skill, some
+positive size is best. If it has none, the best size is zero and the data will say so, or
+will be unable to tell.
+
+**In the repo.** `scripts/overlay_v09.py` computes the grid 0, 0.25, 0.5, 0.75, 1 from two
+costed return streams. The blend double-counts costs on trades that would net, so its Sharpe
+is conservative.
+
+**The numbers.** On the design period the five sizes give Sharpe 1.43, 1.44, 1.43, 1.42 and
+1.40, and no difference is distinguishable from zero. On the holdout, printed as a report,
+the Sharpe falls from 0.99 at size 0 to 0.80 at size 1. On the 2008 to 2021 ETF run it falls
+from 0.89 to 0.79. Nothing was adopted.
+
+**Questions.**
+- The design-period grid is flat. Why is "cannot tell" a different conclusion from "the
+  tilt is useless"?
+- The holdout ranks the sizes cleanly. Why is that not allowed to choose the size?
+- Each grid value counts as a trial. What would happen to the deflated Sharpe if a grid of
+  100 sizes were searched and the best reported?
+
+## 43. Pre-registration: decide before you look
+
+**The idea.** A result is only as good as the freedom the analyst did not have. If you may
+choose the metric, the period or the variant after seeing the outcome, some choice will look
+good by chance. Pre-registration removes the freedom: write down what will be run, what will
+count as success and what will be done in each case, commit it, then run.
+
+**In the repo.** [v09_preregistration.md](docs/evaluation/v09_preregistration.md) was
+committed before the v0.9 holdout run. It states the design-period verdict, that the holdout
+run is a report and not a choice, and what the forward test is. An amendment is dated and
+appended, never edited in.
+
+**Questions.**
+- The pre-registration says nothing will be adopted whatever the holdout shows. Why run the
+  holdout at all?
+- What is the difference between a holdout that was reported once and one that has been
+  used to choose?
+- Name one analyst freedom that a pre-registration of the metric alone would leave open.
+
+## 44. The forward record is the only unseen data
+
+**The idea.** Once every historical period has been looked at, the only honest test left is
+the future. A paper-trading record, frozen on a known date, with rules that cannot change,
+accumulates out-of-sample days one at a time. It is slow. A Sharpe near 1 needs years before
+its interval excludes zero.
+
+**In the repo.** `scripts/paper_trade_v09.py` runs daily, recomputes every stream from the
+freeze date (2026-09-29) with data up to the previous close, and appends the new day to
+`results/paper/ledger.csv`. The rules, universe and code version are recorded with each run.
+
+**The numbers.** `stats.min_track_record` gives the arithmetic: at a true annual Sharpe of
+1.0 about 684 daily observations (2.7 years) are needed to be 95% sure it is above zero; at
+0.5, about 2730 (10.8 years). Cookbook recipe 77 prints these.
+
+**Questions.**
+- After three months the paper record shows a Sharpe of 2. What can be concluded?
+- Why does the job recompute from the freeze date each day instead of adding one day to a
+  running total?
+- What changes to the code would break the claim that the record is out of sample?
+
+## 45. Append-only records and honest revisions
+
+**The idea.** A record that can be rewritten is not evidence. Data vendors revise history
+(a late dividend, a corrected close), so a recomputation will sometimes disagree with what
+was written. The rule: what was written stays. The disagreement is logged beside it.
+
+**In the repo.** `merge_append_only` keeps every existing row and adds only new dates.
+`revisions` lists each cell where the recomputed value differs, and the job writes them to
+`revisions.csv` with the full recomputation in `ledger_recomputed.csv`. A recomputation that
+would drop rows stops the job unless `--allow-shrink` is given.
+
+**Questions.**
+- A vendor corrects a close from three weeks ago. Which file changes and which does not?
+- Why is silently adopting the corrected history a form of look-ahead?
+- The job refuses to shrink the ledger. What failure is that guarding against?
+
+---
+
+# Part IX — v0.11 and v0.12: a second review, and a longer test
+
+## 46. When did the market know?
+
+**The idea.** Point-in-time data needs a time, not only a date. A filing accepted by the
+regulator at 17:30 New York time carries that day's date, but no one could trade on it at
+that day's close. Using it that day is a one-day look-ahead, and earnings are often released
+after the close.
+
+**In the repo.** The EDGAR provider reads each filing's acceptance timestamp, converts it
+from UTC to New York time, and makes the filing visible from the first session whose close
+comes after it: the same day before 16:00, the next business day otherwise. Facts are joined
+to filings by accession number. A filing with no timestamp falls back to its filing date.
+
+**Questions.**
+- A filing is accepted at 00:33 UTC. What is its New York date, and on which session is it
+  first usable?
+- Why join facts to filings by accession number and not by filing date?
+- In which direction does a one-day look-ahead on earnings bias a backtest?
+
+## 47. Confidence should follow the evidence
+
+**The idea.** Ten headlines that say nothing are not ten pieces of evidence. An analyst's
+confidence should rise with how much its inputs actually say, not with how many there are.
+The same applies to sizing: a stance called "aggressive" should be a multiple of the
+risk-based size, not a jump to the cap.
+
+**In the repo.** With `rules.news_tone_mass` (on by default since v0.11) the news analyst's
+confidence is driven by the total absolute tone of its headlines, and it abstains when that
+mass is under 0.05. With `risk.aggressive_vol_scaled` the aggressive risk analyst proposes
+1.25 times the vol-target weight. Both old behaviours are registered trials and `RULES_V02`
+still switches them off.
+
+**The numbers.** On the design period the two old rules have portfolio Sharpe 1.44 (news by
+count) and 1.40 (aggressive at the cap); the frozen defaults have 1.44. The data cannot
+separate the news rules. The change was made because the old rule was wrong in principle.
+
+**Questions.**
+- A model-written summary of toneless headlines comes back strongly bullish. What should
+  the desk do with it?
+- Why is "aggressive means the cap" a sizing rule that ignores the instrument?
+- The two news rules have the same design Sharpe to two decimals. On what grounds can a
+  rule be changed when the data cannot choose, and what must be recorded when it is?
+
+## 48. One statistic, every trial, every row
+
+**The idea.** Two corrections for searching. Across the rows of one table, control the false
+discovery rate: with nine baselines, one p below 0.05 is expected by luck about a third of
+the time. Across the history of the project, deflate the Sharpe by the number of variants
+ever tried, and compute every trial's Sharpe the same way or the dispersion means nothing.
+
+**In the repo.** `paired_table` applies Benjamini–Hochberg over the rows it prints.
+`evaluation.TRIALS` registers every variant judged on a design period (62 after v0.12), and
+the deflated Sharpe uses each trial's portfolio Sharpe.
+
+**The numbers.** The v0.11 measurement reports a deflated Sharpe probability of 0.949 for
+the frozen rules. It is below the usual 0.95 line, and the page says it is an upper bound.
+
+**Questions.**
+- Why does mixing mean-of-instrument Sharpes with portfolio Sharpes across trials break the
+  deflated Sharpe?
+- The v0.12 trials were judged on a different period from the earlier ones. What does that
+  do to the dispersion of trial Sharpes, and is including them conservative?
+- A table prints only the rows that were significant. What has BH controlled?
+
+## 49. A longer design period
+
+**The idea.** When the holdout is spent, more evidence can still come from the other
+direction: history before the design period. It is not unseen in the strict sense, because
+the rules were shaped by ideas that came from somewhere. But no rule in the project was
+fitted to it, it contains regimes the short period lacks, and using it costs no holdout.
+More days also narrow every interval, by about the square root of the ratio.
+
+**In the repo.** `PERIODS["design_long"]` is 2008-07-01 to 2021-12-31, the earliest start at
+which all eleven ETFs have a year of history. `scripts/measure_v09.py --period design_long`
+runs it. The core 15 cannot start there because one stock listed in 2012.
+
+**The numbers.** The ETF run has 3400 days against 1510 on the short design period. The
+interval on the long-only trend difference narrows from [−0.89, −0.15] to [−0.41, +0.12].
+
+**Questions.**
+- The long period includes 2008. For which of the streams does that matter most, and in
+  which direction?
+- Why is a universe fixed today and run from 2008 subject to survivorship, and does an ETF
+  universe suffer from it less than a stock universe?
+- The desk's analysts have thinner inputs before 2016. Which rows on the long period does
+  that weaken, and which not at all?
+
+## 50. A negative result, and one routine in two languages
+
+**The idea.** A research round that finds nothing is a result if it was run so that it could
+have found something. The test was set before measuring, every variant is on the record, and
+the conclusion is the one the numbers allow. Separately, numerical code that exists twice is
+easier to trust than code that exists once: two implementations that agree on thousands of
+random inputs are unlikely to share a mistake.
+
+**In the repo.** v0.12 measured the long/short trend stream, the books and the overlay on
+the longer period ([v012_trend_core.md](docs/evaluation/v012_trend_core.md)). The trend
+signal was added the way the README's *Extending* section asks: `strat_tsmom` in `cpp/`,
+bound in `module.cpp`, mirrored in `pycore.py`, cross-checked in `tests/test_quant.py` and
+fuzzed on both backends in `tests/test_fuzz.py`, which now also fuzzes the older strategies.
+
+**The numbers.** `TSMOM(L/S)` against the control: −0.48 [−1.10, +0.13] on the ETF run, +0.14
+[−0.60, +0.79] on FX, −0.20 [−0.99, +0.53] on the combined run. Nothing was adopted.
+
+**Questions.**
+- What would have had to be true of these intervals for the trend stream to be adopted?
+- The fuzz test asserts that both backends refuse exactly the same bad arguments. Why is
+  that as important as agreeing on good ones?
+- After four rounds without an edge, what is the most useful next experiment, and what
+  would it cost?

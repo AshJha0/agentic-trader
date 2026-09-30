@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased — v0.12: a longer design period, long/short trend, the vol-target core
+
+The three steps the tier-2 review approved, run on design data only. Outcome: nothing is
+adopted ([v012_trend_core.md](docs/evaluation/v012_trend_core.md), generated from
+`results/v12` by `scripts/render_v12_doc.py`; no number is typed).
+
+- **`design_long`** (`PERIODS`, 2008-07-01 → 2021-12-31): the earliest start at which the
+  eleven multi-asset ETFs have a year of history; it ends where the design period ends, so
+  no holdout or reserve day is in it. The core 15 cannot start there (one stock listed in
+  2012), so the ETF, FX and combined runs carry this round.
+- **`TSMOM(L/S)`**: the average sign of the 1, 3 and 12 month return, long and short, at the
+  vol-target size; a baseline in every backtest, portfolio and evaluation table, run with
+  shorts allowed whatever the desk's mandate. It does not beat `B&H vol-target` on any run,
+  and books built with it do not beat the multi-asset base.
+- **The overlay on the longer period**: no size of the desk's tilt over the vol-target core
+  is distinguishable from the control.
+- **`quant.strat_tsmom`** in the C++ core (declared, implemented, bound, mirrored in
+  `pycore.py`, cross-checked, fuzzed, with a C++ unit test); `tsmom_weights` and
+  `tsmom_multi_weights` now call it: unchanged on positive finite prices (an infinite ratio
+  used to vote its sign and now votes 0).
+- **Every function the quant facade exports is now fuzzed** on both backends: the five older
+  strategies, `realized_vol`, `almgren_chriss`, the sizing functions and `compute_metrics`
+  were not, contrary to the README's *Extending* section, which is corrected and extended
+  (baseline streams, the `analysts` config, `PolicyEngine(rules=...)`, the trials registry).
+- **18 trials registered** (`evaluation.TRIALS`, version `v0.12`, 62 in all): the trend stream
+  on four runs, five books, nine interior overlay sizes.
+- **Docs**: LEARN.md 35 → 50 concepts (Parts VIII and IX), COOKBOOK.md 72 → 100 recipes (every
+  offline one executed), DIAGRAMS.md 30 → 38, architecture and API pages updated.
+  `scripts/overlay_v09.py --files/--title/--label` and `scripts/combine_v09.py --trend/--tag`
+  take other runs and streams.
+
 ## Unreleased — v0.11: the tier-2 review
 
 A second adversarial review (337 agents: ten finders, a constructive alpha-proposal track,

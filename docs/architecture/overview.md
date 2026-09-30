@@ -57,7 +57,7 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 | `algo.py` | Volume profiles, intraday bars, TWAP / VWAP / POV / Almgren-Chriss schedules, `simulate_execution`, `plan_execution` |
 | `portfolio.py` | EWMA and Ledoit-Wolf covariance, five weighting schemes, hierarchical risk budgets across groups, `risk_contributions`, `construct` |
 | `stats.py` | `sharpe_stats`, `sharpe_ci_bootstrap`, `probabilistic_sharpe`, `expected_max_sharpe`, `deflated_sharpe`, `min_track_record`, `selection_report`, (v0.6) `paired_bootstrap` across instruments — since v0.8 a two-stage cluster bootstrap over asset-class-by-universe groups when there are at least five (`scheme=clusters`), the plain instrument bootstrap otherwise (`scheme=instruments`); `benjamini_hochberg` on the unrounded p; `paired_sharpe_block_bootstrap` for the Sharpe difference between two daily series; `rolling_var_forecast` and `var_backtest` (Kupiec, Christoffersen) |
-| `backtest.py` | Walk-forward agent backtest vs six baselines: constant units between decisions with post-cost sizing, a cash leg (idle capital earns the point-in-time bill; Sharpe on excess returns), optional equity-scaled square-root market impact (`impact_coefficients`); `run_portfolio_backtest(weighting=..., class_budgets=...)` with each sleeve's impact at its own capital share and `PortfolioReport.sharpe_difference` (block bootstrap over days) |
+| `backtest.py` | Walk-forward agent backtest vs nine baselines (buy & hold, vol-targeted buy & hold, SMA, MACD, KDJ+RSI, ZMR, `TSMOM(12-1)`, `TSMOM(L/S)`, `Carry`): constant units between decisions with post-cost sizing, a cash leg (idle capital earns the point-in-time bill; Sharpe on excess returns), optional equity-scaled square-root market impact (`impact_coefficients`); `run_portfolio_backtest(weighting=..., class_budgets=...)` with each sleeve's impact at its own capital share and `PortfolioReport.sharpe_difference` (block bootstrap over days) |
 | `evaluation.py` | Design / holdout / Q1-2024 / reserve harness over the core and extended universes, with parallel workers, LLM usage accounting, (v0.6) repeated runs, cross-instrument paired bootstraps and the prompt hashes in `meta`; (v0.8) `TRIALS`, the registry of every variant judged on the design period (26; 24 reproducible on the current engine), and `provenance` in every result |
 | `quant/`, `cpp/` | Indicators (incl. rolling extremes, Spearman), risk, strategies, backtester with stops and carry, Almgren-Chriss; numpy twin |
 
@@ -117,7 +117,9 @@ The desk's own logic is unchanged by the harness. In brief (details in the v0.3 
 - **Walk-forward** (`run_agent_backtest`): the full graph at each rebalance with the held
   (drifted, or flat after a stop) position; constant units between decisions, stops (a gap
   through the take-profit fills at the open), per-bar carry and the cash leg in the C++
-  engine; six baselines including volatility-targeted buy & hold, the fair control.
+  engine; nine baselines including volatility-targeted buy & hold, the fair control, and the
+  trend and carry streams (`TSMOM(12-1)`, `TSMOM(L/S)`, `Carry`) at the vol-target size.
+  `TSMOM(L/S)` runs long and short whatever the desk's mandate: it is a reference stream.
 - **Portfolio** (`run_portfolio_backtest`): one sleeve per symbol; `weighting` in `equal`,
   `inverse_vol`, `risk_parity`, `min_variance`, `mean_variance`, re-estimated from trailing
   returns at each rebalance and applied identically to every strategy.
@@ -133,6 +135,16 @@ The desk's own logic is unchanged by the harness. In brief (details in the v0.3 
   `scripts/render_v08_tables.py` renders them; the reserve and the extended universe were
   consulted for the v0.5.1 and v0.6 decisions and v0.8 re-measured every period, so no
   held-out data remains.
+- **Research rounds after v0.8** (`scripts/`): `attribution_v09.py` regresses the desk on its
+  control; `measure_v09.py` runs the multi-asset and FX universes under risk parity on
+  `design`, `design_long` (2008-07-01 → 2021-12-31) or, once, the holdout; `combine_v09.py`
+  builds books from the costed streams with risk parity across streams; `overlay_v09.py`
+  sizes the desk's tilt over the vol-target core; `render_v09_doc.py`, `render_v11_doc.py`
+  and `render_v12_doc.py` write the evaluation pages from the result files, so no published
+  number is typed. Every variant is a `Trial` in `evaluation.TRIALS`.
+- **Forward record** (`scripts/paper_trade_v09.py`): a daily job recomputes every stream from
+  the freeze date and appends the new day to an append-only ledger; recomputed values that
+  differ from what was written go to `revisions.csv`, and the ledger never shrinks.
 
 ## Design decisions
 
@@ -225,11 +237,12 @@ See `config.py` for the full dictionary.
 | A policy rule | A callable `PolicyContext -> PolicyDecision | None`; place it before `allow_rule` in the tuple passed to `PolicyEngine` |
 | A critic check | Append a `Check` in `Critic.review`; use severity `error` for anything that must fail the review |
 | A knowledge document | A Markdown file in `agentic/knowledge/docs`; headings become chunks |
-| An analyst | Subclass `Analyst` (`gather`, `rules`, `untrusted_keys`, `abstain`) and register it in `ANALYSTS` |
+| An analyst | Subclass `Analyst` (`gather`, `rules`, `untrusted_keys`, `abstain`), register it in `ANALYSTS`, and name it in `config["analysts"]` or `DEFAULT_ANALYSTS` |
+| A baseline stream | A weight function added to `baseline_weights` in `backtest.py`; it is then costed and printed in every table. Add it to `LONG_SHORT_STREAMS` if it must short whatever the mandate |
 | An alpha | A function `AlphaInputs -> ndarray` in `ALPHAS` (and the asset-class lists) |
 | A weighting scheme | A function over a covariance in `portfolio.py`, added to `METHODS` and `construct` |
 | An execution algorithm | A schedule function in `algo.py` and a branch in `ExecutionPlan.schedule` |
 | A data source | Subclass `MarketDataProvider`, pass prices through `clean_ohlcv`, return only data available at `as_of` |
-| A rule change | Behind a `config["rules"]` switch; choose on the core universe's design period with `evaluate --data yahoo --universe core --periods design`; report the extended universe and the reserve period as information, not as a choice basis — both were consulted for the v0.5.1 and v0.6 decisions and v0.8 re-measured every period, so no held-out data remains |
-| A quant routine | C++ plus `pycore.py` mirror, bound in `module.cpp`, exported in `quant/__init__.py`, cross-checked in tests and added to `tests/test_fuzz.py` |
+| A rule change | Behind a `config["rules"]` switch; choose on a design period only (`evaluate --data yahoo --universe core --periods design`, or `scripts/measure_v09.py --period design_long` for a return stream), adopt only if the interval against `B&H vol-target` is above zero, register every variant in `evaluation.TRIALS`; report the extended universe and the reserve period as information, not as a choice basis — both were consulted for the v0.5.1 and v0.6 decisions and v0.8 re-measured every period, so no held-out data remains |
+| A quant routine | Declared in `cpp/include/at/`, implemented in `cpp/src/`, bound in `module.cpp`, mirrored in `pycore.py`, exported (with argument validation) in `quant/__init__.py`, cross-checked in `tests/test_quant.py` and fuzzed in `tests/test_fuzz.py`; `strat_tsmom` is the worked example and every exported function is fuzzed |
 | A cross-sectional alpha | It is the same `AlphaInputs -> ndarray` function: `xalpha.signal_panels` standardises every library alpha across the universe |
