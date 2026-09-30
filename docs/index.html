@@ -61,6 +61,8 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <nav>
       <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md">Learn (guide)</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md">Cookbook</a>
+      <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md">How the AI works</a>
+      <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md">How the quant works</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/architecture/overview.md">Architecture</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md">Diagrams</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/SPECIFICATION.md">Specification</a>
@@ -74,6 +76,43 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 </header>
 
 <div class="wrap">
+<!-- v0.12 strip -->
+  <h2>What changed in v0.12.0</h2>
+  <div class="grid">
+    <div class="card"><h3>Four research rounds, no edge</h3>
+      <p>Since v0.8.0 the project looked for an edge over the volatility-targeted control four times, on
+         design data only: a multi-asset base, trend and carry streams (v0.9), the desk's tilt as a sized
+         overlay (v0.10), and a longer design period from 2008 with a long/short multi-horizon trend stream
+         (v0.12). <strong>None beat its control and nothing was adopted.</strong> The pages are generated from
+         result files:
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v09_research.md">v0.9</a>,
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v010_overlay.md">v0.10</a>,
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v012_trend_core.md">v0.12</a>.</p></div>
+    <div class="card"><h3>Every table re-measured again</h3>
+      <p>A second adversarial review (89 confirmed findings) changed when a filing becomes visible
+         (acceptance time, not filing date), the price impact is measured on, and two sizing and confidence
+         rules. The 15-sleeve holdout portfolio is at Sharpe 0.91 against 0.86 buy &amp; hold and 0.99
+         vol-target (desk − vol-target −0.08 [−0.46, +0.30]). The tables further down this page are the
+         v0.8.0 measurement; each is re-measured in
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v011_review.md">the v0.11 page</a>.</p></div>
+    <div class="card"><h3>The forward record</h3>
+      <p>Every historical period has now been looked at. A daily paper-trading job, frozen on 2026-09-29
+         and <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v09_preregistration.md">pre-registered</a>,
+         appends to an append-only ledger and logs any revision of history beside it. It is the only
+         unseen data, and a Sharpe near 1 needs years before its interval excludes zero.</p></div>
+    <div class="card"><h3>Two new guides</h3>
+      <p><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md">How the AI works</a>: what each
+         agent does, when the model is called, what it may decide and what stops it.
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md">How the quant works</a>: the
+         two-backend core, the backtester's conventions, risk, alphas, portfolios and the statistics.
+         The guide now has 50 concepts, the cookbook 100 recipes, and there are 38 diagrams.</p></div>
+    <div class="card"><h3>Engineering</h3>
+      <p>879 tests collected on both backends (C++ 879 passed; numpy 839 passed, 40 C++-only skipped) and
+         26 C++ test functions. Every function the quant facade exports is fuzzed on both backends; that
+         fuzzing found and fixed a threshold in an old baseline that rounding noise decided differently
+         on one platform. The trend signal <code>strat_tsmom</code> is in the C++ core with a numpy twin.</p></div>
+  </div>
+
 <!-- v0.8 strip -->
   <h2>What changed in v0.8.0</h2>
   <div class="grid">
@@ -117,7 +156,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 
   <h2>Measured, not claimed</h2>
   <div class="numbers">
-    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 832 pytest tests collected on both backends (C++ backend 832 passed; numpy fallback 796 passed, 36 C++-only skipped) · 95% line coverage on the numpy backend (weakest file <code>data/yahoo.py</code> 75%) — 105 v0.8 fixes + 17 CLI · 68 v0.8 agents · 59 hypothesis fuzz properties on the C++ boundary + 7 on the agentic layer · 57 v0.8 engine · 57 v0.8 data · 41 v0.8 execution · 41 v0.8 agentic · 38 quant edge cases · 37 v0.7 · 35 agent · 30 v0.8 portfolio · 30 agentic · 21 v0.8 CLI · 20 v0.6 · 20 quant research · 19 v0.5 · 19 pipeline · 17 workflow · 15 adversarial · 13 data · 12 v0.8 stats · 11 LLM-eval · 11 EDGAR · 10 v0.8 protocol · 8 v0.8 alpha · 7 services (FastAPI client + a real MCP stdio round trip) · 7 quant · 25 C++ test functions (one ctest test)<br>
+    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 879 pytest tests collected on both backends at v0.12.0 (C++ backend 879 passed; numpy fallback 839 passed, 40 C++-only skipped; the breakdown that follows is the v0.8.0 one, 832 tests) · 95% line coverage on the numpy backend (weakest file <code>data/yahoo.py</code> 75%) — 105 v0.8 fixes + 17 CLI · 68 v0.8 agents · 59 hypothesis fuzz properties on the C++ boundary + 7 on the agentic layer · 57 v0.8 engine · 57 v0.8 data · 41 v0.8 execution · 41 v0.8 agentic · 38 quant edge cases · 37 v0.7 · 35 agent · 30 v0.8 portfolio · 30 agentic · 21 v0.8 CLI · 20 v0.6 · 20 quant research · 19 v0.5 · 19 pipeline · 17 workflow · 15 adversarial · 13 data · 12 v0.8 stats · 11 LLM-eval · 11 EDGAR · 10 v0.8 protocol · 8 v0.8 alpha · 7 services (FastAPI client + a real MCP stdio round trip) · 7 quant · 25 C++ test functions (one ctest test)<br>
     One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans · every transition written to SQLite when a task store is configured<br>
     Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 16 tools on 5 servers (market_data · quant incl. cross-sectional alphas · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
     Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → read-only → argument guards → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API · a bounded task pool per process (503 + Retry-After when full) and multi-process serving over the task store<br>

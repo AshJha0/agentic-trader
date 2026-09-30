@@ -3,7 +3,7 @@
 This reference covers the public Python API (the desk, the agentic layer and the research
 layer), the HTTP API, the MCP server, the CLI, the C++ API and the standalone C++ tool.
 Anything not listed here is internal and may change. Every signature below was read from the
-code with `inspect.signature` at v0.8.0; every CLI flag from `build_parser()`; every route
+code with `inspect.signature` at v0.8.0, and the additions of v0.9 to v0.12 were added as they were made; every CLI flag from `build_parser()`; every route
 from `agentic/api.py`.
 
 ```python
@@ -16,7 +16,7 @@ from agentic_trader.agentic import (AgentHarness, Task, Role, TaskState, PolicyE
 from agentic_trader import alpha, algo, portfolio, stats, quant, provenance
 ```
 
-`agentic_trader.__version__` is read from `pyproject.toml` (`0.8.0`); see
+`agentic_trader.__version__` is read from `pyproject.toml` (`0.12.0`); see
 [Provenance](#provenance-agentic_traderprovenance).
 
 ## Part 1 — The desk
@@ -320,7 +320,7 @@ other; legacy whole-record files still load.
 
 #### `run_agent_backtest(symbol, start, end, config=None, rebalance_every=5, provider=None, llm=None, asset_class=None, on_decision=None, include_agent=True, capital_share=None, rebalance_offset=0) -> ComparisonReport`
 
-Walk-forward backtest of the desk plus eight baselines (the six classic rules and, since v0.9, the `TSMOM(12-1)` and `Carry` streams). Before each decision the engine is
+Walk-forward backtest of the desk plus nine baselines (the six classic rules and, since v0.9, the `TSMOM(12-1)` and `Carry` streams; since v0.12 `TSMOM(L/S)`, which runs long and short whatever the desk's mandate). Before each decision the engine is
 replayed on the bars so far and the desk is told the position it actually holds coming into
 the bar: 0 after a stop, take-profit or ruin, otherwise the previous decision's units drifted
 with the market. A keep is only what the PM's no-trade band marks (`FinalDecision.kept`,
@@ -388,7 +388,7 @@ Also: `backtest_config_for(ins, config, prices, provider, start)` (sets `funded=
 
 `symbols` defaults to `UNIVERSES["all"]` (60 instruments); `periods` to the three
 `DEFAULT_PERIODS` of `PERIODS` (`design` 2016-01-04 → 2021-12-31, `holdout` 2022-01-03 →
-2026-06-30, `q1_2024` 2024-01-02 → 2024-03-28; `reserve` 2026-07-01 → 2026-09-25 is opt-in).
+2026-06-30, `q1_2024` 2024-01-02 → 2024-03-28; `reserve` 2026-07-01 → 2026-09-25 and, since v0.12, `design_long` 2008-07-01 → 2021-12-31 are opt-in).
 `workers > 1` runs backtests in parallel sharing one LLM budget. Failures are recorded in
 `meta["errors"]`. Every row carries `universe` (`core`, `extended`, `extended-macro`, `other`)
 from `universe_group(symbol)`. `EvaluationResult`: `rows`, `meta` (LLM usage, impact and

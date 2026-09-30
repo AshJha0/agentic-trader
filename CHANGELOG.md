@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased — v0.12: a longer design period, long/short trend, the vol-target core
+## v0.12.0 — 2026-09-30
+
+The first release since v0.8.0. It collects four rounds of work: the v0.9 research (attribution,
+a multi-asset base, trend and carry), the v0.10 overlay, the v0.11 tier-2 review with every
+table re-measured, and the v0.12 round (a longer design period, long/short trend, the
+vol-target core). **No round found an edge over the volatility-targeted control and no rule
+was adopted on the strength of one.** The two rule changes of v0.11 (news confidence by tone,
+the aggressive risk stance scaled by volatility) were corrections chosen on the design period.
+The forward paper-trading record, frozen on 2026-09-29, is the only unseen data.
+
+New in the documentation: [How the AI works](docs/ai/ai.md) (agents, the LLM, what is and is
+not machine learning, the agentic layer) and [How the quant works](docs/quant/quant.md) (the
+core, the backtester, risk, alphas, portfolios, statistics, the protocol). LEARN.md has 50
+concepts, COOKBOOK.md 100 recipes, DIAGRAMS.md 38 diagrams. The README, index, specification,
+architecture, API and landing pages were reviewed against the code and corrected.
+
+Verification at this release: 879 tests on the C++ backend (879 passed) and on the numpy
+backend (839 passed, 40 C++-only skipped); 26 C++ core test functions; every offline cookbook
+recipe executed; all 38 diagrams parsed and rendered; no broken internal link.
+
+### v0.12: a longer design period, long/short trend, the vol-target core
 
 The three steps the tier-2 review approved, run on design data only. Outcome: nothing is
 adopted ([v012_trend_core.md](docs/evaluation/v012_trend_core.md), generated from
@@ -36,7 +56,7 @@ adopted ([v012_trend_core.md](docs/evaluation/v012_trend_core.md), generated fro
   `scripts/overlay_v09.py --files/--title/--label` and `scripts/combine_v09.py --trend/--tag`
   take other runs and streams.
 
-## Unreleased — v0.11: the tier-2 review
+### v0.11: the tier-2 review
 
 A second adversarial review (337 agents: ten finders, a constructive alpha-proposal track,
 two or three verification lenses per finding, a gap round and a three-judge panel) produced
@@ -106,7 +126,7 @@ changes below move the next re-measurement (`results/v11`, [v011_review.md](docs
 - Docs: survivorship's direction for the alpha library, eight baselines in the API reference, the
   impact "% of equity" wording (a sum of daily charges, not a terminal loss).
 
-## Unreleased — v0.9 research (branch `research/v0.9-multi-asset`)
+### v0.9 and v0.10 research
 
 The Sharpe plan that followed v0.8: attribution first, then a multi-asset base, trend and
 carry streams, their combination, and a forward test. Every number is in

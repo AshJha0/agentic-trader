@@ -7,6 +7,7 @@
 
 | Guide | For |
 |---|---|
+| [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
 | [LEARN.md](LEARN.md) | 50 concepts: how the repo implements them, real numbers, questions |
 | [COOKBOOK.md](COOKBOOK.md) | 100 copy-pasteable recipes, including the agentic layer, quant research, operations and the v0.7 to v0.12 research tools; every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 38 diagrams |
@@ -28,19 +29,19 @@ layer** for alphas, execution algorithms, portfolio construction and backtest st
 
 ## Results in one paragraph
 
-*v0.12 research (unreleased, [docs/evaluation/v012_trend_core.md](docs/evaluation/v012_trend_core.md)):
+*v0.12 research ([docs/evaluation/v012_trend_core.md](docs/evaluation/v012_trend_core.md)):
 the three steps the review approved were run on design data only: a longer design period
 (2008-07-01 to 2021-12-31), a long/short multi-horizon trend stream (`TSMOM(L/S)`, now a
 baseline in every table, its signal `strat_tsmom` in the C++ core) and the vol-target book as
 the core with the desk's tilt as a sized overlay. None of them beat the vol-target control,
 every interval includes zero, and nothing was adopted. The forward paper record remains the test.*
 
-*v0.11 (unreleased, [docs/evaluation/v011_review.md](docs/evaluation/v011_review.md)): a second
+*v0.11 ([docs/evaluation/v011_review.md](docs/evaluation/v011_review.md)): a second
 adversarial review's 89 confirmed findings are implemented and every table re-measured; the 15-sleeve
 holdout portfolio is at Sharpe 0.91 against 0.86 buy & hold and 0.99 vol-target (desk − vol-target −0.08
-[−0.46, +0.30]), still no measurable edge over the control; the numbers below are the v0.8.0 release's.*
+[−0.46, +0.30]), still no measurable edge over the control; the detailed numbers below are the v0.8.0 measurement and the v0.11 page has each of them re-measured.*
 
-*v0.9 research (unreleased, [docs/evaluation/v09_research.md](docs/evaluation/v09_research.md)):
+*v0.9 and v0.10 research ([docs/evaluation/v09_research.md](docs/evaluation/v09_research.md)):
 attribution shows the desk's active tilts add nothing over the vol-targeted control (alpha
 +0.41%/yr on design, −0.80%/yr on holdout, both inside noise); a multi-asset base, trend and
 carry streams were tried on the design period and none beat its control, so nothing was
@@ -192,7 +193,7 @@ the historical sections keep their earlier-engine numbers under a banner saying 
   FINALISING → COMPLETED) with cancellation, per-step timeouts, retry and tracing. The
   critic, evidence validation and finalisation are appended to any plan that omits them.
 * **Contained, capped, bounded.** Third-party text reaches the model only inside
-  `<untrusted_data>` blocks that cannot be escaped. `max_llm_calls` caps spend. The firm
+  `<untrusted_data>` blocks that cannot be escaped. `max_llm_calls` and `max_llm_cost_usd` cap calls and dollars. The firm
   limits run after any model output.
 * **A benchmark, then tilts.** With no view the desk holds a strategic weight (equities
   fully invested; FX the higher-yielding side, sized by the point-in-time carry and capped
@@ -256,8 +257,8 @@ scripts/                   measure_v08.py (re-measures every published table int
                            measure_v09.py · combine_v09.py · overlay_v09.py · attribution_v09.py (return streams, books, overlay, attribution; v0.9 to v0.12)
                            render_v09_doc.py · render_v11_doc.py · render_v12_doc.py (write the evaluation pages from result files) · paper_trade_v09.py (the forward record)
                            run_cookbook.py · check_mermaid.py · check_links.py (the CI docs job) · build_cpp · set_api_key
-tests/                     879 pytest tests on both backends (the breakdown that follows is the v0.8.0 one, 832 tests: v0.8 fixes 105 + 17 CLI, v0.8 agents 68, fuzz 59 C++ boundary + 7 agentic layer, v0.8 engine 57,
-                           v0.8 data 57, v0.8 execution 41, v0.8 agentic 41, quant edges 38, v0.7 37, agents 35, v0.8 portfolio 30, agentic 30, ...)
+tests/                     879 pytest tests on both backends (v0.8 fixes 105 + 17 CLI, fuzz 73 C++ boundary + 7 agentic layer, v0.8 agents 68, v0.8 engine 57,
+                           v0.8 data 57, v0.8 execution 41, v0.8 agentic 41, quant edges 38, v0.7 37, agents 35, v0.8 portfolio 30, agentic 30, v0.11 18 + 4, v0.9 8 + 3, ...)
 examples/                  equity, FX, baseline comparison
 ```
 
@@ -310,6 +311,7 @@ agentic-trader alpha     USDJPY --start 2021-01-04 --end 2024-03-28 --horizon 10
 agentic-trader xalpha    AAPL,MSFT,NVDA,JPM,XOM --start 2021-01-04 --end 2024-03-28
 agentic-trader execute   AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 5000000   # --capital defaults to config initial_capital; whole shares (FX: whole lots of the base currency); sized at the as-of close, simulated on the next session
 agentic-trader stats     returns.csv --trials 26
+agentic-trader stats     returns.csv --var-backtest                        # Kupiec and Christoffersen coverage tests of a rolling VaR
 agentic-trader evaluate  AAPL,EURUSD --periods q1_2024
 ```
 
@@ -325,6 +327,7 @@ agentic-trader task MSFT --llm anthropic --data yahoo --max-llm-calls 50 --max-l
 agentic-trader evaluate AAPL,NVDA --data yahoo --periods holdout --every 10 --repeats 3 --llm anthropic --anonymize --max-llm-cost 50   # model variance
 agentic-trader calibrate AAPL --date 2024-03-01 --n 5 --anchors none,-0.5,0,0.5 --llm anthropic --anonymize --max-llm-cost 10        # dispersion, anchoring, drift
 agentic-trader serve --processes 4 --workers 4 --task-db results/tasks.sqlite                                                       # bounded pool per process
+python scripts/measure_v09.py --period design_long --out results/v12                                                                # the v0.12 research runs (2008-07-01 to 2021-12-31), then combine_v09.py, overlay_v09.py, render_v12_doc.py
 ```
 
 The CLI also reads a project-local `.env` (`ANTHROPIC_API_KEY=...` and
@@ -364,6 +367,8 @@ print(port.table())
 | `lookback_days` · `alpha_lookback_days` | History handed to the analysts and desk tools (400 days) and to the alpha library and its tools (900 days) |
 | `edgar` · `edgar_user_agent` · `edgar_cache_dir` · `edgar_cache_max_age_days` · `edgar_ciks` | SEC EDGAR point-in-time fundamentals and filing news for real-data equities; the SEC requires a contact (`EDGAR_USER_AGENT="Name email@domain"`, read from `.env` by the CLI), without which EDGAR is skipped with one warning; cached endpoint files older than the max age (7 days) are re-fetched |
 | `risk.neutral_weight` · `rebalance_band` · `max_position` · `max_var_95` | Strategic weight, no-trade band, firm limits |
+| `rules.news_tone_mass` · `risk.aggressive_vol_scaled` | The two v0.11 rules, on by default: news confidence follows the tone the headlines carry (it abstains when they carry almost none); the aggressive risk stance is 1.25 times the vol-target size. `RULES_V02` switches both off |
+| `llm_budget_mode` · `llm_max_retries` | `hard` (default) reserves each call's maximum cost before it is sent, so parallel workers cannot overshoot `max_llm_cost_usd`; a retry must be admitted by the budget like a new call |
 | `costs.impact_coeff` · `costs.fx_adv_notional` · `initial_capital` · `account_currency` | Square-root market impact in backtests (0 = off), the account size trades scale with (100,000) and the currency it is denominated in (USD) |
 | `cash_leg` · `risk_free_annual` | What idle cash earns and what Sharpe is measured against: `auto` credits the 3-month bill (FRED DTB3, one-day publication lag) on real-world providers and the constant `risk_free_annual` (0) on synthetic and CSV data; `fred`, `static`, `off` |
 | `execution.fx_lot_size` · `execution.max_order_notional` | FX orders round down to whole lots of the base currency (1000); the cap on one ticket's notional, enforced by policy before approval and again at execution (`None` = `initial_capital * risk.max_position`) |

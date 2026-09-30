@@ -24,6 +24,10 @@ reproduce anything, see [Reproducing](#reproducing).
 
 ## Summary
 
+> v0.12 (after this release): a longer design period (2008 to 2021), a long/short trend stream and
+> the vol-target core with the desk as an overlay are in [v012_trend_core.md](v012_trend_core.md);
+> v0.10, the overlay on the core 15, is in [v010_overlay.md](v010_overlay.md). Nothing was adopted.
+>
 > v0.11 (after this release): the tier-2 review's fixes and the re-measurement of every table are in
 > [v011_review.md](v011_review.md); rendered tables for every release are under `docs/results/`.
 >

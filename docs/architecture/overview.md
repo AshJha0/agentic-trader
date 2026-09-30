@@ -10,6 +10,10 @@ agentic-trader has three layers:
 3. **The quant research layer** — alphas, execution algorithms, portfolio construction and
    backtest statistics, on top of the C++ core (`alpha`, `algo`, `portfolio`, `stats`, `quant`, `cpp/`).
 
+Two companion pages explain each side end to end: [how the AI works](../ai/ai.md) (agents,
+the LLM, the agentic layer) and [how the quant works](../quant/quant.md) (core, backtester,
+risk, alphas, statistics).
+
 This document covers the components, the flow of one task, the design decisions and the
 extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 
@@ -58,7 +62,7 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 | `portfolio.py` | EWMA and Ledoit-Wolf covariance, five weighting schemes, hierarchical risk budgets across groups, `risk_contributions`, `construct` |
 | `stats.py` | `sharpe_stats`, `sharpe_ci_bootstrap`, `probabilistic_sharpe`, `expected_max_sharpe`, `deflated_sharpe`, `min_track_record`, `selection_report`, (v0.6) `paired_bootstrap` across instruments — since v0.8 a two-stage cluster bootstrap over asset-class-by-universe groups when there are at least five (`scheme=clusters`), the plain instrument bootstrap otherwise (`scheme=instruments`); `benjamini_hochberg` on the unrounded p; `paired_sharpe_block_bootstrap` for the Sharpe difference between two daily series; `rolling_var_forecast` and `var_backtest` (Kupiec, Christoffersen) |
 | `backtest.py` | Walk-forward agent backtest vs nine baselines (buy & hold, vol-targeted buy & hold, SMA, MACD, KDJ+RSI, ZMR, `TSMOM(12-1)`, `TSMOM(L/S)`, `Carry`): constant units between decisions with post-cost sizing, a cash leg (idle capital earns the point-in-time bill; Sharpe on excess returns), optional equity-scaled square-root market impact (`impact_coefficients`); `run_portfolio_backtest(weighting=..., class_budgets=...)` with each sleeve's impact at its own capital share and `PortfolioReport.sharpe_difference` (block bootstrap over days) |
-| `evaluation.py` | Design / holdout / Q1-2024 / reserve harness over the core and extended universes, with parallel workers, LLM usage accounting, (v0.6) repeated runs, cross-instrument paired bootstraps and the prompt hashes in `meta`; (v0.8) `TRIALS`, the registry of every variant judged on the design period (26; 24 reproducible on the current engine), and `provenance` in every result |
+| `evaluation.py` | Design / holdout / Q1-2024 / reserve harness over the core and extended universes, with parallel workers, LLM usage accounting, (v0.6) repeated runs, cross-instrument paired bootstraps and the prompt hashes in `meta`; (v0.8) `TRIALS`, the registry of every variant judged on a design period (62 at v0.12; 26 at v0.8, 24 of them reproducible on the current engine), and `provenance` in every result |
 | `quant/`, `cpp/` | Indicators (incl. rolling extremes, Spearman), risk, strategies, backtester with stops and carry, Almgren-Chriss; numpy twin |
 
 ## One task, step by step

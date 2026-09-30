@@ -2,7 +2,8 @@
 
 This guide works through the 50 ideas behind the project in order. For each concept it gives
 the idea, where the repository implements it, the real numbers it produces, and questions to
-test your understanding. Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
+test your understanding. Two shorter pages give the whole picture first: [how the AI works](docs/ai/ai.md) and
+[how the quant works](docs/quant/quant.md). Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
 [docs/architecture/overview.md](docs/architecture/overview.md); the measured results are in
 [docs/evaluation/evaluation.md](docs/evaluation/evaluation.md). Numbers from the synthetic
 provider or a local command were regenerated for v0.8. Every real-data figure is copied from
