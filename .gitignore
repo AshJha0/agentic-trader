@@ -18,3 +18,7 @@ agentic_trader/quant/_atcore*.so
 .coverage
 coverage.xml
 htmlcov/
+
+# rendered result tables are published with the docs
+!docs/results/
+!docs/results/**

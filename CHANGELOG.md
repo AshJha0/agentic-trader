@@ -53,6 +53,20 @@ changes below move the next re-measurement (`results/v11`, [v011_review.md](docs
   sessions, see the amendment in `docs/evaluation/v09_preregistration.md`).
 - **Renderer**: `--section` writes its own file; the execution-algorithm table averages impact over
   the sleeves that can pay it (FX sleeves pay none without `costs.fx_adv_notional`).
+- **Re-measured (`results/v11`, copied to `docs/results/v11/tables.md`; every file at a clean commit).**
+  15-sleeve portfolio, holdout: desk Sharpe 0.91 with a 6.41% drawdown (v0.8: 0.80 / 7.80%) against 0.86
+  buy & hold and 0.99 vol-target; desk − vol-target −0.08 [−0.46, +0.30] p 0.688, desk − buy & hold +0.05
+  [−0.40, +0.50] p 0.820. Core holdout median Sharpe 0.35 (v0.8: 0.30) against 0.52 for the control, paired
+  difference −0.08 [−0.18, +0.02] p 0.14; extended 0.21 (v0.8: 0.25) against 0.27. The desk still has no
+  measurable edge over the vol-targeted control. Design-period choice of the two rule changes: the
+  vol-scaled aggressive stance gives portfolio Sharpe 1.44 against 1.40 for the v0.8 rule; the news
+  tone-mass rule 1.44 against 1.44 (kept for correctness, not for Sharpe); a symmetric equity tilt 1.45
+  (inside noise, not adopted). Deflated Sharpe on one statistic: 42 trials with a portfolio Sharpe,
+  expected maximum 0.746, probability 0.949 (an upper bound; v0.8's 0.998 is withdrawn). The
+  cross-sectional analyst's four-period re-check was not re-measured in v0.11 (it is off by default and
+  its v0.8 result stands); its design-period trial was.
+- The rendered result tables are in the repository (`docs/results/v08`, `v09`, `v11`), so every published
+  number can be read without the machine that measured it.
 - Docs: survivorship's direction for the alpha library, eight baselines in the API reference, the
   impact "% of equity" wording (a sum of daily charges, not a terminal loss).
 

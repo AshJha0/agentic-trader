@@ -24,6 +24,9 @@ reproduce anything, see [Reproducing](#reproducing).
 
 ## Summary
 
+> v0.11 (after this release): the tier-2 review's fixes and the re-measurement of every table are in
+> [v011_review.md](v011_review.md); rendered tables for every release are under `docs/results/`.
+>
 > v0.9 research (after this release): the attribution, the multi-asset / trend / carry
 > candidates, the pre-registered holdout report and the forward paper-trading test are in
 > [v09_research.md](v09_research.md) and [v09_preregistration.md](v09_preregistration.md).

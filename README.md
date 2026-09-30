@@ -28,6 +28,11 @@ layer** for alphas, execution algorithms, portfolio construction and backtest st
 
 ## Results in one paragraph
 
+*v0.11 (unreleased, [docs/evaluation/v011_review.md](docs/evaluation/v011_review.md)): a second
+adversarial review's 89 confirmed findings are implemented and every table re-measured; the 15-sleeve
+holdout portfolio is at Sharpe 0.91 against 0.86 buy & hold and 0.99 vol-target (desk − vol-target −0.08
+[−0.46, +0.30]), still no measurable edge over the control; the numbers below are the v0.8.0 release's.*
+
 *v0.9 research (unreleased, [docs/evaluation/v09_research.md](docs/evaluation/v09_research.md)):
 attribution shows the desk's active tilts add nothing over the vol-targeted control (alpha
 +0.41%/yr on design, −0.80%/yr on holdout, both inside noise); a multi-asset base, trend and
