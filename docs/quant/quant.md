@@ -111,8 +111,22 @@ the historical tail and scales it to today's volatility.
 threefold over 3000 days, FHS passes both tests (p >= 0.05) on 8 of 8 seeds and the 250-day
 historical window on at most 2 of 8 (`tests/test_v14_risk.py`;
 [recipe 103](../../COOKBOOK.md#103-fhs-against-historical-var-on-synthetic-garch-returns)).
-The design-period counts on the 15 real names (`scripts/v14_var_design.py`) are pending; until
-they are run, no claim is made that FHS is calibrated on real data.
+On the design period (2016-01-04 to 2021-12-31, the 15 core names, 5% level,
+`scripts/v14_var_design.py`, `results/v14/var_design.json`) the pass counts are:
+
+| Method | Kupiec | Independence | Both |
+|---|---|---|---|
+| historical (250 days) | 14/15 | 4/15 | 4/15 |
+| EWMA | 15/15 | 13/15 | 13/15 |
+| FHS | 15/15 | 10/15 | 10/15 |
+
+Conditioning on current volatility fixes most of the clustering the historical window shows.
+EWMA did better than FHS here; the book default stays `"fhs"` pending an owner decision
+recorded in the round's PR, so the default was not switched after seeing the result. The older
+figure "Kupiec 2/15, independence 6/15" (PLAN.md section 2) is a different measurement: the
+desk's 250-day historical forecast on the 2022-2023 holdout, from the v0.7/v0.8 evaluation
+([evaluation.md](../evaluation/evaluation.md), VaR coverage). There the counts are rejections
+(2 of 15 rejected by Kupiec, 6 of 15 by independence); here they are passes, on another period.
 
 **Book VaR is on by default.** `risk.max_book_var_95` is now 0.05 (it was `None`), measured with
 `risk.book_var_method = "fhs"`. The 5% is a loose budget, not tuned on any period; it binds only
@@ -369,3 +383,61 @@ These conventions are pinned by `tests/test_v14_edges.py`; the code is in `agent
 **Short notional.** Borrow availability and recall are not modelled. `risk.max_short_notional` (default `None`: only `max_position` binds) caps a short in the Portfolio Manager's guardrails, after the short-selling check and before the position cap.
 
 **Ledger floats.** The paper ledger is written with each float's shortest round-trip `repr` and read back with pandas' round-trip parser, so a row survives a write and read bit for bit. Ledgers are compared with a tolerance (`validate.ledgers_match`, default 1e-12), never with `==`.
+
+## 15. Estimated combination, regimes and conformal sizing (v0.14, plan items 5.1-5.3)
+
+**The idea.** The rules desk adds its evidence with hand-set numbers nobody estimated (role
+weights, 0.30 / 0.20 / 0.15 / 0.15 technical weights, a 2x tilt, a 25 / 50 / 25 risk blend).
+The alternative is to weight each signal by how well it has predicted returns, and to give a
+signal no weight at all unless that record clears a significance bar.
+
+**Precisely.** `agentic_trader/combine.py`, on with `combination.method = "ic"`:
+
+1. every library alpha plus two trend components, each a trailing z-score clipped at +-3;
+2. a trailing purged IC per signal over the last `window` bars whose forward return is known
+   at the as-of bar (`leakage.ic_purged`);
+3. shrinkage: `IC * max(0, 1 - (t_crit / t)^2)`, where `t_crit` is the two-sided 5% Student-t
+   value for `k - 1` degrees of freedom over the `k` finite folds (2.776 for five folds); with
+   fewer than three finite folds nothing passes;
+4. `mu = sigma_h * sum_i IC_i z_i` (Grinold; overstates `mu` when correlated signals survive);
+5. tilt `mu / (gamma sigma_h^2)`, or `Sigma^-1 mu / gamma` with a Ledoit-Wolf covariance for a
+   book, then a turnover no-trade band of half-width `kappa / (gamma sigma^2)`.
+
+Only `window` (504) is a registered parameter; `horizon` 10, `risk_aversion` 2.5 and
+`turnover_penalty` 0.0005 were fixed in `DEFAULT_CONFIG` before any run.
+
+`regime.py` fits a 2- or 3-state diagonal Gaussian HMM (Baum-Welch in numpy) to log 20-day
+volatility, the 60-day return over 60-day volatility and the 20-day change in the 3-month bill
+rate, on bars from `regime.fit_start` up to the earlier of the as-of date and `regime.fit_end`
+(the design end). Labels are forward-filtered probabilities, ordered calm to stressed.
+`regime.enabled` adds the label as a fact; `regime.condition` estimates ICs and the sizing
+volatility on bars of the current regime only.
+
+`conformal.enabled` splits the window in time: ICs are estimated on its first part, and the
+absolute forecast errors on the last `calibration_share` give the interval half-width at
+miscoverage `alpha`; the PM scales the tilt by `min(1, |mu| / half-width)`.
+
+**Example: the design result.** 2016-01-04 to 2021-12-31, 15 names, Yahoo (`results/v14/`):
+
+| Trial | Mean Sharpe | Control | Difference | 95% CI | p | Beats control |
+|---|---|---|---|---|---|---|
+| rules desk (current default) | 0.6477 | 0.6437 | +0.004 | [-0.128, +0.148] | 0.989 | 6/15 |
+| IC combination, window 504 | 0.5125 | 0.6437 | -0.131 | [-0.314, +0.059] | 0.174 | 5/15 |
+
+The pre-registered expectation was that the tilt would go to zero on what is mostly noise.
+It did not: some signal survived shrinkage on 82.6% of sampled design dates
+(`ic_tilt_design.json`, every fifth date), mostly slow price-level signals whose fold ICs are
+consistently signed. Nothing was adopted or tuned. The regime and conformal trials are
+registered with their design run pending (follow-up 5.2b). See
+[LEARN concept 53](../../LEARN.md#53-a-pre-registered-expectation-that-failed).
+
+## 16. Paper order management (v0.14, plan item 4.7)
+
+`oms.py` simulates the order path between a decision and a fill; nothing reaches a broker. A
+fill of notional `N` on capital `C` pays `N (cost_bps + slippage_bps) / 1e4 + C K_t (N / C)^1.5`,
+exactly the entry cost `quant.run_backtest` charges for a weight change `N / C`
+(`tests/test_v14_oms.py` checks the parity), capped at `participation_cap` (0.10) of modelled
+daily volume. Equities settle T+1 on the NYSE calendar; FX spot settles T+2 and an FX trade at
+or after 17:00 New York belongs to the next trade date. Limits: static borrow list, no
+non-USD holidays unless listed, no intraday path.
+[Recipe 104](../../COOKBOOK.md#104-a-paper-order-through-the-oms).

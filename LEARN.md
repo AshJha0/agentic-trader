@@ -1934,7 +1934,7 @@ measurement for a later round.
   and which test would catch it?
 - Why record the served model id on every call rather than trust the configured one?
 
-# Part XI — v0.14: leakage and risk
+# Part XI — v0.14: leakage, risk and a failed expectation
 
 ## 52. Purged cross-validation and the leak canary
 
@@ -1985,3 +1985,39 @@ values published after the date they describe are a third case, handled by
 - With five folds, how many degrees of freedom does the t-statistic have, and what threshold
   corresponds to a two-sided 5% test?
 - Design a provider bug the canary would miss. What second test would catch it?
+
+## 53. A pre-registered expectation that failed
+
+**The idea.** Writing down before a run what you expect to see is only useful if you are
+prepared to report that it did not happen. A wrong expectation is information about the
+method, not something to tune away.
+
+**In the repo.** Plan item 5.1 replaced the desk's hand weights with an estimated
+combination (`combine.py`): each signal's trailing purged IC is multiplied by
+`max(0, 1 - (t_crit / t)^2)`, so a signal whose fold t-statistic does not clear the Student-t
+bar gets zero weight. The plan pre-registered: "tilt goes to zero, desk about equal to the
+control; success is that the pipeline refuses noise." The trial was registered in
+`evaluation.TRIALS` before the run.
+
+**A worked example.** With five folds, `t_crit` is the 97.5% Student-t quantile on 4 degrees
+of freedom, 2.776. A signal with fold t of 4.0 keeps `1 - (2.776/4.0)^2 = 0.52` of its IC; one
+with t of 2.5 keeps nothing. The gate refuses fewer than three finite folds outright.
+[Recipe 105](COOKBOOK.md#105-the-student-t-gate-on-purged-fold-ics) prints the bar for other
+fold counts.
+
+**The numbers.** On 2016-2021 for 15 names, at least one signal survived on 82.6% of sampled
+dates. The survivors were mostly slow price-level signals whose fold ICs all had the same sign,
+so the fold dispersion was small and t large, from only five observations. The combined desk
+scored 0.5125 mean Sharpe against the control's 0.6437 (difference -0.131, 95% CI
+[-0.314, +0.059], p 0.174). Nothing was adopted and nothing was tuned after seeing it (plan
+section 3, principle 6).
+
+**What it teaches.** Shrinkage on a t-statistic protects only as well as the t-statistic's
+assumptions hold. Five folds of one trending series need not be five independent tests. The
+next design should make the null harder (for example detrended or cross-sectional ICs, or more
+folds) and decide that before running, not after.
+
+**Questions.**
+- Why can fold ICs from one trending price series be positively dependent?
+- If the folds are dependent, is the 4-df bar too low or too high?
+- What result would have counted as success, and what would you pre-register next time?

@@ -353,3 +353,31 @@ agentic-trader analyze NVDA --date 2024-03-01 --llm anthropic --anonymize --max-
 Cookbook recipes 1 to 8 (decisions), 17 to 19 and 36 (the model and its budget), 39 to 50
 (the agentic layer) and 68 to 70 (repeated runs, calibration, the prompt hash) show each
 piece in a few lines.
+
+## 10. A local model and the LLM study (v0.14, plan items 2.1-2.2): ready but unrun
+
+**The idea.** A model running on the same machine costs nothing per call and sends nothing
+off the host, which makes a full study of where a model helps the desk affordable.
+
+**Precisely.** `llm_provider = "local"` selects `local_llm.LocalLLM`, which posts to Ollama's
+`/api/chat` at `local_llm_url` (default `http://127.0.0.1:11434`) with `local_llm_model`,
+`local_llm_timeout_s` (120) and `local_llm_seed`; temperature is 0. A structured reply sends
+the contract's JSON schema in the request's `format` field, and the agent's contract check
+still runs afterwards. Anonymisation, evidence (`last_call`) and `max_llm_calls` apply as for
+Claude; `estimate_cost` is 0, so only the call cap binds. A timeout, refused connection, HTTP
+error or unreadable body returns `None` and the rules answer, with no retry.
+
+`scripts/llm_study.py` defines seven cells: `rules`, `local_all`, `local_text`, `local_pm`,
+`no_debate`, `debate_1`, `neutral_risk`. `--describe` lists them, `--dry-run` counts calls
+and prompt tokens without a model, `--live` runs them on a local model and refuses if Ollama
+does not answer.
+
+**Status: ready but unrun.** The development machine has 15.6 GB of RAM, below the plan's
+16 GB bar for a 7-8B model (OD-6), and no Ollama install; the module is tested against a fake
+HTTP server only (`tests/test_v14_local_llm.py`). No model has answered a desk prompt through it.
+
+**Example: what the study would cost on Claude.** The dry run for 15 names x 40 dates x 2
+seeds, priced at Claude list prices: `local_all` makes 16,800 calls, estimate $214.82,
+ceiling $1,992.26. The estimate assumes 400 output tokens per quick call and 1,500 per deep
+call; the ceiling assumes every reply runs to `max_tokens`. On a local model the same study
+costs $0, which is why it is planned there.

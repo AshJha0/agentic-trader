@@ -999,6 +999,58 @@ NaN, ±inf, empty and huge inputs without crashing: it returns a well-formed res
 `ValueError`, `quantile(x, NaN)` is NaN and `max_drawdown` ignores NaN — properties enforced
 by `tests/test_fuzz.py`.
 
+### v0.14: `combine`, `regime`, `oms`, `local_llm`
+
+**`agentic_trader.leakage` (gate additions).** `student_t_crit(df, alpha=0.05) -> float`;
+`PurgedIC.k`, `.t_crit` (NaN when `k < 3`), `.significant`, `.as_gate() -> {"IC", "t(IC)", "n",
+"t_crit"}`; `gate_threshold(entry, fallback=2.0)`; `passes_gate(entry, min_n=30, fallback_tstat=2.0)`.
+
+**`agentic_trader.combine`.** `signal_panel(df, instrument, carry=None) -> DataFrame`;
+`james_stein_factor(pic) -> float`; `trailing_ics(signals, close, horizon, window, ...)`;
+`standardised(signals, window, cap=3.0)`; `ledoit_wolf(returns) -> (cov, shrinkage)`;
+`mean_variance(mu, cov, risk_aversion)`; `turnover_penalised(w_target, w_prev, variance,
+risk_aversion, ...)`; `conformal_halfwidth(residuals, alpha) -> float | None`;
+`desk_forecast(df, instrument, cfg, carry=None, regimes=None) -> Forecast` (`Forecast.active`,
+`.size_scale`, `.facts`).
+
+**`agentic_trader.regime`.** `regime_features(close, risk_free=None, ...)`;
+`fit_hmm(x, k=2, n_iter=100, tol=1e-6) -> GaussianHMM` (`.filtered(x)`, `.labels(x)`);
+`regime_labels(close, risk_free, k, fit_start, fit_end, periods_per_year=252.0) -> (labels,
+probabilities, model)`; `REGIME_NAMES`.
+
+**`agentic_trader.oms`.** `OMS(config)`; `OMS.submit(client_order_id, symbol, side, quantity,
+price, last_close, at) -> Order` (ACKED or REJECTED; `Order.reject_reason` is prefixed by the
+check); `OMS.execute(client_order_id, market, at) -> Fill | None`; `OMS.cancel(client_order_id,
+at, reason="cancelled")`; `OMS.cash_projection() -> DataFrame`; `OMS.roll_fx(at)`;
+`OMS.cash_balance(currency=None)`; `OMS.kill_switch` (`KillSwitch.engage(scope, reason,
+at=None)`, `.release(scope)`, `.engaged()`, `.blocking(ins)`; scope `"global"`, an asset
+class or a symbol); `kill_switch_for(config)`; `MarketSnapshot(price, adv, impact_k)`,
+`market_snapshot(history, ins, config)`; `fill_cost(ins, config, notional, price, impact_k, ...)`;
+`reconcile(oms, ledger_positions, ledger_cash=None, ledger_prices=None, qty_tol=1e-6,
+cash_tol=0.01, price_tol_bps=5.0) -> BreakReport` (`.ok`, `.to_frame()`); `nyse_holidays(year)`,
+`calendar_for(ins, cfg) -> SleeveCalendar`; `OrderState`, `IllegalTransition`, `SHADOW_LABEL =
+"oms_shadow_v14"`, `paper_session(...)`.
+
+`config["oms"]` keys (`OMS_DEFAULTS`; an unknown key raises `ValueError`):
+`max_order_notional` (None: capital x max_position), `max_order_quantity` 1,000,000,
+`price_collar_pct` 0.10, `duplicate_window_seconds` 60, `participation_cap` 0.10,
+`borrow_list` [], `max_short_notional` 0.5, `kill_switch_path` None (in memory),
+`extra_equity_holidays` [], `extra_fx_holidays` [].
+
+**`agentic_trader.local_llm`.** `LocalLLM(config)` (needs `local_llm_model`), with the `LLM`
+protocol's `complete`, `complete_json(system, prompt, deep=, schema=)`, `estimate_cost` (0.0),
+`last_call`, `calls`; `reachable(url, timeout_s=3.0) -> bool`; `served_matches(configured, served)`.
+
+New configuration: `combination` {`method` "rules" | "ic", `window` 504, `horizon` 10,
+`risk_aversion` 2.5, `turnover_penalty` 0.0005}; `regime` {`enabled` False, `condition` False,
+`states` 2, `fit_start` "2008-07-01", `fit_end` "2021-12-31"}; `conformal` {`enabled` False,
+`alpha` 0.2, `calibration_share` 0.4}; `local_llm_url`, `local_llm_model`,
+`local_llm_timeout_s`, `local_llm_seed`; `oms` (above).
+
+Scripts: `scripts/llm_study.py --describe | --dry-run | --live --model NAME --out FILE`;
+`scripts/paper_ops.py freshness [--runs FILE] [--today DATE]`, `scripts/paper_ops.py commit
+[--message TEXT]`; `scripts/paper_trade_v09.py --oms`.
+
 ## Part 4 — CLI
 
 ```text

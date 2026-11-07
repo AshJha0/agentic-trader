@@ -8,8 +8,8 @@
 | Guide | For |
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
-| [LEARN.md](LEARN.md) | 52 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 103 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools and the v0.14 risk and leakage checks; every offline one runs in CI |
+| [LEARN.md](LEARN.md) | 53 concepts: how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 105 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools and the v0.14 risk, leakage, Student-t gate and paper OMS recipes; every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 38 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
@@ -411,10 +411,32 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
+## Operations (v0.14)
+
+The forward paper record runs on GitHub Actions (`.github/workflows/paper.yml`, weekdays
+22:30 UTC: jobs `session`, `publish`, `freshness`, `report`). Each run records a
+`price_vintage` hash of the bars it read in `results/paper/runs.jsonl`; the freshness job fails
+when the last session is more than two business days old, and any failure opens or comments on
+one issue labelled `paper-record`. The laptop task `scripts/paper_daily.cmd` is the fallback;
+run only one of the two. `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy
+advisory); `nightly.yml` runs the full suite. The paper OMS shadow record (`--oms`, off by
+default) is labelled `oms_shadow_v14` and never writes `ledger.csv`; the frozen forward record
+(from 2026-09-29) is unchanged.
+
+Steps only the repository owner can take on GitHub:
+
+1. Settings > Actions > General: allow Actions to run.
+2. Same page, workflow permissions: read and write (the `publish` job commits the record and
+   `report` opens issues).
+3. If a ruleset on `main` requires pull requests or status checks, add a bypass for
+   `github-actions[bot]`, or the `publish` commit is refused.
+4. After the first green scheduled run, disable the laptop `paper_daily.cmd` task so two
+   runners do not write the same record.
+
 ## Tests
 
 ```bash
-pytest -q                                   # 984 tests collected at the v0.14 work in progress (879 at v0.12.0, all passed on the C++ backend) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
+pytest -q                                   # the full-suite count for v0.14.0 will be stated at release (879 at v0.12.0, all passed on the C++ backend) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
 pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend at v0.8.0 (a report, not a gate); weakest file data/yahoo.py at 75% (network branches)
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 839 passed, 40 skipped (C++-only tests)
 ctest --test-dir build -C Release           # 26 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests

@@ -255,3 +255,23 @@ See `config.py` for the full dictionary.
 | A rule change | Behind a `config["rules"]` switch; choose on a design period only (`evaluate --data yahoo --universe core --periods design`, or `scripts/measure_v09.py --period design_long` for a return stream), adopt only if the interval against `B&H vol-target` is above zero, register every variant in `evaluation.TRIALS`; report the extended universe and the reserve period as information, not as a choice basis — both were consulted for the v0.5.1 and v0.6 decisions and v0.8 re-measured every period, so no held-out data remains |
 | A quant routine | Declared in `cpp/include/at/`, implemented in `cpp/src/`, bound in `module.cpp`, mirrored in `pycore.py`, exported (with argument validation) in `quant/__init__.py`, cross-checked in `tests/test_quant.py` and fuzzed in `tests/test_fuzz.py`; `strat_tsmom` is the worked example and every exported function is fuzzed |
 | A cross-sectional alpha | It is the same `AlphaInputs -> ndarray` function: `xalpha.signal_panels` standardises every library alpha across the universe |
+
+## v0.14 additions
+
+| Module or file | Role | Default |
+|---|---|---|
+| `leakage.py` | Purged walk-forward IC, Student-t gate (`t_crit`), leak canary, point-in-time store | always on |
+| `combine.py` | IC-weighted combination, shrinkage, mean-variance tilt, turnover band, conformal half-width | off (`combination.method = "rules"`) |
+| `regime.py` | Gaussian-HMM regime label, fitted up to min(as-of, design end) | off (`regime.enabled`, `regime.condition`) |
+| `risk_model.py` | EWMA / FHS VaR, factor, stress and capacity rows | book VaR on (`fhs`, 0.05) |
+| `validate.py` | Bar validator, session clocks, short cap, ledger round trip | always on |
+| `oms.py` | Paper OMS: states, pre-trade checks, kill switch, fills, reconciliation, settlement | shadow only (`paper_trade_v09.py --oms`) |
+| `local_llm.py` | Ollama backend behind the `LLM` protocol | off (`llm_provider = "offline"`) |
+| `scripts/llm_study.py` | Seven-cell LLM study driver | unrun |
+| `scripts/paper_ops.py` | Price-vintage hash, freshness check, publish commit | used by `paper.yml` |
+
+Workflows: `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy advisory);
+`nightly.yml` runs the full suite at 03:17 UTC; `paper.yml` runs the paper session on weekdays
+at 22:30 UTC (`session`, `publish`, `freshness`, `report`). Every action is pinned by commit SHA.
+The OMS kill switch is checked both by `OMS.submit` and by the agentic `submit_order` tool
+(`agentic/servers.py`), so a halt binds both order paths.
