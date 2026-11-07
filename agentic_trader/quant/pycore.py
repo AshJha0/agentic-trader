@@ -81,8 +81,10 @@ def rolling_std(x, n: int) -> np.ndarray:
     _check(n)
     x = _arr(x)
     out = np.full(len(x), NaN)
-    for i in range(n - 1, len(x)):
-        out[i] = x[i - n + 1 : i + 1].std()  # ddof=0
+    if len(x) >= n:
+        # One std per window over a strided view: the same reduction, element order and
+        # result bit for bit as calling .std() on each slice, without the Python loop.
+        out[n - 1:] = np.lib.stride_tricks.sliding_window_view(x, n).std(axis=1)  # ddof=0
     return out
 
 
@@ -247,8 +249,9 @@ def realized_vol(close, n: int, periods_per_year: float) -> np.ndarray:
     _check(n)
     r = pct_change(close)
     out = np.full(len(r), NaN)
-    for i in range(n, len(r)):
-        out[i] = r[i - n + 1 : i + 1].std() * np.sqrt(periods_per_year)
+    if len(r) > n:
+        # Windows ending at bars n..; per-window std, bit-identical to a loop over slices.
+        out[n:] = np.lib.stride_tricks.sliding_window_view(r, n)[1:].std(axis=1) * np.sqrt(periods_per_year)
     return out
 
 

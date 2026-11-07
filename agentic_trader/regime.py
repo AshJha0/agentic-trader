@@ -137,6 +137,54 @@ def fit_hmm(x: np.ndarray, k: int = 2, n_iter: int = 100, tol: float = 1e-6) -> 
     return GaussianHMM(model.means[srt], model.variances[srt], model.trans[np.ix_(srt, srt)], model.start[srt])
 
 
+class RegimeSeries:
+    """Filtered regime labels for every prefix of one price series.
+
+    The features and, per fitted model, the forward-filtered state probabilities are computed
+    once for the whole series. Both are causal (row ``t`` uses rows ``<= t`` from the same
+    first bar), so the labels of the prefix ending at bar ``end`` are a slice of them, equal
+    to the labels computed on that prefix alone. A walk-forward that refits monthly therefore
+    runs one forward pass per refit instead of one per decision.
+    """
+
+    def __init__(self, close: pd.Series, risk_free: np.ndarray | None = None,
+                 periods_per_year: float = 252.0):
+        feats = regime_features(close, risk_free, periods_per_year)
+        self.index = close.index
+        self.x = feats.to_numpy(float)
+        self.ok = feats.notna().all(axis=1).to_numpy()
+        self._filtered: dict[tuple[str, int], np.ndarray] = {}
+
+    def labels(self, end: int, k: int, fit_start: pd.Timestamp | None, fit_end: pd.Timestamp
+               ) -> tuple[np.ndarray, np.ndarray | None, GaussianHMM | None]:
+        """``regime_labels`` for the prefix of bars ``0..end``."""
+        n = end + 1
+        ok, idx, x = self.ok[:n], self.index[:n], self.x[:n]
+        fit = ok & (idx <= min(fit_end, idx[-1]))
+        if fit_start is not None:
+            fit &= idx >= fit_start
+        labels = np.full(n, -1)
+        if fit.sum() < 10 * k:
+            return labels, None, None
+        key = (hashlib.sha256(np.ascontiguousarray(x[fit]).tobytes()).hexdigest(), k)
+        hit = _FIT_CACHE.get(key)
+        if hit is None:
+            mu, sd = x[fit].mean(axis=0), x[fit].std(axis=0)
+            sd = np.where(sd > 0, sd, 1.0)
+            hit = (fit_hmm((x[fit] - mu) / sd, k), mu, sd)
+            if len(_FIT_CACHE) >= _FIT_CACHE_MAX:
+                _FIT_CACHE.pop(next(iter(_FIT_CACHE)))
+            _FIT_CACHE[key] = hit
+        model, mu, sd = hit
+        full = self._filtered.get(key)
+        if full is None:
+            full = model.filtered(((self.x - mu) / sd)[self.ok])
+            self._filtered[key] = full
+        probs = full[:int(ok.sum())]
+        labels[ok] = probs.argmax(axis=1)
+        return labels, (probs[-1] if ok[-1] else None), model
+
+
 def regime_labels(close: pd.Series, risk_free: np.ndarray | None, k: int, fit_start: pd.Timestamp | None,
                   fit_end: pd.Timestamp, periods_per_year: float = 252.0
                   ) -> tuple[np.ndarray, np.ndarray | None, GaussianHMM | None]:
@@ -148,27 +196,4 @@ def regime_labels(close: pd.Series, risk_free: np.ndarray | None, k: int, fit_st
     last bar (``None`` when that bar has no label). ``model`` is ``None`` (all labels
     ``-1``) when too few rows are available to fit.
     """
-    feats = regime_features(close, risk_free, periods_per_year)
-    ok = feats.notna().all(axis=1).to_numpy()
-    idx = close.index
-    fit = ok & (idx <= min(fit_end, idx[-1]))
-    if fit_start is not None:
-        fit &= idx >= fit_start
-    labels = np.full(len(close), -1)
-    x = feats.to_numpy(float)
-    if fit.sum() < 10 * k:
-        return labels, None, None
-    key = (hashlib.sha256(np.ascontiguousarray(x[fit]).tobytes()).hexdigest(), k)
-    hit = _FIT_CACHE.get(key)
-    if hit is None:
-        mu, sd = x[fit].mean(axis=0), x[fit].std(axis=0)
-        sd = np.where(sd > 0, sd, 1.0)
-        hit = (fit_hmm((x[fit] - mu) / sd, k), mu, sd)
-        if len(_FIT_CACHE) >= _FIT_CACHE_MAX:
-            _FIT_CACHE.pop(next(iter(_FIT_CACHE)))
-        _FIT_CACHE[key] = hit
-    model, mu, sd = hit
-    xs = (x - mu) / sd
-    probs = model.filtered(xs[ok])
-    labels[ok] = probs.argmax(axis=1)
-    return labels, (probs[-1] if ok[-1] else None), model
+    return RegimeSeries(close, risk_free, periods_per_year).labels(len(close) - 1, k, fit_start, fit_end)

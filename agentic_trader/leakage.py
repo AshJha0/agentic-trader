@@ -26,6 +26,7 @@ Three separate guards, each against a different way the future reaches a backtes
 """
 from __future__ import annotations
 
+import functools
 import json
 import math
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -156,6 +157,7 @@ def student_t_sf(t: float, df: float) -> float:
     return tail if t >= 0 else 1.0 - tail
 
 
+@functools.lru_cache(maxsize=256)
 def student_t_crit(df: float, alpha: float = 0.05) -> float:
     """Two-sided critical value: the ``t`` with ``P(|T| >= t) = alpha`` at ``df`` degrees of
     freedom (2.776 at 4 df and 5%), by bisection on ``student_t_sf``. scipy is not a
