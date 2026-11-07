@@ -705,13 +705,16 @@ def get_llm(config: dict) -> LLM | None:
         return None
     if provider == "anthropic":
         llm: LLM = AnthropicLLM(config)
+    elif provider == "local":
+        from .local_llm import LocalLLM
+        llm = LocalLLM(config)
     else:
-        raise ValueError(f"unknown llm_provider {provider!r} (use 'offline' or 'anthropic')")
+        raise ValueError(f"unknown llm_provider {provider!r} (use 'offline', 'anthropic' or 'local')")
     return budget_llm(llm, config)
 
 
 def llm_usage(llm: LLM | None) -> dict[str, Any] | None:
-    """Usage summary for an AnthropicLLM (possibly budget-wrapped), else None."""
+    """Usage summary for an AnthropicLLM or LocalLLM (possibly budget-wrapped), else None."""
     tracker = getattr(llm, "usage", None)
     return tracker.summary() if isinstance(tracker, UsageTracker) else None
 

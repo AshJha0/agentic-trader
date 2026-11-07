@@ -8,7 +8,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ---- LLM ---------------------------------------------------------------
     # "offline": every agent uses its deterministic rule-based reasoning (no API key needed).
     # "anthropic": agents reason with Claude; rule-based output is the fallback on any error.
+    # "local": agents reason with a local open-weight model (see local_llm_* below).
     "llm_provider": "offline",
+    # "local": a model served on this machine by Ollama (local_llm.py; plan item 2.1). Zero
+    # cost; max_llm_calls still caps calls. Unrun on the development machine (below 16 GB RAM).
+    "local_llm_url": "http://127.0.0.1:11434",
+    "local_llm_model": None,       # Ollama model name; required when llm_provider is "local"
+    "local_llm_timeout_s": 120,
+    "local_llm_seed": None,        # sampling seed sent to Ollama (temperature is 0 regardless)
     "deep_think_llm": "claude-sonnet-5-5",  # researchers, facilitator, trader, risk team, PM
     "quick_think_llm": "claude-haiku-5-5",  # analysts summarising tool output
     # claude-opus-5-5 is the optional upgrade for the PM / critic: set deep_think_llm to it.
