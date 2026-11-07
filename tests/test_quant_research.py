@@ -178,7 +178,7 @@ def test_significance_gated_series_matches_the_analyst_at_one_bar(frames):
     from agentic_trader.alpha import significance_gated_series, significant_alpha_signal
     ins, df, carry = frames["USDJPY"]
     rep = alpha_report(df, ins, 10, carry_series=carry)
-    ic = {n: {"IC": v["IC"], "t(IC)": v["t(IC)"], "n": v["n"]} for n, v in rep.table.to_dict(orient="index").items()}
+    ic = {n: {"IC": v["IC"], "t(IC)": v["t(IC)"], "t_crit": v["t_crit"], "n": v["n"]} for n, v in rep.table.to_dict(orient="index").items()}
     latest = {n: (None if pd.isna(v) else float(v)) for n, v in rep.signals.iloc[-1].items()}
     expected, _ = significant_alpha_signal(latest, ic)
     got = rep.signals["significance_gated"].iloc[-1]

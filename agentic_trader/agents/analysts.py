@@ -476,7 +476,8 @@ class AlphaAnalyst(Analyst):
     Uses the ``quant.alpha`` tool output when the agentic harness ran it (so the IC table is
     evidence); otherwise computes the snapshot from the state's history. Either way, the
     *decision* always goes through ``alpha.significant_alpha_signal``: only alphas whose IC
-    t-statistic clears the significance bar (``|t(IC)| >= 2`` and at least 30 observations)
+    t-statistic clears the significance bar (the two-sided 5% Student-t value for its fold
+    count, 2.776 with five folds, and at least 30 observations)
     get non-zero weight in the combination, and the analyst abstains when none qualify. This
     is stricter than a plain IC-weighted average -- weighting by ``max(0, IC)`` let many
     near-zero, statistically insignificant alphas add turnover without predictive value (see
@@ -490,7 +491,7 @@ class AlphaAnalyst(Analyst):
     role = ("Quantitative Alpha Analyst. You read a library of systematic signals (momentum, "
             "reversal, breakout, volatility, carry) and their measured predictive power, and "
             "give a direction for the next one to four weeks.")
-    instructions = ("Only trust a signal whose IC t-statistic is at least 2 in magnitude; report "
+    instructions = ("Only trust a signal whose IC t-statistic clears the 5% Student-t bar for its fold count (2.78 with five folds); report "
                     "its combined view and the strongest components, and abstain when none qualify.")
     min_ic_tstat = 2.0
     min_ic_n = 30
@@ -534,7 +535,7 @@ class AlphaAnalyst(Analyst):
         comb, strong_names = significant_alpha_signal(latest, ic, self.min_ic_tstat, self.min_ic_n)
         if comb is None:
             return self.abstain(
-                "No alpha signal clears the significance bar (|t(IC)| >= 2, n >= 30) over the "
+                "No alpha signal clears the significance bar (|t(IC)| at the 5% Student-t bar for its fold count, n >= 30) over the "
                 "lookback." if ic else "Not enough history for the alpha library.", f)
         pts = []
         for name in strong_names[:3]:
@@ -547,7 +548,7 @@ class AlphaAnalyst(Analyst):
         total = sum(1 for v in ic.values() if v.get("IC") is not None)
         return AnalystReport(self.name, sig, conf,
                              f"IC-weighted alpha composite {sig:+.2f} from {len(strong_names)} of "
-                             f"{total} signals with |t(IC)| >= {self.min_ic_tstat:.0f} over the "
+                             f"{total} signals clearing the 5% Student-t bar for their fold count over the "
                              "lookback.", pts, f)
 
 
@@ -572,7 +573,7 @@ class XAlphaAnalyst(Analyst):
             "systematic signals (momentum, reversal, breakout, volatility, carry) whose cross-sectional "
             "predictive power has been measured, and give a relative direction for the next one to "
             "four weeks.")
-    instructions = ("Only trust a signal whose cross-sectional IC t-statistic is at least 2 in magnitude; "
+    instructions = ("Only trust a signal whose cross-sectional IC t-statistic clears the 5% Student-t bar for its fold count (2.78 with five folds); "
                     "report the name's rank-based combined view and the strongest components, and abstain "
                     "when none qualify.")
     min_ic_tstat = 2.0
@@ -646,7 +647,8 @@ class XAlphaAnalyst(Analyst):
                     sc = cs_zscore(panel, groups, min_names=3)
                     scores[n] = sc
                     summ = ic_summary(cross_sectional_ic(sc, fwd, self.min_names), self.horizon, ppy)
-                    ic[n] = {"IC": float(summ["mean IC"]), "t(IC)": float(summ["t(IC)"]), "n": int(summ["days"])}
+                    ic[n] = {"IC": float(summ["mean IC"]), "t(IC)": float(summ["t(IC)"]),
+                             "t_crit": float(summ["t_crit"]), "n": int(summ["days"])}
                 scores["combined"] = _combine_scores(scores, None)
                 snap: dict[str, dict[str, float | None]] = {s: {} for s in frames}
                 for n, sc in scores.items():
@@ -675,7 +677,7 @@ class XAlphaAnalyst(Analyst):
                                 f"against the {f.get('breadth', 0)}-name cross-section.", f)
         comb, strong = significant_alpha_signal(latest, ic, self.min_ic_tstat, self.min_ic_n)
         if comb is None:
-            return self.abstain("No cross-sectional alpha clears the significance bar (|t(IC)| >= 2, "
+            return self.abstain("No cross-sectional alpha clears the significance bar (|t(IC)| at the 5% Student-t bar for its fold count, "
                                 "n >= 30) over the lookback." if ic else "Not enough history for the cross-section.", f)
         pts = []
         for name in strong[:3]:

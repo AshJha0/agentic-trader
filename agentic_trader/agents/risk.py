@@ -199,6 +199,16 @@ class PortfolioManager(Agent):
         conf = p.confidence
         rationale = (f"Blended risk-team sizing (25% aggressive / 50% neutral / 25% conservative) "
                      f"gives {w:+.2f} against a proposal of {p.target_weight:+.2f}.")
+        fc = state.forecast
+        if fc is not None:
+            # combination.method "ic": the trader's mean-variance weight already prices risk,
+            # so the hand-set stance blend is not applied; with conformal sizing the tilt is
+            # scaled by min(1, |mu| / interval half-width).
+            scale = fc.size_scale()
+            w = fc.neutral + (p.target_weight - fc.neutral) * scale
+            rationale = (f"IC-combination weight {p.target_weight:+.2f} from {len(fc.active)} significant "
+                         f"signal(s)" + (f", interval sizing x{scale:.2f}" if fc.interval is not None else "")
+                         + f" -> {w:+.2f}.")
         source = "rules"
 
         prompt = (

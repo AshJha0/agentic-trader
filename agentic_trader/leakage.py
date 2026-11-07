@@ -92,6 +92,89 @@ def purged_walk_forward(n_samples: int, horizon: int, n_folds: int = 5,
     return folds
 
 
+def scored_mask(n_samples: int, horizon: int, n_folds: int = 5, embargo: int | None = None) -> np.ndarray:
+    """Boolean mask of the positions ``ic_purged`` scores (the union of every fold's
+    ``scored`` block), so a diagnostic reported beside a purged IC can be measured on the
+    same sample and the same ``n``. All False when the series is too short for the folds."""
+    mask = np.zeros(n_samples, bool)
+    try:
+        folds = purged_walk_forward(n_samples, horizon, n_folds, embargo)
+    except ValueError:
+        if horizon < 1:
+            raise
+        return mask
+    for fold in folds:
+        mask[fold.scored] = True
+    return mask
+
+
+def _betacf(a: float, b: float, x: float) -> float:
+    """Continued fraction for the regularised incomplete beta function (modified Lentz),
+    after Press et al., *Numerical Recipes* (3rd ed., 2007), section 6.4."""
+    tiny, eps = 1e-300, 3e-16
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c, d = 1.0, 1.0 - qab * x / qap
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 400):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+    return h
+
+
+def _betainc(a: float, b: float, x: float) -> float:
+    """Regularised incomplete beta ``I_x(a, b)`` for ``0 <= x <= 1``."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    lbt = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log1p(-x)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return math.exp(lbt) * _betacf(a, b, x) / a
+    return 1.0 - math.exp(lbt) * _betacf(b, a, 1.0 - x) / b
+
+
+def student_t_sf(t: float, df: float) -> float:
+    """Upper-tail probability ``P(T > t)`` of Student's t with ``df`` degrees of freedom."""
+    if df <= 0:
+        raise ValueError("df must be positive")
+    tail = 0.5 * _betainc(df / 2.0, 0.5, df / (df + t * t))
+    return tail if t >= 0 else 1.0 - tail
+
+
+def student_t_crit(df: float, alpha: float = 0.05) -> float:
+    """Two-sided critical value: the ``t`` with ``P(|T| >= t) = alpha`` at ``df`` degrees of
+    freedom (2.776 at 4 df and 5%), by bisection on ``student_t_sf``. scipy is not a
+    dependency, so the quantile is computed here."""
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must lie in (0, 1)")
+    target = alpha / 2.0
+    lo, hi = 0.0, 1.0
+    while student_t_sf(hi, df) > target:
+        hi *= 2.0
+    while hi - lo > 1e-12:
+        mid = 0.5 * (lo + hi)
+        if student_t_sf(mid, df) > target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
 @dataclass(frozen=True)
 class PurgedIC:
     """Fold-by-fold rank IC and its summary.
@@ -99,15 +182,58 @@ class PurgedIC:
     ``ic`` is the mean of the finite fold ICs; ``t`` is ``mean / (sd / sqrt(k))`` over
     those ``k`` folds (NaN with fewer than three), a t-statistic with ``k - 1`` degrees of
     freedom whose observations do not overlap; ``n`` counts the pairs (or dates) scored.
+    With five folds that is 4 degrees of freedom, where the two-sided 5% bar is 2.776, not
+    the normal 1.96 or a round 2: ``t_crit`` carries that bar and ``significant`` applies it.
     """
     ic: float
     t: float
     n: int
     folds: tuple[float, ...]
 
+    @property
+    def k(self) -> int:
+        """Number of finite fold ICs behind ``t``."""
+        return sum(1 for x in self.folds if math.isfinite(x))
+
+    @property
+    def t_crit(self) -> float:
+        """Two-sided 5% Student-t critical value at ``k - 1`` degrees of freedom; NaN when
+        ``t`` is undefined (fewer than three finite folds)."""
+        return student_t_crit(self.k - 1) if self.k >= 3 else float("nan")
+
+    @property
+    def significant(self) -> bool:
+        """``|t| >= t_crit``; False whenever either is NaN."""
+        return math.isfinite(self.t) and math.isfinite(self.t_crit) and abs(self.t) >= self.t_crit
+
     def as_gate(self) -> dict[str, float | int]:
-        """The ``{"IC", "t(IC)", "n"}`` shape ``alpha.significant_alpha_signal`` reads."""
-        return {"IC": self.ic, "t(IC)": self.t, "n": self.n}
+        """The ``{"IC", "t(IC)", "n", "t_crit"}`` shape ``alpha.significant_alpha_signal``
+        reads."""
+        return {"IC": self.ic, "t(IC)": self.t, "n": self.n, "t_crit": self.t_crit}
+
+
+def gate_threshold(entry: dict, fallback: float = 2.0) -> float:
+    """The |t(IC)| bar for one gate-table entry: its own ``t_crit`` (the Student-t value for
+    its fold count) when it carries one, else ``fallback`` for a hand-built table with no
+    fold count. A NaN ``t_crit`` means the statistic is undefined, so nothing passes."""
+    tc = entry.get("t_crit")
+    if tc is None:
+        return fallback
+    tc = float(tc)
+    return tc if math.isfinite(tc) else math.inf
+
+
+def passes_gate(entry: Any, min_n: int = 30, fallback_tstat: float = 2.0) -> bool:
+    """Whether one ``{"IC", "t(IC)", "n"[, "t_crit"]}`` entry clears the significance gate:
+    a finite IC, ``|t(IC)| >= gate_threshold(entry)`` and ``n >= min_n``. Every gate in the
+    package (``alpha.significant_alpha_signal``, ``alpha.significance_gated_series``,
+    ``xalpha.significance_gated_scores``) goes through this function."""
+    if not isinstance(entry, dict):
+        return False
+    icv, t, n = entry.get("IC"), entry.get("t(IC)"), entry.get("n")
+    if icv is None or icv != icv or t is None or t != t:
+        return False
+    return abs(float(t)) >= gate_threshold(entry, fallback_tstat) and (n or 0) >= min_n
 
 
 def _summarise(fold_ics: list[float], n: int) -> PurgedIC:
@@ -278,6 +404,7 @@ def desk_outputs(graph: Any, symbol: str, as_of: date, provider: MarketDataProvi
                  alpha_lookback_days: int = 900) -> dict[str, bytes]:
     """Serialised outputs of one offline desk run for ``symbol`` at ``as_of``: each analyst
     report, the debate, the proposal, the risk views, the decision, the markdown report, the
+    v0.14 IC forecast and regime label when their switches are on, the
     prompts sent (when ``graph.llm`` is a ``PromptRecorder``) and the alpha library's
     values on the same point-in-time history. Memory is not consulted (a fresh in-memory
     store), so two runs differ only through the data."""
@@ -297,6 +424,10 @@ def desk_outputs(graph: Any, symbol: str, as_of: date, provider: MarketDataProvi
     out.update({"debate": _dump(state.debate), "proposal": _dump(state.proposal),
                 "risk_views": _dump(state.risk_views), "decision": _dump(state.decision),
                 "markdown": state.to_markdown().encode("utf-8")})
+    if state.forecast is not None:
+        out["forecast"] = _dump(state.forecast)
+    if state.regime:
+        out["regime"] = _dump(state.regime)
     if recorder is not None:
         out["prompts"] = _dump(recorder.prompts)
     ins = state.instrument

@@ -41,7 +41,7 @@ def evaluate(level: float) -> dict:
         h = provider.history(Instrument.parse(sym), start - timedelta(days=WARMUP_DAYS), end)
         r = h["Close"].pct_change()
         r = r[r.index <= pd.Timestamp(end)]
-        in_design = (r.index >= pd.Timestamp(start)).to_numpy()
+        in_design = np.asarray(r.index >= pd.Timestamp(start))
         for m in VAR_METHODS:
             f = var_forecast(r.to_numpy(float), m)
             bt = var_backtest(r.to_numpy(float)[in_design], f[in_design])

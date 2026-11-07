@@ -11,7 +11,7 @@ import pytest
 
 from agentic_trader import Instrument, make_config
 from agentic_trader.agents.analysts import AlphaAnalyst
-from agentic_trader.leakage import ic_purged
+from agentic_trader.leakage import ic_purged, scored_mask
 from agentic_trader.alpha import (IC_T_METHODS, _alpha_diagnostics, alpha_report, compute_alphas, forward_returns,
                                   information_coefficient, significant_alpha_signal, tercile_spread)
 from agentic_trader.data import SyntheticProvider
@@ -188,7 +188,8 @@ def test_tercile_spread_survives_a_signal_tied_on_most_bars():
     assert old < 0.4 * true_spread                               # lo == hi == -1: "top" was every bar
     assert new == pytest.approx(true_spread, rel=0.15)
     assert new > 2.5 * old
-    assert _alpha_diagnostics(s, fwd)["tercile spread%"] == pytest.approx(100 * new)
+    m = scored_mask(n, 1)                                        # the row is measured on the scored pairs
+    assert _alpha_diagnostics(s, fwd)["tercile spread%"] == pytest.approx(100 * tercile_spread(s[m], fwd[m]))
     # the same bars in another order give the same number: ties are shared, not broken by position
     perm = rng.permutation(n)
     assert tercile_spread(s[perm], fwd[perm]) == pytest.approx(new)
@@ -220,9 +221,10 @@ def test_hit_rate_is_reported_next_to_the_base_rate():
     fwd = rng.normal(0.003, 0.01, 200)                            # a rally: most 10-day returns are up
     fwd[fwd == 0] = 1e-6
     bull = _alpha_diagnostics(np.ones(200), fwd)
-    assert bull["up%"] == pytest.approx(100 * np.mean(fwd > 0)) and bull["up%"] > 55
+    m = scored_mask(200, 1)                                       # every column uses the scored pairs
+    assert bull["up%"] == pytest.approx(100 * np.mean(fwd[m] > 0)) and bull["up%"] > 55
     assert bull["hit%"] == pytest.approx(bull["up%"])              # zero skill reads as hit == base
     bear = _alpha_diagnostics(-np.ones(200), fwd)
     assert bear["hit%"] == pytest.approx(100 - bear["up%"])
     assert math.isnan(_alpha_diagnostics(np.full(5, NAN), fwd[:5])["up%"])
-    assert set(bull) == {"IC", "t(IC)", "n", "hit%", "up%", "tercile spread%", "autocorr", "coverage%"}
+    assert set(bull) == {"IC", "t(IC)", "t_crit", "n", "hit%", "up%", "tercile spread%", "autocorr", "coverage%"}

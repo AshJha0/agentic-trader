@@ -29,7 +29,7 @@ import pandas as pd
 
 from . import quant
 from .instruments import Instrument
-from .leakage import ic_purged
+from .leakage import ic_purged, passes_gate, scored_mask
 
 Signal = Callable[["AlphaInputs"], np.ndarray]
 
@@ -257,9 +257,7 @@ def significance_gated_series(sig: pd.DataFrame, ic: dict[str, dict], min_tstat:
     the point-in-time procedure, would have behaved.
     """
     weights = {name: v["IC"] for name, v in (ic or {}).items()
-              if name not in ("combined", "significance_gated") and isinstance(v, dict)
-              and v.get("IC") is not None and v["IC"] == v["IC"]
-              and abs(v.get("t(IC)") or 0.0) >= min_tstat and (v.get("n") or 0) >= min_n}
+              if name not in ("combined", "significance_gated") and passes_gate(v, min_n, min_tstat)}
     if not weights:
         return pd.Series(np.nan, index=sig.index)
     cols = [c for c in weights if c in sig.columns]
@@ -309,15 +307,17 @@ def _alpha_diagnostics(s: np.ndarray, fwd: np.ndarray, horizon: int = 1) -> dict
     same pairs: a signal stuck at +1 through a rally scores ``hit% == up%`` with zero skill."""
     pic = ic_purged(s, fwd, horizon)
     ic, t, n = pic.ic, pic.t, pic.n
-    ok = np.isfinite(s) & np.isfinite(fwd)
+    # hit%, up% and the tercile spread use the same scored pairs as the IC, so ``n``
+    # describes every column of the row.
+    ok = np.isfinite(s) & np.isfinite(fwd) & scored_mask(len(s), horizon)
     hit = float(np.mean(np.sign(s[ok]) == np.sign(fwd[ok]))) if ok.any() else float("nan")
     up = float(np.mean(fwd[ok] > 0)) if ok.any() else float("nan")
-    spread = tercile_spread(s, fwd) if ok.sum() >= 30 else float("nan")
+    spread = tercile_spread(s[ok], fwd[ok]) if ok.sum() >= 30 else float("nan")
     valid = s[np.isfinite(s)]
     ac = float("nan")
     if valid.size > 10 and valid[:-1].std() > 0 and valid[1:].std() > 0:
         ac = float(np.corrcoef(valid[:-1], valid[1:])[0, 1])
-    return {"IC": ic, "t(IC)": t, "n": n, "hit%": 100 * hit, "up%": 100 * up,
+    return {"IC": ic, "t(IC)": t, "t_crit": pic.t_crit, "n": n, "hit%": 100 * hit, "up%": 100 * up,
             "tercile spread%": 100 * spread, "autocorr": ac, "coverage%": 100 * np.isfinite(s).mean()}
 
 
@@ -368,9 +368,12 @@ def significant_alpha_signal(latest: dict[str, float | None], ic: dict[str, dict
     ``latest`` is a name -> value snapshot (as returned by ``alpha_snapshot``); ``ic`` is a
     name -> {"IC", "t(IC)", "n"} table (as returned by ``alpha_report`` or computed inline),
     whose ``t(IC)`` must be the overlap-aware statistic ``information_coefficient`` returns for
-    the forward horizon actually used -- the ``min_tstat`` bar is calibrated as a per-alpha
-    two-sided test at roughly the 5% level, and the raw ``IC * sqrt(n)`` on overlapping
-    10-bar returns is ~2.5-3x too large under the null.
+    the forward horizon actually used. An entry carrying ``t_crit`` (every
+    ``leakage.PurgedIC.as_gate`` and ``alpha_report`` row does) is held to that bar, the
+    two-sided 5% Student-t value for its fold count (2.776 with five folds); ``min_tstat``
+    is only the fallback for a hand-built entry with no fold count
+    (``leakage.passes_gate``). The raw ``IC * sqrt(n)`` on overlapping 10-bar returns is
+    ~2.5-3x too large under the null.
     Both ``AlphaAnalyst`` and the ``quant.alpha`` tool produce this shape, so this one
     function is the single source of truth for what "the alpha analyst's view" means: it is
     used whether the analyst computes its own snapshot or reuses one already fetched as a
@@ -382,11 +385,8 @@ def significant_alpha_signal(latest: dict[str, float | None], ic: dict[str, dict
     """
     weights: dict[str, float] = {}
     for name, v in (ic or {}).items():
-        if name in ("combined", "significance_gated") or not isinstance(v, dict):
-            continue
-        icv, t, n = v.get("IC"), v.get("t(IC)"), v.get("n")
-        if icv is not None and icv == icv and abs(t or 0.0) >= min_tstat and (n or 0) >= min_n:
-            weights[name] = float(icv)
+        if name not in ("combined", "significance_gated") and passes_gate(v, min_n, min_tstat):
+            weights[name] = float(v["IC"])
     if not weights:
         return None, []
     num = den = 0.0
