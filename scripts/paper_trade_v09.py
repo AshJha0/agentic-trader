@@ -22,7 +22,8 @@ Frozen books (docs/evaluation/v09_preregistration.md), all with the released v0.
 Outputs under ``results/paper``: ``ledger.csv`` (one daily return per book/stream plus the
 credited ``rf``), ``summary.md`` (cumulative return, Sharpe on excess returns and, once 60
 sessions exist, the paired block-bootstrap Sharpe difference of every candidate against
-its control), ``runs.jsonl`` (one line per run: as-of date, rows, provenance, revisions).
+its control), ``runs.jsonl`` (one line per run: as-of date, rows, provenance, revisions and
+``price_vintage``, the SHA-256 of every price frame the run read; see ``paper_ops.py``).
 
 Nothing here changes a rule, a universe or a weight after the freeze date. To adopt a
 candidate later, the forward record has to clear the pre-registered bar on its own.
@@ -35,7 +36,6 @@ import argparse
 import json
 import sys
 import time
-from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 
@@ -53,6 +53,7 @@ from agentic_trader.evaluation import CORE_UNIVERSE, EXTENDED_UNIVERSE, UNIVERSE
 from agentic_trader.provenance import provenance  # noqa: E402
 from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_stats  # noqa: E402
 from agentic_trader.validate import read_ledger_csv, write_ledger_csv  # noqa: E402
+from scripts.paper_ops import VintageRecorder, vintage_hash  # noqa: E402
 
 FREEZE = date(2026, 9, 29)          # the first session of the forward record (v0.9 pre-registration)
 PPY = 260.0
@@ -199,7 +200,7 @@ def main(argv=None) -> int:
     cfg = make_config(data_provider=a.data, memory_path=None,
                       edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
                       fred_cache_dir=str(ROOT / "build" / "fred_cache"))
-    provider = get_provider(cfg)
+    provider = VintageRecorder(get_provider(cfg))
     t0 = time.time()
     # The freeze session is the first bar; a return needs a second. Until it is complete (the
     # run after the next close) there is nothing to record, and that is not a failure. Any
@@ -240,6 +241,7 @@ def main(argv=None) -> int:
                             "freeze": freeze.isoformat(), "sessions": int(len(merged)),
                             "sessions_recomputed": int(len(frame)), "appended": int(len(merged) - (len(old) if old is not None else 0)),
                             "data": a.data, "seconds": round(time.time() - t0, 1),
+                            "price_vintage": vintage_hash(provider.frames),
                             "revisions": rev["changed"], "dropped": rev["dropped"],
                             "last": {c: float(merged[c].iloc[-1]) for c in merged.columns},
                             "provenance": provenance()}, default=float) + "\n")

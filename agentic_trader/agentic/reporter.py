@@ -207,8 +207,8 @@ def llm_narrative(llm: LLM, state: TradingState, facts: dict[str, float], findin
     # its name would; they stay in the template narrative and the number audit, not in the prompt.
     shown = {k: v for k, v in facts.items() if getattr(state, "anon", None) is None or k not in PRICE_LEVEL_FACTS}
     prompt = (
-        f"Write a 4-6 sentence executive summary of this decision for a portfolio manager.\n\n"
-        f"Structured facts (use these figures and no others; quote them as given):\n"
+        "Write a 4-6 sentence executive summary of this decision for a portfolio manager.\n\n"
+        "Structured facts (use these figures and no others; quote them as given):\n"
         + "\n".join(f"- {k}: {v:.4g}" for k, v in shown.items())
         + "\n\nFindings:\n" + findings_block(findings, confidence=False)
         + "\n\nDo not invent numbers, dates or evidence ids. Plain prose, no headings."
