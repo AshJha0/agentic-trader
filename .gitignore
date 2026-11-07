@@ -22,3 +22,8 @@ htmlcov/
 # rendered result tables are published with the docs
 !docs/results/
 !docs/results/**
+# forward paper record is published (owner decision 2026-11-07); the run log stays local
+!results/
+results/*
+!results/paper/
+results/paper/cron.log
