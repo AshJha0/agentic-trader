@@ -73,9 +73,15 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE) -> pd.DataFrame:
-    """The whole forward record, freeze -> as_of, one column per ``book/stream`` plus ``rf``."""
+def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure: dict | None = None) -> pd.DataFrame:
+    """The whole forward record, freeze -> as_of, one column per ``book/stream`` plus ``rf``.
+
+    When ``exposure`` is a dict it receives one frame with, per ``book/stream``, the gross
+    exposure held over each bar (sum of |weight| x allocation), the turnover traded on it and
+    the trading cost charged for it (turnover x (cost_bps + slippage_bps) of each sleeve), all
+    as fractions of book capital."""
     cols, rf = {}, None
+    exp_cols = {}
     for book, (syms, weighting, streams, _) in BOOKS.items():
         rep = run_portfolio_backtest(syms, freeze, as_of, cfg, rebalance_every=5, provider=provider,
                                      weighting=weighting, cov_window=120)
@@ -88,10 +94,28 @@ def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE) -> pd.Dat
                                  f"{last.date()}; refusing to record a sleeve with missing sessions")
         for s in streams:
             cols[f"{book}/{s}"] = rep.returns[s]
+            if exposure is not None:
+                alloc = rep.allocations.reindex(rep.dates) if rep.allocations is not None else None
+                gross = turn = cost = 0.0
+                for sym, sleeve in rep.sleeves.items():
+                    res = sleeve.results[s]
+                    share = alloc[sym] if alloc is not None else 1.0 / len(rep.sleeves)
+                    bc = sleeve.backtest_config
+                    unit = 0.0 if bc is None else (bc.cost_bps + bc.slippage_bps) / 1e4
+                    pos = pd.Series(np.abs(res.positions), index=sleeve.dates).reindex(rep.dates).fillna(0.0)
+                    trd = pd.Series(np.abs(res.traded), index=sleeve.dates).reindex(rep.dates).fillna(0.0)
+                    gross = gross + pos * share
+                    turn = turn + trd * share
+                    cost = cost + trd * unit * share
+                exp_cols[f"{book}/{s}/gross"] = gross
+                exp_cols[f"{book}/{s}/turnover"] = turn
+                exp_cols[f"{book}/{s}/cost"] = cost
         r = pd.Series(rep.rf if isinstance(rep.rf, np.ndarray) else float(rep.rf or 0.0), index=rep.dates)
         rf = r if rf is None else pd.concat([rf, r], axis=1, sort=True).max(axis=1)
     frame = pd.DataFrame(cols).sort_index().fillna(0.0)
     frame["rf"] = rf.reindex(frame.index).ffill()
+    if exposure is not None:
+        exposure["frame"] = pd.DataFrame(exp_cols).reindex(frame.index).fillna(0.0)
     return frame
 
 
@@ -185,7 +209,8 @@ def main(argv=None) -> int:
         log(f"fewer than 2 complete sessions since the freeze date {freeze} (as-of {as_of}): nothing to record yet")
         return 0
     log(f"recomputing {freeze} -> {as_of} on {a.data}")
-    frame = recompute(as_of, cfg, provider, freeze)
+    exp: dict = {}
+    frame = recompute(as_of, cfg, provider, freeze, exposure=exp)
     ledger = out / "ledger.csv"
     old = pd.read_csv(ledger, index_col=0, parse_dates=True) if ledger.exists() else None
     if old is not None and len(old) and frame.index[-1] < old.index[-1] and not a.allow_shrink:
@@ -195,6 +220,12 @@ def main(argv=None) -> int:
     merged = merge_append_only(old, frame)
     frame.to_csv(out / "ledger_recomputed.csv")
     merged.to_csv(ledger)
+    # exposure.csv: gross exposure, turnover and trading cost per book/stream per session,
+    # kept append-only like the ledger (sessions already written are never rewritten)
+    exp_file = out / "exposure.csv"
+    if "frame" in exp:
+        old_exp = pd.read_csv(exp_file, index_col=0, parse_dates=True) if exp_file.exists() else None
+        merge_append_only(old_exp, exp["frame"]).to_csv(exp_file)
     if rev["cells"] or rev["dropped"]:
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         rows = [{"run_at": stamp, "as_of": as_of.isoformat(), **c} for c in rev["cells"]]

@@ -58,7 +58,7 @@ def test_ledger_is_append_only_and_a_revised_recomputation_is_logged_not_absorbe
     first = pd.read_csv(out / "ledger.csv", index_col=0, parse_dates=True)
     real = mod.recompute
 
-    def shifted(as_of, cfg, provider, freeze):
+    def shifted(as_of, cfg, provider, freeze, exposure=None):
         f = real(as_of, cfg, provider, freeze)
         f.iloc[5, 0] += 0.005                                          # a restated return on an old session
         return f
