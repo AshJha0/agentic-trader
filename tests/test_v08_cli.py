@@ -4,6 +4,7 @@ provenance in every saved result (56), an honest and CI-exercised dependency loc
 a correctly tagged wheel and a loud numpy fallback (82)."""
 import importlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -240,7 +241,9 @@ def test_lock_states_the_python_it_is_valid_for_and_marks_platform_pins():
     markers = {n: m for n, _, m in _lock_requirements() if m}
     assert markers.get("pywin32") == 'sys_platform == "win32"'
     numpy = next(v for n, v, _ in _lock_requirements() if n == "numpy")
-    if sys.version_info[:2] == (3, 12):
+    # Only an environment installed from the lock must match it; the other CI jobs resolve fresh
+    # from pyproject on purpose, so a new numpy release must not fail them.
+    if sys.version_info[:2] == (3, 12) and os.environ.get("AGENTIC_TRADER_LOCKED") == "1":
         assert numpy == metadata.version("numpy")                   # the lock describes this environment
 
 
