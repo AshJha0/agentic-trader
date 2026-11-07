@@ -24,6 +24,7 @@ from .agents import (ANALYSTS, BearResearcher, BullResearcher, DebateFacilitator
 from .anonymize import Anonymizer
 from .config import make_config
 from .data import MarketDataProvider, get_provider
+from .validate import MAX_GAP_DAYS, require_valid_bars
 from .instruments import Instrument
 from .llm import LLM, budget_llm, get_llm
 from .memory import DecisionMemory, series_basis
@@ -100,6 +101,11 @@ class TradingGraph:
         start = as_of - timedelta(days=self.config["lookback_days"])
         hist = provider.history(ins, start, as_of)
         hist = hist[hist.index <= pd.Timestamp(as_of)]  # point-in-time guard, whatever the provider does
+        # An outage the desk tolerates at the end of the series (max_data_staleness_days) is
+        # tolerated inside it too, so the gap limit is the larger of the two.
+        asset_class = "fx" if ins.is_fx else "equity"
+        require_valid_bars(hist, asset_class, f"{ins.display} history to {as_of}",
+                           max(MAX_GAP_DAYS[asset_class], self.max_staleness_days))
         if len(hist) < 30:
             raise ValueError(f"not enough history for {ins.display} up to {as_of} "
                              f"({len(hist)} bars)")
@@ -123,7 +129,49 @@ class TradingGraph:
         state.track_record = self.memory.track_record(ins.symbol, as_of, provider=state.provider_name)
         self.on_event("data", f"{ins.display} {ins.asset_class}: {len(hist)} bars to {bar_date}, "
                               f"last {state.last_price:.6g}")
+        self._research_forecast(state, provider)
         return state
+
+    def _research_forecast(self, state: TradingState, provider: MarketDataProvider) -> None:
+        """Fill ``state.regime`` and ``state.forecast`` when their v0.14 switches are on.
+
+        Both read one longer point-in-time history (bars ``<= as_of``): the IC combination
+        needs ``window`` bars of signals plus the alpha library's warm-up, the regime model
+        the bars from ``regime.fit_start``. Neither touches anything when its switch is off.
+        """
+        comb, reg, conf = self.config["combination"], self.config["regime"], self.config["conformal"]
+        use_ic = comb["method"] == "ic"
+        if comb["method"] not in ("rules", "ic"):
+            raise ValueError(f"combination.method must be 'rules' or 'ic', not {comb['method']!r}")
+        if (reg["condition"] or conf["enabled"]) and not use_ic:
+            raise ValueError("regime.condition and conformal.enabled need combination.method 'ic'")
+        if not (use_ic or reg["enabled"]):
+            return
+        ins, as_of = state.instrument, state.as_of
+        days = int((int(comb["window"]) + 300 + int(comb["horizon"])) * 1.5)
+        start = as_of - timedelta(days=max(days, self.config["lookback_days"]))
+        if reg["enabled"]:
+            start = min(start, date.fromisoformat(reg["fit_start"]) - timedelta(days=150))
+        hist = provider.history(ins, start, as_of)
+        hist = hist[hist.index <= pd.Timestamp(as_of)]
+        labels = None
+        if reg["enabled"]:
+            from .regime import REGIME_NAMES, regime_labels
+            k = int(reg["states"])
+            # Refit monthly: the fit ends at the earlier of the design end and the first day
+            # of the as-of month, so every fit uses bars before the decision only.
+            fit_end = min(pd.Timestamp(reg["fit_end"]), pd.Timestamp(as_of.replace(day=1)))
+            lab, probs, _ = regime_labels(hist["Close"], provider.risk_free_series(hist.index), k,
+                                          pd.Timestamp(reg["fit_start"]), fit_end, ins.periods_per_year)
+            if probs is not None:
+                state.regime = {"label": int(lab[-1]), "name": REGIME_NAMES[k][int(lab[-1])],
+                                "prob": float(probs[int(lab[-1])])}
+                if reg["condition"]:
+                    labels = lab
+        if use_ic:
+            from .combine import desk_forecast
+            carry = provider.carry_series(ins, hist.index) if ins.is_fx else None
+            state.forecast = desk_forecast(hist, ins, {**comb, "conformal": conf}, carry, labels)
 
     def run_analyst(self, state: TradingState, name: str,
                     provider: MarketDataProvider | None = None) -> AnalystReport:

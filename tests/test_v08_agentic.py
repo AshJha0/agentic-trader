@@ -607,9 +607,11 @@ def test_non_terminal_records_are_reread_from_the_store(tmp_path):
 
 
 # ------------------------------------------------- 53: owner + lease, not a blanket sweep
+# The lease is 3 s (heartbeat every 1 s): with the 1 s lease this test used, a heartbeat
+# thread starved for ~0.7 s on a loaded runner let a sibling's sweep fail a live run.
 def test_interrupted_sweep_spares_a_live_siblings_runs(tmp_path):
     db = tmp_path / "shared.sqlite"
-    cfg = make_config(CFG, agentic={"task_db": str(db), "lease_s": 1.0})
+    cfg = make_config(CFG, agentic={"task_db": str(db), "lease_s": 3.0})
     a = AgentHarness(TradingGraph(cfg, **QUIET), gateway=QueuedApprovalGateway())
     queued = a.submit(Task("MSFT", AS_OF, Role.TRADER))
     parked = _parked_run(a, [_ticket(a, "AAPL", 0.1)])
@@ -621,7 +623,7 @@ def test_interrupted_sweep_spares_a_live_siblings_runs(tmp_path):
     b = AgentHarness(TradingGraph(cfg, **QUIET), gateway=QueuedApprovalGateway())   # default sweep, same db
     assert states() == ("CREATED", "AWAITING_APPROVAL")
     assert b.record(parked.id)["state"] == "AWAITING_APPROVAL"
-    time.sleep(1.6)                                            # longer than the lease: heartbeats keep them alive
+    time.sleep(3.5)                                            # longer than the lease: heartbeats keep them alive
     c = AgentHarness(TradingGraph(cfg, **QUIET), gateway=QueuedApprovalGateway())
     assert states() == ("CREATED", "AWAITING_APPROVAL")
     # A record whose owner stopped heartbeating is failed by the next periodic sweep ...
@@ -655,7 +657,7 @@ def test_interrupted_sweep_spares_a_live_siblings_runs(tmp_path):
     assert parked2.state is TaskState.COMPLETED and second.record(parked2.id)["state"] == "COMPLETED"
     first.close()                                              # the old slot drains and stops heartbeating ...
     t0 = time.time()
-    while store.load(mine.id)["state"] != "FAILED" and time.time() - t0 < 6:
+    while store.load(mine.id)["state"] != "FAILED" and time.time() - t0 < 15:
         time.sleep(0.05)
     assert store.load(mine.id)["state"] == "FAILED"            # ... and its lease expiry fails what it left
     assert second.record(mine.id)["state"] == "FAILED"
@@ -1334,17 +1336,20 @@ def test_stdio_session_serves_calls_concurrently_so_an_abandoned_call_does_not_b
     reg = ms.registry_from_stdio(overrides={"demo.slow": relax, "demo.fast": relax}, call_timeout_s=1.5)
     try:
         ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER, AutoApprovalGateway(),
-                          Tracer(), ExecutorConfig(timeout_s=0.5, max_attempts=1))
+                          Tracer(), ExecutorConfig(timeout_s=1.0, max_attempts=1))
+        # Timeouts sized for a loaded runner: a 0.5 s budget timed the fast call itself out.
+        # A blocked session would hold the fast call for the slow call's full 6 s, so the
+        # bounds below still separate concurrent from head-of-line-blocked by a wide margin.
         assert ex.call("demo.fast").ok
         t0 = time.perf_counter()
-        slow = ex.call("demo.slow", seconds=3.0)
+        slow = ex.call("demo.slow", seconds=6.0)
         assert not slow.ok and "timed out" in slow.error
         fast = ex.call("demo.fast")
-        assert fast.ok and fast.payload == 1 and time.perf_counter() - t0 < 2.0, (fast.error, time.perf_counter() - t0)
+        assert fast.ok and fast.payload == 1 and time.perf_counter() - t0 < 3.0, (fast.error, time.perf_counter() - t0)
         for _ in range(3):                                   # several abandoned calls do not wedge the session
-            assert not ex.call("demo.slow", seconds=3.0).ok
+            assert not ex.call("demo.slow", seconds=6.0).ok
         t1 = time.perf_counter()
-        assert ex.call("demo.fast").ok and time.perf_counter() - t1 < 1.0
+        assert ex.call("demo.fast").ok and time.perf_counter() - t1 < 2.0
         assert ex.tracer.metrics.counter("tool_calls_abandoned_total", tool="demo.slow") == 4
     finally:
         reg.session.close()

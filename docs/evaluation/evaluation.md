@@ -2678,3 +2678,40 @@ the selection report, recipe 57 an impact backtest and recipe 64 the universe pa
 Yahoo occasionally revises adjusted history, so re-runs can differ in the second decimal; the
 historical extended-universe tables above were generated from their saved JSON with pandas,
 and the v0.8 tables by `scripts/render_v08_tables.py`, like every other table here.
+
+## v0.14 design trials (plan items 5.1-5.4)
+
+Design period 2016-01-04 to 2021-12-31, the 15 core names, Yahoo data, produced by
+`scripts/v14_design_trials.py` and `scripts/v14_var_design.py` into `results/v14/` (result
+files are git-ignored; the numbers below are copied from them). The holdout was not read.
+
+**Registered trials** (`evaluation.TRIALS`, 62 to 65): IC-weighted combination (window 504);
+IC combination + HMM regime conditioning; IC combination + conformal interval sizing.
+
+| Trial | Mean Sharpe | Control | Difference | 95% CI | p | Beats control |
+|---|---|---|---|---|---|---|
+| rules desk (current default) | 0.6477 | 0.6437 | +0.004 | [-0.128, +0.148] | 0.989 | 6/15 |
+| IC combination, window 504 | 0.5125 | 0.6437 | -0.131 | [-0.314, +0.059] | 0.174 | 5/15 |
+| IC + HMM regime conditioning | design run pending | | | | | |
+| IC + conformal sizing | design run pending | | | | | |
+
+CI and p are the paired instrument bootstrap against the vol-targeted buy-and-hold control.
+The pre-registered expectation for 5.1 was "tilt goes to zero, desk about equal to control;
+success is that the pipeline refuses noise". It did not hold: on 82.6% of sampled design dates
+at least one signal survived shrinkage (`ic_tilt_design.json`). The combination was worse than
+the control on average, though not significantly. Nothing was adopted and no parameter was
+changed after the result. The regime and conformal runs were stopped for speed (the per-date
+signal panel rebuild dominates); follow-up 5.2b computes the panel and labels once per name
+and then runs them.
+
+**VaR (5.4)**, 5% level, pass counts out of 15:
+
+| Method | Kupiec | Independence | Both |
+|---|---|---|---|
+| historical (250 days) | 14 | 4 | 4 |
+| EWMA (lambda 0.94) | 15 | 13 | 13 |
+| FHS | 15 | 10 | 10 |
+
+EWMA beat the FHS default; the default stays `"fhs"` pending an owner decision recorded in the
+round's PR. The earlier "Kupiec rejects 2 of 15, independence rejects 6 of 15" in the v0.7/v0.8
+sections above is the desk's 250-day historical forecast on the holdout, not the design period.

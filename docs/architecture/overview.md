@@ -57,9 +57,12 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 | Module | Responsibility |
 |---|---|
 | `alpha.py` | Nine alphas, `compute_alphas`, `combine`, `alpha_report` (IC, decay, hit rate, spread, autocorrelation, correlations), `alpha_snapshot`, `significant_alpha_signal` |
-| `xalpha.py` | Cross-sectional alphas: per-day z-scores / ranks within asset class, per-date IC with an overlap-aware t-statistic, quantile spreads, breadth; `xalpha_report`, `xalpha_snapshot` |
+| `xalpha.py` | Cross-sectional alphas: per-day z-scores / ranks within asset class, per-date IC with a purged walk-forward t-statistic (v0.14), quantile spreads, breadth; `xalpha_report`, `xalpha_snapshot` |
 | `algo.py` | Volume profiles, intraday bars, TWAP / VWAP / POV / Almgren-Chriss schedules, `simulate_execution`, `plan_execution` |
 | `portfolio.py` | EWMA and Ledoit-Wolf covariance, five weighting schemes, hierarchical risk budgets across groups, `risk_contributions`, `construct` |
+| `risk_model.py` | (v0.14) `var_forecast` / `var_next` (historical, EWMA, FHS), `factor_exposures`, `stress_rows`, `capacity_aum` / `capacity_row` |
+| `validate.py` | (v0.14) bar validator run in `TradingGraph.prepare`, session clocks, `survivorship_statement`, `cap_short_notional`, round-trip ledger CSV |
+| `leakage.py` | (v0.14) `purged_walk_forward`, `ic_purged`, `ic_purged_series`, `future_leak_canary`, `PointInTimeStore` |
 | `stats.py` | `sharpe_stats`, `sharpe_ci_bootstrap`, `probabilistic_sharpe`, `expected_max_sharpe`, `deflated_sharpe`, `min_track_record`, `selection_report`, (v0.6) `paired_bootstrap` across instruments — since v0.8 a two-stage cluster bootstrap over asset-class-by-universe groups when there are at least five (`scheme=clusters`), the plain instrument bootstrap otherwise (`scheme=instruments`); `benjamini_hochberg` on the unrounded p; `paired_sharpe_block_bootstrap` for the Sharpe difference between two daily series; `rolling_var_forecast` and `var_backtest` (Kupiec, Christoffersen) |
 | `backtest.py` | Walk-forward agent backtest vs nine baselines (buy & hold, vol-targeted buy & hold, SMA, MACD, KDJ+RSI, ZMR, `TSMOM(12-1)`, `TSMOM(L/S)`, `Carry`): constant units between decisions with post-cost sizing, a cash leg (idle capital earns the point-in-time bill; Sharpe on excess returns), optional equity-scaled square-root market impact (`impact_coefficients`); `run_portfolio_backtest(weighting=..., class_budgets=...)` with each sleeve's impact at its own capital share and `PortfolioReport.sharpe_difference` (block bootstrap over days) |
 | `evaluation.py` | Design / holdout / Q1-2024 / reserve harness over the core and extended universes, with parallel workers, LLM usage accounting, (v0.6) repeated runs, cross-instrument paired bootstraps and the prompt hashes in `meta`; (v0.8) `TRIALS`, the registry of every variant judged on a design period (62 at v0.12; 26 at v0.8, 24 of them reproducible on the current engine), and `provenance` in every result |
@@ -211,7 +214,8 @@ See `config.py` for the full dictionary.
 | `rules.track_record_cut` | True | The trader's 0.75× size cut when memory's hit rate over the last ≥ 5 resolved calls is below 40%; on in every published backtest; measured on/off in v0.8 (`results/v08/eval_no_trackrecord_cut.json`) and kept |
 | `data_provider`, `csv_dir`, `lookback_days`, `alpha_lookback_days`, `max_data_staleness_days`, `news_lookback_days`, `synthetic_seed` | `synthetic`, `data`, 400, 900, 7, 7, 7 | Data source and windows; refuse to decide on a bar older than the staleness limit |
 | `risk.neutral_weight`, `rebalance_band`, `max_position`, `max_var_95`, `min_trade_weight`, `target_vol` | equity 1.0 / fx 0.0 (overridden by the carry rule above), 0.10, 1.0, 0.02, 0.05, 0.15 | Strategic weight, band, firm limits, the neutral risk analyst's vol target |
-| `risk.max_book_var_95` | None (off) | Book-level (cross-sleeve) 95% historical VaR cap; scales a proposed weight down by grid search over the book's other positions (`portfolio.book_var_scale`); off in every published run |
+| `risk.max_book_var_95`, `risk.book_var_method` | 0.05, `fhs` | Book-level (cross-sleeve) 1-day 95% VaR cap; scales a proposed weight down by grid search over the book's other positions (`portfolio.book_var_scale`). On by default since v0.14 (was `None`); the 5% is loose and untuned; only `scan` builds a book; off in every run published before v0.14 |
+| `risk.max_short_notional` | None | Largest short as a fraction of capital (v0.14); borrow is not modelled |
 | `risk.allow_short_equity`, `allow_short_fx`, `stop_atr_mult`, `take_profit_atr_mult` | False, True, 2.0, 3.0 | Shorting policy per asset class; protective levels |
 | `costs.equity_cost_bps`, `equity_slippage_bps`, `equity_borrow_annual`, `fx_spread_pips`, `fx_slippage_bps` | 1.0, 1.0, 0.01, 0.8, 0.2 | Multiplicative per-trade costs; borrow on equity shorts |
 | `costs.impact_coeff`, `costs.fx_adv_notional` | 0.0, None | Equity-scaled square-root market impact in backtests (0 = off; 1.0 the textbook value); a notional ADV per FX pair to apply it to FX sleeves |
@@ -251,3 +255,23 @@ See `config.py` for the full dictionary.
 | A rule change | Behind a `config["rules"]` switch; choose on a design period only (`evaluate --data yahoo --universe core --periods design`, or `scripts/measure_v09.py --period design_long` for a return stream), adopt only if the interval against `B&H vol-target` is above zero, register every variant in `evaluation.TRIALS`; report the extended universe and the reserve period as information, not as a choice basis — both were consulted for the v0.5.1 and v0.6 decisions and v0.8 re-measured every period, so no held-out data remains |
 | A quant routine | Declared in `cpp/include/at/`, implemented in `cpp/src/`, bound in `module.cpp`, mirrored in `pycore.py`, exported (with argument validation) in `quant/__init__.py`, cross-checked in `tests/test_quant.py` and fuzzed in `tests/test_fuzz.py`; `strat_tsmom` is the worked example and every exported function is fuzzed |
 | A cross-sectional alpha | It is the same `AlphaInputs -> ndarray` function: `xalpha.signal_panels` standardises every library alpha across the universe |
+
+## v0.14 additions
+
+| Module or file | Role | Default |
+|---|---|---|
+| `leakage.py` | Purged walk-forward IC, Student-t gate (`t_crit`), leak canary, point-in-time store | always on |
+| `combine.py` | IC-weighted combination, shrinkage, mean-variance tilt, turnover band, conformal half-width | off (`combination.method = "rules"`) |
+| `regime.py` | Gaussian-HMM regime label, fitted up to min(as-of, design end) | off (`regime.enabled`, `regime.condition`) |
+| `risk_model.py` | EWMA / FHS VaR, factor, stress and capacity rows | book VaR on (`fhs`, 0.05) |
+| `validate.py` | Bar validator, session clocks, short cap, ledger round trip | always on |
+| `oms.py` | Paper OMS: states, pre-trade checks, kill switch, fills, reconciliation, settlement | shadow only (`paper_trade_v09.py --oms`) |
+| `local_llm.py` | Ollama backend behind the `LLM` protocol | off (`llm_provider = "offline"`) |
+| `scripts/llm_study.py` | Seven-cell LLM study driver | unrun |
+| `scripts/paper_ops.py` | Price-vintage hash, freshness check, publish commit | used by `paper.yml` |
+
+Workflows: `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy advisory);
+`nightly.yml` runs the full suite at 03:17 UTC; `paper.yml` runs the paper session on weekdays
+at 22:30 UTC (`session`, `publish`, `freshness`, `report`). Every action is pinned by commit SHA.
+The OMS kill switch is checked both by `OMS.submit` and by the agentic `submit_order` tool
+(`agentic/servers.py`), so a halt binds both order paths.

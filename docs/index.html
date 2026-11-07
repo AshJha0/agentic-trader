@@ -107,7 +107,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
          agent does, when the model is called, what it may decide and what stops it.
          <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md">How the quant works</a>: the
          two-backend core, the backtester's conventions, risk, alphas, portfolios and the statistics.
-         The guide now has 51 concepts, the cookbook 101 recipes, and there are 38 diagrams.</p></div>
+         The guide now has 53 concepts, the cookbook 105 recipes, and there are 38 diagrams.</p></div>
     <div class="card"><h3>Engineering</h3>
       <p>879 tests collected on both backends (C++ 879 passed; numpy 839 passed, 40 C++-only skipped) and
          26 C++ test functions. Every function the quant facade exports is fuzzed on both backends; that
@@ -417,7 +417,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
          breakout, MACD, RSI, low-vol and FX carry — all in [-1, 1], point in time by
          construction. Per name: IC with t-stat, decay, hit rate, tercile spread, turnover.
          Across a universe (v0.5): daily z-scores or ranks within asset class, per-date IC with
-         an overlap-aware t-statistic, top-minus-bottom quantile spreads, breadth.</p></div>
+         a t-statistic from purged walk-forward folds (v0.14), top-minus-bottom quantile spreads, breadth.</p></div>
     <div class="card"><h3>Execution, in the simulator and in the backtest</h3>
       <p>TWAP, VWAP, participation-of-volume and Almgren-Chriss schedules; a simulator that
          builds intraday bars from the daily bar, charges half the spread and square-root

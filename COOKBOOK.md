@@ -116,6 +116,9 @@ on synthetic data and is executed as-is when the docs are checked.
   99. [Rank and z-score a panel across names](#99-rank-and-z-score-a-panel-across-names)
   100. [Reproduce the v0.12 research round](#100-reproduce-the-v012-research-round)
   101. [Structured outputs and the per-call evidence](#101-structured-outputs-and-the-per-call-evidence)
+- [v0.14: risk model, leakage checks and the paper OMS](#v014-risk-model-leakage-checks-and-the-paper-oms)
+  102. [Purged walk-forward IC on a signal](#102-purged-walk-forward-ic-on-a-signal)
+  103. [FHS against historical VaR on synthetic GARCH returns](#103-fhs-against-historical-var-on-synthetic-garch-returns)
 
 ## Decisions
 
@@ -2218,3 +2221,133 @@ the contract gate that rejects the string `"0.4"`. A dated id such as
 `claude-haiku-5-5-20261001` counts as the configured model (`llm.model_matches`); any other
 served id with no recorded fallback is drift, and with `llm_strict_model=True` the reply is
 discarded and the rules apply.
+
+## v0.14: risk model, leakage checks and the paper OMS
+
+### 102. Purged walk-forward IC on a signal
+
+A 10-day forward return at bar `i` uses bars `i+1` to `i+10`, so neighbouring pairs share nine
+of their ten days. `ic_purged` cuts the series into five contiguous folds, drops the last
+`horizon` bars of each fold from scoring (their labels run into the next fold), and takes
+the t-statistic from the spread of the five fold ICs. This is what `alpha_report`,
+`xalpha_report` and the alpha analysts' gate use since v0.14. The pooled
+`information_coefficient` is printed beside it for comparison.
+
+```python
+from datetime import date
+from agentic_trader import Instrument, make_config
+from agentic_trader.alpha import compute_alphas, forward_returns, information_coefficient
+from agentic_trader.data import SyntheticProvider
+from agentic_trader.leakage import ic_purged, purged_walk_forward
+
+ins = Instrument.parse("AAPL")
+df = SyntheticProvider(make_config()).history(ins, date(2019, 1, 2), date(2023, 12, 29))
+sig = compute_alphas(df, ins, ["tsmom_12_1", "reversal_5"])
+fwd = forward_returns(df["Close"].to_numpy(), 10)
+
+f = purged_walk_forward(len(fwd), horizon=10, n_folds=5)[2]
+print(f"fold 2: test {f.test[0]}..{f.test[-1]}, scored to {f.scored[-1]}, train {f.train.size} bars ending {f.train[-1]}")
+for name in sig:
+    s = sig[name].to_numpy()
+    pooled, t_pooled, n_pooled = information_coefficient(s, fwd, horizon=10)
+    p = ic_purged(s, fwd, horizon=10)
+    print(f"{name:<11} pooled IC {pooled:+.3f} t {t_pooled:+.2f} n {n_pooled} | "
+          f"purged IC {p.ic:+.3f} t {p.t:+.2f} n {p.n} folds {[round(x, 3) for x in p.folds]}")
+```
+
+On this synthetic series, `tsmom_12_1` has no score in fold 0 because the signal needs a year
+of history; that fold is NaN and the mean and t use the other four. `n` is smaller than the
+pooled count because the last ten bars of each fold are not scored. Fold 2's training set
+ends at bar 510, ten bars before its test block (the purge), and has 501 bars because the ten
+bars after fold 0 are embargoed. The t-statistic has `k - 1` degrees of freedom (here three
+or four), so read it against a Student-t, not against 2.
+
+### 103. FHS against historical VaR on synthetic GARCH returns
+
+Volatility that clusters and drifts is what a 250-day historical window handles worst. The
+recipe simulates such a series, forecasts 1-day 95% VaR three ways with
+`risk_model.var_forecast`, and judges each with Kupiec (breach rate) and Christoffersen
+(breach independence) from `stats.var_backtest`.
+
+```python
+import math
+import numpy as np
+from agentic_trader.risk_model import var_forecast, var_next
+from agentic_trader.stats import var_backtest
+
+def garch(n, seed, w=2e-6, a=0.08, b=0.90, df=6):
+    """GARCH(1,1) with Student-t shocks, volatility drifting up threefold over the sample."""
+    rng = np.random.default_rng(seed)
+    s2, scale, r = w / (1 - a - b), np.linspace(1.0, 3.0, n), np.empty(n)
+    for t in range(n):
+        e = math.sqrt(s2) * rng.standard_t(df) / math.sqrt(df / (df - 2))
+        r[t], s2 = e * scale[t], w + a * e * e + b * s2
+    return r
+
+passed = {"historical": 0, "ewma": 0, "fhs": 0}
+for seed in range(4):
+    r = garch(3000, seed)
+    for m in passed:
+        bt = var_backtest(r, var_forecast(r, m))
+        passed[m] += bt.kupiec_p >= 0.05 and bt.christoffersen_p >= 0.05
+        if seed == 0:
+            print(f"{m:<10} breaches {bt.breaches}/{bt.n} ({bt.breach_rate:.3f} vs 0.050)  "
+                  f"Kupiec p {bt.kupiec_p:.3f}  independence p {bt.christoffersen_p:.3f}")
+print("seeds passing both tests (of 4):", passed)
+print("tomorrow's FHS VaR on seed 0:", round(var_next(garch(3000, 0), "fhs"), 4))
+```
+
+On seed 0 the historical window has roughly the right breach rate but its breaches cluster
+(independence p below 0.05); EWMA and FHS pass both. Over the four seeds FHS passes on all
+four. The test suite runs the same check over eight seeds (`tests/test_v14_risk.py`: FHS
+8 of 8, historical at most 2 of 8). This is synthetic data built to have the property FHS
+exploits. On the design period (2016-2021, 15 real names, `scripts/v14_var_design.py`, network)
+the counts passing both tests are historical 4/15, EWMA 13/15, FHS 10/15.
+
+### 104. A paper order through the OMS
+
+The paper OMS takes an order, runs the pre-trade checks, fills it with the backtester's cost
+model and books the cash for T+1. Engaging the kill switch makes every later order fail its
+first check. Nothing reaches a broker.
+
+```python
+from datetime import datetime, timezone
+from agentic_trader.config import make_config
+from agentic_trader.oms import OMS, MarketSnapshot, reconcile
+
+cfg = make_config(data_provider="synthetic", memory_path=None)
+cfg["oms"] = {"borrow_list": ["MSFT"], "max_order_notional": 50_000}
+oms = OMS(cfg)
+at = datetime(2026, 11, 6, 20, 55, tzinfo=timezone.utc)      # 15:55 New York, a Friday
+order = oms.submit("ord-1", "AAPL", "buy", 100, price=200.0, last_close=199.0, at=at)
+oms.execute("ord-1", MarketSnapshot(price=200.0, adv=60_000_000, impact_k=None), at)
+print(order.state, order.filled_qty, round(order.cost, 2))
+print(oms.cash_projection())
+print("reconciles with a ledger holding 100 AAPL:", reconcile(oms, {"AAPL": 100.0}).ok)
+oms.kill_switch.engage("global", "end of test")
+late = oms.submit("ord-2", "MSFT", "buy", 10, price=400.0, last_close=400.0, at=at)
+print(late.state, late.reject_reason)
+```
+
+The fill costs $4.00 on $20,000 of notional (impact is off when `impact_k` is None), and the
+cash leaves on Monday 2026-11-09, T+1 on the NYSE calendar. The second order is `REJECTED`
+with reason `kill_switch: global halted (end of test)`.
+
+### 105. The Student-t gate on purged fold ICs
+
+The gate's bar depends on how many folds produced a finite IC: `k - 1` degrees of freedom,
+two-sided 5%. Fewer than three folds and nothing passes.
+
+```python
+from agentic_trader.leakage import student_t_crit, passes_gate
+
+for df in (2, 3, 4, 9, 29):
+    print(f"{df + 1:>2} folds: t_crit {student_t_crit(df):.3f}")
+entry = {"IC": 0.05, "t(IC)": 2.5, "n": 400, "t_crit": student_t_crit(4)}
+print("t 2.5 with five folds passes:", passes_gate(entry))
+entry["t(IC)"] = 3.0
+print("t 3.0 with five folds passes:", passes_gate(entry))
+```
+
+Five folds give 2.776, so a t of 2.5, which would clear the old fixed bar of 2, fails, and 3.0
+passes. With 30 folds the bar falls to about 2.05, close to the normal 1.96.

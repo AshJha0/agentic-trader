@@ -191,6 +191,11 @@ class TradingState:
     # server-side fallback switches, model drift (llm.AnthropicLLM.last_call).
     llm_calls: list[dict[str, Any]] = field(default_factory=list)
     price_basis: str = ""
+    # v0.14 research switches: the IC-combination forecast (combine.Forecast) when
+    # config["combination"]["method"] is "ic", and the HMM regime label when
+    # config["regime"]["enabled"] ({"label": int, "name": str, "prob": float}).
+    forecast: Any = None
+    regime: dict[str, Any] = field(default_factory=dict)
 
     @property
     def last_price(self) -> float:
@@ -220,6 +225,8 @@ class TradingState:
         lines = []
         if self.current_weight is not None:
             lines.append(f"[portfolio] current position weight {self.current_weight:+.2f}")
+        if self.regime:
+            lines.append(f"[regime] {self.regime['name']} (filtered probability {self.regime['prob']:.2f})")
         for r in self.reports.values():
             if r.abstained:
                 lines.append(f"[{r.analyst}] no data - abstains: {r.summary}")

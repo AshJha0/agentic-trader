@@ -19,6 +19,8 @@ results are on the evaluation pages.
 | Alphas | `alpha.py`, `xalpha.py` | A signal library with time-series and cross-sectional tests |
 | Execution | `algo.py` | Schedules (TWAP, VWAP, POV, Almgren-Chriss), a fill simulator, implementation shortfall |
 | Portfolio | `portfolio.py` | Covariance estimation, five weighting schemes, risk budgets, book VaR |
+| Risk model | `risk_model.py` (v0.14) | EWMA and filtered-historical-simulation VaR forecasts, factor exposures, stress rows, a capacity row |
+| Validation and leakage | `validate.py`, `leakage.py` (v0.14) | Bar validator and edge-case conventions; purged walk-forward IC, the future-leak canary, a point-in-time feature table |
 | Statistics | `stats.py` | Sharpe inference, bootstraps, deflated Sharpe, false discovery control, VaR coverage tests |
 | Evaluation | `evaluation.py`, `scripts/` | Periods, universes, the trials registry, the measurement and rendering scripts |
 | Data | `data/` | Synthetic, Yahoo and CSV prices; FRED (rates, inflation, vintages); SEC EDGAR (filings) |
@@ -84,6 +86,62 @@ The desk's own risk check is a 95% one-day historical VaR of the instrument's la
 returns, on the side of the position (the left tail for a long, the right tail for a short),
 multiplied by the absolute weight and compared with a 2% limit. Whether that forecast is
 calibrated is tested, not assumed: section 9.
+
+### Conditional VaR forecasts (v0.14, plan item 5.4)
+
+**The idea.** A 250-day window treats a quiet day a year ago the same as yesterday, so after
+volatility jumps the forecast catches up slowly: breaches arrive in runs, then become rare.
+On the design period that rule passed Kupiec for 2 of 15 names and Christoffersen
+independence for 6 of 15 (PLAN.md section 2). `risk_model.py` adds two forecasters that
+condition on current volatility.
+
+**Precisely.** `var_forecast(returns, method, window=250, alpha=0.95)` returns, for each day
+`t`, a VaR built from returns before `t` only, aligned so `stats.var_backtest` scores it.
+
+| Method | Forecast for day `t` |
+|---|---|
+| `historical` | The `1 - alpha` quantile of the last `window` returns (identical to `stats.rolling_var_forecast`) |
+| `ewma` | `-z(1 - alpha) * sigma_t`, with `sigma_t^2 = 0.94 * sigma_{t-1}^2 + 0.06 * r_{t-1}^2` (RiskMetrics, 1996) |
+| `fhs` | Divide each past return by its own ex-ante `sigma`; take the `1 - alpha` quantile of the last `window` such residuals; multiply by `sigma_t` (Barone-Adesi, Giannopoulos and Vosper, 1999) |
+
+The decay 0.94 is the RiskMetrics value, not tuned on any period here. FHS keeps the shape of
+the historical tail and scales it to today's volatility.
+
+**Example.** On simulated GARCH(1,1) returns with Student-t shocks and volatility rising
+threefold over 3000 days, FHS passes both tests (p >= 0.05) on 8 of 8 seeds and the 250-day
+historical window on at most 2 of 8 (`tests/test_v14_risk.py`;
+[recipe 103](../../COOKBOOK.md#103-fhs-against-historical-var-on-synthetic-garch-returns)).
+On the design period (2016-01-04 to 2021-12-31, the 15 core names, 5% level,
+`scripts/v14_var_design.py`, `results/v14/var_design.json`) the pass counts are:
+
+| Method | Kupiec | Independence | Both |
+|---|---|---|---|
+| historical (250 days) | 14/15 | 4/15 | 4/15 |
+| EWMA | 15/15 | 13/15 | 13/15 |
+| FHS | 15/15 | 10/15 | 10/15 |
+
+Conditioning on current volatility fixes most of the clustering the historical window shows.
+EWMA did better than FHS here; the book default stays `"fhs"` pending an owner decision
+recorded in the round's PR, so the default was not switched after seeing the result. The older
+figure "Kupiec 2/15, independence 6/15" (PLAN.md section 2) is a different measurement: the
+desk's 250-day historical forecast on the 2022-2023 holdout, from the v0.7/v0.8 evaluation
+([evaluation.md](../evaluation/evaluation.md), VaR coverage). There the counts are rejections
+(2 of 15 rejected by Kupiec, 6 of 15 by independence); here they are passes, on another period.
+
+**Book VaR is on by default.** `risk.max_book_var_95` is now 0.05 (it was `None`), measured with
+`risk.book_var_method = "fhs"`. The 5% is a loose budget, not tuned on any period; it binds only
+on concentrated or highly correlated books. Only a multi-sleeve `TradingGraph.scan` builds a
+book, so a single `propagate` is unaffected.
+
+**Factor, stress and capacity rows.** `factor_exposures` regresses a return series jointly on
+SPY, IEF, UUP and MTUM proxies over a rolling 126-day window. `stress_rows` reports cumulative
+return, worst day, drawdown and volatility over 2008, 2020 and 2022; the 2022 window is inside
+the holdout, so a 2022 row may only report a series that has already been run there.
+`capacity_aum` gives the AUM at which square-root impact costs 0.1 of annual Sharpe. Impact per
+trade scales with `sqrt(capital)`, so annual drag at AUM `A` is `D * sqrt(A / capital)`; setting
+`D(A) / vol = 0.1` gives `A = capital * (0.1 * vol / D)^2`. Example: a run at 1 000 000 with 15%
+volatility that paid 0.5% a year in impact has capacity `1e6 * (0.1 * 0.15 / 0.005)^2 =
+9 000 000`. The trading schedule is held fixed, so trades a larger fund would skip are ignored.
 
 ## 4. The backtester
 
@@ -164,16 +222,25 @@ high, position in the 20-day channel, MACD in ATR units, contrarian RSI, low vol
 FX carry.
 
 `alpha_report` tests each one on one instrument: the information coefficient (the rank
-correlation between the signal and the forward return) with a t-statistic corrected for the
-overlap of forward returns (an effective sample size, or Newey-West), its decay over
+correlation between the signal and the forward return), its decay over
 horizons, hit rate, tercile spread and autocorrelation, and the correlations between signals.
 
 `xalpha.py` asks the cross-sectional question: on each day, does ranking the names by the
 signal rank their forward returns? Signals are z-scored or ranked within an asset class per
-day; the IC is computed per date and summarised with an overlap-aware t-statistic; quantile
-spreads give the long-short return.
+day; the IC is computed per date; quantile spreads give the long-short return.
 
-Only signals whose IC t-statistic is at least 2 in magnitude are combined. The two alpha
+Since v0.14 (plan item 5.8) both reports, and the alpha analysts' gate, estimate IC on purged
+walk-forward folds (`leakage.ic_purged`, `ic_purged_series`). The bars are cut into five
+contiguous blocks; the last `horizon` bars of each block are not scored, because their
+forward returns run into the next block; the IC is the mean of the five fold ICs and the
+t-statistic is `mean / (sd / sqrt(5))` over them. Folds share no return, so the t-statistic
+does not count overlapping pairs as separate evidence. IC, t(IC) and `n` in these tables
+therefore differ from earlier releases. `information_coefficient` (effective sample size or
+Newey-West) remains public for comparison. With five folds the t-statistic has four degrees
+of freedom, so the right threshold is a Student-t critical value, not the normal one; that
+correction is plan item 5.1.
+
+Only signals whose IC t-statistic clears the gate (`min_tstat`) are combined. The two alpha
 analysts that use them are off by default because the design period did not support them.
 
 ## 7. Execution
@@ -222,7 +289,9 @@ This is the part of the quant that decides what the project is allowed to claim.
 | Did I find this by trying many things? | `deflated_sharpe`, `expected_max_sharpe`, `selection_report` | The Sharpe is compared with the best one expected from that many unskilled trials. `evaluation.TRIALS` registers every variant ever judged |
 | Are the flagged rows of a table luck? | `benjamini_hochberg` | False discovery rate over the rows printed |
 | How long a record is needed? | `min_track_record`, `probabilistic_sharpe` | A Sharpe near 1 needs years |
-| Is the VaR forecast honest? | `rolling_var_forecast`, `var_backtest` | Kupiec tests the breach rate, Christoffersen tests whether breaches cluster |
+| Is the VaR forecast honest? | `rolling_var_forecast`, `risk_model.var_forecast`, `var_backtest` | Kupiec tests the breach rate, Christoffersen tests whether breaches cluster |
+| Is a signal's IC real, given overlapping labels? | `leakage.ic_purged`, `ic_purged_series` | Purged, embargoed walk-forward folds; t from the dispersion of fold ICs |
+| Can the code see the future? | `leakage.future_leak_canary` | Shock the data from date T; every output before T must be byte-identical |
 
 ## 10. The evaluation protocol
 
@@ -256,6 +325,12 @@ A backtest is only as honest as its data timing.
 - **Filings.** SEC EDGAR fundamentals are visible from the first session whose close comes
   after the filing's acceptance time (converted from UTC to New York time), and facts are
   joined to filings by accession number.
+- **Validation (v0.14).** After the provider's repair, `TradingGraph.prepare` refuses a
+  history with bad prices, duplicate or unsorted dates, or a gap longer than its limit
+  (section 14).
+- **Feature visibility (v0.14).** `leakage.PointInTimeStore` keeps each feature value with
+  the date it became public and raises `LookaheadError` on a read before that date. It is
+  in place for P3; no analyst reads from it yet.
 - **Synthetic.** The default provider makes fake prices, news and fundamentals from a seed,
   so everything runs offline and deterministically. It is for tests and examples, never
   for results.
@@ -288,3 +363,81 @@ agentic-trader stats returns.csv --var-backtest                        # Sharpe 
 Cookbook recipes 9 to 16 (backtests and the core), 51 to 59 (alphas, execution, portfolios,
 deflated Sharpe, impact) and 73 to 100 (VaR tests, bootstraps, trend and carry streams, the
 overlay, risk budgets, the trials registry) show each piece in a few lines.
+
+## 14. Edge-case conventions (v0.14, plan item 5.7)
+
+These conventions are pinned by `tests/test_v14_edges.py`; the code is in `agentic_trader/validate.py`.
+
+**Bars are validated, not repaired, at the graph.** Providers repair raw downloads with `clean_ohlcv`. After that, `TradingGraph.prepare` runs `require_valid_bars` on the history it is handed and refuses with every reason found: a NaN, zero or negative price, High below Low, a duplicate date, dates out of order, or a step between bars longer than 7 calendar days for equities or 5 for FX (or `max_data_staleness_days`, when that is larger). Seven days covers the longest US closure in the free-data era (11 to 17 September 2001).
+
+**Session clocks.** A daily bar is labelled with its New York trade date. The equity session closes at 16:00 New York; the FX day closes at the 17:00 New York roll, one hour later. Both are New York wall time, so a US daylight-saving change moves both together and the one-hour gap holds all year (21:00/22:00 UTC in winter, 20:00/21:00 UTC in summer). A European DST change on another weekend moves neither. Example: on 26 March 2024, after the US change and before the European one, the equity close is 20:00 UTC and the FX roll 21:00 UTC.
+
+**Holidays across sleeves.** Sleeves align on trade dates. A date on which one sleeve has no bar (4 July: equities shut, FX trades) is not a common session, so a multi-sleeve rebalance waits for the next date every sleeve trades (`validate.common_sessions`).
+
+**Splits.** Every metric is computed from returns of a split-adjusted series, so it cannot depend on the price scale. A property test builds an unadjusted series with a k-for-1 step, adjusts it back, and checks that cumulative return, volatility, Sharpe, drawdown, historical VaR and CVaR, and every equity alpha are unchanged, as they are under any constant rescaling.
+
+**Stops and targets.** Levels are checked against the open first, then against the bar's range. A gap through the stop fills at the open, not at the stop. When the stop and the target both lie inside one bar's range, the stop is assumed to have traded first: daily bars do not say which came first, and the worse outcome is the conservative assumption. This was already the rule on both backends; v0.14 pins it and does not change it.
+
+**Survivorship.** `validate.survivorship_statement` writes one line per table row saying whether the name was trading at design start, listed afterwards (chosen with hindsight), or absent.
+
+**Short notional.** Borrow availability and recall are not modelled. `risk.max_short_notional` (default `None`: only `max_position` binds) caps a short in the Portfolio Manager's guardrails, after the short-selling check and before the position cap.
+
+**Ledger floats.** The paper ledger is written with each float's shortest round-trip `repr` and read back with pandas' round-trip parser, so a row survives a write and read bit for bit. Ledgers are compared with a tolerance (`validate.ledgers_match`, default 1e-12), never with `==`.
+
+## 15. Estimated combination, regimes and conformal sizing (v0.14, plan items 5.1-5.3)
+
+**The idea.** The rules desk adds its evidence with hand-set numbers nobody estimated (role
+weights, 0.30 / 0.20 / 0.15 / 0.15 technical weights, a 2x tilt, a 25 / 50 / 25 risk blend).
+The alternative is to weight each signal by how well it has predicted returns, and to give a
+signal no weight at all unless that record clears a significance bar.
+
+**Precisely.** `agentic_trader/combine.py`, on with `combination.method = "ic"`:
+
+1. every library alpha plus two trend components, each a trailing z-score clipped at +-3;
+2. a trailing purged IC per signal over the last `window` bars whose forward return is known
+   at the as-of bar (`leakage.ic_purged`);
+3. shrinkage: `IC * max(0, 1 - (t_crit / t)^2)`, where `t_crit` is the two-sided 5% Student-t
+   value for `k - 1` degrees of freedom over the `k` finite folds (2.776 for five folds); with
+   fewer than three finite folds nothing passes;
+4. `mu = sigma_h * sum_i IC_i z_i` (Grinold; overstates `mu` when correlated signals survive);
+5. tilt `mu / (gamma sigma_h^2)`, or `Sigma^-1 mu / gamma` with a Ledoit-Wolf covariance for a
+   book, then a turnover no-trade band of half-width `kappa / (gamma sigma^2)`.
+
+Only `window` (504) is a registered parameter; `horizon` 10, `risk_aversion` 2.5 and
+`turnover_penalty` 0.0005 were fixed in `DEFAULT_CONFIG` before any run.
+
+`regime.py` fits a 2- or 3-state diagonal Gaussian HMM (Baum-Welch in numpy) to log 20-day
+volatility, the 60-day return over 60-day volatility and the 20-day change in the 3-month bill
+rate, on bars from `regime.fit_start` up to the earlier of the as-of date and `regime.fit_end`
+(the design end). Labels are forward-filtered probabilities, ordered calm to stressed.
+`regime.enabled` adds the label as a fact; `regime.condition` estimates ICs and the sizing
+volatility on bars of the current regime only.
+
+`conformal.enabled` splits the window in time: ICs are estimated on its first part, and the
+absolute forecast errors on the last `calibration_share` give the interval half-width at
+miscoverage `alpha`; the PM scales the tilt by `min(1, |mu| / half-width)`.
+
+**Example: the design result.** 2016-01-04 to 2021-12-31, 15 names, Yahoo (`results/v14/`):
+
+| Trial | Mean Sharpe | Control | Difference | 95% CI | p | Beats control |
+|---|---|---|---|---|---|---|
+| rules desk (current default) | 0.6477 | 0.6437 | +0.004 | [-0.128, +0.148] | 0.989 | 6/15 |
+| IC combination, window 504 | 0.5125 | 0.6437 | -0.131 | [-0.314, +0.059] | 0.174 | 5/15 |
+
+The pre-registered expectation was that the tilt would go to zero on what is mostly noise.
+It did not: some signal survived shrinkage on 82.6% of sampled design dates
+(`ic_tilt_design.json`, every fifth date), mostly slow price-level signals whose fold ICs are
+consistently signed. Nothing was adopted or tuned. The regime and conformal trials are
+registered with their design run pending (follow-up 5.2b). See
+[LEARN concept 53](../../LEARN.md#53-a-pre-registered-expectation-that-failed).
+
+## 16. Paper order management (v0.14, plan item 4.7)
+
+`oms.py` simulates the order path between a decision and a fill; nothing reaches a broker. A
+fill of notional `N` on capital `C` pays `N (cost_bps + slippage_bps) / 1e4 + C K_t (N / C)^1.5`,
+exactly the entry cost `quant.run_backtest` charges for a weight change `N / C`
+(`tests/test_v14_oms.py` checks the parity), capped at `participation_cap` (0.10) of modelled
+daily volume. Equities settle T+1 on the NYSE calendar; FX spot settles T+2 and an FX trade at
+or after 17:00 New York belongs to the next trade date. Limits: static borrow list, no
+non-USD holidays unless listed, no intraday path.
+[Recipe 104](../../COOKBOOK.md#104-a-paper-order-through-the-oms).

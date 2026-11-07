@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-trader"
-version = "0.13.0"
+version = "0.14.0"
 description = "Agentic multi-agent LLM trading desk for equities and FX: policy-gated tools, evidence, audited reports, C++ quant core"
 readme = "README.md"
 license = { text = "MIT" }
@@ -33,6 +33,34 @@ include = ["agentic_trader*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The PR gate runs `-m "not slow"`; the nightly workflow runs everything.
+markers = [
+    "slow: one of the slowest tests (from --durations); skipped by the PR gate, run nightly",
+]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+# Conservative: pyflakes and the pycodestyle error classes (real bugs and syntax-level
+# issues), no style or import-order rules.
+select = ["E4", "E7", "E9", "F"]
+# `l` for a low/level/length in the numeric kernels reads fine next to `h` and `c`
+ignore = ["E741"]
+
+[tool.ruff.lint.per-file-ignores]
+# analysts.py keeps the cross-sectional cache's imports beside the cache they serve; the
+# file is owned by another work item, so it is not reordered here
+"agentic_trader/agents/analysts.py" = ["E402"]
+
+[tool.mypy]
+# Lenient on purpose: catch outright type errors in agentic_trader/ without demanding
+# annotations; tighten per module as it earns it.
+python_version = "3.10"
+files = ["agentic_trader"]
+ignore_missing_imports = true
+follow_imports = "silent"
 
 [tool.coverage.run]
 source = ["agentic_trader"]

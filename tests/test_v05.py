@@ -69,7 +69,8 @@ def test_cross_sectional_ic_recovers_a_perfect_signal():
     ic = cross_sectional_ic(perfect, fwd, min_names=5)
     assert ic.dropna().size == 75 and np.allclose(ic.dropna(), 1.0)
     s = ic_summary(ic, 5)
-    assert s["mean IC"] == pytest.approx(1.0) and s["IC>0%"] == 100.0 and s["days"] == 75
+    assert s["mean IC"] == pytest.approx(1.0) and s["IC>0%"] == 100.0
+    assert s["days"] == 55                                 # 5 purged folds of 16 dates, 11 scored each
     spread = quantile_spread(perfect, fwd, 5, quantile=0.25, min_names=5)
     assert spread.size == 15 and (spread > 0).all()
     anti = cross_sectional_ic(-perfect, fwd, min_names=5)

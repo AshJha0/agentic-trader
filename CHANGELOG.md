@@ -1,5 +1,115 @@
 # Changelog
 
+## v0.14.0 — unreleased (P5)
+
+Plan items of phase P5 in [docs/review/PLAN.md](docs/review/PLAN.md), plus 4.7, 4.10 and 4.11
+pulled forward from P4 and 2.1-2.2 from P2. Offline and synthetic tests only; no live model
+call and no spend. Tests: `tests/test_v14_risk.py`, `tests/test_v14_edges.py`,
+`tests/test_v14_leakage.py`, `tests/test_v14_combine.py`, `tests/test_v14_oms.py`,
+`tests/test_v14_ops.py`, `tests/test_v14_local_llm.py`. The full-suite test count will be
+stated at release.
+
+- **Risk model (5.4).** New `agentic_trader/risk_model.py`. `var_forecast(returns, method)`
+  gives a 1-day VaR for each day from returns strictly before it, aligned like
+  `stats.rolling_var_forecast` (which `method="historical"` reproduces exactly), so
+  `stats.var_backtest` judges all three methods; `var_next` gives the forecast for the day
+  after the series. `"ewma"` is RiskMetrics (lambda 0.94, not tuned here); `"fhs"` is filtered
+  historical simulation (EWMA-standardised residuals, their empirical quantile rescaled by
+  today's volatility). On synthetic GARCH(1,1) series with Student-t shocks and rising
+  volatility, FHS passes both Kupiec and Christoffersen independence on 8 of 8 seeds and the
+  250-day historical window on at most 2 of 8. The design-period counts on the 15 real names
+  (`scripts/v14_var_design.py`, 2016-01-04 to 2021-12-31, 5% level, `results/v14/var_design.json`)
+  are: historical 250-day window Kupiec 14/15, independence 4/15, both 4/15; EWMA 15/15, 13/15, 13/15; FHS 15/15, 10/15, 10/15. EWMA beat the FHS default on the design period;
+  the default stays `"fhs"` pending an owner decision recorded in the round's PR. (The older
+  "Kupiec 2/15, independence 6/15" was the desk's 250-day historical forecast on the
+  2022-2023 holdout, v0.7/v0.8 evaluation; a different period, so the two are not comparable.) **Book VaR is now on by default**: `risk.max_book_var_95 = 0.05`, a loose budget
+  not tuned on any period, measured with `risk.book_var_method = "fhs"`
+  (`"ewma"` and `"historical"` also accepted). Only a multi-sleeve `scan` builds a book, so a
+  single `propagate` is unaffected. Also: `factor_exposures` (rolling joint OLS betas on SPY,
+  IEF, UUP and MTUM proxies, `FACTOR_PROXIES`), `stress_rows` (2008, 2020, 2022; the 2022
+  window lies inside the holdout and may only report a series already run there) and
+  `capacity_aum` / `capacity_row` (the AUM at which square-root impact costs 0.1 of annual
+  Sharpe: `capital * (0.1 * vol / drag)^2`).
+- **Edge-case validators (5.7).** New `agentic_trader/validate.py`. `TradingGraph.prepare`
+  now refuses a history with a NaN, zero or negative price, High below Low, a duplicate or
+  out-of-order date, or a gap longer than max(7 calendar days for equities or 5 for FX,
+  `max_data_staleness_days`), raising `BarValidationError` with every reason. Session clocks
+  (equity close 16:00 New York, FX roll 17:00 New York; `session_close_utc`,
+  `common_sessions`), `survivorship_statement`, a new `risk.max_short_notional` cap (default
+  `None`), round-trip ledger CSV helpers with a tolerance compare (`ledgers_match`), and the
+  stop convention pinned by tests (a gap through the stop fills at the open; stop and target
+  in one bar means the stop). See [quant.md section 14](docs/quant/quant.md#14-edge-case-conventions-v014-plan-item-57).
+- **Leakage rigour (5.8).** New `agentic_trader/leakage.py`. `purged_walk_forward` builds
+  purged, embargoed, expanding walk-forward folds; `ic_purged` and `ic_purged_series` score a
+  signal fold by fold and take the t-statistic from the dispersion of the fold ICs. Every IC
+  the pipeline reports now comes from these (`alpha_report`, `xalpha.ic_summary`, the alpha
+  analyst's gate), so **IC, t(IC) and n in those tables change** from earlier releases: `n`
+  now counts only the scored pairs, which excludes the last `horizon` bars of each fold.
+  `future_leak_canary` runs the offline desk on the data and on a `ShockedProvider` copy
+  shocked from date T and requires every output and prompt for dates before T to be
+  byte-identical; on synthetic AAPL and EURUSD it found no leak, and it caught an analyst made
+  to read one week ahead. It does not cover a leak inside a provider's own `news()` or
+  `fundamentals()`. `PointInTimeStore`, `FeatureRecord` and `LookaheadError` are the
+  point-in-time feature table P3 will use.
+
+- **Student-t IC gate (5.1, completes 5.8).** The significance gate now compares `|t(IC)|`
+  with `t_crit`, the two-sided 5% Student-t value for `k - 1` degrees of freedom, `k` being the
+  number of finite folds (`leakage.student_t_crit`; 2.776 at 4 df, i.e. five folds). With fewer
+  than three finite folds `t_crit` is NaN and nothing passes. `PurgedIC.t_crit`,
+  `PurgedIC.significant`, `PurgedIC.as_gate`, `gate_threshold` and `passes_gate` carry it; gate
+  tables gain a `t_crit` column.
+- **Estimated combination, regimes, conformal sizing (5.1-5.3).** New `agentic_trader/combine.py`
+  and `agentic_trader/regime.py`. `config["combination"]["method"] = "ic"` (default `"rules"`)
+  replaces the desk's hand weights with trailing purged ICs shrunk by the positive-part
+  James-Stein factor `max(0, 1 - (t_crit / t)^2)`, `mu = sigma_h * sum IC_i z_i`, a
+  mean-variance tilt (Ledoit-Wolf for a book) and an exact turnover no-trade band.
+  `config["regime"]` (`enabled`, `condition`, `states`, `fit_start`, `fit_end`) adds a
+  forward-filtered Gaussian-HMM label fitted only up to the earlier of the as-of date and the
+  design end; `config["conformal"]` (`enabled`, `alpha` 0.2, `calibration_share` 0.4) scales the
+  tilt by `min(1, |mu| / half-width)`. All off by default. Three trials registered
+  (`evaluation.TRIALS` 62 to 65). **Design results** (2016-01-04 to 2021-12-31, 15 core names,
+  Yahoo; `results/v14/`): the rules desk 0.6477 mean Sharpe against the control's 0.6437
+  (difference +0.004, paired-bootstrap p 0.989); IC combination, window 504: 0.5125 against
+  0.6437 (difference -0.131, 95% CI [-0.314, +0.059], p 0.174, beats the control on 5 of 15).
+  **The pre-registered expectation did not hold**: the plan expected the tilt to go to zero on
+  noise, but a signal survived shrinkage on 82.6% of design dates (slow price-level signals
+  with consistent fold ICs; `results/v14/ic_tilt_design.json`). Nothing was adopted and
+  nothing was tuned after seeing it. The regime and conformal trials are registered with their
+  design run pending: the run was stopped for speed, because the per-date signal panel rebuild
+  dominates the run time (follow-up 5.2b computes the panel and labels once per name).
+- **Paper OMS (4.7, pulled forward from P4).** New `agentic_trader/oms.py`: order state machine
+  (`NEW -> ACKED -> PARTIALLY_FILLED -> FILLED`, `CANCELLED`, `REJECTED`; `IllegalTransition`
+  otherwise; `client_order_id` is the idempotency key), pre-trade checks (kill switch, fat
+  finger notional and quantity, price collar, duplicate, market hours, borrow, short notional,
+  approval), a kill switch at global, asset-class or symbol scope that persists to
+  `kill_switch_path` and also blocks the agentic `submit_order` tool, partial fills priced with
+  the backtester's own cost and impact model (a parity test pins it) and capped at
+  `participation_cap` of modelled volume, end-of-day `reconcile` returning a `BreakReport`,
+  settlement T+1 for equities and T+2 for FX spot, and the FX roll at 17:00 New York. Settings
+  under `config["oms"]` (`OMS_DEFAULTS`; unknown keys are an error). `paper_trade_v09.py --oms`
+  (off by default) writes a separately labelled shadow record `oms_shadow_v14` under
+  `<out>/oms` and never touches `ledger.csv`: the frozen forward record (from 2026-09-29) is
+  unchanged.
+- **Operations (4.10, 4.11).** `.github/workflows/paper.yml` runs the paper session on
+  weekdays at 22:30 UTC (jobs `session`, `publish`, `freshness`, `report`); the laptop task
+  `scripts/paper_daily.cmd` is the fallback, and only one of the two should run. Each run
+  writes a `price_vintage` SHA-256 of the bars it read into `runs.jsonl`
+  (`scripts/paper_ops.py`); the freshness check fails when the last session is more than two
+  business days old; a failure opens or comments on one `paper-record` issue. The PR gate
+  runs `pytest -m "not slow"`; `nightly.yml` runs the full suite at 03:17 UTC. `ruff` is
+  blocking, `mypy` advisory (144 errors at the time of writing). Actions are pinned by commit
+  SHA. Both known flaky tests were fixed.
+- **Local model and the study driver (2.1, 2.2; built, unrun).** New
+  `agentic_trader/local_llm.py`: `llm_provider = "local"` talks to Ollama's `/api/chat`
+  (`local_llm_url`, `local_llm_model`, `local_llm_timeout_s`, `local_llm_seed`), sends the
+  contract schema in `format`, costs 0 and still obeys `max_llm_calls`. `scripts/llm_study.py`
+  defines seven cells (`--describe`, `--dry-run`, `--live`). Unrun here: the machine has
+  15.6 GB of RAM, below the plan's 16 GB bar (OD-6), and no Ollama. The dry run prices the
+  15 names x 40 dates x 2 seeds design at Claude list prices: `local_all` 16,800 calls,
+  estimate $214.82, ceiling $1,992.26 (estimate assumes 400 / 1,500 output tokens per quick /
+  deep call, ceiling assumes every reply runs to `max_tokens`). The study itself would cost $0
+  on a local model.
+
 ## v0.13.0 — unreleased (P1 foundation)
 
 Plan items 1.1 to 1.8 of [docs/review/PLAN.md](docs/review/PLAN.md). **No live Claude run was

@@ -11,7 +11,6 @@ become DOCUMENT evidence when reached through the ``knowledge.search`` tool.
 """
 from __future__ import annotations
 
-import math
 import re
 import zlib
 from dataclasses import dataclass, field

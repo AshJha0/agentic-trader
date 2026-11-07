@@ -182,6 +182,22 @@ Prices the model returns are mapped back, and names are restored in the audit tr
 critic, the reporter and the planner go through the same scrubbing. The threat model lists
 what still leaks (distinctive statistics, company names inside real headlines).
 
+### Checking that no agent reads the future (v0.14)
+
+Anonymisation stops the model recognising a period. A separate question is whether the
+desk's own code hands it, or the rules, anything dated after the decision day.
+`leakage.future_leak_canary` answers that by experiment: it runs the offline desk twice, once
+on the data and once on a `ShockedProvider` copy whose prices for one symbol are tripled from
+date T and whose news and social feeds gain a headline dated T. With a `PromptRecorder` as the
+backend every agent builds its prompt and the rules decide, so the prompts are compared too.
+Every report, the debate, the proposal, the risk views, the decision, every prompt and the
+alpha values for a date before T must be byte-identical between the two runs; any difference
+is a read of the future. On synthetic AAPL and EURUSD (`tests/test_v14_leakage.py`) no output
+differed before T and outputs changed on T, and an analyst patched to read one week ahead was
+caught. The canary does not cover a leak inside a provider's own `news()` or `fundamentals()`:
+`ShockedProvider` passes fundamentals through unchanged and only adds one item to news, so a
+provider that returned future items itself would look the same in both runs.
+
 ### Reproducibility of prompts
 
 `prompts.py` hashes every agent's system prompt and the source code that builds its user
@@ -219,10 +235,12 @@ Whatever the portfolio manager (rules or model) decides, `PortfolioManager.guard
 afterwards, in code:
 
 1. no short position where shorting is not allowed;
-2. the weight is capped at the maximum position;
-3. the position's 1-day 95% historical VaR must be within the limit, or the weight is scaled down;
-4. optionally the whole book's VaR must be within its limit;
-5. a weight below the minimum trade size becomes flat.
+2. a short is capped at `risk.max_short_notional` of capital when that is set (v0.14; default `None`);
+3. the weight is capped at the maximum position;
+4. the position's 1-day 95% historical VaR must be within the limit, or the weight is scaled down;
+5. in a multi-sleeve `scan`, the whole book's 1-day 95% VaR must be within `risk.max_book_var_95`
+   (on by default at 5% since v0.14, forecast by filtered historical simulation);
+6. a weight below the minimum trade size becomes flat.
 
 Then the no-trade band keeps the current position when the new target is close to it, but
 only if the current position would itself pass every limit. Each adjustment is written into
@@ -301,9 +319,9 @@ estimated from data and then used:
 
 | What | Where | How it is used |
 |---|---|---|
-| Information coefficient of each alpha | `alpha.py`, `xalpha.py` | The alpha analysts combine signals weighted by IC, and only signals whose IC t-statistic is at least 2 in magnitude. Otherwise they abstain |
+| Information coefficient of each alpha | `alpha.py`, `xalpha.py`, `leakage.py` | Estimated on purged walk-forward folds since v0.14. The alpha analysts combine signals weighted by IC, and only signals whose fold t-statistic clears the gate. Otherwise they abstain |
 | Covariance with EWMA weights and Ledoit-Wolf shrinkage | `portfolio.py` | Risk parity, minimum variance and mean-variance weights |
-| Historical VaR and CVaR | `quant`, `agents/risk.py` | Position and book limits |
+| Historical VaR and CVaR; EWMA volatility and FHS VaR (v0.14) | `quant`, `risk_model.py`, `agents/risk.py` | Position limit (historical); book limit (FHS by default) |
 | TF-IDF document frequencies | `agentic/rag.py` | Retrieval |
 | Hit rate of past decisions | `memory.py` | The trader's size cut |
 | Bootstrap distributions | `stats.py` | Every interval and p-value in the evaluation |
@@ -335,3 +353,31 @@ agentic-trader analyze NVDA --date 2024-03-01 --llm anthropic --anonymize --max-
 Cookbook recipes 1 to 8 (decisions), 17 to 19 and 36 (the model and its budget), 39 to 50
 (the agentic layer) and 68 to 70 (repeated runs, calibration, the prompt hash) show each
 piece in a few lines.
+
+## 10. A local model and the LLM study (v0.14, plan items 2.1-2.2): ready but unrun
+
+**The idea.** A model running on the same machine costs nothing per call and sends nothing
+off the host, which makes a full study of where a model helps the desk affordable.
+
+**Precisely.** `llm_provider = "local"` selects `local_llm.LocalLLM`, which posts to Ollama's
+`/api/chat` at `local_llm_url` (default `http://127.0.0.1:11434`) with `local_llm_model`,
+`local_llm_timeout_s` (120) and `local_llm_seed`; temperature is 0. A structured reply sends
+the contract's JSON schema in the request's `format` field, and the agent's contract check
+still runs afterwards. Anonymisation, evidence (`last_call`) and `max_llm_calls` apply as for
+Claude; `estimate_cost` is 0, so only the call cap binds. A timeout, refused connection, HTTP
+error or unreadable body returns `None` and the rules answer, with no retry.
+
+`scripts/llm_study.py` defines seven cells: `rules`, `local_all`, `local_text`, `local_pm`,
+`no_debate`, `debate_1`, `neutral_risk`. `--describe` lists them, `--dry-run` counts calls
+and prompt tokens without a model, `--live` runs them on a local model and refuses if Ollama
+does not answer.
+
+**Status: ready but unrun.** The development machine has 15.6 GB of RAM, below the plan's
+16 GB bar for a 7-8B model (OD-6), and no Ollama install; the module is tested against a fake
+HTTP server only (`tests/test_v14_local_llm.py`). No model has answered a desk prompt through it.
+
+**Example: what the study would cost on Claude.** The dry run for 15 names x 40 dates x 2
+seeds, priced at Claude list prices: `local_all` makes 16,800 calls, estimate $214.82,
+ceiling $1,992.26. The estimate assumes 400 output tokens per quick call and 1,500 per deep
+call; the ceiling assumes every reply runs to `max_tokens`. On a local model the same study
+costs $0, which is why it is planned there.

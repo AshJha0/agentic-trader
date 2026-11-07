@@ -1,0 +1,132 @@
+name: Paper record
+
+# The daily forward paper session (scripts/paper_trade_v09.py), run on the free tier after
+# the US close on weekdays.
+#
+# Two paths, one record. Primary: this workflow. Fallback: the laptop task
+# scripts/paper_daily.cmd (Windows Task Scheduler), which commits the same files with the
+# same message to main. Run one of them, not both: each run appends a runs.jsonl line, so
+# two runners give two lines per session (the ledger itself is append-only and unaffected).
+# To fall back, disable this workflow (Actions > Paper record > Disable) and enable the
+# laptop task; to return, do the reverse. This runner uses the numpy backend and the locked
+# dependency set; the laptop uses the C++ backend, and any difference between the two shows
+# up in revisions.csv rather than in the ledger.
+#
+# Jobs, each with only the permissions it needs:
+#   session    reads Yahoo/FRED (the only job with live web data), writes results/paper as an artifact
+#   publish    commits the artifact to main as the bot, only when the files changed
+#   freshness  fails if the last recorded session is more than 2 business days old
+#   report     opens (or comments on) one issue when any of the above fails
+on:
+  schedule:
+    - cron: "30 22 * * 1-5"      # 22:30 UTC: after the 16:00 New York close in both EST and EDT
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: paper-record
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      AGENTIC_TRADER_BACKEND: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: main
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+      - name: Install from the lock
+        run: |
+          python -m pip install -r requirements-lock.txt
+          python -m pip install -e . --no-deps
+      # Records the last complete New York session (the script's default as-of is New York's
+      # yesterday), so a provisional close is never written into the append-only ledger.
+      - name: Paper session
+        run: python scripts/paper_trade_v09.py
+      - name: Mask the runner path in runs.jsonl
+        run: python scripts/paper_mask_paths.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: paper-record
+          path: results/paper/
+          retention-days: 30
+
+  publish:
+    needs: session
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: main
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install numpy pandas
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: paper-record
+          path: results/paper/
+      # Same files, message and branch as the laptop task; commits only when they changed,
+      # and a push that loses a race with another commit rebases once and retries.
+      - name: Commit and push the record
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python scripts/paper_ops.py commit --message "paper: daily record [skip ci]"
+          git push -q origin HEAD:main || { git pull -q --rebase origin main && git push -q origin HEAD:main; }
+
+  freshness:
+    needs: publish
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: main
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install numpy pandas
+      - name: Last recorded session is at most 2 business days old
+        run: python scripts/paper_ops.py freshness
+
+  report:
+    needs: [session, publish, freshness]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const title = "Paper record run failed";
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `The scheduled paper record failed: ${url}\n\nJobs: session ${{ needs.session.result }}, ` +
+                         `publish ${{ needs.publish.result }}, freshness ${{ needs.freshness.result }}.`;
+            const open = await github.rest.issues.listForRepo({ ...context.repo, state: "open", labels: "paper-record" });
+            const existing = open.data.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body, labels: ["paper-record"] });
+            }

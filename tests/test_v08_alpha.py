@@ -3,7 +3,7 @@ is overlap-aware for a multi-bar forward horizon and is threaded through every c
 tercile spread is computed on rank-assigned disjoint terciles that survive tied signals, and
 the hit rate is reported next to the base rate it must be read against."""
 import math
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -11,6 +11,7 @@ import pytest
 
 from agentic_trader import Instrument, make_config
 from agentic_trader.agents.analysts import AlphaAnalyst
+from agentic_trader.leakage import ic_purged, scored_mask
 from agentic_trader.alpha import (IC_T_METHODS, _alpha_diagnostics, alpha_report, compute_alphas, forward_returns,
                                   information_coefficient, significant_alpha_signal, tercile_spread)
 from agentic_trader.data import SyntheticProvider
@@ -127,7 +128,7 @@ def test_alpha_analyst_gate_is_a_five_percent_test_on_pure_noise():
     assert emit_old / n_sim >= 0.8, emit_old / n_sim
 
 
-def test_alpha_analyst_gather_reports_the_overlap_aware_t():
+def test_alpha_analyst_gather_reports_the_purged_walk_forward_ic():
     provider = SyntheticProvider(make_config(synthetic_seed=7))
     ins = Instrument.parse("AAPL")
     as_of = date(2020, 6, 1)
@@ -135,10 +136,13 @@ def test_alpha_analyst_gather_reports_the_overlap_aware_t():
     state = TradingState(ins, as_of, df[df.index <= pd.Timestamp(as_of)])
     facts = AlphaAnalyst(None, CFG).gather(state, provider)
     assert facts["ic"]
+    # v0.14 (5.8): the gate reads leakage.ic_purged on the analyst's own point-in-time window
+    hist = provider.history(ins, as_of - timedelta(days=CFG.get("alpha_lookback_days", 900)), as_of)
+    hist = hist[hist.index <= pd.Timestamp(as_of)]
+    sig = compute_alphas(hist, ins)
+    fwd = forward_returns(hist["Close"].to_numpy(float), H)
     for name, v in facts["ic"].items():
-        if v["IC"] == v["IC"]:
-            assert v["t(IC)"] == pytest.approx(v["IC"] * math.sqrt(v["n"] / H))
-            assert v["t(IC)"] != pytest.approx(v["IC"] * math.sqrt(v["n"]))
+        assert v == pytest.approx(ic_purged(sig[name].to_numpy(), fwd, H).as_gate(), nan_ok=True)
 
 
 def test_alpha_report_threads_the_horizon_into_every_t_and_reports_the_base_rate():
@@ -149,11 +153,12 @@ def test_alpha_report_threads_the_horizon_into_every_t_and_reports_the_base_rate
     rep1 = alpha_report(df, ins, 1)
     for name in rep10.table.index:
         row = rep10.table.loc[name]
-        if row["IC"] == row["IC"]:
-            assert row["t(IC)"] == pytest.approx(row["IC"] * math.sqrt(row["n"] / 10), abs=2e-3)
-        row1 = rep1.table.loc[name]
-        if row1["IC"] == row1["IC"]:
-            assert row1["t(IC)"] == pytest.approx(row1["IC"] * math.sqrt(row1["n"]), abs=2e-3)
+        close = df["Close"].to_numpy(float)
+        for rep, h in ((rep10, 10), (rep1, 1)):
+            want = ic_purged(rep.signals[name].to_numpy(), forward_returns(close, h), h)
+            row = rep.table.loc[name]
+            assert row["t(IC)"] == pytest.approx(want.t, abs=2e-3, nan_ok=True)
+            assert row["n"] == want.n
     assert "up%" in rep10.table.columns
     up = rep10.table["up%"].dropna()
     assert ((up >= 0) & (up <= 100)).all()
@@ -183,7 +188,8 @@ def test_tercile_spread_survives_a_signal_tied_on_most_bars():
     assert old < 0.4 * true_spread                               # lo == hi == -1: "top" was every bar
     assert new == pytest.approx(true_spread, rel=0.15)
     assert new > 2.5 * old
-    assert _alpha_diagnostics(s, fwd)["tercile spread%"] == pytest.approx(100 * new)
+    m = scored_mask(n, 1)                                        # the row is measured on the scored pairs
+    assert _alpha_diagnostics(s, fwd)["tercile spread%"] == pytest.approx(100 * tercile_spread(s[m], fwd[m]))
     # the same bars in another order give the same number: ties are shared, not broken by position
     perm = rng.permutation(n)
     assert tercile_spread(s[perm], fwd[perm]) == pytest.approx(new)
@@ -215,9 +221,10 @@ def test_hit_rate_is_reported_next_to_the_base_rate():
     fwd = rng.normal(0.003, 0.01, 200)                            # a rally: most 10-day returns are up
     fwd[fwd == 0] = 1e-6
     bull = _alpha_diagnostics(np.ones(200), fwd)
-    assert bull["up%"] == pytest.approx(100 * np.mean(fwd > 0)) and bull["up%"] > 55
+    m = scored_mask(200, 1)                                       # every column uses the scored pairs
+    assert bull["up%"] == pytest.approx(100 * np.mean(fwd[m] > 0)) and bull["up%"] > 55
     assert bull["hit%"] == pytest.approx(bull["up%"])              # zero skill reads as hit == base
     bear = _alpha_diagnostics(-np.ones(200), fwd)
     assert bear["hit%"] == pytest.approx(100 - bear["up%"])
     assert math.isnan(_alpha_diagnostics(np.full(5, NAN), fwd[:5])["up%"])
-    assert set(bull) == {"IC", "t(IC)", "n", "hit%", "up%", "tercile spread%", "autocorr", "coverage%"}
+    assert set(bull) == {"IC", "t(IC)", "t_crit", "n", "hit%", "up%", "tercile spread%", "autocorr", "coverage%"}

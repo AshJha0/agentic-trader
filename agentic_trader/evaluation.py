@@ -99,6 +99,9 @@ def _v03_trial(rules: dict | None = None, risk: dict | None = None, stops: bool 
             "backtest": {"use_stops": stops}}
 
 
+V14_IC = {"method": "ic", "window": 504}
+
+
 def _eq(w: float) -> dict:
     return {"neutral_weight": {"equity": w, "fx": 0.0}}
 
@@ -187,6 +190,15 @@ TRIALS: tuple[Trial, ...] = (
     Trial("v0.12 overlay all26_rp lam 0.25", "v0.12", None, recorded_portfolio_sharpe=0.29),
     Trial("v0.12 overlay all26_rp lam 0.50", "v0.12", None, recorded_portfolio_sharpe=0.27),
     Trial("v0.12 overlay all26_rp lam 0.75", "v0.12", None, recorded_portfolio_sharpe=0.22),
+    # v0.14 (PLAN.md 5.1-5.3): the estimated combination replacing every hand weight, then the
+    # regime-conditioned and the conformal-sized variants of it. One registered parameter,
+    # window = 504 bars, fixed before any run. Pre-registered expectation: tilt -> 0, desk ~
+    # control; success is that the pipeline refuses noise (scripts/v14_design_trials.py).
+    Trial("v0.14 IC-weighted combination (window 504)", "v0.14", {"combination": V14_IC}),
+    Trial("v0.14 IC combination + HMM regime conditioning", "v0.14",
+          {"combination": V14_IC, "regime": {"enabled": True, "condition": True}}),
+    Trial("v0.14 IC combination + conformal interval sizing", "v0.14",
+          {"combination": V14_IC, "conformal": {"enabled": True}}),
 )
 
 

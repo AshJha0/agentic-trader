@@ -10,6 +10,7 @@ from .. import quant
 from .. import contracts
 from ..state import Book, FinalDecision, RiskView, TradingState
 from .base import Agent, clip, fmt_facts
+from ..validate import cap_short_notional
 from .trader import action_for, allow_short, atr14, policy_passages, protective_levels, sane_levels
 
 
@@ -38,11 +39,14 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         "max_var_95": config["risk"]["max_var_95"],
         "rebalance_band": config["risk"].get("rebalance_band", 0.0),
         "short_selling_allowed": allow_short(state, config),
+        "max_short_notional": config["risk"].get("max_short_notional"),
         "max_book_var_95": config["risk"].get("max_book_var_95"),
+        "book_var_method": config["risk"].get("book_var_method", "fhs"),
         # Informational only (current book, no proposed change): the enforced check runs in
         # PortfolioManager.guardrails, which has state.book and can evaluate the proposed
         # weight's own effect on it -- a plain fact dict can only report a number, not act.
-        "book_var_95_now": (_book_var_now(state) if state.book is not None else None),
+        "book_var_95_now": (_book_var_now(state, config["risk"].get("book_var_method", "fhs"))
+                            if state.book is not None else None),
     }
 
 
@@ -57,11 +61,11 @@ def position_cvar(f: dict[str, Any], w: float) -> float:
     return f["cvar_95_1d_short"] if w < 0 else f["cvar_95_1d"]
 
 
-def _book_var_now(state: TradingState) -> float | None:
+def _book_var_now(state: TradingState, method: str) -> float | None:
     from ..portfolio import book_var_95
     sym = state.instrument.symbol
     positions = {**state.book.positions, sym: state.current_weight or 0.0}
-    return book_var_95(positions, state.book.returns)
+    return book_var_95(positions, state.book.returns, method=method)
 
 
 class RiskAnalyst(Agent):
@@ -161,6 +165,10 @@ class PortfolioManager(Agent):
         if w < 0 and not f["short_selling_allowed"]:
             notes.append("short selling not allowed -> flat")
             w = 0.0
+        short_cap = f.get("max_short_notional")
+        if short_cap is not None and w < -short_cap:
+            notes.append(f"capped at max short notional {short_cap:.2f}")
+            w = cap_short_notional(w, short_cap)
         if abs(w) > mx:
             notes.append(f"capped at max position {mx:.2f}")
             w = math.copysign(mx, w)
@@ -171,7 +179,8 @@ class PortfolioManager(Agent):
             w = new
         if book is not None and symbol is not None and f.get("max_book_var_95") and w != 0:
             from ..portfolio import book_var_scale
-            w, _, note = book_var_scale(symbol, w, book.positions, book.returns, f["max_book_var_95"])
+            w, _, note = book_var_scale(symbol, w, book.positions, book.returns, f["max_book_var_95"],
+                                         method=f.get("book_var_method", "fhs"))
             if note:
                 notes.append(note)
         if 0 < abs(w) < self.config["risk"]["min_trade_weight"]:
@@ -190,6 +199,16 @@ class PortfolioManager(Agent):
         conf = p.confidence
         rationale = (f"Blended risk-team sizing (25% aggressive / 50% neutral / 25% conservative) "
                      f"gives {w:+.2f} against a proposal of {p.target_weight:+.2f}.")
+        fc = state.forecast
+        if fc is not None:
+            # combination.method "ic": the trader's mean-variance weight already prices risk,
+            # so the hand-set stance blend is not applied; with conformal sizing the tilt is
+            # scaled by min(1, |mu| / interval half-width).
+            scale = fc.size_scale()
+            w = fc.neutral + (p.target_weight - fc.neutral) * scale
+            rationale = (f"IC-combination weight {p.target_weight:+.2f} from {len(fc.active)} significant "
+                         f"signal(s)" + (f", interval sizing x{scale:.2f}" if fc.interval is not None else "")
+                         + f" -> {w:+.2f}.")
         source = "rules"
 
         prompt = (

@@ -1,6 +1,6 @@
 # Learn agentic-trader
 
-This guide works through the 51 ideas behind the project in order. For each concept it gives
+This guide works through the 52 ideas behind the project in order. For each concept it gives
 the idea, where the repository implements it, the real numbers it produces, and questions to
 test your understanding. Two shorter pages give the whole picture first: [how the AI works](docs/ai/ai.md) and
 [how the quant works](docs/quant/quant.md). Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
@@ -94,6 +94,10 @@ evaluation is
 **Part X — v0.13: the model interface**
 
 51. [Structured outputs and the contract gate](#51-structured-outputs-and-the-contract-gate)
+
+**Part XI — v0.14: leakage and risk**
+
+52. [Purged cross-validation and the leak canary](#52-purged-cross-validation-and-the-leak-canary)
 
 ---
 
@@ -1929,3 +1933,91 @@ measurement for a later round.
 - A schema and its contract disagree about one optional key. Which failures could follow,
   and which test would catch it?
 - Why record the served model id on every call rather than trust the configured one?
+
+# Part XI — v0.14: leakage, risk and a failed expectation
+
+## 52. Purged cross-validation and the leak canary
+
+**The idea.** There are two ways a backtest can see the future without anyone writing
+"tomorrow" in the code. The first is statistical: a 10-day forward return overlaps the next
+nine, so a long pooled sample of daily pairs looks like far more evidence than it is, and a
+statistic fitted on bars just before a test period has already seen part of what the test
+period is scored on. The second is a plain bug: some function reads a row dated after the
+decision day. The first is fixed by how the sample is split; the second can only be found by
+experiment.
+
+**In the repo.** `leakage.purged_walk_forward(n, horizon, n_folds=5)` cuts positions `0..n-1`
+into contiguous test blocks. For block `[a, b)` a training position `i` is kept only if its
+label ends before the block (`i + horizon < a`: the purge), and the `horizon` positions after
+every earlier block are dropped (the embargo), after Lopez de Prado (2018, ch. 7). Each fold
+scores only its block minus the last `horizon` positions, so no two folds share a return.
+`ic_purged` takes the Spearman IC per fold and reports the mean and `t = mean / (sd /
+sqrt(k))` over the `k` finite folds. Since v0.14, `alpha_report`, `xalpha.ic_summary` and the
+alpha analysts' gate all use it, so their IC, t(IC) and `n` differ from earlier releases.
+
+`leakage.future_leak_canary` is the experiment for the second kind. It runs the whole offline
+desk twice: once on the data, once on a `ShockedProvider` copy in which one symbol's prices
+are tripled from date T and a headline dated T is added. For every as-of date before T, each
+analyst report, the debate, the proposal, the risk views, the decision, every prompt built
+(recorded by `PromptRecorder`) and the alpha values must be byte-identical. A difference
+names the output that read past its date. The canary also checks that something did change
+on T, so a shock that never reached the desk cannot pass as clean.
+
+**A worked example.** With 1 300 bars, a 10-bar horizon and five folds, the blocks are about
+260 bars long. Fold 2 tests bars 521 to 780 and scores 521 to 770. Its training set stops at
+bar 510 (the purge) and skips bars 260 to 269 just after fold 0 (the embargo), leaving 501
+bars. [Recipe 102](COOKBOOK.md#102-purged-walk-forward-ic-on-a-signal) prints these numbers
+and the fold ICs for two alphas.
+
+**The numbers.** On synthetic AAPL and EURUSD, at two dates before each of four shock dates,
+the canary found no difference, and the outputs changed on the shock date
+(`tests/test_v14_leakage.py`). An analyst patched to read one week ahead was caught. These
+are tests of the code on synthetic data, not a measurement of any strategy.
+
+**What it does not cover.** A leak inside a provider's own `news()` or `fundamentals()`.
+`ShockedProvider` passes fundamentals through unchanged and only adds one item to news, so a
+provider that itself returned future items would give the same output in both runs. Feature
+values published after the date they describe are a third case, handled by
+`PointInTimeStore`, which raises `LookaheadError` on a read before a value's `visible_from`.
+
+**Questions.**
+- Why does `ic_purged` not use the training sets at all, and when would it need them?
+- With five folds, how many degrees of freedom does the t-statistic have, and what threshold
+  corresponds to a two-sided 5% test?
+- Design a provider bug the canary would miss. What second test would catch it?
+
+## 53. A pre-registered expectation that failed
+
+**The idea.** Writing down before a run what you expect to see is only useful if you are
+prepared to report that it did not happen. A wrong expectation is information about the
+method, not something to tune away.
+
+**In the repo.** Plan item 5.1 replaced the desk's hand weights with an estimated
+combination (`combine.py`): each signal's trailing purged IC is multiplied by
+`max(0, 1 - (t_crit / t)^2)`, so a signal whose fold t-statistic does not clear the Student-t
+bar gets zero weight. The plan pre-registered: "tilt goes to zero, desk about equal to the
+control; success is that the pipeline refuses noise." The trial was registered in
+`evaluation.TRIALS` before the run.
+
+**A worked example.** With five folds, `t_crit` is the 97.5% Student-t quantile on 4 degrees
+of freedom, 2.776. A signal with fold t of 4.0 keeps `1 - (2.776/4.0)^2 = 0.52` of its IC; one
+with t of 2.5 keeps nothing. The gate refuses fewer than three finite folds outright.
+[Recipe 105](COOKBOOK.md#105-the-student-t-gate-on-purged-fold-ics) prints the bar for other
+fold counts.
+
+**The numbers.** On 2016-2021 for 15 names, at least one signal survived on 82.6% of sampled
+dates. The survivors were mostly slow price-level signals whose fold ICs all had the same sign,
+so the fold dispersion was small and t large, from only five observations. The combined desk
+scored 0.5125 mean Sharpe against the control's 0.6437 (difference -0.131, 95% CI
+[-0.314, +0.059], p 0.174). Nothing was adopted and nothing was tuned after seeing it (plan
+section 3, principle 6).
+
+**What it teaches.** Shrinkage on a t-statistic protects only as well as the t-statistic's
+assumptions hold. Five folds of one trending series need not be five independent tests. The
+next design should make the null harder (for example detrended or cross-sectional ICs, or more
+folds) and decide that before running, not after.
+
+**Questions.**
+- Why can fold ICs from one trending price series be positively dependent?
+- If the folds are dependent, is the 4-df bar too low or too high?
+- What result would have counted as success, and what would you pre-register next time?

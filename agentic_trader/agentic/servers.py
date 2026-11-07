@@ -392,7 +392,11 @@ class DeskTools:
         ``position_after`` (pending the fill), so a following ``plan`` sizes the next leg of a
         split order from it and ``position`` reports the ticket behind the weight."""
         from ..algo import plan_reference, trade_intent
+        from ..oms import kill_switch_for
         ins = Instrument.parse(symbol)
+        halted = kill_switch_for(self.config).blocking(ins)   # the OMS kill switch binds tickets too
+        if halted:
+            raise ValueError(halted)
         if side not in ("buy", "sell"):
             raise ValueError("side must be 'buy' or 'sell'")
         for name, v in (("quantity", quantity), ("notional", notional), ("price", price)):

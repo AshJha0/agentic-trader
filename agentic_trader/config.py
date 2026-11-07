@@ -8,7 +8,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ---- LLM ---------------------------------------------------------------
     # "offline": every agent uses its deterministic rule-based reasoning (no API key needed).
     # "anthropic": agents reason with Claude; rule-based output is the fallback on any error.
+    # "local": agents reason with a local open-weight model (see local_llm_* below).
     "llm_provider": "offline",
+    # "local": a model served on this machine by Ollama (local_llm.py; plan item 2.1). Zero
+    # cost; max_llm_calls still caps calls. Unrun on the development machine (below 16 GB RAM).
+    "local_llm_url": "http://127.0.0.1:11434",
+    "local_llm_model": None,       # Ollama model name; required when llm_provider is "local"
+    "local_llm_timeout_s": 120,
+    "local_llm_seed": None,        # sampling seed sent to Ollama (temperature is 0 regardless)
     "deep_think_llm": "claude-sonnet-5-5",  # researchers, facilitator, trader, risk team, PM
     "quick_think_llm": "claude-haiku-5-5",  # analysts summarising tool output
     # claude-opus-5-5 is the optional upgrade for the PM / critic: set deep_think_llm to it.
@@ -65,6 +72,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # instrument's asset class). The instrument itself is always included.
     "xalpha_universe": None,
     "decision_threshold": 0.10,  # |consensus score| below this -> no directional view
+    # v0.14 (PLAN.md 5.1-5.3), research switches, all off by default. "ic" replaces the hand
+    # weights (analyst role weights, technical component weights, the 2x tilt, the 25/50/25
+    # risk-stance blend) with combine.desk_forecast: trailing purged IC per signal, shrunk to
+    # zero unless significant, mu = IC x vol x z, mean-variance tilt, turnover penalty.
+    # Only "window" (bars) is a registered trial parameter; the rest were fixed before any run.
+    "combination": {"method": "rules", "window": 504, "horizon": 10, "risk_aversion": 2.5,
+                    "turnover_penalty": 0.0005},
+    # Gaussian-HMM regime label (regime.py) fitted on fit_start..min(as_of, fit_end), fit_end
+    # being the design end. "enabled" adds the label as a fact; "condition" (needs method
+    # "ic") estimates ICs and sizing vol on bars of the current regime only.
+    "regime": {"enabled": False, "condition": False, "states": 2, "fit_start": "2008-07-01",
+               "fit_end": "2021-12-31"},
+    # Split-conformal interval on the IC forecast (needs method "ic"); the PM scales the tilt
+    # by min(1, |mu| / half-width). alpha is the miscoverage rate.
+    "conformal": {"enabled": False, "alpha": 0.2, "calibration_share": 0.4},
     # Rule-based reasoning switches. Each is a separately measured change; the
     # defaults were chosen on the 2016-2021 design period only (ablation in
     # docs/evaluation/evaluation.md). None of these three improved risk-adjusted
@@ -110,15 +132,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # period (trial "aggressive stance at the cap (v0.8 rule)").
         "aggressive_vol_scaled": True,
         "max_var_95": 0.02,        # cap on 1-day 95% historical VaR of the position
-        # Book-level risk aggregation (off by default: None). Per-instrument VaR above is
+        # Book-level risk aggregation. Per-instrument VaR above is
         # exactly that -- per instrument; a desk running several sleeves at once (TradingGraph
         # .scan(), which already threads a positions dict across a watchlist) has no check
         # that the *book* as a whole stays within a risk budget. Set this to enforce one: the
-        # 1-day 95% historical VaR of the whole book (this instrument's proposed weight plus
+        # 1-day 95% VaR (book_var_method) of the whole book (this instrument's proposed weight plus
         # every other symbol's current weight from the same scan) is capped, and a breach
         # scales *this* instrument's weight down (found by search over its own weight, since
         # book VaR is not assumed monotonic -- a new position could be a partial hedge).
-        "max_book_var_95": None,
+        # v0.14 (plan 5.4): on by default at 5% -- a loose budget that binds only on
+        # concentrated or highly correlated books, not tuned on any period; None turns it off.
+        # Only multi-sleeve runs (scan) build a book, so a single propagate() is unaffected.
+        "max_book_var_95": 0.05,
+        # How book VaR is forecast: "fhs" (filtered historical simulation, risk_model), "ewma",
+        # or "historical" (the plain quantile of the book history, the rule before v0.14).
+        "book_var_method": "fhs",
         "min_trade_weight": 0.05,  # smaller targets are rounded to flat
         "rebalance_band": 0.10,    # keep the current position if the new target is within this
                                    # distance of it (a no-trade band; 0 disables)
@@ -132,6 +160,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "fx_carry_neutral_cap": 0.5,
         "allow_short_equity": False,
         "allow_short_fx": True,
+        # Largest short as a fraction of capital (None = only max_position binds). Borrow
+        # availability and recall are not modelled; this is the documented limit instead.
+        "max_short_notional": None,
         "stop_atr_mult": 2.0,
         "take_profit_atr_mult": 3.0,
     },
