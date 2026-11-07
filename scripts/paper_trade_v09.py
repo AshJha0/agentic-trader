@@ -188,6 +188,9 @@ def main(argv=None) -> int:
     ap.add_argument("--data", default="yahoo", choices=("yahoo", "synthetic"))
     ap.add_argument("--freeze", default=FREEZE.isoformat(), help="first session (tests only)")
     ap.add_argument("--allow-shrink", action="store_true", help="accept a recomputation that ends before the ledger does")
+    ap.add_argument("--oms", action="store_true",
+                    help="also run the paper OMS shadow record (separate label, under <out>/oms; off by default: "
+                         "the frozen record is unchanged, and turning it on starts a new, separately labelled record)")
     a = ap.parse_args(argv)
     load_dotenv(str(ROOT / ".env"))
     out = Path(a.out)
@@ -245,6 +248,9 @@ def main(argv=None) -> int:
                             "revisions": rev["changed"], "dropped": rev["dropped"],
                             "last": {c: float(merged[c].iloc[-1]) for c in merged.columns},
                             "provenance": provenance()}, default=float) + "\n")
+    if a.oms:   # plan item 4.7; never reads or writes the frozen ledger
+        from agentic_trader.oms import paper_session
+        log(f"OMS shadow record: {paper_session(as_of, cfg, provider, BOOKS, out / 'oms', freeze)}")
     if rev["changed"] or rev["dropped"]:
         log(f"WARNING: the recomputation differs from the ledger for {len(rev['cells'])} cell(s) and "
             f"{len(rev['dropped'])} dropped session(s); the ledger keeps its rows, see revisions.csv")
