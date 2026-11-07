@@ -5,8 +5,9 @@ bar's close. The library covers the classic time-series signals for a single
 instrument; ``alpha_report`` measures each one the way a research desk would:
 
 * **IC**: Spearman correlation between the signal and the forward return over
-  the horizon, with an overlap-aware t-statistic (consecutive h-bar forward
-  returns share h-1 bars, so only n/h of the daily pairs are independent);
+  the horizon, estimated fold by fold on purged walk-forward folds
+  (``leakage.ic_purged``): consecutive h-bar forward returns share h-1 bars, so
+  the t-statistic comes from the dispersion of non-overlapping fold ICs;
 * **decay**: IC across horizons;
 * **hit rate** next to the **base rate** (share of up-moves), and the
   **tercile spread** on rank-assigned, disjoint terciles: does the sign predict
@@ -28,6 +29,7 @@ import pandas as pd
 
 from . import quant
 from .instruments import Instrument
+from .leakage import ic_purged
 
 Signal = Callable[["AlphaInputs"], np.ndarray]
 
@@ -298,17 +300,19 @@ def tercile_spread(s: np.ndarray, fwd: np.ndarray) -> float:
 
 
 def _alpha_diagnostics(s: np.ndarray, fwd: np.ndarray, horizon: int = 1) -> dict[str, float]:
-    """IC (with the overlap-aware t-statistic for ``horizon``), hit rate and the base rate to
+    """Purged walk-forward IC (``leakage.ic_purged``: fold-mean IC, fold-dispersion t-statistic,
+    pairs scored), hit rate and the base rate to
     read it against, tercile spread, autocorrelation and coverage of one signal series against
     forward returns -- the row every column of ``alpha_report``'s table gets, factored out so
     ``significance_gated`` gets exactly the same measurement as every individual alpha and
     ``combined``, not a different one. ``up%`` is the share of positive forward returns on the
     same pairs: a signal stuck at +1 through a rally scores ``hit% == up%`` with zero skill."""
-    ic, t, n = information_coefficient(s, fwd, horizon)
+    pic = ic_purged(s, fwd, horizon)
+    ic, t, n = pic.ic, pic.t, pic.n
     ok = np.isfinite(s) & np.isfinite(fwd)
-    hit = float(np.mean(np.sign(s[ok]) == np.sign(fwd[ok]))) if n else float("nan")
-    up = float(np.mean(fwd[ok] > 0)) if n else float("nan")
-    spread = tercile_spread(s, fwd) if n >= 30 else float("nan")
+    hit = float(np.mean(np.sign(s[ok]) == np.sign(fwd[ok]))) if ok.any() else float("nan")
+    up = float(np.mean(fwd[ok] > 0)) if ok.any() else float("nan")
+    spread = tercile_spread(s, fwd) if ok.sum() >= 30 else float("nan")
     valid = s[np.isfinite(s)]
     ac = float("nan")
     if valid.size > 10 and valid[:-1].std() > 0 and valid[1:].std() > 0:
@@ -331,14 +335,14 @@ def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
     for name in sig.columns:
         s = sig[name].to_numpy()
         rows[name] = _alpha_diagnostics(s, fwd, horizon)
-        decay[name] = {h: information_coefficient(s, forward_returns(close, h), h)[0] for h in decay_horizons}
+        decay[name] = {h: ic_purged(s, forward_returns(close, h), h).ic for h in decay_horizons}
     # The row nobody was measuring: the significance-gated combination is what the alpha
     # analysts actually trade (agents.analysts.significant_alpha_signal), not "combined"
     # above, which is an equal-weighted diagnostic over every alpha regardless of quality.
     sig["significance_gated"] = significance_gated_series(sig.drop(columns=["combined"]), rows)
     s = sig["significance_gated"].to_numpy()
     rows["significance_gated"] = _alpha_diagnostics(s, fwd, horizon)
-    decay["significance_gated"] = {h: information_coefficient(s, forward_returns(close, h), h)[0] for h in decay_horizons}
+    decay["significance_gated"] = {h: ic_purged(s, forward_returns(close, h), h).ic for h in decay_horizons}
     table = pd.DataFrame(rows).T.round(4)
     with np.errstate(invalid="ignore", divide="ignore"):  # a constant or empty column has no correlation
         corr = sig.drop(columns=["combined", "significance_gated"]).corr().round(3)
