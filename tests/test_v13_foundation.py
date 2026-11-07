@@ -321,9 +321,12 @@ def test_admission_prices_the_real_prompt(monkeypatch):
     assert big > small > 0
 
 
-def test_workers_at_the_cap_during_a_retry_storm_never_overspend(monkeypatch):
+@pytest.mark.parametrize("calls_affordable,all_succeed", [(5.5, False), (16.5, True)])
+def test_workers_at_the_cap_during_a_retry_storm_never_overspend(monkeypatch, calls_affordable, all_succeed):
     """Eight workers share a dollar cap while every first attempt is rate limited: each retry
-    is reserved before it is sent, so the booked spend stays under the cap in hard mode."""
+    is reserved before it is sent, so booked spend never passes the cap in hard mode. A cap of
+    5.5 reservations must refuse some retries (which ones depends on thread timing, so only
+    the bound is asserted); a cap of 16.5 affords every call and its one retry, so all succeed."""
     lock, seen = threading.Lock(), {}
 
     def fail(kw):
@@ -335,7 +338,7 @@ def test_workers_at_the_cap_during_a_retry_storm_never_overspend(monkeypatch):
     c = cfg(max_tokens=1000, llm_max_retries=2)
     inner = AnthropicLLM(c)
     per_call = inner.estimate_cost(True, system="s", prompt="p-00")
-    cap = per_call * 5.5
+    cap = per_call * calls_affordable
     llm = budget_llm(inner, make_config(c, max_llm_cost_usd=cap))
     results = []
     threads = [threading.Thread(target=lambda i=i: results.append(llm.complete("s", f"p-{i:02d}", deep=True)))
@@ -344,5 +347,7 @@ def test_workers_at_the_cap_during_a_retry_storm_never_overspend(monkeypatch):
         t.start()
     for t in threads:
         t.join()
-    assert llm.spent_usd <= cap and llm.reserved_usd == pytest.approx(0.0, abs=1e-12)
-    assert sum(r is not None for r in results) >= 1 and llm.in_flight == 0
+    assert llm.spent_usd <= cap and llm.reserved_usd == pytest.approx(0.0, abs=1e-12) and llm.in_flight == 0
+    assert len(results) == 8
+    if all_succeed:
+        assert all(r is not None for r in results)
