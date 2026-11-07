@@ -75,7 +75,7 @@ def test_ic_purged_handles_short_and_missing_inputs():
     s = np.full(500, np.nan)
     assert math.isnan(ic_purged(s, np.arange(500.0), 5).ic)
     gate = ic_purged(np.arange(500.0), np.arange(500.0), 5).as_gate()
-    assert set(gate) == {"IC", "t(IC)", "n"} and gate["IC"] == pytest.approx(1.0)
+    assert set(gate) == {"IC", "t(IC)", "n", "t_crit"} and gate["IC"] == pytest.approx(1.0)
 
 
 def test_ic_purged_series_means_scored_dates():

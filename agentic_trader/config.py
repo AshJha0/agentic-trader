@@ -72,6 +72,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # instrument's asset class). The instrument itself is always included.
     "xalpha_universe": None,
     "decision_threshold": 0.10,  # |consensus score| below this -> no directional view
+    # v0.14 (PLAN.md 5.1-5.3), research switches, all off by default. "ic" replaces the hand
+    # weights (analyst role weights, technical component weights, the 2x tilt, the 25/50/25
+    # risk-stance blend) with combine.desk_forecast: trailing purged IC per signal, shrunk to
+    # zero unless significant, mu = IC x vol x z, mean-variance tilt, turnover penalty.
+    # Only "window" (bars) is a registered trial parameter; the rest were fixed before any run.
+    "combination": {"method": "rules", "window": 504, "horizon": 10, "risk_aversion": 2.5,
+                    "turnover_penalty": 0.0005},
+    # Gaussian-HMM regime label (regime.py) fitted on fit_start..min(as_of, fit_end), fit_end
+    # being the design end. "enabled" adds the label as a fact; "condition" (needs method
+    # "ic") estimates ICs and sizing vol on bars of the current regime only.
+    "regime": {"enabled": False, "condition": False, "states": 2, "fit_start": "2008-07-01",
+               "fit_end": "2021-12-31"},
+    # Split-conformal interval on the IC forecast (needs method "ic"); the PM scales the tilt
+    # by min(1, |mu| / half-width). alpha is the miscoverage rate.
+    "conformal": {"enabled": False, "alpha": 0.2, "calibration_share": 0.4},
     # Rule-based reasoning switches. Each is a separately measured change; the
     # defaults were chosen on the 2016-2021 design period only (ablation in
     # docs/evaluation/evaluation.md). None of these three improved risk-adjusted

@@ -90,7 +90,19 @@ class Trader(Agent):
                 scale = float(risk.get("fx_carry_neutral_scale", 4.0))   # % p.a. per unit of weight
                 cap = float(risk.get("fx_carry_neutral_cap", 0.5))
                 neutral = clip(float(rd) / scale, -cap, cap)
-        w = clip(neutral + 2.0 * score, -1, 1) if abs(score) > thr else neutral
+        fc = state.forecast
+        if fc is not None:
+            # combination.method "ic": the estimated mean-variance tilt replaces the 2x tilt on
+            # the consensus score, less the exact turnover-penalty margin around the tilt held.
+            from ..combine import turnover_penalised
+            comb = cfg["combination"]
+            held = (state.current_weight - neutral) if state.current_weight is not None else 0.0
+            var = fc.sigma ** 2 if fc.sigma == fc.sigma else 0.0
+            fc.neutral = neutral
+            w = clip(neutral + turnover_penalised(fc.tilt, held, var, float(comb["risk_aversion"]),
+                                                  float(comb["turnover_penalty"])), -1, 1)
+        else:
+            w = clip(neutral + 2.0 * score, -1, 1) if abs(score) > thr else neutral
         if not shorts:
             w = max(w, 0.0)
         hit = state.track_record.get("hit_rate")

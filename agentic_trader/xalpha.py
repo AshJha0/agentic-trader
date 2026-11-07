@@ -30,7 +30,7 @@ import pandas as pd
 from . import quant
 from .alpha import ALPHAS, EQUITY_ALPHAS, FX_ALPHAS, compute_alphas
 from .instruments import Instrument
-from .leakage import ic_purged_series
+from .leakage import ic_purged_series, passes_gate, scored_mask
 
 
 # ------------------------------------------------------------- panels
@@ -133,16 +133,17 @@ def ic_summary(ic: pd.Series, horizon: int, periods_per_year: float = 252.0) -> 
     ``mean IC``, ``t(IC)`` and ``days`` come from purged walk-forward folds
     (``leakage.ic_purged_series``): the fold-mean IC, a t-statistic from the dispersion of
     non-overlapping fold ICs, and the dates scored. ``IC IR`` (annualised for
-    non-overlapping horizons) and ``IC>0%`` describe the daily series itself.
+    non-overlapping horizons) and ``IC>0%`` are measured on the same scored dates, so
+    ``days`` counts the sample behind every column.
     """
-    v = ic.dropna()
     pic = ic_purged_series(ic, horizon)
+    v = ic[scored_mask(len(ic), horizon)].dropna()
     if v.size < 3 or not math.isfinite(pic.ic):
         return {"mean IC": float("nan"), "IC IR": float("nan"), "t(IC)": float("nan"),
-                "IC>0%": float("nan"), "days": pic.n}
+                "t_crit": float("nan"), "IC>0%": float("nan"), "days": pic.n}
     mean, sd = float(v.mean()), float(v.std(ddof=1))
     return {"mean IC": pic.ic, "IC IR": (mean / sd) * math.sqrt(periods_per_year / horizon) if sd > 0 else float("nan"),
-            "t(IC)": pic.t, "IC>0%": 100.0 * float((v > 0).mean()), "days": pic.n}
+            "t(IC)": pic.t, "t_crit": pic.t_crit, "IC>0%": 100.0 * float((v > 0).mean()), "days": pic.n}
 
 
 def quantile_spread(signal: pd.DataFrame, fwd: pd.DataFrame, horizon: int, quantile: float = 0.2,
@@ -229,7 +230,7 @@ def xalpha_report(frames: dict[str, pd.DataFrame], instruments: dict[str, Instru
     # not "combined" above, which is an equal-weighted diagnostic over every alpha regardless
     # of measured quality. A full-sample diagnostic, not a walk-forward backtest -- see
     # alpha.significance_gated_series, which this mirrors for cross-sectional scores.
-    ic_for_gate = {n: {"IC": v["mean IC"], "t(IC)": v["t(IC)"], "n": v["days"]}
+    ic_for_gate = {n: {"IC": v["mean IC"], "t(IC)": v["t(IC)"], "t_crit": v["t_crit"], "n": v["days"]}
                   for n, v in rows.items() if n != "combined"}
     scores["significance_gated"] = significance_gated_scores(scores, ic_for_gate)
     rows["significance_gated"] = row_for("significance_gated", scores["significance_gated"])
@@ -256,8 +257,7 @@ def significance_gated_scores(scores: dict[str, pd.DataFrame], ic: dict[str, dic
     weights = {n: 0.0 for n in names}
     for n in names:
         v = ic.get(n)
-        if (v and v.get("IC") is not None and v["IC"] == v["IC"]
-                and abs(v.get("t(IC)") or 0.0) >= min_tstat and (v.get("n") or 0) >= min_n):
+        if passes_gate(v, min_n, min_tstat):
             weights[n] = float(v["IC"])
     return _combine_scores(scores, weights)
 
