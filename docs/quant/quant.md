@@ -288,3 +288,23 @@ agentic-trader stats returns.csv --var-backtest                        # Sharpe 
 Cookbook recipes 9 to 16 (backtests and the core), 51 to 59 (alphas, execution, portfolios,
 deflated Sharpe, impact) and 73 to 100 (VaR tests, bootstraps, trend and carry streams, the
 overlay, risk budgets, the trials registry) show each piece in a few lines.
+
+## 14. Edge-case conventions (v0.14, plan item 5.7)
+
+These conventions are pinned by `tests/test_v14_edges.py`; the code is in `agentic_trader/validate.py`.
+
+**Bars are validated, not repaired, at the graph.** Providers repair raw downloads with `clean_ohlcv`. After that, `TradingGraph.prepare` runs `require_valid_bars` on the history it is handed and refuses with every reason found: a NaN, zero or negative price, High below Low, a duplicate date, dates out of order, or a step between bars longer than 7 calendar days for equities or 5 for FX (or `max_data_staleness_days`, when that is larger). Seven days covers the longest US closure in the free-data era (11 to 17 September 2001).
+
+**Session clocks.** A daily bar is labelled with its New York trade date. The equity session closes at 16:00 New York; the FX day closes at the 17:00 New York roll, one hour later. Both are New York wall time, so a US daylight-saving change moves both together and the one-hour gap holds all year (21:00/22:00 UTC in winter, 20:00/21:00 UTC in summer). A European DST change on another weekend moves neither. Example: on 26 March 2024, after the US change and before the European one, the equity close is 20:00 UTC and the FX roll 21:00 UTC.
+
+**Holidays across sleeves.** Sleeves align on trade dates. A date on which one sleeve has no bar (4 July: equities shut, FX trades) is not a common session, so a multi-sleeve rebalance waits for the next date every sleeve trades (`validate.common_sessions`).
+
+**Splits.** Every metric is computed from returns of a split-adjusted series, so it cannot depend on the price scale. A property test builds an unadjusted series with a k-for-1 step, adjusts it back, and checks that cumulative return, volatility, Sharpe, drawdown, historical VaR and CVaR, and every equity alpha are unchanged, as they are under any constant rescaling.
+
+**Stops and targets.** Levels are checked against the open first, then against the bar's range. A gap through the stop fills at the open, not at the stop. When the stop and the target both lie inside one bar's range, the stop is assumed to have traded first: daily bars do not say which came first, and the worse outcome is the conservative assumption. This was already the rule on both backends; v0.14 pins it and does not change it.
+
+**Survivorship.** `validate.survivorship_statement` writes one line per table row saying whether the name was trading at design start, listed afterwards (chosen with hindsight), or absent.
+
+**Short notional.** Borrow availability and recall are not modelled. `risk.max_short_notional` (default `None`: only `max_position` binds) caps a short in the Portfolio Manager's guardrails, after the short-selling check and before the position cap.
+
+**Ledger floats.** The paper ledger is written with each float's shortest round-trip `repr` and read back with pandas' round-trip parser, so a row survives a write and read bit for bit. Ledgers are compared with a tolerance (`validate.ledgers_match`, default 1e-12), never with `==`.
