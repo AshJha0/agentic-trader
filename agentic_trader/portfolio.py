@@ -273,28 +273,37 @@ def book_returns(weights: dict[str, float], returns: pd.DataFrame) -> np.ndarray
     return port[np.isfinite(port)]
 
 
-def book_var_95(weights: dict[str, float], returns: pd.DataFrame, alpha: float = 0.95) -> float | None:
-    """Historical VaR of a weighted book (the same convention as ``quant.historical_var`` for
-    one instrument: a non-negative loss fraction). ``returns`` is an aligned (T, N) frame of
+def book_var_95(weights: dict[str, float], returns: pd.DataFrame, alpha: float = 0.95,
+                method: str = "historical") -> float | None:
+    """1-day VaR of a weighted book (the same convention as ``quant.historical_var`` for
+    one instrument: a non-negative loss fraction). ``method`` is ``"historical"`` (the
+    quantile of the whole aligned history, the rule before v0.14) or a ``risk_model``
+    forecaster (``"ewma"``, ``"fhs"``) applied to the book's return series, giving the VaR
+    for the day after it ends. ``returns`` is an aligned (T, N) frame of
     daily returns; see ``book_returns`` for how zero-weight, missing and short-history symbols
     are treated. An empty book (every weight zero) has VaR 0. Returns ``None`` when fewer
     than ``MIN_BOOK_OBS`` aligned, finite observations are available -- too little to trust
-    a quantile -- which ``book_var_scale`` treats as a failed check, never a passed one.
+    a quantile -- which ``book_var_scale`` treats as a failed check, never a passed one. The
+    forecasters also return ``None`` when they cannot form a forecast (``risk_model.var_next``
+    needs the EWMA warm-up plus ``MIN_RESIDUALS`` residuals, about 40 observations).
     """
     if not any(x != 0 for x in weights.values()):
         return 0.0
     port = book_returns(weights, returns)
     if port is None or port.size < MIN_BOOK_OBS:
         return None
-    return quant.historical_var(port, alpha)
+    if method == "historical":
+        return quant.historical_var(port, alpha)
+    from .risk_model import var_next
+    return var_next(port, method, alpha=alpha)
 
 
 def book_var_scale(symbol: str, proposed_weight: float, other_positions: dict[str, float],
                    returns: pd.DataFrame, max_var_95: float | None, alpha: float = 0.95,
-                   grid: int = 41) -> tuple[float, float | None, str | None]:
+                   grid: int = 41, method: str = "historical") -> tuple[float, float | None, str | None]:
     """Scale ``proposed_weight`` in ``symbol`` down, if needed, so the book (``other_positions``
     unchanged, ``symbol`` at the scaled weight) stays within ``max_var_95`` of 1-day 95%
-    historical VaR.
+    VaR, measured by ``book_var_95`` with ``method``.
 
     Book VaR is *not* assumed monotonic in this instrument's own weight -- a new position can
     be a partial hedge against the rest of the book, in which case increasing it could lower
@@ -313,7 +322,7 @@ def book_var_scale(symbol: str, proposed_weight: float, other_positions: dict[st
     def var_at(c: float) -> float | None:
         w = dict(other_positions)
         w[symbol] = c * proposed_weight
-        return book_var_95(w, returns, alpha)
+        return book_var_95(w, returns, alpha, method)
 
     full = var_at(1.0)
     if proposed_weight == 0 or not max_var_95 or max_var_95 <= 0:
