@@ -9,6 +9,7 @@ import numpy as np
 
 from .. import quant
 from ..data.base import MarketDataProvider, NewsItem
+from .. import contracts
 from ..sentiment import score_fx_headline, score_text
 from ..state import AnalystReport, TradingState
 from .base import Agent, clip, fmt_facts, untrusted_block
@@ -62,7 +63,7 @@ class Analyst(Agent):
         # invent a view from an empty input).
         if not report.abstained:
             data = self.ask_json(self.prompt(facts, state), ("signal", "confidence", "summary"),
-                                 state=state, numeric=("signal", "confidence"))
+                                 state=state, numeric=("signal", "confidence"), schema=contracts.ANALYST)
             if data:
                 kp = data.get("key_points") or []
                 report = AnalystReport(

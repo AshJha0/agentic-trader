@@ -6,6 +6,7 @@ import math
 import numpy as np
 
 from .. import quant
+from .. import contracts
 from ..state import Action, TradeProposal, TradingState
 from .base import Agent, clip, fmt_facts
 
@@ -127,7 +128,7 @@ class Trader(Agent):
         )
         data = self.ask_json(prompt, ("action", "target_weight", "rationale"), state=state,
                              numeric=("target_weight", "confidence", "stop_loss", "take_profit",
-                                      "horizon_days"))
+                                      "horizon_days"), schema=contracts.TRADER)
         if data:
             w = clip(data["target_weight"], -1, 1)
             if not shorts:

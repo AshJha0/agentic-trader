@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from .. import quant
+from .. import contracts
 from ..state import Book, FinalDecision, RiskView, TradingState
 from .base import Agent, clip, fmt_facts
 from .trader import action_for, allow_short, atr14, policy_passages, protective_levels, sane_levels
@@ -134,7 +135,7 @@ class RiskAnalyst(Agent):
               '"argument" (<= 120 words, respond to the other analysts).'
         )
         data = self.ask_json(prompt, ("recommended_weight", "argument"), state=state,
-                             numeric=("recommended_weight",))
+                             numeric=("recommended_weight",), schema=contracts.RISK_VIEW)
         if data:
             mx = f["max_position"]
             view = RiskView(self.stance, clip(data["recommended_weight"], -mx, mx),
@@ -203,7 +204,7 @@ class PortfolioManager(Agent):
               '([0, 1]), "rationale" (2-4 sentences explaining approval/resizing/rejection).'
         )
         data = self.ask_json(prompt, ("target_weight", "rationale"), state=state,
-                             numeric=("target_weight", "confidence"))
+                             numeric=("target_weight", "confidence"), schema=contracts.PORTFOLIO_MANAGER)
         if data:
             w = clip(data["target_weight"], -1, 1)
             conf = clip(data.get("confidence"), 0, 1, conf)
@@ -228,7 +229,9 @@ class PortfolioManager(Agent):
         d = FinalDecision(state.instrument.symbol, state.as_of,
                           action_for(w, state.debate.score, thr), round(w, 4), conf,
                           stop, take, rationale, bool(approved), notes, source,
-                          kept=band_note is not None)
+                          kept=band_note is not None,
+                          models_served=tuple(sorted({c["model_served"] for c in state.llm_calls
+                                                      if c.get("model_served")})))
         state.decision = d
         return d
 

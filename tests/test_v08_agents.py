@@ -26,6 +26,9 @@ from agentic_trader.agentic import AgentHarness, Role, Task, TaskState
 from agentic_trader.llm import (AnthropicLLM, BudgetedLLM, UsageTracker, budget_llm, extract_json, get_llm,
                                 request_shape, retry_after_seconds)
 from agentic_trader.memory import DecisionMemory
+# The v0.8 suites were written against these ids; P1 (v0.13) moved the defaults.
+V08_MODELS = {"deep_think_llm": "claude-opus-5", "quick_think_llm": "claude-haiku-4-5", "deep_effort": "high",
+              "llm_min_input_tokens": 8000, "llm_strict_model": False}
 from agentic_trader.prompts import prompt_bundle_hash, prompt_registry
 
 CFG = make_config(memory_path=None)
@@ -123,7 +126,7 @@ def test_request_shape_only_sends_parameters_the_model_family_accepts(model, eff
 
 def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, caplog):
     recorded, clients = fake_anthropic(monkeypatch)
-    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, llm_timeout_s=42, llm_max_retries=1,
+    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, llm_timeout_s=42, llm_max_retries=1,
                       llm_retry_backoff_s=0.0)
     llm = AnthropicLLM(cfg)
     # v0.8 regression (g): the SDK makes no retries of its own; AnthropicLLM runs the loop so every
@@ -133,7 +136,7 @@ def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, cap
     assert llm.complete("sys", "hello", deep=False) == '{"signal": 0.5}'
     deep, quick = recorded
     assert deep["model"] == "claude-opus-5" and deep["thinking"] == {"type": "adaptive"}
-    assert deep["output_config"] == {"effort": "high"} and deep["system"] == "sys"
+    assert deep["output_config"] == {"effort": "high"} and deep["system"][0]["text"] == "sys"
     assert deep["messages"] == [{"role": "user", "content": "hello"}]
     assert quick["model"] == "claude-haiku-4-5" and "thinking" not in quick and "output_config" not in quick
     # accounted under the *served* id (dated), priced at the family rate
@@ -150,7 +153,7 @@ def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, cap
 
     # refusal fallback goes through the beta endpoint with the fallbacks body, opus-5 only
     recorded.clear()
-    cfg2 = make_config(llm_provider="anthropic")
+    cfg2 = make_config(**V08_MODELS, llm_provider="anthropic")
     AnthropicLLM(cfg2).complete("s", "p", deep=True)
     assert recorded[-1]["betas"] == ["server-side-fallback-2026-07-01"]
     assert recorded[-1]["extra_body"] == {"fallbacks": "default"}
@@ -187,7 +190,7 @@ def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, cap
 def test_dollar_budget_fails_closed_for_an_unpriced_served_model(monkeypatch):
     fake_anthropic(monkeypatch, served="claude-opus-6-20270101",
                    usage=SimpleNamespace(input_tokens=1_000_000, output_tokens=1_000_000))
-    cfg = make_config(llm_provider="anthropic", max_llm_cost_usd=650.0)
+    cfg = make_config(**V08_MODELS, llm_provider="anthropic", max_llm_cost_usd=650.0)
     llm = get_llm(cfg)
     assert isinstance(llm, BudgetedLLM) and llm.max_cost_usd == 650.0 and llm.max_calls is None
     assert llm.complete("s", "p", deep=True) is not None       # nothing known yet about the served id
@@ -195,10 +198,10 @@ def test_dollar_budget_fails_closed_for_an_unpriced_served_model(monkeypatch):
     assert llm.usage.summary()["unpriced_models"] == ["claude-opus-6-20270101"]
     # a configured id without a price is refused up front when a dollar cap is set
     with pytest.raises(ValueError, match="deep_think_llm"):
-        get_llm(make_config(llm_provider="anthropic", deep_think_llm="claude-opus-6", max_llm_cost_usd=5.0))
+        get_llm(make_config(**{**V08_MODELS, "deep_think_llm": "claude-opus-6"}, llm_provider="anthropic", max_llm_cost_usd=5.0))
     with pytest.raises(ValueError, match="quick_think_llm"):
         budget_llm(object(), make_config(quick_think_llm="claude-3-5-haiku-20241022", max_llm_cost_usd=5.0))
-    assert isinstance(get_llm(make_config(llm_provider="anthropic", deep_think_llm="claude-opus-6",
+    assert isinstance(get_llm(make_config(**{**V08_MODELS, "deep_think_llm": "claude-opus-6"}, llm_provider="anthropic",
                                           max_llm_calls=3)), BudgetedLLM)   # a call cap needs no price
     tr = UsageTracker()
     tr.add("claude-opus-6", SimpleNamespace(input_tokens=5, output_tokens=5))
@@ -836,7 +839,7 @@ def test_budget_reservation_is_a_realistic_reply_so_parallel_workers_use_the_cap
     fake_anthropic(monkeypatch, served="claude-opus-5", usage=usage, delay=0.05)
     # the realistic reservation is llm_budget_mode="estimate" (v0.8 final review (e): the default
     # is "hard"; this test used the default before, when "estimate" was the only behaviour)
-    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0,
+    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0,
                       llm_budget_mode="estimate")
     assert cfg["llm_reserve_output_tokens"] == 2000
     llm = get_llm(cfg)
@@ -868,7 +871,7 @@ def test_budget_reservation_is_a_realistic_reply_so_parallel_workers_use_the_cap
 
 # ------------------------------------------------- (g) every timed-out attempt is billed
 def test_every_timed_out_attempt_is_billed_even_when_a_retry_succeeds(monkeypatch):
-    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.0)
+    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.0)
     recorded, clients = fake_anthropic(monkeypatch, fail=[_APITimeoutError("read timeout"), None])
     llm = AnthropicLLM(cfg)
     assert clients[-1]["max_retries"] == 0 and llm.max_retries == 2
@@ -1055,7 +1058,7 @@ def _budgeted(monkeypatch, mode, fail=None, **over):
     usage = SimpleNamespace(input_tokens=8000, output_tokens=16000, cache_read_input_tokens=0,
                             cache_creation_input_tokens=0)             # every reply fills max_tokens
     recorded, _ = fake_anthropic(monkeypatch, served="claude-opus-5", usage=usage, delay=0.05, fail=fail)
-    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0,
+    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0,
                       llm_budget_mode=mode, **over)
     return get_llm(cfg), recorded
 
@@ -1095,14 +1098,14 @@ def test_hard_budget_mode_bounds_spend_and_estimate_mode_is_a_documented_soft_ca
     _hammer(llm)
     assert len(recorded) >= 3 and llm.spent_usd == pytest.approx(len(recorded) * worst) and llm.spent_usd > 1.0
     with pytest.raises(ValueError, match="llm_budget_mode"):
-        AnthropicLLM(make_config(llm_provider="anthropic", llm_budget_mode="soft"))
+        AnthropicLLM(make_config(**V08_MODELS, llm_provider="anthropic", llm_budget_mode="soft"))
 
 
 def test_budget_exhausted_agrees_with_complete_on_the_tier_it_is_asked_about(monkeypatch):
     usage = SimpleNamespace(input_tokens=8000, output_tokens=16000, cache_read_input_tokens=0,
                             cache_creation_input_tokens=0)
     fake_anthropic(monkeypatch, served="claude-haiku-4-5", usage=usage)
-    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=0.2)
+    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=0.2)
     llm = get_llm(cfg)
     deep, quick = llm.inner.estimate_cost(True), llm.inner.estimate_cost(False)
     assert quick == pytest.approx(0.088) and deep == pytest.approx(0.44) and quick < 0.2 < deep
@@ -1127,7 +1130,7 @@ def test_retries_honour_the_servers_retry_after_header_and_validate_the_backoff(
         e = _RateLimitError("slow down", status) if status == 429 else _APIStatusError("overloaded", status)
         e.response = SimpleNamespace(headers=headers)
         return e
-    cfg = make_config(llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.5)
+    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.5)
     recorded, _ = fake_anthropic(monkeypatch, fail=[limited({"retry-after": "3"}), limited({"retry-after-ms": "1500"}, 529),
                                                     None])
     llm = AnthropicLLM(cfg)

@@ -200,10 +200,11 @@ See `config.py` for the full dictionary.
 
 | Key | Default | Effect |
 |---|---|---|
-| `llm_provider`, `deep_think_llm`, `quick_think_llm`, `deep_effort`, `quick_effort`, `max_tokens` | `offline`, `claude-opus-5`, `claude-haiku-4-5`, `high`, `low`, 16000 | Model tiers, effort and reply size |
+| `llm_provider`, `deep_think_llm`, `quick_think_llm`, `deep_effort`, `quick_effort`, `max_tokens` | `offline`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `medium`, `low`, 16000 | Model tiers, effort and reply size; `claude-opus-5-5` is the optional deep-tier upgrade |
+| `use_refusal_fallback`, `llm_count_tokens`, `llm_min_input_tokens`, `llm_strict_model` | True, `auto`, 0, True | Server-side refusal fallback on the families in `REFUSAL_FALLBACK_FAMILIES`; prompt pricing for admission (`count_tokens` with a key, local estimate without); floor under the input estimate; reject a reply from an unexpected served model |
 | `llm_timeout_s`, `max_llm_calls`, `max_llm_cost_usd`, `llm_anonymize` | 300, None, None, False | Timeout; hard call cap; spend cap (list prices); anonymised prompts |
 | `llm_max_retries`, `llm_retry_backoff_s` | 2, 0.5 | Attempts after the first for a timed-out, rate-limited, 5xx or dropped request (the client runs the loop itself; a timed-out attempt is billed at its maximum); first-retry delay, doubling to 8 s with jitter, unless a `retry-after` header (up to 60 s) is honoured instead |
-| `llm_budget_mode`, `llm_reserve_output_tokens` | `hard`, 2000 | How `max_llm_cost_usd` is enforced: `hard` reserves each call's maximum cost (input estimate + `max_tokens`) before dispatch so parallel workers cannot overshoot; `estimate` reserves input + `llm_reserve_output_tokens` and is a soft cap |
+| `llm_budget_mode`, `llm_reserve_output_tokens` | `hard`, 2000 | How `max_llm_cost_usd` is enforced: `hard` reserves each call's maximum cost (input tokens + `max_tokens`) before dispatch so parallel workers cannot overshoot; `estimate` reserves input + `llm_reserve_output_tokens` and is a soft cap |
 | `analysts`, `xalpha_universe` | None (asset-class default), None (the core universe of the asset class) | Add `"alpha"` for the alpha analyst or `"xalpha"` for the cross-sectional one; the peer universe it ranks against |
 | `rules.tsmom`, `trend_filtered_reversal`, `abstain_without_data` | False, False, False | Rule switches measured on the design period and left off |
 | `rules.fx_carry_neutral`, `risk.fx_carry_neutral_scale`, `fx_carry_neutral_cap` | True, 2.0, 0.5 | FX strategic weight = clip(carry% / scale, ±cap) from the point-in-time rate differential (v0.5.1); `RULES_V03` turns it off |

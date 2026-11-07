@@ -8,8 +8,8 @@
 | Guide | For |
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
-| [LEARN.md](LEARN.md) | 50 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 100 copy-pasteable recipes, including the agentic layer, quant research, operations and the v0.7 to v0.12 research tools; every offline one runs in CI |
+| [LEARN.md](LEARN.md) | 51 concepts: how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 101 copy-pasteable recipes, including the agentic layer, quant research, operations and the v0.7 to v0.12 research tools; every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 38 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
@@ -357,7 +357,8 @@ print(port.table())
 
 | key | meaning |
 |---|---|
-| `llm_provider` · `deep_think_llm` · `quick_think_llm` · `deep_effort` | Model tiers and effort |
+| `llm_provider` · `deep_think_llm` · `quick_think_llm` · `deep_effort` | Model tiers and effort: `claude-sonnet-5-5` at `medium` for the reasoning roles, `claude-haiku-5-5` for the analysts; `claude-opus-5-5` is the optional upgrade for the deep tier |
+| `llm_count_tokens` · `llm_min_input_tokens` · `llm_strict_model` | How budget admission prices a prompt (`auto`: the free `count_tokens` endpoint when `ANTHROPIC_API_KEY` is set, else a conservative local estimate); a floor under that estimate (0); reject a reply served by an unexpected model with no recorded fallback (`True`) |
 | `llm_timeout_s` · `max_llm_calls` · `max_llm_cost_usd` · `llm_anonymize` | Timeout; hard call cap; hard spend cap (USD, list prices); hide ticker, dates and price level from the model |
 | `agentic.approval` | `auto`, `queued` or `deny` for tool calls that need approval |
 | `agentic.llm_planner` · `llm_critic` · `llm_reporter` | Which governance steps may use the model (all validated / audited either way) |

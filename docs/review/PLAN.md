@@ -47,6 +47,7 @@ Effort = wall-clock solo days. Spend = $0 throughout. Order: **P1 → P5 → P2 
 | 1.3 | Prompt caching: `FIRM_CONTEXT` + role + instructions as the first system block with `cache_control`; `UsageTracker` records `cache_read_input_tokens`; request-shape unit test. | cost report shows cache fields |
 | 1.4 | Server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`); fallback blocks and `stop_details.category` into the evidence record; `_FALLBACK_MODELS` removed. | fixture test |
 | 1.5 | `BatchLLM` implementing `LLM` (Message Batches, resume by `custom_id`, idempotent writes, partial-failure handling) with a fake batch backend; graph restructured for stage-wise batching across the walk-forward. | fake-backend test runs a 3-name, 5-date walk-forward |
+| 1.5b | Batch-friendly loop: one name's dates in sequence, names and offsets in parallel per pass, so a batched backtest needs about (pipeline stages) passes per date step rather than stages x dates per run. | 15-name test needs no more than stages x dates / names passes |
 | 1.6 | Drift test: default ids in both tables; `models.retrieve` check skipped without a key. | CI green |
 | 1.7 | Token counting via local estimate when no key, `count_tokens` when a key exists, replacing `ESTIMATED_INPUT_TOKENS = 8000` in budget admission. Test N workers at the cap during a retry storm. | test |
 | 1.8 | Assert `response.model` equals the configured id and store it per decision (model-version drift). | test |
@@ -149,6 +150,7 @@ Free daily data on 15 names will not produce a tradable edge; a local 8B model i
 ## 9. Progress log
 
 - 2026-11-07 — review, two plan drafts, second critical review, consolidation into this file. Nothing executed. Files uncommitted.
+- 2026-11-07 — P1 items 1.1 (5.5 model defaults and price table), 1.2 (structured outputs, `contracts.py`), 1.3 (prompt caching), 1.4 (refusal-fallback evidence per call), 1.6 (model-table drift test), 1.7 (token counting in budget admission) and 1.8 (served-model drift) implemented and tested offline in `tests/test_v13_foundation.py`; no live call, $0. 1.5 (BatchLLM) partly done: mechanism, store, resubmission and a fake-backend 3x5 walk-forward test pass, but passes grow as stages x dates because each prompt carries the previous held weight; full-length batching needs a loop change (open, see 1.5b). Docs pass done (README, LEARN 51, COOKBOOK 101, CHANGELOG v0.13.0 unreleased, AI, API, architecture pages).
 
 ## 10. How to resume
 

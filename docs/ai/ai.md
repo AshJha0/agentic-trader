@@ -96,11 +96,20 @@ There are two tiers (`config.py`):
 
 | Tier | Default model | Used by | Why |
 |---|---|---|---|
-| quick | `claude-haiku-4-5`, effort `low` | analysts | summarising tool output is a light task and there are four or more per decision |
-| deep | `claude-opus-5`, effort `high` | researchers, facilitator, trader, risk team, portfolio manager; critic, reporter and planner in the agentic layer | these weigh evidence against evidence |
+| quick | `claude-haiku-5-5`, effort `low` | analysts | summarising tool output is a light task and there are four or more per decision |
+| deep | `claude-sonnet-5-5`, effort `medium` | researchers, facilitator, trader, risk team, portfolio manager; critic, reporter and planner in the agentic layer | these weigh evidence against evidence |
 
-`request_shape` builds the API parameters each model family accepts (thinking mode, effort
-levels), so changing the model id in the config is enough.
+`claude-opus-5-5` is the optional upgrade for the deep tier (set `deep_think_llm`); at list
+price it costs twice Sonnet 5.5 per token ($4 / $20 against $2 / $10 per million input / output
+tokens; Haiku 5.5 is $0.10 / $0.50). `request_shape` builds the API parameters each model
+family accepts (thinking mode, effort levels), so changing the model id in the config is
+enough. The desk never forces a `tool_choice`; the 5.5 families reject a forced one
+(`NO_FORCED_TOOL_CHOICE`).
+
+The system prompt goes out as one block marked for prompt caching (`cache_control`
+ephemeral): it is the stable prefix of every call an agent makes. A prefix shorter than the
+model's minimum cacheable length is simply not cached; the usage summary then shows no
+`cache_read_tokens`.
 
 ### What it is given
 
@@ -116,6 +125,12 @@ with the document: a report written from headlines stays fenced wherever it is q
 
 ### What happens to its reply
 
+Each structured reply has a JSON schema in `agentic_trader/contracts.py`. When the backend
+supports it, the schema is sent as `output_config.format` (structured outputs), so the API
+returns JSON of that shape. That removes the parse failure; it does not make the values
+right, so the contract below stays as a second gate. A test checks every schema against the
+API's schema rules and runs one recorded-shape reply per contract through both.
+
 `Agent.ask_json` enforces a contract:
 
 - the reply must contain one JSON object;
@@ -130,12 +145,24 @@ proposes are kept only when they sit on the correct side of the entry.
 `llm.complete` returns `None` on any failure (no key, network error, timeout, refusal,
 unparseable output). The agent then uses its rules. **A run never fails because of the model.**
 
+On the families in `REFUSAL_FALLBACK_FAMILIES` (Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5; Haiku
+5.5 has none) a request is sent with the server-side refusal fallback (`fallbacks="default"`,
+beta `server-side-fallback-2026-07-01`), so a declined request may be finished by another
+model. Every call leaves evidence in `TradingState.llm_calls`: configured and served model, stop
+reason, refusal category, any fallback switch, and whether the served id drifted. A served id
+that is neither the configured id nor that id with a date suffix, with no fallback recorded,
+is drift: counted in `usage.model_drift` and, with `llm_strict_model` on (the default), the
+reply is discarded and the rules apply. `FinalDecision.models_served` lists the ids that
+actually answered.
+
 ### Cost control
 
 `BudgetedLLM` caps the number of calls and the dollar spend (`max_llm_calls`,
 `max_llm_cost_usd`). In the default `hard` mode each call reserves its maximum possible cost
 before it is sent, so parallel workers cannot overshoot the cap, and a retry must be admitted
-by the budget like a new call. Past the cap every call returns `None` and the run finishes on
+by the budget like a new call. The input side of a reservation is the actual prompt: counted by
+the free `count_tokens` endpoint when an API key is set, otherwise estimated locally on the high
+side ((chars / 3 + 64) × 1.35). Past the cap every call returns `None` and the run finishes on
 rules. `UsageTracker` records tokens and cost per model; an evaluation result carries that
 summary.
 

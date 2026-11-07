@@ -1,6 +1,6 @@
 # Learn agentic-trader
 
-This guide works through the 50 ideas behind the project in order. For each concept it gives
+This guide works through the 51 ideas behind the project in order. For each concept it gives
 the idea, where the repository implements it, the real numbers it produces, and questions to
 test your understanding. Two shorter pages give the whole picture first: [how the AI works](docs/ai/ai.md) and
 [how the quant works](docs/quant/quant.md). Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
@@ -90,6 +90,10 @@ evaluation is
 48. [One statistic, every trial, every row](#48-one-statistic-every-trial-every-row)
 49. [A longer design period](#49-a-longer-design-period)
 50. [A negative result, and one routine in two languages](#50-a-negative-result-and-one-routine-in-two-languages)
+
+**Part X — v0.13: the model interface**
+
+51. [Structured outputs and the contract gate](#51-structured-outputs-and-the-contract-gate)
 
 ---
 
@@ -1893,3 +1897,35 @@ fuzzed on both backends in `tests/test_fuzz.py`, which now also fuzzes the older
   that as important as agreeing on good ones?
 - After four rounds without an edge, what is the most useful next experiment, and what
   would it cost?
+
+# Part X — v0.13: the model interface
+
+## 51. Structured outputs and the contract gate
+
+**The idea.** Asking a model for JSON can fail in two different ways. The reply may not be
+JSON of the right shape at all, or it may be well-formed JSON that says something the desk
+cannot use: a signal written as a string, a missing confidence. Structured outputs remove the
+first failure at the API. They do nothing about the second, so the check the desk already
+made stays in place.
+
+**In the repo.** Every structured reply has a JSON schema in `agentic_trader/contracts.py`.
+`Agent.ask_json(..., schema=...)` sends it through `complete_json`, which puts it in
+`output_config.format`. The reply then meets the same contract as before (`required` keys
+present, `numeric` keys finite numbers) and is rejected as a whole if it fails. Tests in
+`tests/test_v13_foundation.py` check every schema against the API's schema rules and run one
+recorded-shape reply per contract through both gates. Each call also records evidence in `TradingState.llm_calls`: which model
+was configured, which served it, the stop reason, any refusal category or fallback switch,
+and whether the served id drifted. [Recipe 101](COOKBOOK.md#101-structured-outputs-and-the-per-call-evidence)
+shows both gates and the evidence on a recorded reply.
+
+**The numbers.** None yet. No live Claude run was made for v0.13; the schemas, the evidence
+records and the budget admission are tested offline against stand-ins with the API's reply
+shape. Whether structured outputs change the share of replies rejected by the contract is a
+measurement for a later round.
+
+**Questions.**
+- If the API guarantees the shape, why keep the contract check? Name a reply that passes the
+  schema and fails the contract.
+- A schema and its contract disagree about one optional key. Which failures could follow,
+  and which test would catch it?
+- Why record the served model id on every call rather than trust the configured one?

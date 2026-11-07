@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.13.0 — unreleased (P1 foundation)
+
+Plan items 1.1 to 1.8 of [docs/review/PLAN.md](docs/review/PLAN.md). **No live Claude run was
+made**: everything below is tested offline in `tests/test_v13_foundation.py` against a
+stand-in `anthropic` module that returns the API's reply shapes. Nothing was spent.
+
+- **Model defaults (1.1).** `quick_think_llm` is `claude-haiku-5-5` ($0.10 / $0.50 per million
+  input / output tokens), `deep_think_llm` is `claude-sonnet-5-5` ($2 / $10) at `deep_effort`
+  `medium`; `claude-opus-5-5` ($4 / $20) is the optional upgrade for the PM and critic.
+  `PRICES_PER_MTOK` and `MODEL_CAPABILITIES` carry the 5.5 families. `NO_FORCED_TOOL_CHOICE`
+  lists the families that reject a forced `tool_choice`; the desk never forces one.
+- **Structured outputs (1.2).** `Agent.ask_json(..., schema=...)` sends a JSON schema from the
+  new `agentic_trader/contracts.py` through `complete_json` as `output_config.format`. The
+  contract check stays as the second gate; tests check each schema against the API's rules and
+  run one recorded-shape reply per contract through both gates.
+- **Prompt caching (1.3).** The system prompt is sent as one block with `cache_control`
+  ephemeral. The usage summary reports `cache_read_tokens` and `cache_write_tokens`. A prefix
+  under the model's minimum cacheable length is not cached.
+- **Refusal fallback evidence (1.4).** On `REFUSAL_FALLBACK_FAMILIES` (`claude-fable-5-1`,
+  `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`; Haiku 5.5 has none) requests use
+  `fallbacks="default"` with beta `server-side-fallback-2026-07-01`. Fallback switches and
+  `stop_details.category` are recorded per call (`AnthropicLLM.last_call`,
+  `TradingState.llm_calls`) and counted in `usage.fallbacks`. `_FALLBACK_MODELS` is removed.
+- **1.5 `BatchLLM`, partly done** (`agentic_trader/batch.py`): Message Batches behind the `LLM`
+  protocol, keyed by a content hash `custom_id`, an append-only JSONL store that makes a rerun
+  resume without resubmitting, and resubmission of expired, cancelled and retryable errored
+  requests (a non-retryable error falls back to rules). `run_until_complete` reruns a function
+  and sends each pass's new requests as one batch. Limit found while testing: every decision's
+  prompt carries the position held after the previous date, so passes grow as pipeline stages
+  times decision dates (about 25 for 3 names by 5 dates). Batching a full-length backtest needs
+  the backtest loop changed first (dates of one name in sequence, names in parallel per pass);
+  that is open.
+- **Model-table drift test (1.6).** Both default ids must be in `PRICES_PER_MTOK` and
+  `MODEL_CAPABILITIES`; a `models.retrieve` check runs only with an API key and is skipped
+  otherwise.
+- **Token counting in admission (1.7).** `ESTIMATED_INPUT_TOKENS` is removed. Budget admission
+  prices the actual prompt: the free `count_tokens` endpoint when `ANTHROPIC_API_KEY` is set
+  (`llm_count_tokens`: `auto` / `True` / `False`), else `estimate_tokens` ((chars / 3 + 64)
+  × 1.35). `llm_min_input_tokens` (default 0) sets a floor. `estimate_call_cost` now takes
+  `input_tokens` as a required argument. A test checks that a retry storm cannot pass the cap.
+- **Served-model drift (1.8).** A reply must come from the configured id or that id with a
+  `-YYYYMMDD` suffix unless a fallback is recorded. With `llm_strict_model` (default `True`)
+  a drifted reply is discarded and the rules apply; `usage.model_drift` counts it.
+  `FinalDecision.models_served` lists the served ids and is in `to_dict()`.
+- Docs: README, LEARN (concept 51, 51 in all), COOKBOOK (recipe 101 on structured outputs and
+  `llm_calls`; recipe 94 re-priced on the new defaults; 101 in all), the AI, API and
+  architecture pages updated to the new defaults and keys.
+
 ## v0.12.0 — 2026-09-30
 
 The first release since v0.8.0. It collects four rounds of work: the v0.9 research (attribution,
