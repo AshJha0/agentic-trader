@@ -510,7 +510,8 @@ class AlphaAnalyst(Analyst):
 
         import pandas as pd
 
-        from ..alpha import alpha_snapshot, compute_alphas, forward_returns, information_coefficient
+        from ..alpha import alpha_snapshot, compute_alphas, forward_returns
+        from ..leakage import ic_purged
         if state.alpha:
             return {"latest": dict(state.alpha.get("latest") or {}), "ic": dict(state.alpha.get("ic") or {})}
         ins = state.instrument
@@ -524,8 +525,7 @@ class AlphaAnalyst(Analyst):
             horizon = 10
             fwd = forward_returns(df["Close"].to_numpy(float), horizon)
             for name in sig.columns:
-                v, t, n = information_coefficient(sig[name].to_numpy(), fwd, horizon)
-                ic[name] = {"IC": v, "t(IC)": t, "n": n}
+                ic[name] = ic_purged(sig[name].to_numpy(), fwd, horizon).as_gate()
         return {"latest": latest, "ic": ic}
 
     def rules(self, f, state):

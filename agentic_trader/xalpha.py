@@ -30,6 +30,7 @@ import pandas as pd
 from . import quant
 from .alpha import ALPHAS, EQUITY_ALPHAS, FX_ALPHAS, compute_alphas
 from .instruments import Instrument
+from .leakage import ic_purged_series
 
 
 # ------------------------------------------------------------- panels
@@ -127,18 +128,21 @@ def cross_sectional_ic(signal: pd.DataFrame, fwd: pd.DataFrame, min_names: int =
 
 
 def ic_summary(ic: pd.Series, horizon: int, periods_per_year: float = 252.0) -> dict[str, float]:
-    """Mean IC, its information ratio (annualised for non-overlapping horizons), t-stat, hit rate."""
+    """Summary of a per-date cross-sectional IC series.
+
+    ``mean IC``, ``t(IC)`` and ``days`` come from purged walk-forward folds
+    (``leakage.ic_purged_series``): the fold-mean IC, a t-statistic from the dispersion of
+    non-overlapping fold ICs, and the dates scored. ``IC IR`` (annualised for
+    non-overlapping horizons) and ``IC>0%`` describe the daily series itself.
+    """
     v = ic.dropna()
-    n = int(v.size)
-    if n < 3:
+    pic = ic_purged_series(ic, horizon)
+    if v.size < 3 or not math.isfinite(pic.ic):
         return {"mean IC": float("nan"), "IC IR": float("nan"), "t(IC)": float("nan"),
-                "IC>0%": float("nan"), "days": n}
+                "IC>0%": float("nan"), "days": pic.n}
     mean, sd = float(v.mean()), float(v.std(ddof=1))
-    # Consecutive daily ICs of an h-day forward return overlap; only every h-th is independent.
-    n_indep = max(1.0, n / horizon)
-    return {"mean IC": mean, "IC IR": (mean / sd) * math.sqrt(periods_per_year / horizon) if sd > 0 else float("nan"),
-            "t(IC)": (mean / sd) * math.sqrt(n_indep) if sd > 0 else float("nan"),
-            "IC>0%": 100.0 * float((v > 0).mean()), "days": n}
+    return {"mean IC": pic.ic, "IC IR": (mean / sd) * math.sqrt(periods_per_year / horizon) if sd > 0 else float("nan"),
+            "t(IC)": pic.t, "IC>0%": 100.0 * float((v > 0).mean()), "days": pic.n}
 
 
 def quantile_spread(signal: pd.DataFrame, fwd: pd.DataFrame, horizon: int, quantile: float = 0.2,
