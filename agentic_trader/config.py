@@ -110,15 +110,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # period (trial "aggressive stance at the cap (v0.8 rule)").
         "aggressive_vol_scaled": True,
         "max_var_95": 0.02,        # cap on 1-day 95% historical VaR of the position
-        # Book-level risk aggregation (off by default: None). Per-instrument VaR above is
+        # Book-level risk aggregation. Per-instrument VaR above is
         # exactly that -- per instrument; a desk running several sleeves at once (TradingGraph
         # .scan(), which already threads a positions dict across a watchlist) has no check
         # that the *book* as a whole stays within a risk budget. Set this to enforce one: the
-        # 1-day 95% historical VaR of the whole book (this instrument's proposed weight plus
+        # 1-day 95% VaR (book_var_method) of the whole book (this instrument's proposed weight plus
         # every other symbol's current weight from the same scan) is capped, and a breach
         # scales *this* instrument's weight down (found by search over its own weight, since
         # book VaR is not assumed monotonic -- a new position could be a partial hedge).
-        "max_book_var_95": None,
+        # v0.14 (plan 5.4): on by default at 5% -- a loose budget that binds only on
+        # concentrated or highly correlated books, not tuned on any period; None turns it off.
+        # Only multi-sleeve runs (scan) build a book, so a single propagate() is unaffected.
+        "max_book_var_95": 0.05,
+        # How book VaR is forecast: "fhs" (filtered historical simulation, risk_model), "ewma",
+        # or "historical" (the plain quantile of the book history, the rule before v0.14).
+        "book_var_method": "fhs",
         "min_trade_weight": 0.05,  # smaller targets are rounded to flat
         "rebalance_band": 0.10,    # keep the current position if the new target is within this
                                    # distance of it (a no-trade band; 0 disables)

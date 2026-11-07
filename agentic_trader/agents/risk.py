@@ -39,10 +39,12 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         "rebalance_band": config["risk"].get("rebalance_band", 0.0),
         "short_selling_allowed": allow_short(state, config),
         "max_book_var_95": config["risk"].get("max_book_var_95"),
+        "book_var_method": config["risk"].get("book_var_method", "historical"),
         # Informational only (current book, no proposed change): the enforced check runs in
         # PortfolioManager.guardrails, which has state.book and can evaluate the proposed
         # weight's own effect on it -- a plain fact dict can only report a number, not act.
-        "book_var_95_now": (_book_var_now(state) if state.book is not None else None),
+        "book_var_95_now": (_book_var_now(state, config["risk"].get("book_var_method", "historical"))
+                            if state.book is not None else None),
     }
 
 
@@ -57,11 +59,11 @@ def position_cvar(f: dict[str, Any], w: float) -> float:
     return f["cvar_95_1d_short"] if w < 0 else f["cvar_95_1d"]
 
 
-def _book_var_now(state: TradingState) -> float | None:
+def _book_var_now(state: TradingState, method: str) -> float | None:
     from ..portfolio import book_var_95
     sym = state.instrument.symbol
     positions = {**state.book.positions, sym: state.current_weight or 0.0}
-    return book_var_95(positions, state.book.returns)
+    return book_var_95(positions, state.book.returns, method=method)
 
 
 class RiskAnalyst(Agent):
@@ -171,7 +173,8 @@ class PortfolioManager(Agent):
             w = new
         if book is not None and symbol is not None and f.get("max_book_var_95") and w != 0:
             from ..portfolio import book_var_scale
-            w, _, note = book_var_scale(symbol, w, book.positions, book.returns, f["max_book_var_95"])
+            w, _, note = book_var_scale(symbol, w, book.positions, book.returns, f["max_book_var_95"],
+                                         method=f.get("book_var_method", "historical"))
             if note:
                 notes.append(note)
         if 0 < abs(w) < self.config["risk"]["min_trade_weight"]:
