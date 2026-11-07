@@ -18,6 +18,12 @@ is requested, so the holdout is never read. Each output is skipped when it alrea
     .venv\\Scripts\\python.exe scripts/v14_design_trials.py [--out results/v14]
 
 Uses the Yahoo provider (network); the test suite never runs this script.
+
+Status (2026-11-07): the tilt diagnostic, the rules-desk reference and the IC-combination
+trial have run (``results/v14/``). The regime-conditioned and conformal-sized trials are
+registered, design run pending: the run was stopped after the IC trial took about an hour
+(five times the rules desk), because every decision rebuilds the full signal panel from a
+long history. Re-running this script fills only the missing files.
 """
 from __future__ import annotations
 
