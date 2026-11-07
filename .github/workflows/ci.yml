@@ -13,7 +13,29 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# This is the PR gate: every pytest run below skips tests marked `slow` (see pyproject's
+# markers) to stay under ten minutes. nightly.yml runs the whole suite.
 jobs:
+  lint:
+    name: Lint (ruff) and types (mypy, advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: python -m pip install -e . ruff==0.17.2 mypy==2.4.1
+      - name: ruff
+        run: ruff check agentic_trader scripts/paper_ops.py
+      # Advisory until the Optional-handling backlog is cleared: the log shows the count
+      # without blocking a PR. Make it blocking by removing continue-on-error.
+      - name: mypy
+        continue-on-error: true
+        run: mypy
+
   python:
     name: Python ${{ matrix.python-version }} (numpy backend)
     runs-on: ubuntu-latest
@@ -24,8 +46,8 @@ jobs:
     env:
       AGENTIC_TRADER_BACKEND: python
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -35,14 +57,14 @@ jobs:
       - name: Check quant backend
         run: python -c "import agentic_trader.quant as q; assert q.BACKEND == 'python', q.BACKEND"
       - name: Run tests
-        run: python -m pytest -ra --cov=agentic_trader --cov-report=xml --cov-report=term-missing:skip-covered
+        run: python -m pytest -ra -m "not slow" --cov=agentic_trader --cov-report=xml --cov-report=term-missing:skip-covered
       # Report only, not a gate: this tells a contributor which modules (cli.py, data/edgar.py
       # are the largest and most I/O-heavy) have the thinnest coverage, without blocking a PR
       # on a percentage. Collected once (one matrix leg) since coverage does not vary by
       # Python version the way test outcomes occasionally do.
       - name: Upload coverage report
         if: matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: coverage-xml
           path: coverage.xml
@@ -57,8 +79,8 @@ jobs:
       AGENTIC_TRADER_BACKEND: python
       AGENTIC_TRADER_LOCKED: "1"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -89,7 +111,7 @@ jobs:
           print("lock honoured")
           EOF
       - name: Run tests
-        run: python -m pytest -ra
+        run: python -m pytest -ra -m "not slow"
 
   cpp:
     name: C++ core (${{ matrix.os }})
@@ -102,8 +124,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -122,19 +144,19 @@ jobs:
       - name: Check quant backend
         run: python -c "import agentic_trader.quant as q; assert q.BACKEND == 'cpp', q.BACKEND"
       - name: Python tests on the C++ backend (includes C++ vs numpy cross-check)
-        run: python -m pytest -ra
+        run: python -m pytest -ra -m "not slow"
 
   docs:
     name: Docs (cookbook, diagrams, links)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: "20"
       - name: Install
