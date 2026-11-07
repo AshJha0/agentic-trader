@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.14.0 — unreleased (P5)
+
+Plan items of phase P5 in [docs/review/PLAN.md](docs/review/PLAN.md). Offline and synthetic
+tests only; no live model call and no spend. Tests: `tests/test_v14_risk.py`,
+`tests/test_v14_edges.py`, `tests/test_v14_leakage.py`.
+
+- **Risk model (5.4).** New `agentic_trader/risk_model.py`. `var_forecast(returns, method)`
+  gives a 1-day VaR for each day from returns strictly before it, aligned like
+  `stats.rolling_var_forecast` (which `method="historical"` reproduces exactly), so
+  `stats.var_backtest` judges all three methods; `var_next` gives the forecast for the day
+  after the series. `"ewma"` is RiskMetrics (lambda 0.94, not tuned here); `"fhs"` is filtered
+  historical simulation (EWMA-standardised residuals, their empirical quantile rescaled by
+  today's volatility). On synthetic GARCH(1,1) series with Student-t shocks and rising
+  volatility, FHS passes both Kupiec and Christoffersen independence on 8 of 8 seeds and the
+  250-day historical window on at most 2 of 8. The design-period counts on the 15 real names
+  (`scripts/v14_var_design.py`; the historical baseline was Kupiec 2/15, independence 6/15)
+  are pending. **Book VaR is now on by default**: `risk.max_book_var_95 = 0.05`, a loose budget
+  not tuned on any period, measured with `risk.book_var_method = "fhs"`
+  (`"ewma"` and `"historical"` also accepted). Only a multi-sleeve `scan` builds a book, so a
+  single `propagate` is unaffected. Also: `factor_exposures` (rolling joint OLS betas on SPY,
+  IEF, UUP and MTUM proxies, `FACTOR_PROXIES`), `stress_rows` (2008, 2020, 2022; the 2022
+  window lies inside the holdout and may only report a series already run there) and
+  `capacity_aum` / `capacity_row` (the AUM at which square-root impact costs 0.1 of annual
+  Sharpe: `capital * (0.1 * vol / drag)^2`).
+- **Edge-case validators (5.7).** New `agentic_trader/validate.py`. `TradingGraph.prepare`
+  now refuses a history with a NaN, zero or negative price, High below Low, a duplicate or
+  out-of-order date, or a gap longer than max(7 calendar days for equities or 5 for FX,
+  `max_data_staleness_days`), raising `BarValidationError` with every reason. Session clocks
+  (equity close 16:00 New York, FX roll 17:00 New York; `session_close_utc`,
+  `common_sessions`), `survivorship_statement`, a new `risk.max_short_notional` cap (default
+  `None`), round-trip ledger CSV helpers with a tolerance compare (`ledgers_match`), and the
+  stop convention pinned by tests (a gap through the stop fills at the open; stop and target
+  in one bar means the stop). See [quant.md section 14](docs/quant/quant.md#14-edge-case-conventions-v014-plan-item-57).
+- **Leakage rigour (5.8).** New `agentic_trader/leakage.py`. `purged_walk_forward` builds
+  purged, embargoed, expanding walk-forward folds; `ic_purged` and `ic_purged_series` score a
+  signal fold by fold and take the t-statistic from the dispersion of the fold ICs. Every IC
+  the pipeline reports now comes from these (`alpha_report`, `xalpha.ic_summary`, the alpha
+  analyst's gate), so **IC, t(IC) and n in those tables change** from earlier releases: `n`
+  now counts only the scored pairs, which excludes the last `horizon` bars of each fold.
+  `future_leak_canary` runs the offline desk on the data and on a `ShockedProvider` copy
+  shocked from date T and requires every output and prompt for dates before T to be
+  byte-identical; on synthetic AAPL and EURUSD it found no leak, and it caught an analyst made
+  to read one week ahead. It does not cover a leak inside a provider's own `news()` or
+  `fundamentals()`. `PointInTimeStore`, `FeatureRecord` and `LookaheadError` are the
+  point-in-time feature table P3 will use.
+
 ## v0.13.0 — unreleased (P1 foundation)
 
 Plan items 1.1 to 1.8 of [docs/review/PLAN.md](docs/review/PLAN.md). **No live Claude run was

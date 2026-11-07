@@ -1,6 +1,6 @@
 # Learn agentic-trader
 
-This guide works through the 51 ideas behind the project in order. For each concept it gives
+This guide works through the 52 ideas behind the project in order. For each concept it gives
 the idea, where the repository implements it, the real numbers it produces, and questions to
 test your understanding. Two shorter pages give the whole picture first: [how the AI works](docs/ai/ai.md) and
 [how the quant works](docs/quant/quant.md). Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
@@ -94,6 +94,10 @@ evaluation is
 **Part X — v0.13: the model interface**
 
 51. [Structured outputs and the contract gate](#51-structured-outputs-and-the-contract-gate)
+
+**Part XI — v0.14: leakage and risk**
+
+52. [Purged cross-validation and the leak canary](#52-purged-cross-validation-and-the-leak-canary)
 
 ---
 
@@ -1929,3 +1933,55 @@ measurement for a later round.
 - A schema and its contract disagree about one optional key. Which failures could follow,
   and which test would catch it?
 - Why record the served model id on every call rather than trust the configured one?
+
+# Part XI — v0.14: leakage and risk
+
+## 52. Purged cross-validation and the leak canary
+
+**The idea.** There are two ways a backtest can see the future without anyone writing
+"tomorrow" in the code. The first is statistical: a 10-day forward return overlaps the next
+nine, so a long pooled sample of daily pairs looks like far more evidence than it is, and a
+statistic fitted on bars just before a test period has already seen part of what the test
+period is scored on. The second is a plain bug: some function reads a row dated after the
+decision day. The first is fixed by how the sample is split; the second can only be found by
+experiment.
+
+**In the repo.** `leakage.purged_walk_forward(n, horizon, n_folds=5)` cuts positions `0..n-1`
+into contiguous test blocks. For block `[a, b)` a training position `i` is kept only if its
+label ends before the block (`i + horizon < a`: the purge), and the `horizon` positions after
+every earlier block are dropped (the embargo), after Lopez de Prado (2018, ch. 7). Each fold
+scores only its block minus the last `horizon` positions, so no two folds share a return.
+`ic_purged` takes the Spearman IC per fold and reports the mean and `t = mean / (sd /
+sqrt(k))` over the `k` finite folds. Since v0.14, `alpha_report`, `xalpha.ic_summary` and the
+alpha analysts' gate all use it, so their IC, t(IC) and `n` differ from earlier releases.
+
+`leakage.future_leak_canary` is the experiment for the second kind. It runs the whole offline
+desk twice: once on the data, once on a `ShockedProvider` copy in which one symbol's prices
+are tripled from date T and a headline dated T is added. For every as-of date before T, each
+analyst report, the debate, the proposal, the risk views, the decision, every prompt built
+(recorded by `PromptRecorder`) and the alpha values must be byte-identical. A difference
+names the output that read past its date. The canary also checks that something did change
+on T, so a shock that never reached the desk cannot pass as clean.
+
+**A worked example.** With 1 300 bars, a 10-bar horizon and five folds, the blocks are about
+260 bars long. Fold 2 tests bars 521 to 780 and scores 521 to 770. Its training set stops at
+bar 510 (the purge) and skips bars 260 to 269 just after fold 0 (the embargo), leaving 501
+bars. [Recipe 102](COOKBOOK.md#102-purged-walk-forward-ic-on-a-signal) prints these numbers
+and the fold ICs for two alphas.
+
+**The numbers.** On synthetic AAPL and EURUSD, at two dates before each of four shock dates,
+the canary found no difference, and the outputs changed on the shock date
+(`tests/test_v14_leakage.py`). An analyst patched to read one week ahead was caught. These
+are tests of the code on synthetic data, not a measurement of any strategy.
+
+**What it does not cover.** A leak inside a provider's own `news()` or `fundamentals()`.
+`ShockedProvider` passes fundamentals through unchanged and only adds one item to news, so a
+provider that itself returned future items would give the same output in both runs. Feature
+values published after the date they describe are a third case, handled by
+`PointInTimeStore`, which raises `LookaheadError` on a read before a value's `visible_from`.
+
+**Questions.**
+- Why does `ic_purged` not use the training sets at all, and when would it need them?
+- With five folds, how many degrees of freedom does the t-statistic have, and what threshold
+  corresponds to a two-sided 5% test?
+- Design a provider bug the canary would miss. What second test would catch it?

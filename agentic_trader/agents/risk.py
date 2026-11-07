@@ -41,11 +41,11 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         "short_selling_allowed": allow_short(state, config),
         "max_short_notional": config["risk"].get("max_short_notional"),
         "max_book_var_95": config["risk"].get("max_book_var_95"),
-        "book_var_method": config["risk"].get("book_var_method", "historical"),
+        "book_var_method": config["risk"].get("book_var_method", "fhs"),
         # Informational only (current book, no proposed change): the enforced check runs in
         # PortfolioManager.guardrails, which has state.book and can evaluate the proposed
         # weight's own effect on it -- a plain fact dict can only report a number, not act.
-        "book_var_95_now": (_book_var_now(state, config["risk"].get("book_var_method", "historical"))
+        "book_var_95_now": (_book_var_now(state, config["risk"].get("book_var_method", "fhs"))
                             if state.book is not None else None),
     }
 
@@ -180,7 +180,7 @@ class PortfolioManager(Agent):
         if book is not None and symbol is not None and f.get("max_book_var_95") and w != 0:
             from ..portfolio import book_var_scale
             w, _, note = book_var_scale(symbol, w, book.positions, book.returns, f["max_book_var_95"],
-                                         method=f.get("book_var_method", "historical"))
+                                         method=f.get("book_var_method", "fhs"))
             if note:
                 notes.append(note)
         if 0 < abs(w) < self.config["risk"]["min_trade_weight"]:

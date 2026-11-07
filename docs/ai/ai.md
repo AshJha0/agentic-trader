@@ -182,6 +182,22 @@ Prices the model returns are mapped back, and names are restored in the audit tr
 critic, the reporter and the planner go through the same scrubbing. The threat model lists
 what still leaks (distinctive statistics, company names inside real headlines).
 
+### Checking that no agent reads the future (v0.14)
+
+Anonymisation stops the model recognising a period. A separate question is whether the
+desk's own code hands it, or the rules, anything dated after the decision day.
+`leakage.future_leak_canary` answers that by experiment: it runs the offline desk twice, once
+on the data and once on a `ShockedProvider` copy whose prices for one symbol are tripled from
+date T and whose news and social feeds gain a headline dated T. With a `PromptRecorder` as the
+backend every agent builds its prompt and the rules decide, so the prompts are compared too.
+Every report, the debate, the proposal, the risk views, the decision, every prompt and the
+alpha values for a date before T must be byte-identical between the two runs; any difference
+is a read of the future. On synthetic AAPL and EURUSD (`tests/test_v14_leakage.py`) no output
+differed before T and outputs changed on T, and an analyst patched to read one week ahead was
+caught. The canary does not cover a leak inside a provider's own `news()` or `fundamentals()`:
+`ShockedProvider` passes fundamentals through unchanged and only adds one item to news, so a
+provider that returned future items itself would look the same in both runs.
+
 ### Reproducibility of prompts
 
 `prompts.py` hashes every agent's system prompt and the source code that builds its user
@@ -219,10 +235,12 @@ Whatever the portfolio manager (rules or model) decides, `PortfolioManager.guard
 afterwards, in code:
 
 1. no short position where shorting is not allowed;
-2. the weight is capped at the maximum position;
-3. the position's 1-day 95% historical VaR must be within the limit, or the weight is scaled down;
-4. optionally the whole book's VaR must be within its limit;
-5. a weight below the minimum trade size becomes flat.
+2. a short is capped at `risk.max_short_notional` of capital when that is set (v0.14; default `None`);
+3. the weight is capped at the maximum position;
+4. the position's 1-day 95% historical VaR must be within the limit, or the weight is scaled down;
+5. in a multi-sleeve `scan`, the whole book's 1-day 95% VaR must be within `risk.max_book_var_95`
+   (on by default at 5% since v0.14, forecast by filtered historical simulation);
+6. a weight below the minimum trade size becomes flat.
 
 Then the no-trade band keeps the current position when the new target is close to it, but
 only if the current position would itself pass every limit. Each adjustment is written into
@@ -301,9 +319,9 @@ estimated from data and then used:
 
 | What | Where | How it is used |
 |---|---|---|
-| Information coefficient of each alpha | `alpha.py`, `xalpha.py` | The alpha analysts combine signals weighted by IC, and only signals whose IC t-statistic is at least 2 in magnitude. Otherwise they abstain |
+| Information coefficient of each alpha | `alpha.py`, `xalpha.py`, `leakage.py` | Estimated on purged walk-forward folds since v0.14. The alpha analysts combine signals weighted by IC, and only signals whose fold t-statistic clears the gate. Otherwise they abstain |
 | Covariance with EWMA weights and Ledoit-Wolf shrinkage | `portfolio.py` | Risk parity, minimum variance and mean-variance weights |
-| Historical VaR and CVaR | `quant`, `agents/risk.py` | Position and book limits |
+| Historical VaR and CVaR; EWMA volatility and FHS VaR (v0.14) | `quant`, `risk_model.py`, `agents/risk.py` | Position limit (historical); book limit (FHS by default) |
 | TF-IDF document frequencies | `agentic/rag.py` | Retrieval |
 | Hit rate of past decisions | `memory.py` | The trader's size cut |
 | Bootstrap distributions | `stats.py` | Every interval and p-value in the evaluation |

@@ -8,8 +8,8 @@
 | Guide | For |
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
-| [LEARN.md](LEARN.md) | 51 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 101 copy-pasteable recipes, including the agentic layer, quant research, operations and the v0.7 to v0.12 research tools; every offline one runs in CI |
+| [LEARN.md](LEARN.md) | 52 concepts: how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 103 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools and the v0.14 risk and leakage checks; every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 38 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
@@ -414,7 +414,7 @@ of the last one.
 ## Tests
 
 ```bash
-pytest -q                                   # 879 tests collected on either backend (C++ backend: 879 passed) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
+pytest -q                                   # 984 tests collected at the v0.14 work in progress (879 at v0.12.0, all passed on the C++ backend) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
 pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend at v0.8.0 (a report, not a gate); weakest file data/yahoo.py at 75% (network branches)
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 839 passed, 40 skipped (C++-only tests)
 ctest --test-dir build -C Release           # 26 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests

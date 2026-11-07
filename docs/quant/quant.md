@@ -19,6 +19,8 @@ results are on the evaluation pages.
 | Alphas | `alpha.py`, `xalpha.py` | A signal library with time-series and cross-sectional tests |
 | Execution | `algo.py` | Schedules (TWAP, VWAP, POV, Almgren-Chriss), a fill simulator, implementation shortfall |
 | Portfolio | `portfolio.py` | Covariance estimation, five weighting schemes, risk budgets, book VaR |
+| Risk model | `risk_model.py` (v0.14) | EWMA and filtered-historical-simulation VaR forecasts, factor exposures, stress rows, a capacity row |
+| Validation and leakage | `validate.py`, `leakage.py` (v0.14) | Bar validator and edge-case conventions; purged walk-forward IC, the future-leak canary, a point-in-time feature table |
 | Statistics | `stats.py` | Sharpe inference, bootstraps, deflated Sharpe, false discovery control, VaR coverage tests |
 | Evaluation | `evaluation.py`, `scripts/` | Periods, universes, the trials registry, the measurement and rendering scripts |
 | Data | `data/` | Synthetic, Yahoo and CSV prices; FRED (rates, inflation, vintages); SEC EDGAR (filings) |
@@ -84,6 +86,48 @@ The desk's own risk check is a 95% one-day historical VaR of the instrument's la
 returns, on the side of the position (the left tail for a long, the right tail for a short),
 multiplied by the absolute weight and compared with a 2% limit. Whether that forecast is
 calibrated is tested, not assumed: section 9.
+
+### Conditional VaR forecasts (v0.14, plan item 5.4)
+
+**The idea.** A 250-day window treats a quiet day a year ago the same as yesterday, so after
+volatility jumps the forecast catches up slowly: breaches arrive in runs, then become rare.
+On the design period that rule passed Kupiec for 2 of 15 names and Christoffersen
+independence for 6 of 15 (PLAN.md section 2). `risk_model.py` adds two forecasters that
+condition on current volatility.
+
+**Precisely.** `var_forecast(returns, method, window=250, alpha=0.95)` returns, for each day
+`t`, a VaR built from returns before `t` only, aligned so `stats.var_backtest` scores it.
+
+| Method | Forecast for day `t` |
+|---|---|
+| `historical` | The `1 - alpha` quantile of the last `window` returns (identical to `stats.rolling_var_forecast`) |
+| `ewma` | `-z(1 - alpha) * sigma_t`, with `sigma_t^2 = 0.94 * sigma_{t-1}^2 + 0.06 * r_{t-1}^2` (RiskMetrics, 1996) |
+| `fhs` | Divide each past return by its own ex-ante `sigma`; take the `1 - alpha` quantile of the last `window` such residuals; multiply by `sigma_t` (Barone-Adesi, Giannopoulos and Vosper, 1999) |
+
+The decay 0.94 is the RiskMetrics value, not tuned on any period here. FHS keeps the shape of
+the historical tail and scales it to today's volatility.
+
+**Example.** On simulated GARCH(1,1) returns with Student-t shocks and volatility rising
+threefold over 3000 days, FHS passes both tests (p >= 0.05) on 8 of 8 seeds and the 250-day
+historical window on at most 2 of 8 (`tests/test_v14_risk.py`;
+[recipe 103](../../COOKBOOK.md#103-fhs-against-historical-var-on-synthetic-garch-returns)).
+The design-period counts on the 15 real names (`scripts/v14_var_design.py`) are pending; until
+they are run, no claim is made that FHS is calibrated on real data.
+
+**Book VaR is on by default.** `risk.max_book_var_95` is now 0.05 (it was `None`), measured with
+`risk.book_var_method = "fhs"`. The 5% is a loose budget, not tuned on any period; it binds only
+on concentrated or highly correlated books. Only a multi-sleeve `TradingGraph.scan` builds a
+book, so a single `propagate` is unaffected.
+
+**Factor, stress and capacity rows.** `factor_exposures` regresses a return series jointly on
+SPY, IEF, UUP and MTUM proxies over a rolling 126-day window. `stress_rows` reports cumulative
+return, worst day, drawdown and volatility over 2008, 2020 and 2022; the 2022 window is inside
+the holdout, so a 2022 row may only report a series that has already been run there.
+`capacity_aum` gives the AUM at which square-root impact costs 0.1 of annual Sharpe. Impact per
+trade scales with `sqrt(capital)`, so annual drag at AUM `A` is `D * sqrt(A / capital)`; setting
+`D(A) / vol = 0.1` gives `A = capital * (0.1 * vol / D)^2`. Example: a run at 1 000 000 with 15%
+volatility that paid 0.5% a year in impact has capacity `1e6 * (0.1 * 0.15 / 0.005)^2 =
+9 000 000`. The trading schedule is held fixed, so trades a larger fund would skip are ignored.
 
 ## 4. The backtester
 
@@ -164,16 +208,25 @@ high, position in the 20-day channel, MACD in ATR units, contrarian RSI, low vol
 FX carry.
 
 `alpha_report` tests each one on one instrument: the information coefficient (the rank
-correlation between the signal and the forward return) with a t-statistic corrected for the
-overlap of forward returns (an effective sample size, or Newey-West), its decay over
+correlation between the signal and the forward return), its decay over
 horizons, hit rate, tercile spread and autocorrelation, and the correlations between signals.
 
 `xalpha.py` asks the cross-sectional question: on each day, does ranking the names by the
 signal rank their forward returns? Signals are z-scored or ranked within an asset class per
-day; the IC is computed per date and summarised with an overlap-aware t-statistic; quantile
-spreads give the long-short return.
+day; the IC is computed per date; quantile spreads give the long-short return.
 
-Only signals whose IC t-statistic is at least 2 in magnitude are combined. The two alpha
+Since v0.14 (plan item 5.8) both reports, and the alpha analysts' gate, estimate IC on purged
+walk-forward folds (`leakage.ic_purged`, `ic_purged_series`). The bars are cut into five
+contiguous blocks; the last `horizon` bars of each block are not scored, because their
+forward returns run into the next block; the IC is the mean of the five fold ICs and the
+t-statistic is `mean / (sd / sqrt(5))` over them. Folds share no return, so the t-statistic
+does not count overlapping pairs as separate evidence. IC, t(IC) and `n` in these tables
+therefore differ from earlier releases. `information_coefficient` (effective sample size or
+Newey-West) remains public for comparison. With five folds the t-statistic has four degrees
+of freedom, so the right threshold is a Student-t critical value, not the normal one; that
+correction is plan item 5.1.
+
+Only signals whose IC t-statistic clears the gate (`min_tstat`) are combined. The two alpha
 analysts that use them are off by default because the design period did not support them.
 
 ## 7. Execution
@@ -222,7 +275,9 @@ This is the part of the quant that decides what the project is allowed to claim.
 | Did I find this by trying many things? | `deflated_sharpe`, `expected_max_sharpe`, `selection_report` | The Sharpe is compared with the best one expected from that many unskilled trials. `evaluation.TRIALS` registers every variant ever judged |
 | Are the flagged rows of a table luck? | `benjamini_hochberg` | False discovery rate over the rows printed |
 | How long a record is needed? | `min_track_record`, `probabilistic_sharpe` | A Sharpe near 1 needs years |
-| Is the VaR forecast honest? | `rolling_var_forecast`, `var_backtest` | Kupiec tests the breach rate, Christoffersen tests whether breaches cluster |
+| Is the VaR forecast honest? | `rolling_var_forecast`, `risk_model.var_forecast`, `var_backtest` | Kupiec tests the breach rate, Christoffersen tests whether breaches cluster |
+| Is a signal's IC real, given overlapping labels? | `leakage.ic_purged`, `ic_purged_series` | Purged, embargoed walk-forward folds; t from the dispersion of fold ICs |
+| Can the code see the future? | `leakage.future_leak_canary` | Shock the data from date T; every output before T must be byte-identical |
 
 ## 10. The evaluation protocol
 
@@ -256,6 +311,12 @@ A backtest is only as honest as its data timing.
 - **Filings.** SEC EDGAR fundamentals are visible from the first session whose close comes
   after the filing's acceptance time (converted from UTC to New York time), and facts are
   joined to filings by accession number.
+- **Validation (v0.14).** After the provider's repair, `TradingGraph.prepare` refuses a
+  history with bad prices, duplicate or unsorted dates, or a gap longer than its limit
+  (section 14).
+- **Feature visibility (v0.14).** `leakage.PointInTimeStore` keeps each feature value with
+  the date it became public and raises `LookaheadError` on a read before that date. It is
+  in place for P3; no analyst reads from it yet.
 - **Synthetic.** The default provider makes fake prices, news and fundamentals from a seed,
   so everything runs offline and deterministically. It is for tests and examples, never
   for results.
