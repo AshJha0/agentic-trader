@@ -115,6 +115,7 @@ on synthetic data and is executed as-is when the docs are checked.
   98. [Information coefficient with an honest t-statistic](#98-information-coefficient-with-an-honest-t-statistic)
   99. [Rank and z-score a panel across names](#99-rank-and-z-score-a-panel-across-names)
   100. [Reproduce the v0.12 research round](#100-reproduce-the-v012-research-round)
+  101. [Structured outputs and the per-call evidence](#101-structured-outputs-and-the-per-call-evidence)
 
 ## Decisions
 
@@ -371,7 +372,7 @@ print(d.source, d.target_weight)          # llm 0.1
 pip install -e ".[llm]"
 export ANTHROPIC_API_KEY=...            # or: ant auth login
 agentic-trader analyze MSFT --date 2024-03-01 --llm anthropic
-agentic-trader analyze EURUSD --llm anthropic --data yahoo --deep-model claude-opus-5 --rounds 1
+agentic-trader analyze EURUSD --llm anthropic --data yahoo --deep-model claude-opus-5-5 --rounds 1
 ```
 
 In Python, use `make_config(llm_provider="anthropic", deep_effort="medium")`. Each decision
@@ -1457,9 +1458,9 @@ class Priced:                                   # stands in for AnthropicLLM: 16
     def __init__(self):
         self.usage = UsageTracker()
     def estimate_cost(self, deep):              # the most one call can cost; reserved before dispatch
-        return estimate_call_cost("claude-opus-5", 16_000)
+        return estimate_call_cost("claude-sonnet-5-5", 16_000, 2_000)
     def complete(self, system, prompt, *, deep):
-        u = self.usage.by_model.setdefault("claude-opus-5", ModelUsage())
+        u = self.usage.by_model.setdefault("claude-sonnet-5-5", ModelUsage())
         u.calls += 1
         u.output_tokens += 16_000
         return '{"signal": 0.4, "confidence": 0.5, "summary": "ok"}'
@@ -2064,9 +2065,17 @@ print(merge_append_only(old, new))             # old rows kept as written, the n
 ```python
 from agentic_trader.llm import estimate_call_cost, price_for
 
-for model in ("claude-haiku-4-5", "claude-opus-5-5"):
-    print(model, price_for(model), f"${estimate_call_cost(model, output_tokens=2000, input_tokens=8000):.4f} per call")
+from agentic_trader.llm import estimate_tokens
+
+prompt = "facts as JSON " * 2000                # stands in for a real system + user prompt
+tokens_in = estimate_tokens(prompt)            # chars / 3 + 64 overhead, times 1.35
+for model in ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"):
+    print(model, price_for(model), f"${estimate_call_cost(model, output_tokens=2000, input_tokens=tokens_in):.4f} per call")
 ```
+
+With `ANTHROPIC_API_KEY` set, `AnthropicLLM` prices the input from the free `count_tokens`
+endpoint instead (`llm_count_tokens="auto"`); without a key it uses this local estimate, which
+is deliberately on the high side. `llm_min_input_tokens` puts a floor under either.
 
 The budget wrapper reserves this estimate before each call and refuses the call that would go
 over, so a cap in dollars holds even when a response is larger than expected.
@@ -2165,3 +2174,47 @@ pytest tests/test_fuzz.py -k tsmom                                          # th
 ```
 
 Every number in the v0.12 page is copied from the files these commands write.
+
+### 101. Structured outputs and the per-call evidence
+
+An agent asks for JSON with a schema from `agentic_trader/contracts.py`. When the backend has
+`complete_json`, the schema goes to the API as `output_config.format` and the reply is
+constrained to it; the agent's contract check (`required`, `numeric`) still runs afterwards.
+Every call also appends its evidence to `state.llm_calls`: which model was configured, which
+served it, the stop reason, the refusal category, any server-side fallback switch, and
+whether the served id drifted. The stand-in below replays that shape offline; no model is called.
+
+```python
+from types import SimpleNamespace
+from agentic_trader import contracts
+from agentic_trader.agents.base import Agent
+from agentic_trader.config import make_config
+
+class Recorded:                                  # stands in for the Claude backend; replays one reply shape
+    def __init__(self, text, served):
+        self.text, self.served, self.last_call = text, served, None
+    def complete(self, system, prompt, *, deep):
+        return self.complete_json(system, prompt, deep=deep, schema=None)
+    def complete_json(self, system, prompt, *, deep, schema):
+        self.last_call = {"model_configured": "claude-haiku-5-5", "model_served": self.served,
+                          "stop_reason": "end_turn", "refusal_category": None,
+                          "fallbacks": [], "model_drift": False}
+        return self.text
+
+state = SimpleNamespace(llm_calls=[])
+agent = Agent(Recorded('{"signal": 0.4, "confidence": 0.6, "summary": "trend up"}',
+                       "claude-haiku-5-5-20261001"), make_config())
+print(agent.ask_json("Rate the trend.", ("signal", "confidence", "summary"), state,
+                     numeric=("signal", "confidence"), schema=contracts.ANALYST))
+bad = Agent(Recorded('{"signal": "0.4", "confidence": 0.6, "summary": "x"}', "claude-haiku-5-5"), make_config())
+print(bad.ask_json("Rate the trend.", ("signal", "confidence", "summary"), state,
+                   numeric=("signal", "confidence"), schema=contracts.ANALYST))   # None: the contract gate still rejects
+for call in state.llm_calls:
+    print(call["agent"], call["model_served"], call["stop_reason"], call["fallbacks"], call["model_drift"])
+```
+
+The second reply passes no schema check here because the stand-in ignores the schema; it is
+the contract gate that rejects the string `"0.4"`. A dated id such as
+`claude-haiku-5-5-20261001` counts as the configured model (`llm.model_matches`); any other
+served id with no recorded fallback is drift, and with `llm_strict_model=True` the reply is
+discarded and the rules apply.

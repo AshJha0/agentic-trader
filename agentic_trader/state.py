@@ -137,12 +137,14 @@ class FinalDecision:
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
     kept: bool = False   # the desk held its current position (the no-trade band): not a target
+    models_served: tuple[str, ...] = ()   # distinct model ids that served this decision's calls
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["as_of"] = self.as_of.isoformat()
         d["action"] = self.action.value
         d["evidence_ids"] = list(self.evidence_ids)
+        d["models_served"] = list(self.models_served)
         return d
 
 
@@ -185,6 +187,9 @@ class TradingState:
     # Which provider priced ``history`` and on what basis: stamped on the memory record so
     # an outcome is only ever valued on the same kind of series.
     provider_name: str = ""
+    # Per model call: agent, configured and served model id, stop reason, refusal category,
+    # server-side fallback switches, model drift (llm.AnthropicLLM.last_call).
+    llm_calls: list[dict[str, Any]] = field(default_factory=list)
     price_basis: str = ""
 
     @property

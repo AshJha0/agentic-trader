@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import random
 import re
 import threading
@@ -25,9 +26,16 @@ from typing import Any, Protocol
 
 log = logging.getLogger(__name__)
 
-# Models that accept the server-side refusal fallback (beta).
-_FALLBACK_MODELS = {"claude-opus-5", "claude-fable-5-1"}
+# Server-side refusal fallback, ``fallbacks: "default"`` form (beta header below): the API
+# re-runs a declined request on a model it picks by refusal category. Families that accept it
+# on the Claude API; matched by family like the tables below. Claude Haiku 5.5 has none.
+REFUSAL_FALLBACK_FAMILIES = frozenset({"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5",
+                                       "claude-sonnet-5-5"})
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# Families on which a forced ``tool_choice`` (``any`` / ``tool``) returns a 400. The desk never
+# forces a tool: JSON contracts go through ``output_config.format`` instead.
+NO_FORCED_TOOL_CHOICE = frozenset({"claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5",
+                                   "claude-sonnet-5-5"})
 
 # USD per million tokens (input, output), first-party API list prices. Cache reads
 # are billed at 0.1x input and cache writes at 1.25x input. Update when prices change.
@@ -41,8 +49,10 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-opus-4-8": (5.0, 25.0),
     "claude-opus-4-7": (5.0, 25.0),
     "claude-opus-4-6": (5.0, 25.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
     "claude-sonnet-5": (2.0, 10.0),
     "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-5-5": (0.10, 0.50),   # prompts up to 100K tokens; $0.50 / $2.50 beyond
     "claude-haiku-4-5": (1.0, 5.0),
 }
 
@@ -67,16 +77,22 @@ MODEL_CAPABILITIES: dict[str, tuple[str | None, tuple[str, ...]]] = {
     "claude-opus-4-8": ("adaptive", _ALL),
     "claude-opus-4-7": ("adaptive", _ALL),
     "claude-opus-4-6": ("adaptive", _NO_XHIGH),
+    "claude-sonnet-5-5": ("adaptive", _ALL),
     "claude-sonnet-5": ("adaptive", _ALL),
+    "claude-haiku-5-5": ("adaptive", _ALL),
     "claude-sonnet-4-6": ("adaptive", _NO_XHIGH),
     "claude-opus-4-5": (None, _PRE_46),
     "claude-sonnet-4-5": (None, ()),
     "claude-haiku-4-5": (None, ()),
 }
 
-# Input size assumed when a call has to be priced before (or without) a usage record:
-# the deep-tier prompts carry the analyst digest, debate and facts, a few thousand tokens.
-ESTIMATED_INPUT_TOKENS = 8000
+# Local token estimate when no counting endpoint is used: characters per token (English and
+# JSON run 3.5-4 on current tokenizers; 3 is the conservative side) plus a fixed request
+# overhead, times a margin for tokenizer differences between families. Used by budget
+# admission and to bill a timed-out attempt; ``count_tokens`` replaces it when a key exists.
+CHARS_PER_TOKEN = 3.0
+REQUEST_OVERHEAD_TOKENS = 64
+TOKEN_ESTIMATE_MARGIN = 1.35
 # Reply size reserved per call under a dollar cap when the config does not say (llm_reserve_output_tokens).
 DEFAULT_RESERVE_OUTPUT_TOKENS = 2000
 # Status codes retried besides rate limits and every 5xx (what the SDK's own loop retries).
@@ -152,9 +168,32 @@ def request_shape(model: str, effort: str, max_tokens: int) -> dict[str, Any]:
     return kwargs
 
 
-def estimate_call_cost(model: str, output_tokens: int,
-                       input_tokens: int = ESTIMATED_INPUT_TOKENS) -> float:
-    """List-price cost of one call with a typical prompt and ``output_tokens`` of reply.
+def refusal_fallback_supported(model: str) -> bool:
+    return _family(model, {k: 1 for k in REFUSAL_FALLBACK_FAMILIES}) is not None
+
+
+def forced_tool_choice_supported(model: str) -> bool:
+    return _family(model, {k: 1 for k in NO_FORCED_TOOL_CHOICE}) is None
+
+
+def estimate_tokens(*texts: str) -> int:
+    """Conservative local input-token estimate for a request made of ``texts``."""
+    return tokens_for_chars(sum(len(t or "") for t in texts))
+
+
+def tokens_for_chars(chars: int) -> int:
+    return int(math.ceil((chars / CHARS_PER_TOKEN + REQUEST_OVERHEAD_TOKENS) * TOKEN_ESTIMATE_MARGIN))
+
+
+def model_matches(configured: str, served: str | None) -> bool:
+    """True when the id the API reports serving is the configured one (an exact match, or the
+    configured id followed by a ``-YYYYMMDD`` snapshot suffix; ``claude-haiku-5`` does not
+    match ``claude-haiku-5-5``)."""
+    return bool(served) and (served == configured or re.fullmatch(re.escape(configured) + r"-\d{8}", served) is not None)
+
+
+def estimate_call_cost(model: str, output_tokens: int, input_tokens: int) -> float:
+    """List-price cost of one call with ``input_tokens`` of prompt and ``output_tokens`` of reply.
     ``inf`` for an unpriced id, so a budget that reserves it fails closed."""
     price = price_for(model)
     if price is None:
@@ -209,6 +248,9 @@ def retry_after_seconds(error: Any) -> float | None:
 
 
 class LLM(Protocol):
+    """What every model backend implements. A backend may also offer
+    ``complete_json(system, prompt, *, deep, schema)`` (structured outputs) and ``last_call``
+    (per-call evidence); callers use them when present and fall back to ``complete``."""
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None: ...
 
 
@@ -238,6 +280,8 @@ class UsageTracker:
     errors: int = 0
     empty: int = 0
     timeouts: int = 0
+    fallbacks: int = 0      # replies finished by a server-side fallback model
+    model_drift: int = 0    # replies served by an unexpected model with no fallback recorded
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add(self, model: str, usage: Any) -> None:
@@ -293,7 +337,11 @@ class UsageTracker:
         with self._lock:
             return {
                 "calls": self._calls(), "refusals": self.refusals, "errors": self.errors,
-                "empty_replies": self.empty, "timeouts": self.timeouts, "cost_usd": round(self._cost_usd(), 4),
+                "empty_replies": self.empty, "timeouts": self.timeouts,
+                "fallbacks": self.fallbacks, "model_drift": self.model_drift,
+                "cache_read_tokens": sum(u.cache_read_tokens for u in self.by_model.values()),
+                "cache_write_tokens": sum(u.cache_write_tokens for u in self.by_model.values()),
+                "cost_usd": round(self._cost_usd(), 4),
                 "unpriced_models": self._unpriced_models(),
                 "by_model": {m: {**u.__dict__, "cost_usd": None if u.cost(m) is None else round(u.cost(m), 4)}
                              for m, u in self.by_model.items()},
@@ -327,6 +375,9 @@ class AnthropicLLM:
         self.admit_retry = None
         self.config = config
         self.usage = UsageTracker()
+        self._tls = threading.local()
+        # optional floor under every input-token estimate (0 = trust the count / estimate)
+        self.min_input_tokens = _whole_number(config, "llm_min_input_tokens", 0, 0)
 
     @property
     def calls(self) -> int:
@@ -340,21 +391,51 @@ class AnthropicLLM:
                              self.config["deep_effort" if deep else "quick_effort"],
                              self.config["max_tokens"])
 
-    def estimate_cost(self, deep: bool, prompt_chars: int = 0) -> float:
+    def count_input_tokens(self, deep: bool, system: str, prompt: str) -> int:
+        """Input tokens of one request: the ``count_tokens`` endpoint (free, no spend) when
+        ``llm_count_tokens`` allows it, else the conservative local estimate. ``"auto"`` (the
+        default) counts remotely only when ``ANTHROPIC_API_KEY`` is set; any failure of the
+        endpoint falls back to the estimate."""
+        mode = self.config.get("llm_count_tokens", "auto")
+        remote = mode is True or (mode == "auto" and bool(os.environ.get("ANTHROPIC_API_KEY")))
+        if remote:
+            try:
+                r = self.client.messages.count_tokens(
+                    model=self.model_for(deep), system=self._system_blocks(system),
+                    messages=[{"role": "user", "content": prompt}])
+                return int(r.input_tokens)
+            except Exception as e:  # noqa: BLE001 - counting is advisory, the estimate is safe
+                _warn_once("count_tokens", "count_tokens failed (%s); using the local estimate", e)
+        return estimate_tokens(system, prompt)
+
+    def estimate_cost(self, deep: bool, prompt_chars: int = 0, *, system: str | None = None,
+                      prompt: str | None = None) -> float:
         """What one call on this tier is reserved at before it is dispatched. Under
-        ``llm_budget_mode="hard"`` it is the most the call can cost -- a typical prompt plus a
-        full ``max_tokens`` reply, which is also what a timed-out attempt is billed at -- so the
+        ``llm_budget_mode="hard"`` it is the most the call can cost -- the prompt plus a full
+        ``max_tokens`` reply, which is also what a timed-out attempt is billed at -- so the
         dollar cap is a bound on spend. Under ``"estimate"`` it is the prompt plus
         ``llm_reserve_output_tokens`` of reply: a realistic size that admits more concurrent
-        calls but lets spend overshoot the cap by what replies exceed the reserve."""
+        calls but lets spend overshoot the cap by what replies exceed the reserve.
+
+        The prompt is priced from its text when given (``count_input_tokens``), else from
+        ``prompt_chars`` by the local estimate."""
         out = self.config["max_tokens"] if self.budget_mode == "hard" else self.reserve_output_tokens
-        # the prompt is priced at what it is when known (about 3 characters a token), never below
-        # the typical size, so a long prompt cannot slip under a reservation made for a short one
-        tokens_in = max(ESTIMATED_INPUT_TOKENS, int(prompt_chars) // 3)
+        if system is not None or prompt is not None:
+            tokens_in = self.count_input_tokens(deep, system or "", prompt or "")
+        else:
+            tokens_in = tokens_for_chars(int(prompt_chars))
+        tokens_in = max(tokens_in, self.min_input_tokens)
         return estimate_call_cost(self.model_for(deep), int(out), tokens_in)
 
+    @staticmethod
+    def _system_blocks(system: str) -> list[dict[str, Any]]:
+        # One system block carrying FIRM_CONTEXT + role, marked as a cache breakpoint: it is the
+        # stable prefix of every call an agent makes. A prefix under the model's minimum
+        # cacheable length is simply not cached (no error); usage then shows no cache reads.
+        return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
     def _create(self, kwargs: dict[str, Any]) -> Any:
-        if self.config.get("use_refusal_fallback") and kwargs["model"] in _FALLBACK_MODELS:
+        if self.config.get("use_refusal_fallback") and refusal_fallback_supported(kwargs["model"]):
             return self.client.beta.messages.create(betas=[_FALLBACK_BETA], extra_body={"fallbacks": "default"},
                                                     **kwargs)
         return self.client.messages.create(**kwargs)
@@ -362,10 +443,69 @@ class AnthropicLLM:
     def _retry_delay(self, attempt: int) -> float:
         return min(self.retry_backoff_s * 2 ** (attempt - 1), MAX_RETRY_DELAY_S) * (1.0 - 0.25 * random.random())
 
+    @property
+    def last_call(self) -> dict[str, Any] | None:
+        """Evidence for the most recent call made on this thread: configured and served model,
+        stop reason, refusal category, fallback switches, whether the served model drifted."""
+        return getattr(self._tls, "last", None)
+
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
-        a = self._anthropic
+        return self._run(system, prompt, deep=deep, schema=None)
+
+    def complete_json(self, system: str, prompt: str, *, deep: bool, schema: dict[str, Any]) -> str | None:
+        """Like ``complete`` with the reply constrained to ``schema`` (structured outputs,
+        ``output_config.format``). The caller still checks the contract: the schema removes the
+        parse failure mode, the contract check stays as the second gate."""
+        return self._run(system, prompt, deep=deep, schema=schema)
+
+    def build_request(self, system: str, prompt: str, *, deep: bool,
+                      schema: dict[str, Any] | None = None) -> dict[str, Any]:
+        """The Messages API parameters for one call (also the body of a batch request)."""
         kwargs = self._request(deep)
-        kwargs.update(system=system, messages=[{"role": "user", "content": prompt}])
+        kwargs.update(system=self._system_blocks(system), messages=[{"role": "user", "content": prompt}])
+        if schema is not None:
+            kwargs["output_config"] = {**kwargs.get("output_config", {}),
+                                       "format": {"type": "json_schema", "schema": schema}}
+        return kwargs
+
+    def read_response(self, resp: Any, configured: str) -> str | None:
+        """Book usage, record the call's evidence and return the reply text (``None`` on a
+        refusal, an empty reply, or a served model that is neither the configured one nor a
+        recorded fallback while ``llm_strict_model`` is on)."""
+        served = getattr(resp, "model", None) or configured
+        self.usage.add(served, getattr(resp, "usage", None))
+        switches = [{"from": getattr(getattr(b, "from_", None), "model", None),
+                     "to": getattr(getattr(b, "to", None), "model", None)}
+                    for b in (getattr(resp, "content", None) or []) if getattr(b, "type", "") == "fallback"]
+        details = getattr(resp, "stop_details", None)
+        drift = not model_matches(configured, served) and not switches
+        evidence = {"model_configured": configured, "model_served": served,
+                    "stop_reason": getattr(resp, "stop_reason", None),
+                    "refusal_category": getattr(details, "category", None) if details is not None else None,
+                    "fallbacks": switches, "model_drift": drift}
+        self._tls.last = evidence
+        if switches:
+            self.usage.count("fallbacks")
+        if drift:
+            self.usage.count("model_drift")
+            _warn_once(f"drift:{configured}:{served}", "configured model %r but the API served %r "
+                       "with no fallback recorded", configured, served)
+            if self.config.get("llm_strict_model", True):
+                return None
+        if resp.stop_reason == "refusal":
+            log.warning("model declined the request (category %s); using rule-based fallback",
+                        evidence["refusal_category"])
+            self.usage.count("refusals")
+            return None
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        if not text:
+            self.usage.count("empty")
+        return text or None
+
+    def _run(self, system: str, prompt: str, *, deep: bool, schema: dict[str, Any] | None) -> str | None:
+        a = self._anthropic
+        self._tls.last = None
+        kwargs = self.build_request(system, prompt, deep=deep, schema=schema)
         for attempt in range(1, self.max_retries + 2):
             wait = None
             try:
@@ -381,7 +521,8 @@ class AnthropicLLM:
                 if isinstance(e, a.APITimeoutError):
                     # The server can finish (and bill) a request the client abandoned; an unknown
                     # charge is booked at its maximum, per attempt, whatever a later attempt does.
-                    self.usage.add_estimate(kwargs["model"], ESTIMATED_INPUT_TOKENS, kwargs["max_tokens"])
+                    self.usage.add_estimate(kwargs["model"], max(estimate_tokens(system, prompt), self.min_input_tokens),
+                                           kwargs["max_tokens"])
                     self.usage.count("timeouts")
                     problem = f"Claude API request timed out (attempt {attempt}, billed at the estimated maximum): {e}"
                 else:
@@ -397,15 +538,7 @@ class AnthropicLLM:
                 return None
             log.warning("%s; retry %d of %d", problem, attempt, self.max_retries)
             time.sleep(self._retry_delay(attempt) if wait is None else wait)
-        self.usage.add(getattr(resp, "model", kwargs["model"]), getattr(resp, "usage", None))
-        if resp.stop_reason == "refusal":
-            log.warning("model declined the request; using rule-based fallback")
-            self.usage.count("refusals")
-            return None
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
-        if not text:
-            self.usage.count("empty")
-        return text or None
+        return self.read_response(resp, kwargs["model"])
 
 
 class BudgetedLLM:
@@ -415,7 +548,7 @@ class BudgetedLLM:
 
     Protects backtests from runaway cost: at default settings one decision makes
     14 calls, so a 1-year weekly backtest of one instrument is ~730 calls, and an
-    Opus call costs roughly 15x a Haiku call, so a call count alone does not bound
+    Opus 5.5 call costs about 40x a Haiku 5.5 call (Sonnet 5.5 about 20x) at list prices, so a call count alone does not bound
     the bill. The dollar cap uses the inner model's ``UsageTracker`` (list prices,
     cache-aware). Before a call is dispatched its reservation (``inner.estimate_cost``)
     is taken under the lock, and calls in flight count against the cap, so parallel
@@ -465,17 +598,21 @@ class BudgetedLLM:
         with self._lock:
             return self._why_exhausted(self._reserve(deep)) is not None
 
-    def _estimate(self, deep: bool, prompt_chars: int = 0) -> float:
+    def _estimate(self, deep: bool, system: str | None = None, prompt: str | None = None) -> float:
         est = getattr(self.inner, "estimate_cost", None)
         if not callable(est):
             return 0.0
+        chars = len(system or "") + len(prompt or "")
         try:
-            return float(est(deep, prompt_chars))
-        except TypeError:                       # an LLM whose estimate takes only the tier
-            return float(est(deep))
+            return float(est(deep, chars, system=system, prompt=prompt))
+        except TypeError:                       # an older LLM whose estimate takes chars or only the tier
+            try:
+                return float(est(deep, chars))
+            except TypeError:
+                return float(est(deep))
 
-    def _reserve(self, deep: bool, prompt_chars: int = 0) -> float:
-        return self._estimate(deep, prompt_chars) if self.max_cost_usd is not None else 0.0
+    def _reserve(self, deep: bool, system: str | None = None, prompt: str | None = None) -> float:
+        return self._estimate(deep, system, prompt) if self.max_cost_usd is not None else 0.0
 
     def _admit_retry(self, deep: bool) -> bool:
         """Reserve one more attempt of the call in flight on this thread, or refuse the retry."""
@@ -502,22 +639,38 @@ class BudgetedLLM:
                         f"spent, ${self.reserved_usd + reserve:.2f} reserved for calls in flight)")
         return None
 
+    @property
+    def last_call(self) -> dict[str, Any] | None:
+        # a call this budget refused never reached the inner model: no evidence, not a stale one
+        if getattr(self._call, "refused", False):
+            return None
+        return getattr(self.inner, "last_call", None)
+
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
-        reserve = self._reserve(deep, len(system) + len(prompt))
+        return self._admit_and_call(system, prompt, deep, None)
+
+    def complete_json(self, system: str, prompt: str, *, deep: bool, schema: dict[str, Any]) -> str | None:
+        return self._admit_and_call(system, prompt, deep, schema)
+
+    def _admit_and_call(self, system: str, prompt: str, deep: bool, schema: dict[str, Any] | None) -> str | None:
+        reserve = self._reserve(deep, system, prompt)
         with self._lock:
             why = self._why_exhausted(reserve)
             if why is not None:
                 if self.refused == 0:
                     log.warning("%s; agents fall back to rules", why)
                 self.refused += 1
+                self._call.refused = True
                 return None
             self.calls += 1
             self.in_flight += 1
             self.reserved_usd += reserve
-        self._call.reserve, self._call.extra = reserve, 0
+        self._call.reserve, self._call.extra, self._call.refused = reserve, 0, False
         if hasattr(self.inner, "admit_retry"):
             self.inner.admit_retry = self._admit_retry
         try:
+            if schema is not None and callable(getattr(self.inner, "complete_json", None)):
+                return self.inner.complete_json(system, prompt, deep=deep, schema=schema)
             return self.inner.complete(system, prompt, deep=deep)
         finally:
             with self._lock:

@@ -9,13 +9,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # "offline": every agent uses its deterministic rule-based reasoning (no API key needed).
     # "anthropic": agents reason with Claude; rule-based output is the fallback on any error.
     "llm_provider": "offline",
-    "deep_think_llm": "claude-opus-5",      # researchers, facilitator, trader, risk team, PM
-    "quick_think_llm": "claude-haiku-4-5",  # analysts summarising tool output
-    "deep_effort": "high",
+    "deep_think_llm": "claude-sonnet-5-5",  # researchers, facilitator, trader, risk team, PM
+    "quick_think_llm": "claude-haiku-5-5",  # analysts summarising tool output
+    # claude-opus-5-5 is the optional upgrade for the PM / critic: set deep_think_llm to it.
+    "deep_effort": "medium",
     "quick_effort": "low",
     "max_tokens": 16000,
-    # Server-side refusal fallback for claude-opus-5 / claude-fable-5-1 (beta).
+    # Server-side refusal fallback (beta, fallbacks="default") on the families that accept it
+    # (llm.REFUSAL_FALLBACK_FAMILIES); fallback switches are recorded per call as evidence.
     "use_refusal_fallback": True,
+    # Input-token counting for budget admission: "auto" uses the free count_tokens endpoint
+    # when ANTHROPIC_API_KEY is set and the local estimate otherwise; True / False force either.
+    "llm_count_tokens": "auto",
+    # A reply served by a model that is neither the configured id nor a recorded fallback is
+    # rejected (rules apply) and counted as model drift. False keeps it, still counted.
+    "llm_strict_model": True,
+    # Floor under every input-token estimate used for admission and timeout billing (0 = none).
+    # Raise it for a deliberately pessimistic hard cap.
+    "llm_min_input_tokens": 0,
     "llm_timeout_s": 300,   # per request; adaptive thinking on the deep tier can take minutes
     # Attempts after the first for a request that timed out, was rate limited, hit a 5xx or lost
     # its connection. AnthropicLLM runs the retry loop itself (the SDK client makes none), so a

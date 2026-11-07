@@ -55,6 +55,15 @@ def fmt_facts(facts: dict[str, Any]) -> str:
     return json.dumps({k: conv(v) for k, v in facts.items()}, indent=1, default=str)
 
 
+def record_call(llm: Any, state: Any, agent: str) -> None:
+    """Append the backend's evidence for the call just made (configured and served model,
+    fallbacks, refusal category, drift) to ``state.llm_calls`` when both exist."""
+    calls = getattr(state, "llm_calls", None)
+    ev = getattr(llm, "last_call", None)
+    if isinstance(calls, list) and isinstance(ev, dict):
+        calls.append({"agent": agent, **ev})
+
+
 def complete_anon(llm, system: str, prompt: str, state, *, deep: bool = True):
     """One model call through the state's anonymiser (``state.anon``) when anonymisation is
     on: names and dates are scrubbed on the way out and restored on the way back, exactly as
@@ -78,14 +87,23 @@ class Agent:
     def system_prompt(self) -> str:
         return f"{FIRM_CONTEXT}\n\nYour role: {self.role}"
 
-    def _complete(self, prompt: str, state: Any) -> str | None:
+    def _send(self, prompt: str, schema: dict[str, Any] | None) -> str | None:
+        # Structured outputs when the backend offers them; plain completion otherwise (offline
+        # stubs, older backends). Either way the contract check below is the second gate.
+        cj = getattr(self.llm, "complete_json", None) if schema is not None else None
+        if callable(cj):
+            return cj(self.system_prompt, prompt, deep=self.deep, schema=schema)
+        return self.llm.complete(self.system_prompt, prompt, deep=self.deep)
+
+    def _complete(self, prompt: str, state: Any, schema: dict[str, Any] | None = None) -> str | None:
         """Send one prompt. With anonymisation on (``state.anon``) every prompt is
         scrubbed of names and dates on the way out, and names are restored in the
         reply on the way back, so no agent has to remember to do it."""
         anon = getattr(state, "anon", None)
         if anon is not None:
             prompt = anon.scrub(prompt)
-        text = self.llm.complete(self.system_prompt, prompt, deep=self.deep)
+        text = self._send(prompt, schema)
+        record_call(self.llm, state, self.name)
         return anon.restore(text) if anon is not None and text is not None else text
 
     def ask_text(self, prompt: str, state: Any = None) -> str | None:
@@ -94,7 +112,7 @@ class Agent:
         return self._complete(prompt, state)
 
     def ask_json(self, prompt: str, required: tuple[str, ...], state: Any = None,
-                 numeric: tuple[str, ...] = ()) -> dict[str, Any] | None:
+                 numeric: tuple[str, ...] = (), schema: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """One JSON reply, or ``None`` (rules apply) when it does not meet the contract.
 
         ``required`` keys must be present. ``numeric`` keys must hold a finite JSON number
@@ -105,7 +123,7 @@ class Agent:
         if self.llm is None:
             return None
         text = self._complete(
-            prompt + "\n\nRespond with a single JSON object only (no prose outside it).", state)
+            prompt + "\n\nRespond with a single JSON object only (no prose outside it).", state, schema)
         data = extract_json(text)
         problem = self._contract_problem(data, required, numeric)
         if problem is not None:

@@ -29,6 +29,8 @@ from agentic_trader.cli.research import carry_summary
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.evaluation import evaluate
 from agentic_trader.llm import EFFORT_LEVELS, AnthropicLLM, BudgetedLLM, UsageTracker, request_shape
+# The v0.8 suites were written against these ids; P1 (v0.13) moved the defaults.
+V08_MODELS = {"deep_think_llm": "claude-opus-5", "quick_think_llm": "claude-haiku-4-5"}
 from agentic_trader.prompts import prompt_bundle_hash, prompt_registry, shared_prompt_constants
 
 CFG = make_config(memory_path=None)
@@ -168,10 +170,10 @@ def _fake_anthropic(monkeypatch):
 @pytest.mark.parametrize("key", ["deep_effort", "quick_effort"])
 def test_effort_outside_levels_is_rejected_at_construction(monkeypatch, key):
     _fake_anthropic(monkeypatch)
-    cfg = make_config(llm_provider="anthropic", **{key: "extreme"})
+    cfg = make_config(**V08_MODELS, llm_provider="anthropic", **{key: "extreme"})
     with pytest.raises(ValueError, match=rf"{key}: effort must be one of .*'extreme'"):
         AnthropicLLM(cfg)
-    AnthropicLLM(make_config(llm_provider="anthropic"))      # the defaults are valid
+    AnthropicLLM(make_config(**V08_MODELS, llm_provider="anthropic"))      # the defaults are valid
 
 
 def test_request_shape_rejects_an_unknown_effort_instead_of_sending_high():

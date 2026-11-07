@@ -1,6 +1,7 @@
 """Researcher team: bull vs bear debate moderated by a facilitator."""
 from __future__ import annotations
 
+from .. import contracts
 from ..state import AnalystReport, DebateOutcome, DebateTurn, TradingState
 from .base import Agent, clip
 
@@ -125,7 +126,7 @@ class DebateFacilitator(Agent):
               '(number in [0, 1]), "summary" (2-4 sentences recording the decisive arguments).'
         )
         data = self.ask_json(prompt, ("winner", "score", "summary"), state=state,
-                             numeric=("score", "conviction"))
+                             numeric=("score", "conviction"), schema=contracts.FACILITATOR)
         if data:
             w = str(data["winner"]).lower()
             outcome = DebateOutcome(
