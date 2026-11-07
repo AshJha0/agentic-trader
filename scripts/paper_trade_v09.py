@@ -52,6 +52,7 @@ from agentic_trader.data import get_provider  # noqa: E402
 from agentic_trader.evaluation import CORE_UNIVERSE, EXTENDED_UNIVERSE, UNIVERSES  # noqa: E402
 from agentic_trader.provenance import provenance  # noqa: E402
 from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_stats  # noqa: E402
+from agentic_trader.validate import read_ledger_csv, write_ledger_csv  # noqa: E402
 
 FREEZE = date(2026, 9, 29)          # the first session of the forward record (v0.9 pre-registration)
 PPY = 260.0
@@ -212,14 +213,14 @@ def main(argv=None) -> int:
     exp: dict = {}
     frame = recompute(as_of, cfg, provider, freeze, exposure=exp)
     ledger = out / "ledger.csv"
-    old = pd.read_csv(ledger, index_col=0, parse_dates=True) if ledger.exists() else None
+    old = read_ledger_csv(ledger) if ledger.exists() else None
     if old is not None and len(old) and frame.index[-1] < old.index[-1] and not a.allow_shrink:
         raise SystemExit(f"as-of {as_of} would shrink the record ({len(old)} -> {len(frame)} sessions); "
                          f"pass --allow-shrink to accept it")
     rev = revisions(old, frame)
     merged = merge_append_only(old, frame)
-    frame.to_csv(out / "ledger_recomputed.csv")
-    merged.to_csv(ledger)
+    write_ledger_csv(frame, out / "ledger_recomputed.csv")
+    write_ledger_csv(merged, ledger)
     # exposure.csv: gross exposure, turnover and trading cost per book/stream per session,
     # kept append-only like the ledger (sessions already written are never rewritten)
     exp_file = out / "exposure.csv"

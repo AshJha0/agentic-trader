@@ -10,6 +10,7 @@ from .. import quant
 from .. import contracts
 from ..state import Book, FinalDecision, RiskView, TradingState
 from .base import Agent, clip, fmt_facts
+from ..validate import cap_short_notional
 from .trader import action_for, allow_short, atr14, policy_passages, protective_levels, sane_levels
 
 
@@ -38,6 +39,7 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         "max_var_95": config["risk"]["max_var_95"],
         "rebalance_band": config["risk"].get("rebalance_band", 0.0),
         "short_selling_allowed": allow_short(state, config),
+        "max_short_notional": config["risk"].get("max_short_notional"),
         "max_book_var_95": config["risk"].get("max_book_var_95"),
         # Informational only (current book, no proposed change): the enforced check runs in
         # PortfolioManager.guardrails, which has state.book and can evaluate the proposed
@@ -161,6 +163,10 @@ class PortfolioManager(Agent):
         if w < 0 and not f["short_selling_allowed"]:
             notes.append("short selling not allowed -> flat")
             w = 0.0
+        short_cap = f.get("max_short_notional")
+        if short_cap is not None and w < -short_cap:
+            notes.append(f"capped at max short notional {short_cap:.2f}")
+            w = cap_short_notional(w, short_cap)
         if abs(w) > mx:
             notes.append(f"capped at max position {mx:.2f}")
             w = math.copysign(mx, w)

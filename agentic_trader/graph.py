@@ -24,6 +24,7 @@ from .agents import (ANALYSTS, BearResearcher, BullResearcher, DebateFacilitator
 from .anonymize import Anonymizer
 from .config import make_config
 from .data import MarketDataProvider, get_provider
+from .validate import MAX_GAP_DAYS, require_valid_bars
 from .instruments import Instrument
 from .llm import LLM, budget_llm, get_llm
 from .memory import DecisionMemory, series_basis
@@ -100,6 +101,11 @@ class TradingGraph:
         start = as_of - timedelta(days=self.config["lookback_days"])
         hist = provider.history(ins, start, as_of)
         hist = hist[hist.index <= pd.Timestamp(as_of)]  # point-in-time guard, whatever the provider does
+        # An outage the desk tolerates at the end of the series (max_data_staleness_days) is
+        # tolerated inside it too, so the gap limit is the larger of the two.
+        asset_class = "fx" if ins.is_fx else "equity"
+        require_valid_bars(hist, asset_class, f"{ins.display} history to {as_of}",
+                           max(MAX_GAP_DAYS[asset_class], self.max_staleness_days))
         if len(hist) < 30:
             raise ValueError(f"not enough history for {ins.display} up to {as_of} "
                              f"({len(hist)} bars)")

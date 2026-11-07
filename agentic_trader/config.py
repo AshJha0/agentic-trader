@@ -132,6 +132,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "fx_carry_neutral_cap": 0.5,
         "allow_short_equity": False,
         "allow_short_fx": True,
+        # Largest short as a fraction of capital (None = only max_position binds). Borrow
+        # availability and recall are not modelled; this is the documented limit instead.
+        "max_short_notional": None,
         "stop_atr_mult": 2.0,
         "take_profit_atr_mult": 3.0,
     },
