@@ -120,12 +120,21 @@ def _config(args) -> dict:
     if getattr(args, "no_memory", False):
         over["memory_path"] = None
     agentic = {}
-    if getattr(args, "approval", None):
+    signed_cli = getattr(args, "approval", None) == "signed"
+    if getattr(args, "approval", None) and not signed_cli:
         agentic["approval"] = args.approval
     if getattr(args, "llm_planner", False):
         agentic["llm_planner"] = True
     _section(over, "agentic", **agentic)
-    return make_config(over)
+    cfg = make_config(over)
+    if signed_cli:
+        # --approval signed selects the signed gateway but its approvers live only in the
+        # configuration block (secret env-var names), so the block must already be there.
+        block = cfg.get("agentic", {}).get("approval")
+        if not isinstance(block, dict) or not block.get("approvers"):
+            raise SystemExit('--approval signed needs an agentic.approval block with approvers in the config file')
+        cfg["agentic"]["approval"] = {**block, "gateway": "signed"}
+    return cfg
 
 
 def _print_event(stage: str, msg: str) -> None:

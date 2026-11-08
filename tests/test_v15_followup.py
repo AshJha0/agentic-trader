@@ -260,3 +260,67 @@ def test_otel_extra_declared_and_locked():
     lock = (root / "requirements-lock.txt").read_text(encoding="utf-8")
     for name in ("opentelemetry-sdk==", "opentelemetry-exporter-otlp-proto-http==", "opentelemetry-proto=="):
         assert name in lock
+
+
+# ---- follow-up gaps closed 2026-11-08 ------------------------------------------------
+def test_signed_gateway_from_config_reprices_from_the_provider():
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from agentic_trader.agentic.harness import _gateway, last_close_price_fn
+
+    class P:
+        def history(self, inst, start, end):
+            return pd.DataFrame({"close": [100.0, 101.5]})
+
+    fn = last_close_price_fn(P())
+    assert fn(SimpleNamespace(arguments={"symbol": "AAPL", "as_of": "2024-03-01"})) == 101.5
+    assert fn(SimpleNamespace(arguments={})) is None
+    block = {"gateway": "signed", "approvers": {"a": "AT_TEST_SECRET_A"}, "quorum": 1, "submit_order_quorum": 1}
+    g = _gateway(block, environ={"AT_TEST_SECRET_A": "s"}, provider=P())
+    assert g.price_fn is not None
+    g2 = _gateway({**block, "reprice": False}, environ={"AT_TEST_SECRET_A": "s"}, provider=P())
+    assert g2.price_fn is None
+
+
+def test_bare_signed_string_is_refused_with_a_clear_message():
+    import pytest
+
+    from agentic_trader.agentic.harness import _gateway
+    with pytest.raises(ValueError, match="approval. block"):
+        _gateway("signed")
+
+
+def test_cli_signed_needs_a_config_block():
+    import pytest
+
+    from agentic_trader.cli.common import _config
+    from agentic_trader.cli.parser import build_parser
+    ns = build_parser().parse_args(["task", "AAPL", "--approval", "signed"])
+    with pytest.raises(SystemExit, match="agentic.approval block"):
+        _config(ns)
+
+
+def test_harness_path_runs_text_analysts_before_the_debate(monkeypatch):
+    from datetime import date
+
+    from agentic_trader.agentic.domain import Task
+    from agentic_trader.agentic.harness import AgentHarness
+    from agentic_trader.config import make_config
+    from agentic_trader.graph import TradingGraph
+    from agentic_trader.state import AnalystReport
+    g = TradingGraph(make_config(memory_path=None, data_provider="synthetic"))
+    calls = []
+
+    def fake(state):
+        calls.append(state.as_of)
+        r = AnalystReport("fundamentals_text", 0.3, 0.6, "cited filing claims", source="llm")
+        state.reports[r.analyst] = r
+        return [r]
+
+    monkeypatch.setattr(g, "run_text_analysts", fake)
+    run = AgentHarness(g).run(Task("AAPL", date(2024, 3, 1)))
+    assert len(calls) == 1
+    assert any(f.agent == "fundamentals_text" for f in run.findings)
+    assert run.evidence.by_source("analyst.fundamentals_text")

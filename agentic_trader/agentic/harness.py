@@ -172,10 +172,37 @@ def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
                                  store=AppendOnlyApprovalLog(log_path) if log_path else None)
 
 
-def _gateway(approval: Any, environ: Any = None) -> ApprovalGateway:
+def last_close_price_fn(provider: Any) -> Any:
+    """``price_fn`` for the signed gateway's re-pricing check: the last close at or before the
+    request's ``as_of`` (today when absent) for the request's ``symbol``. None when the request
+    names no symbol or the provider has no price, which skips the check for that request
+    (the gateway's documented behaviour) rather than blocking it on missing data."""
+    from datetime import date, timedelta
+
+    def price(request: Any) -> float | None:
+        args = getattr(request, "arguments", {}) or {}
+        sym = args.get("symbol")
+        if not sym:
+            return None
+        try:
+            as_of = date.fromisoformat(str(args["as_of"])) if args.get("as_of") else date.today()
+            df = provider.history(Instrument.parse(str(sym)), as_of - timedelta(days=10), as_of)
+            px = float(df["close"].iloc[-1]) if df is not None and len(df) else None
+        except Exception:  # noqa: BLE001 - no price means no re-pricing check, never a crash
+            return None
+        return px if px is not None and math.isfinite(px) and px > 0 else None
+    return price
+
+
+def _gateway(approval: Any, environ: Any = None, provider: Any = None) -> ApprovalGateway:
     kind = approval_mode(approval)
     if kind == "signed":
-        return signed_gateway_from_config(approval if isinstance(approval, dict) else {}, environ)
+        if not isinstance(approval, dict):
+            raise ValueError('signed approval needs an "approval" block in the configuration '
+                             '(approvers, quorum, ...); the bare string "signed" carries no approvers')
+        reprice = approval.get("reprice", True) and provider is not None
+        return signed_gateway_from_config(approval, environ,
+                                          price_fn=last_close_price_fn(provider) if reprice else None)
     return {"auto": AutoApprovalGateway, "queued": QueuedApprovalGateway, "deny": DenyApprovalGateway}[kind]()
 
 
@@ -198,7 +225,7 @@ class AgentHarness:
             "max_position": self.config["risk"]["max_position"],
             "max_order_notional": self.tools.order_cap,
             "max_symbols_per_call": acfg.get("max_symbols_per_call", 60)})
-        self.gateway = gateway or _gateway(acfg.get("approval", "auto"))
+        self.gateway = gateway or _gateway(acfg.get("approval", "auto"), provider=graph.provider)
         self.critic = Critic(self.config, graph.llm)
         self.metrics = Metrics()          # one exposition for the process; every run's tracer feeds it
         self.runs: dict[str, TaskRun] = {}
@@ -562,6 +589,18 @@ class AgentHarness:
                 run.findings.append(Finding.make(name, r.summary, r.confidence, r.evidence_ids,
                                                  {"signal": r.signal}, ("analyst", r.source), untrusted=r.untrusted))
         elif step.name == "debate":
+            # v0.15 text analysts (config["text_analysts"], default none) join before the debate,
+            # as in TradingGraph.propagate, with their reports evidenced like any analyst's.
+            for r in self.graph.run_text_analysts(st):
+                tb = len(ev)
+                ev.record(EvidenceType.DECISION, f"analyst.{r.analyst}", r.summary,
+                          {"signal": r.signal, "confidence": r.confidence, "abstained": r.abstained,
+                           "source": r.source, "key_points": r.key_points}, run.correlation_id)
+                r.evidence_ids = tuple(ev.ids_since(tb))
+                if not r.abstained:
+                    run.findings.append(Finding.make(r.analyst, r.summary, r.confidence, r.evidence_ids,
+                                                     {"signal": r.signal}, ("analyst", r.source),
+                                                     untrusted=r.untrusted))
             d = self.graph.run_debate(st)
             dec = ev.record(EvidenceType.DECISION, "facilitator", d.summary,
                             {"winner": d.winner, "score": d.score, "conviction": d.conviction,

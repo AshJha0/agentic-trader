@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--csv-dir", default=None)
     p.add_argument("--role", choices=[r.value for r in Role], default=Role.TRADER.value,
                    help="the role every call is evaluated for (stdio carries no identity)")
-    p.add_argument("--approval", choices=["auto", "queued", "deny"], default=None,
+    p.add_argument("--approval", choices=["auto", "queued", "deny", "signed"], default=None,
                    help="gateway for tools that need approval (default: agentic.approval); queued is refused")
     args = p.parse_args(argv)
     over: dict[str, Any] = {"data_provider": args.data}
@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = make_config(over)
     from .harness import approval_mode
     if approval_mode(cfg["agentic"].get("approval", "auto")) in ("queued", "signed"):
-        p.error("--approval queued cannot work on a stdio server: nothing can decide a parked request, so every "
+        p.error("--approval queued or signed cannot work on a stdio server: nothing can decide a parked request, so every "
                 "state-changing call would wait forever; use --approval deny (locked down) or auto")
     tools = DeskTools(get_provider(cfg), cfg)
     registry = build_registry(tools)
