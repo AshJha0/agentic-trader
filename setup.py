@@ -39,7 +39,7 @@ def native_extension(quant_dir: Path = QUANT_DIR, ext_suffix: str | None = None)
 def package_data(quant_dir: Path = QUANT_DIR, ext_suffix: str | None = None) -> dict[str, list[str]]:
     ext = native_extension(quant_dir, ext_suffix)
     return {"agentic_trader.quant": [ext.name] if ext else [],
-            "agentic_trader.agentic.knowledge": ["docs/*.md", "retrieval_eval/*.json"]}
+            "agentic_trader.agentic.knowledge": ["docs/*.md", "retrieval_eval/*.json", "eval_set/*.json"]}
 
 
 def build_cmdclass() -> dict:
