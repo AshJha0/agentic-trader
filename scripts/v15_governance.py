@@ -140,13 +140,15 @@ def regen_fixtures(path: Path, cfg: dict, seed: int = 1515) -> None:
 
 
 def survival(cfg: dict, registry, fixtures: Path) -> list[dict]:
-    plans = {}
+    plans, label = {}, "model plans (synthetic fixture)"
     if fixtures.exists():
         for line in fixtures.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 obj = json.loads(line)
                 plans[obj["task_id"]] = obj["steps"]
-    res: dict[str, list[dict]] = {"canonical": [], "rule planner": [], "model plans (synthetic fixture)": []}
+                if obj.get("synthetic") is False:
+                    label = f"model plans (local {obj.get('model', 'model')}, recorded)"
+    res: dict[str, list[dict]] = {"canonical": [], "rule planner": [], label: []}
     for task, inst in tasks():
         analysts = list(DEFAULT_ANALYSTS[inst.asset_class])
         canon = canonical_plan(task, inst, analysts, cfg, registry)
@@ -161,7 +163,7 @@ def survival(cfg: dict, registry, fixtures: Path) -> list[dict]:
             raw = plans[task.id]
             plan = (validate_plan(raw, task, inst, analysts, registry, config=cfg) if raw is not None
                     else canonical_plan(task, inst, analysts, cfg, registry))
-            res["model plans (synthetic fixture)"].append(planner_survival(raw, plan))
+            res[label].append(planner_survival(raw, plan))
     return survival_table(res)
 
 
