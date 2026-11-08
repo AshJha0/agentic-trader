@@ -199,6 +199,10 @@ TRIALS: tuple[Trial, ...] = (
           {"combination": V14_IC, "regime": {"enabled": True, "condition": True}}),
     Trial("v0.14 IC combination + conformal interval sizing", "v0.14",
           {"combination": V14_IC, "conformal": {"enabled": True}}),
+    # v0.15 (PLAN.md 3.9): the policy-runbook RAG kept; this trial removes it and counts changed
+    # decisions (agentic_trader.agentic.research_rag.runbook_rag_ablation). Not a config override:
+    # the harness runs with an empty knowledge base. Measured offline on the rules path only.
+    Trial("v0.15 policy-runbook RAG removed (decision ablation)", "v0.15", None),
 )
 
 

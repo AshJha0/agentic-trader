@@ -226,7 +226,7 @@ def test_lock_pins_every_declared_and_transitive_dependency(monkeypatch):
     reqs = _lock_requirements()
     names = {n for n, _, _ in reqs}
     assert len(names) == len(reqs)                                  # no duplicates
-    missing = _pyproject_requirement_names() - names - {"cmake"}    # cmake is a system tool, said so in the file
+    missing = _pyproject_requirement_names() - names - {"cmake", "sentence-transformers"}  # cmake: system tool; [rag] extra (pulls torch) is not locked
     assert not missing, missing
     # transitive packages under pandas' dates, yfinance's HTTP layer and the API framework
     assert {"python-dateutil", "tzdata", "pydantic", "starlette", "requests", "curl-cffi", "anyio", "httpcore"} <= names
@@ -280,7 +280,7 @@ def test_setup_ships_only_a_core_built_for_this_interpreter(tmp_path):
     assert setup.native_extension(tmp_path) == native
     assert setup.package_data(tmp_path)["agentic_trader.quant"] == [native.name]
     assert len(setup.extension_files(tmp_path)) == 3
-    assert setup.package_data(tmp_path)["agentic_trader.agentic.knowledge"] == ["docs/*.md"]
+    assert setup.package_data(tmp_path)["agentic_trader.agentic.knowledge"] == ["docs/*.md", "retrieval_eval/*.json"]
 
 
 def test_wheel_tag_matches_its_contents(tmp_path):
