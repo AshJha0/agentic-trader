@@ -70,6 +70,8 @@ class TradingGraph:
             self.config.get("memory_path"), max_staleness_days=self.max_staleness_days)
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
         self._research: dict[tuple[int, str, date], _ResearchSeries] = {}
+        self.text_inputs = None   # text_analysts.TextInputs; built from the config on first use
+        self.text_llm = None      # backend for the text analysts (None = self.llm)
 
         c, m = self.config, self.llm
         self.bull, self.bear = BullResearcher(m, c), BearResearcher(m, c)
@@ -244,6 +246,28 @@ class TradingGraph:
                                  f"[{r.source}] {r.summary}")
         return r
 
+    def run_text_analysts(self, state: TradingState) -> list[AnalystReport]:
+        """The v0.15 text analysts named in ``config["text_analysts"]`` (default none: a no-op).
+
+        They read fenced EDGAR sections and central-bank text visible at the decision cut-off
+        (``text_analysts.text_cutoff``) through ``self.text_inputs`` (built from
+        ``config["text_analyst_options"]`` on first use) and the model in ``self.text_llm``
+        (default: the desk's model). Each report joins ``state.reports``.
+        """
+        names = list(self.config.get("text_analysts") or [])
+        if not names:
+            return []
+        from .text_analysts import TextInputs, text_reports
+        if self.text_inputs is None:
+            self.text_inputs = TextInputs.from_config(self.config)
+        llm = self.text_llm if self.text_llm is not None else self.llm
+        reports = text_reports(names, llm, self.text_inputs, state.instrument, state.as_of)
+        for r in reports:
+            state.reports[r.analyst] = r
+            self.on_event("analyst", f"{r.analyst:<12} signal {r.signal:+.2f} conf {r.confidence:.2f} "
+                                     f"[{r.source}] {r.summary}")
+        return reports
+
     def run_debate(self, state: TradingState, rounds: int | None = None) -> DebateOutcome:
         d = run_debate(state, self.bull, self.bear, self.facilitator,
                        self.config["max_debate_rounds"] if rounds is None else rounds)
@@ -295,6 +319,7 @@ class TradingGraph:
         state = self.prepare(symbol, as_of, asset_class, current_weight, book=book)
         for name in self.analyst_names(state.instrument):
             self.run_analyst(state, name)
+        self.run_text_analysts(state)
         self.run_debate(state)
         self.run_trader(state)
         dec = self.run_risk(state)

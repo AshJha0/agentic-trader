@@ -189,7 +189,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.approval:
         over["agentic"] = {"approval": args.approval}
     cfg = make_config(over)
-    if cfg["agentic"].get("approval") == "queued":
+    from .harness import approval_mode
+    if approval_mode(cfg["agentic"].get("approval", "auto")) in ("queued", "signed"):
         p.error("--approval queued cannot work on a stdio server: nothing can decide a parked request, so every "
                 "state-changing call would wait forever; use --approval deny (locked down) or auto")
     tools = DeskTools(get_provider(cfg), cfg)
