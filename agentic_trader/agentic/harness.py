@@ -55,8 +55,8 @@ from .domain import (EvidenceType, Finding, Plan, PlanStep, PolicyOutcome, StepT
                      TERMINAL_STATES, TRANSITIONS, ToolRequest, new_id, utc_now)
 from .evidence import EvidenceStore
 from .planner import ANALYST_PREFIX, make_plan, max_plan_lookback_bars, plan_cost_bars, plan_to_dict
-from .policy import (ApprovalGateway, AutoApprovalGateway, DenyApprovalGateway, PolicyEngine,
-                     QueuedApprovalGateway)
+from .policy import (AppendOnlyApprovalLog, ApprovalGateway, AutoApprovalGateway, DenyApprovalGateway,
+                     PolicyEngine, QueuedApprovalGateway, SignedApprovalGateway)
 from .rag import KnowledgeBase
 from .reporter import Report, build_report
 from .servers import DeskTools, RecordingProvider, build_registry
@@ -132,11 +132,78 @@ class TaskRun:
         return d
 
 
-def _gateway(kind: str) -> ApprovalGateway:
-    try:
-        return {"auto": AutoApprovalGateway, "queued": QueuedApprovalGateway, "deny": DenyApprovalGateway}[kind]()
-    except KeyError:
-        raise ValueError(f"unknown approval gateway {kind!r} (auto, queued or deny)") from None
+APPROVAL_MODES = ("auto", "queued", "deny", "signed")
+
+
+def approval_mode(approval: Any) -> str:
+    """The gateway kind named by ``config["agentic"]["approval"]``: a plain string (the
+    pre-v0.15 form) or a block ``{"gateway": ..., <signed options>}``."""
+    kind = approval.get("gateway", "auto") if isinstance(approval, dict) else approval
+    if kind not in APPROVAL_MODES:
+        raise ValueError(f"unknown approval gateway {kind!r} ({', '.join(APPROVAL_MODES)})")
+    return kind
+
+
+def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
+                               price_fn: Any = None) -> SignedApprovalGateway:
+    """A ``SignedApprovalGateway`` from the ``approval`` block. ``approvers`` maps an approver
+    id to the NAME of the environment variable holding its secret: secrets never sit in the
+    configuration, and a missing or empty variable is an error, not a silent drop."""
+    env = os.environ if environ is None else environ
+    approvers = block.get("approvers") or {}
+    if not isinstance(approvers, dict) or not approvers:
+        raise ValueError("signed approval needs approvers: {approver_id: SECRET_ENV_VAR_NAME}")
+    keys = {}
+    for who, var in approvers.items():
+        if not isinstance(var, str) or not var.replace("_", "").isalnum():
+            raise ValueError(f"approver {who!r}: give the environment variable NAME, never the secret")
+        secret = env.get(var)
+        if not secret:
+            raise ValueError(f"approver {who!r}: environment variable {var} is not set")
+        keys[str(who)] = secret.encode("utf-8")
+    quorum = {"execution.submit_order": int(block.get("submit_order_quorum", 2))}
+    for tool, n in (block.get("tool_quorum") or {}).items():
+        quorum[str(tool)] = int(n)
+    log_path = block.get("log_path")
+    ttl = block.get("ttl_s")
+    return SignedApprovalGateway(keys, quorum, default_quorum=int(block.get("quorum", 1)),
+                                 ttl_s=None if ttl is None else float(ttl), price_fn=price_fn,
+                                 price_tolerance=float(block.get("price_tolerance", 0.01)),
+                                 store=AppendOnlyApprovalLog(log_path) if log_path else None)
+
+
+def last_close_price_fn(provider: Any) -> Any:
+    """``price_fn`` for the signed gateway's re-pricing check: the last close at or before the
+    request's ``as_of`` (today when absent) for the request's ``symbol``. None when the request
+    names no symbol or the provider has no price, which skips the check for that request
+    (the gateway's documented behaviour) rather than blocking it on missing data."""
+    from datetime import date, timedelta
+
+    def price(request: Any) -> float | None:
+        args = getattr(request, "arguments", {}) or {}
+        sym = args.get("symbol")
+        if not sym:
+            return None
+        try:
+            as_of = date.fromisoformat(str(args["as_of"])) if args.get("as_of") else date.today()
+            df = provider.history(Instrument.parse(str(sym)), as_of - timedelta(days=10), as_of)
+            px = float(df["close"].iloc[-1]) if df is not None and len(df) else None
+        except Exception:  # noqa: BLE001 - no price means no re-pricing check, never a crash
+            return None
+        return px if px is not None and math.isfinite(px) and px > 0 else None
+    return price
+
+
+def _gateway(approval: Any, environ: Any = None, provider: Any = None) -> ApprovalGateway:
+    kind = approval_mode(approval)
+    if kind == "signed":
+        if not isinstance(approval, dict):
+            raise ValueError('signed approval needs an "approval" block in the configuration '
+                             '(approvers, quorum, ...); the bare string "signed" carries no approvers')
+        reprice = approval.get("reprice", True) and provider is not None
+        return signed_gateway_from_config(approval, environ,
+                                          price_fn=last_close_price_fn(provider) if reprice else None)
+    return {"auto": AutoApprovalGateway, "queued": QueuedApprovalGateway, "deny": DenyApprovalGateway}[kind]()
 
 
 def default_instance_id() -> str:
@@ -151,14 +218,14 @@ class AgentHarness:
         self.graph = graph
         self.config = graph.config
         acfg = self.config.get("agentic", {})
-        self.tools = DeskTools(graph.provider, self.config, knowledge, positions, capital)
+        self.tools = DeskTools(graph.provider, self.config, knowledge, positions, capital, memory=graph.memory)
         self.registry: ToolRegistry = build_registry(self.tools)
         self.policy = policy or PolicyEngine({
             "symbol_universe": acfg.get("symbol_universe"), "deny_tools": acfg.get("deny_tools", ()),
             "max_position": self.config["risk"]["max_position"],
             "max_order_notional": self.tools.order_cap,
             "max_symbols_per_call": acfg.get("max_symbols_per_call", 60)})
-        self.gateway = gateway or _gateway(acfg.get("approval", "auto"))
+        self.gateway = gateway or _gateway(acfg.get("approval", "auto"), provider=graph.provider)
         self.critic = Critic(self.config, graph.llm)
         self.metrics = Metrics()          # one exposition for the process; every run's tracer feeds it
         self.runs: dict[str, TaskRun] = {}
@@ -522,6 +589,18 @@ class AgentHarness:
                 run.findings.append(Finding.make(name, r.summary, r.confidence, r.evidence_ids,
                                                  {"signal": r.signal}, ("analyst", r.source), untrusted=r.untrusted))
         elif step.name == "debate":
+            # v0.15 text analysts (config["text_analysts"], default none) join before the debate,
+            # as in TradingGraph.propagate, with their reports evidenced like any analyst's.
+            for r in self.graph.run_text_analysts(st):
+                tb = len(ev)
+                ev.record(EvidenceType.DECISION, f"analyst.{r.analyst}", r.summary,
+                          {"signal": r.signal, "confidence": r.confidence, "abstained": r.abstained,
+                           "source": r.source, "key_points": r.key_points}, run.correlation_id)
+                r.evidence_ids = tuple(ev.ids_since(tb))
+                if not r.abstained:
+                    run.findings.append(Finding.make(r.analyst, r.summary, r.confidence, r.evidence_ids,
+                                                     {"signal": r.signal}, ("analyst", r.source),
+                                                     untrusted=r.untrusted))
             d = self.graph.run_debate(st)
             dec = ev.record(EvidenceType.DECISION, "facilitator", d.summary,
                             {"winner": d.winner, "score": d.score, "conviction": d.conviction,

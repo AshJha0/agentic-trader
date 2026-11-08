@@ -525,7 +525,7 @@ with the call.
 
 `lookback_days=None` (the default everywhere) resolves to `config["lookback_days"]` (400) for `market_data.history`, `quant.technical`, `quant.risk` and `portfolio.construct`, and to `config["alpha_lookback_days"]` (900) for `quant.alpha` and `quant.xalpha`.
 
-`DeskTools(provider, config, knowledge=None, positions=None, capital=None)` and
+`DeskTools(provider, config, knowledge=None, positions=None, capital=None, memory=None)` and
 `build_registry(tools)` give 16 tools on five servers (`market_data`, `quant`, `knowledge`,
 `portfolio`, `execution`); the descriptors below are the registry's own schemas.
 `DeskTools.for_book(positions)` is a view of the desk whose position book is that dict, read
@@ -615,7 +615,7 @@ arguments=None)`, `get`, `resolve(ev_id)` (re-hashes the payload), `unresolved(i
 |---|---|
 | `canonical_plan(task, instrument, analysts, config, registry)` | Knowledge search, alpha (when `use_alpha_tool`), analysts, debate, trader, risk, then the governance steps (12 steps for an FX task at the defaults) |
 | `governance_steps()` | `critic`, `validate_evidence`, `finalise` |
-| `propose_plan(llm, task, instrument, analysts, registry)` | Model-proposed raw steps (or `None`) and the raw reply |
+| `propose_plan(llm, task, instrument, analysts, registry, anonymize=False, compact=False)` | Model-proposed raw steps (or `None`) and the raw reply. `compact` keeps only the first sentence of each tool description and asks for rationales of at most 8 words, about half the prompt, for slow local models; tools, stages and validation are the same |
 | `validate_plan(raw_steps, task, instrument, analysts, registry, source="llm", config=None, book=None)` | Drops unknown tools and analysts, pins `symbol` and `as_of`, drops a model-written `current_weight` whenever the run's `book` holds the task's symbol (without a `book`, whenever the task declares one), so the book is the single source of the current position; repairs a string `symbols` to `[string]` and drops a step whose `symbols` is any other non-list shape; clips a `symbols` list to `agentic.symbol_universe` (`clip_symbols`: canonical spelling, duplicates removed, unparseable names dropped, a parallel `targets` list kept aligned) and truncates it to `agentic.max_symbols_per_call`, dropping the step only when nothing is left; coerces arguments, drops duplicate `(name, arguments)` tool steps before the step cap, refuses a plan whose tool steps would load more than `agentic.max_plan_lookback_bars` symbol-days (`plan_cost_bars`; alpha tools are costed at `alpha_lookback_days`), appends governance; every repair is a `Plan.notes` entry, never a reason to fail the run |
 | `clip_symbols(symbols, universe) -> (kept, dropped, indices)` | The universe clip above; with no universe every parseable entry is kept |
 | `make_plan(task, instrument, analysts, config, registry, llm, book=None)` | LLM plan when `agentic.llm_planner`, else canonical; always validated against the run's `book` |
@@ -1060,7 +1060,12 @@ Scripts: `scripts/llm_study.py --describe | --dry-run | --live --model NAME --ou
 | `EdgarProvider.from_config(cfg)` | Filing index, documents and sections, cached by accession; `None` without a user agent |
 | `data.gdelt.GdeltProvider.from_config(cfg)`, `.news(query, as_of, lookback_days=7)`, `daily_tone(items)` | Headlines behind a flag, scored by the rules lexicon |
 | `alpha.filing_tone(text)`, `filing_tone_changes(sections)`, `tone_change_signal(index, changes, hold_bars=63)`, `text_alpha_decay(signal, close)` | Filing tone-change feature (registered trial, not run) |
-| `text_analysts.FundamentalsTextAnalyst`, `MacroTextAnalyst`, `FixtureLLM`, `dry_run(analyst, ...)` | Text analysts against fixtures; not in the graph |
+| `text_analysts.FundamentalsTextAnalyst`, `MacroTextAnalyst`, `FixtureLLM`, `dry_run(analyst, ...)` | Text analysts against fixtures |
+| `text_analysts.TextInputs(edgar=None, statements=[], retriever=None, retrieval_k=3)`, `TextInputs.from_config(cfg)` | What the text analysts may read: an EDGAR provider, central-bank statements and an optional retriever, which must come from `analyst_retriever` (a corpus that fails the gate leaves `retriever=None`) |
+| `text_analysts.text_reports(names, llm, inputs, instrument, as_of) -> list[AnalystReport]` | One report per name in `TEXT_ANALYST_NAMES` (`fundamentals_text`, `macro_text`); only inputs with `visible_date` at or before the cut-off are read; abstains without a model, and fundamentals abstains for FX |
+| `text_analysts.text_cutoff(as_of) -> datetime` | The decision cut-off: the as-of day at `TEXT_CUTOFF_UTC` (20:00 UTC); a naive datetime is taken as UTC |
+| `TradingGraph.run_text_analysts(state) -> list[AnalystReport]` | Runs the analysts in `config["text_analysts"]` (default `[]`: a no-op) and adds each report to `state.reports`; called by `propagate` and by the harness before the debate |
+| `TradingGraph.text_inputs`, `TradingGraph.text_llm` | The `TextInputs` (built from `text_analyst_options` on first use when `None`) and the model the text analysts use (`None` = the desk's `llm`) |
 | `agentic.research_rag.ResearchCorpus.build(filings=(), statements=())`, `.search(query, as_of, k=5, method="tfidf")` | Point-in-time search; `as_of` must be timezone-aware; `method="hybrid"` fuses TF-IDF and BM25 |
 | `to_document_blocks(hits)`, `build_cited_request(question, hits)`, `audit_citations(claims, passages)` | Citation payloads (no call is made) and the span audit |
 | `load_eval_corpus()`, `load_questions()`, `evaluate_retrieval(corpus, questions, method)`, `comparison_table(reports)` | Recall@5 and MRR |
@@ -1068,6 +1073,10 @@ Scripts: `scripts/llm_study.py --describe | --dry-run | --live --model NAME --ou
 | `agentic.governance.join_outcomes`, `governance_report`, `weekly_rollup`, `planner_survival`, `survival_table` | Plan items 4.1 and 4.2 |
 | `agentic.redteam.load_corpus`, `fence_check`, `rules_view`, `measure`, `compliance_run(llm, ...)` | Plan item 4.4 |
 | `agentic.policy.SignedApprovalGateway(keys, quorum=None, default_quorum=1, ttl_s=None, price_fn=None, price_tolerance=0.01, store=None)`, `sign_approval(secret, approval_id, request, approve)` | Signed N-of-M approvals; opt-in |
+| `agentic.harness.approval_mode(approval) -> str` | The gateway kind in `agentic.approval`, given either the mode string or a block with `gateway`; one of `APPROVAL_MODES` (`auto`, `queued`, `deny`, `signed`), else `ValueError` |
+| `agentic.harness.signed_gateway_from_config(block, environ=None, price_fn=None)` | A `SignedApprovalGateway` from the `approval` block. `approvers` maps approver id to the *name* of the environment variable holding the secret (read from `environ`, default `os.environ`); a value that is not a variable name, or an unset or empty variable, raises `ValueError`. `submit_order_quorum` (2), `quorum` (1), `tool_quorum`, `ttl_s`, `price_tolerance` (0.01) and `log_path` (an `AppendOnlyApprovalLog`) map onto the gateway |
+| `agentic.harness.last_close_price_fn(provider)` | The re-pricing `price_fn` the harness uses by default for a signed gateway (`reprice: false` in the block turns it off): last close at or before the request's `as_of` (today when absent) for its `symbol`; `None`, which skips the check for that request, when there is no symbol or no finite positive price |
+| `DeskTools(..., memory=None)`, `DeskTools.recall(symbol, as_of, k=3)`, `DeskTools.remember(symbol, as_of, action, weight, price, summary, horizon_days=10)` | The `memory.recall` (read-only, fenced lessons and track record resolved on or before `as_of`) and `memory.remember` (state-changing, append-only, small write budget per as-of day, returns `{"recorded": key}`) tools, registered only when `agentic.memory_tool` is true; `remember` needs approval like an order |
 | `agentic.tool_search.DeferredToolCatalog(registry, preloaded=())`, `.names()`, `.search(query, limit=5, load=True)`, `.load(name)` | Deferred tools; MCP tool `tool_search`, HTTP `GET /tools?deferred=true` and `GET /tools/search?q=...` |
 | `agentic.replay.Recorder(cfg)`, `load_recording(path)`, `replay(rec, check=True)` | Record and replay; recordings are pickles, load only your own |
 | `agentic.tracing.SLO(latency_ms=10000, max_failure_rate=0.05, latency_quantile=0.95, min_samples=1)`, `Metrics.slo_report(slos, default)`, `slos_from_config(cfg)`, `export_otel(tracer, endpoint)` | Stage SLOs and OTel export (extra packages needed) |

@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--capital", type=float, default=None,
                    help="account size the desk tools size orders from (default: config initial_capital)")
     t.add_argument("--role", choices=["viewer", "analyst", "trader", "risk", "admin"], default="trader")
-    t.add_argument("--approval", choices=["auto", "queued", "deny"], default=None,
+    t.add_argument("--approval", choices=["auto", "queued", "deny", "signed"], default=None,
                    help="what happens to tool calls that need approval")
     t.add_argument("--llm-planner", action="store_true", help="let the model propose the plan")
     t.add_argument("--question", default=None, help="free-text request shown to the planner")
@@ -219,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     common(sv, symbol_required=None)
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
-    sv.add_argument("--approval", choices=["auto", "queued", "deny"], default="queued")
+    sv.add_argument("--approval", choices=["auto", "queued", "deny", "signed"], default="queued")
     sv.add_argument("--capital", type=float, default=None,
                     help="account size the desk tools size orders from (default: config initial_capital)")
     sv.add_argument("--task-db", default=None, help="SQLite file for a persistent task store")
@@ -236,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     common(mc, symbol_required=None)
     mc.add_argument("--role", choices=["viewer", "analyst", "trader", "risk", "admin"], default="trader",
                     help="the role every call is evaluated for (stdio carries no identity)")
-    mc.add_argument("--approval", choices=["auto", "queued", "deny"], default=None,
+    mc.add_argument("--approval", choices=["auto", "queued", "deny", "signed"], default=None,
                     help="gateway for tools that need approval (default: config agentic.approval); "
                          "queued is refused: nothing can answer on a stdio server")
     mc.set_defaults(func=cmd_mcp)

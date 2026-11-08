@@ -53,6 +53,8 @@ _DATA = ToolAnnotations(True, RiskLevel.LOW, frozenset({Capability.READ_MARKET_D
 _CALC = ToolAnnotations(True, RiskLevel.LOW, frozenset({Capability.RUN_ANALYTICS}), EvidenceType.CALCULATION)
 _DOC = ToolAnnotations(True, RiskLevel.LOW, frozenset({Capability.READ_KNOWLEDGE}), EvidenceType.DOCUMENT)
 _ORDER = ToolAnnotations(False, RiskLevel.HIGH, frozenset({Capability.PROPOSE_TRADES}), EvidenceType.DECISION)
+_MEMORY_READ = ToolAnnotations(True, RiskLevel.MEDIUM, frozenset({Capability.READ_KNOWLEDGE}), EvidenceType.DOCUMENT)
+_MEMORY_WRITE = ToolAnnotations(False, RiskLevel.MEDIUM, frozenset({Capability.PROPOSE_TRADES}), EvidenceType.DECISION)
 
 
 def _clean(obj: Any) -> Any:
@@ -104,8 +106,11 @@ class DeskTools:
     """Holds the objects the tool functions close over."""
 
     def __init__(self, provider: MarketDataProvider, config: dict, knowledge: KnowledgeBase | None = None,
-                 positions: dict[str, float] | None = None, capital: float | None = None):
+                 positions: dict[str, float] | None = None, capital: float | None = None,
+                 memory: Any = None):
         self.provider = provider
+        self._memory = memory                        # DecisionMemory for the memory.* tools (lazy)
+        self._memory_writes: dict[date, int] = {}    # as_of -> writes spent (MemoryTool budget per day)
         self.config = config
         self.knowledge = knowledge or default_knowledge_base()
         self.positions = {k.upper(): float(v) for k, v in (positions or {}).items()}
@@ -138,6 +143,36 @@ class DeskTools:
         ins = Instrument.parse(symbol)
         df = self.provider.history(ins, as_of - timedelta(days=lookback_days), as_of)
         return ins, df[df.index <= pd.Timestamp(as_of)]
+
+    # ------------------------------------------------------------ memory
+    def _memory_tool(self, as_of: date):
+        from ..memory import DecisionMemory
+        from .governance import MemoryTool
+        if self._memory is None:
+            self._memory = DecisionMemory(self.config.get("memory_path"),
+                                          max_staleness_days=int(self.config.get("max_data_staleness_days", 7)))
+        uni = self.config.get("agentic", {}).get("symbol_universe")
+        tool = MemoryTool(self._memory, as_of, getattr(self.provider, "name", ""),
+                          tuple(uni) if uni else None)
+        tool._writes = self._memory_writes.get(as_of, 0)
+        return tool
+
+    def recall(self, symbol: str, as_of: date, k: int = 3) -> str:
+        """Lessons and track record from decision memory, resolved on or before the as-of date
+        only, fenced as untrusted (they quote earlier model-written reasoning)."""
+        return self._memory_tool(_as_date(as_of)).recall(symbol, k)
+
+    def remember(self, symbol: str, as_of: date, action: str, weight: float, price: float, summary: str,
+                 horizon_days: int = 10) -> dict:
+        """Append one decision to memory, dated the as-of day (append-only: an existing key is
+        refused, there is no update or delete; a small write budget per day)."""
+        d = _as_date(as_of)
+        with self._lock:
+            tool = self._memory_tool(d)
+            key = tool.remember(symbol, action, weight, price, summary, horizon_days=horizon_days,
+                                price_basis=series_basis(self.provider))
+            self._memory_writes[d] = tool._writes
+        return {"recorded": key}
 
     # ------------------------------------------------------- market_data
     def history(self, symbol: str, as_of: date, lookback_days: int | None = None) -> dict:
@@ -501,6 +536,9 @@ def build_registry(tools: DeskTools) -> ToolRegistry:
     reg.register("portfolio", tools.construct, annotations=_CALC)
     reg.register("execution", tools.plan, annotations=_CALC)
     reg.register("execution", tools.submit_order, annotations=_ORDER)
+    if tools.config.get("agentic", {}).get("memory_tool", False):
+        reg.register("memory", tools.recall, annotations=_MEMORY_READ)
+        reg.register("memory", tools.remember, annotations=_MEMORY_WRITE)
     return reg
 
 
