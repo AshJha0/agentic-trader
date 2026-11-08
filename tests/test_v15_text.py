@@ -21,7 +21,12 @@ from agentic_trader.text_analysts import (TEXT_CELLS, FixtureLLM, FundamentalsTe
 UTC = timezone.utc
 
 
+# Neutral filler (no lexicon words) so each section clears edgar_text.MIN_PERIODIC_CHARS.
+_PAD = " The company makes widgets in Ohio." * 40
+
+
 def _tenk(risk: str, mdna: str) -> str:
+    risk, mdna = risk + _PAD, mdna + _PAD
     return ("<html><body><p>TABLE OF CONTENTS</p><p>Item 1A. Risk Factors</p><p>Item 1B. Unresolved</p>"
             "<p>Item 7. MD&amp;A</p><p>Item 8. Financials</p>"
             f"<p>Item 1. Business</p><p>We sell widgets.</p><p>Item 1A. Risk Factors</p><p>{risk}</p>"

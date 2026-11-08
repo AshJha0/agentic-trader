@@ -2720,8 +2720,9 @@ sections above is the desk's 250-day historical forecast on the holdout, not the
 
 | Item | What was measured | Result | What it does not show |
 |---|---|---|---|
-| 3.2, 3.3 | Filing tone change, GDELT tone | registered as trials, not run | anything |
-| 3.7 | Retrieval, 100 questions, 34-passage invented corpus | TF-IDF recall@5 0.990, MRR 0.954; hybrid 0.990, 0.961; gate 0.8 passes | recall on real filings; embeddings untested |
+| 3.2 | Filing tone change, 9 names, design period, 201 filings | mean IC negative at every horizon (1 to 63 sessions), no horizon reaches \|t\| = 2: not supported | any edge (see the section below) |
+| 3.3 | GDELT headline tone | registered as a trial; design run pending | anything |
+| 3.7 | Retrieval, 100 questions, 34-passage invented corpus (real-filings run: 50 questions, 2,702 passages, TF-IDF recall@5 0.92, hybrid 0.98, gate passes; see below) | TF-IDF recall@5 0.990, MRR 0.954; hybrid 0.990, 0.961; gate 0.8 passes | recall on real filings; embeddings untested |
 | 3.9 | Remove the runbook RAG (synthetic, rules path) | 0/9 decisions changed | the LLM path |
 | 4.1 | Outcome-aware governance | n = 0 real TaskRuns | any hit rate |
 | 4.2 | Planner survival, 200 tasks | canonical 100%, rule planner 100%, synthetic model-plan fixtures 95.1% (1547/1626) | a model's plans (the fixtures test the validator) |
@@ -2729,3 +2730,78 @@ sections above is the desk's 250-day historical forecast on the holdout, not the
 
 The trials registry has 70 entries; the deflated Sharpe counts every one of them whether or not
 it was run or adopted.
+
+## v0.15 EDGAR text on real filings (plan items 3.2 and 3.7)
+
+Design period 2016-01-04 to 2021-12-31. The nine core single-name equities (the ten core
+equities minus SPY, which files no 10-K or 10-Q). Filings come from the SEC (10-K, 10-Q and
+8-K items 2.02, 7.01 and 8.01), accepted from December 2014 (warm-up, so the first design
+filing has one to compare with) to the design end. Closes are from Yahoo. Produced by
+`scripts/v15_edgar_design.py` into `results/v15/`. Result files and the filing cache are
+git-ignored; the numbers below are copied from them. Nothing accepted after the design end
+was requested, so the holdout was not read.
+
+**Section cutter fixes, made before any trial number was seen.** I read the cut sections of
+all 864 filings and found four bugs, each now covered by a regression test built from a short
+real excerpt (`tests/test_v15_edgar_real.py`):
+
+1. Wrapped cross-references that start a line ("Item 7 of this Form 10-K under the heading
+   ...") were taken as headings. They started or ended sections in the wrong place: AAPL's
+   FY2015 MD&A was 6 kB instead of 59 kB, XOM's FY2015 risk factors ran 200 kB to the end of
+   the document, and JPM's 10-Q risk factors were 340 kB. Lines longer than 150 characters, or
+   that contain reference words, no longer count as headings.
+2. A section under 1,000 characters is a pointer to text elsewhere, so it is now omitted. JPM
+   and XOM put their 10-K MD&A in the annual-report wrap ("appears on pages 40-145"), JNJ's
+   FY2014-2015 risk factors are in Exhibit 99, and many 10-Q Item 1A say only "no material
+   changes".
+3. In a 10-Q, "Item 2" is both the Part I MD&A and Part II "Unregistered Sales of Equity
+   Securities". JPM's 10-Q MD&A has no Item 2 heading, so Part II Item 2 was being cut as its
+   MD&A.
+4. The SEC ticker map now sends XOM to a new registrant (CIK 2115436, filings from 2026
+   only). The script pins the historical Exxon Mobil CIK, 34088.
+
+Known gaps: JPM and XOM have no 10-K MD&A, and JPM has no 10-Q sections, because their text
+has no Item headings. For those names the trial uses the sections that were cut (risk factors
+for JPM; risk factors and 10-Q MD&A for XOM).
+
+**Trial "v0.15 EDGAR filing tone change (lexicon diff, 10-K/10-Q)"** (`evaluation.TRIALS`).
+`alpha.tone_change_signal` uses its registered defaults (hold 63 sessions, scale 0.5). Purged
+IC is from `alpha.text_alpha_decay` (5 purged walk-forward folds per name). There are 201
+design-period 10-K/10-Q filings with a predecessor, 327 section changes.
+
+| Horizon (sessions) | Mean IC across 9 names | t across names | Names with IC > 0 |
+|---|---|---|---|
+| 1 | -0.012 | -1.94 | 2 / 9 |
+| 5 | -0.017 | -1.69 | 3 / 9 |
+| 10 | -0.021 | -1.25 | 4 / 9 |
+| 21 | -0.020 | -0.61 | 3 / 9 |
+| 63 | -0.021 | -0.31 | 3 / 9 |
+
+Conclusion: not supported. The expected sign is positive: more positive filing language
+should come before higher returns. The mean IC is slightly negative at every horizon, and no
+horizon reaches |t| = 2 across names. Per name, two of 45 name-horizon cells pass |t| > 2.5:
+GOOGL at 1 day (-0.047, t -2.54) and JNJ at 63 days (-0.229, t -2.67). That is about what
+chance gives across 45 cells. Nothing was tuned after the result. The feature is not added to
+the desk, and the trial counts in the deflated Sharpe.
+
+**Retrieval evaluation on real text (3.7).** The corpus holds the design-period 10-K
+sections (1A, 7) and 8-K items of the nine names. HTML-converted filings break tables into
+"paragraphs" of a few characters (median 9), so paragraphs are merged into passages of at
+least 1,500 characters (`ResearchCorpus.build(min_chars=1500)`), giving 2,702 passages. 10-Qs
+are left out: their risk factors largely repeat the 10-K, and the dense index is rebuilt for
+every `as_of`. There are 50 hand-labelled questions
+(`agentic_trader/agentic/knowledge/retrieval_eval/edgar_real_questions.json`), with 16
+distinct `as_of` values. Each `as_of` is chosen so that later look-alike events from the same
+company are hidden: next year's dividend increase, next CCAR result, the next EC ruling. That
+hides 1,036 later same-company, same-section passages in total across the questions.
+
+| Method | Questions | Recall@5 | MRR | Accession recall@5 | Gate (>= 0.8) |
+|---|---|---|---|---|---|
+| tfidf | 50 | 0.92 | 0.820 | 0.94 | pass |
+| hybrid (TF-IDF + BM25, RRF) | 50 | 0.98 | 0.849 | 1.00 | pass |
+
+Both methods pass the gate on real text. Caveats: one person wrote the questions after
+reading the gold passages, so the wording overlaps the passages more than an analyst's
+question would. Most gold passages are distinctive 8-K events. Fifty questions give a
+recall@5 standard error of about 0.04 (tfidf) and 0.02 (hybrid). No local embedding ranker
+was used (the optional `[rag]` extra is not installed).

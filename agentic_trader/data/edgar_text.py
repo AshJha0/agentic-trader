@@ -100,14 +100,48 @@ _PERIODIC: dict[str, dict[str, tuple[str, tuple[str, ...]]]] = {
 }
 
 
-def _cut(text: str, start: str, ends: tuple[str, ...]) -> str:
+# A line that starts with "Item 7" is not always a heading: real filings wrap cross-references
+# onto a new line ("Item 7 of this Form 10-K under the heading ...", "Item 1A. Risk Factors for a
+# more complete discussion of risks.", "Item 1A: Risk Factors in JPMorgan Chase's 2016 Annual
+# Report on Form 10-K ..."). Taken as headings they started or ended sections in the wrong place
+# (found on the 2015-2021 filings of the core names; tests/test_v15_edgar_real.py).
+_CROSS_REF = re.compile(r"(?i)\b(of this|in this|in our|for a|see|refer|referenced|included in|set forth|"
+                        r"contained in|annual report|form\s*10-?[kq]|incorporated|discussed)\b")
+_MAX_HEADING_LINE = 150
+# A periodic-report section shorter than this is a pointer elsewhere ("appears on pages 40-145",
+# "see Exhibit 99", "no material changes"), not text whose tone can be compared; omitted.
+MIN_PERIODIC_CHARS = 1000
+
+
+def _is_heading(text: str, m: re.Match) -> bool:
+    eol = text.find("\n", m.start() + 1)
+    line = text[m.start(): eol if eol != -1 else len(text)].strip()
+    return len(line) <= _MAX_HEADING_LINE and not _CROSS_REF.search(line)
+
+
+# 10-Q "Item 2" is both Part I MD&A and Part II "Unregistered Sales of Equity Securities"; a
+# filer whose MD&A carries no Item 2 heading (JPM) otherwise had Part II Item 2 cut as its MD&A.
+_NOT_MDNA = re.compile(r"(?i)unregistered\s+sales")
+
+
+def _cut(text: str, start: str, ends: tuple[str, ...], exclude: re.Pattern | None = None) -> str:
     """The longest span from an ``Item <start>`` heading to the next end heading. The longest
-    is taken so the table of contents (heading followed at once by the next heading) loses."""
+    is taken so the table of contents (heading followed at once by the next heading) loses.
+    Lines that are cross-references, not headings, neither start nor end a span."""
     best = ""
     end_re = re.compile("|".join(_item_re(e)[len("(?im)"):] for e in ends) + r"|^\s*signatures?\s*$",
                         re.I | re.M)
     for m in re.finditer(_item_re(start), text):
-        e = end_re.search(text, m.end())
+        if not _is_heading(text, m):
+            continue
+        if exclude is not None and exclude.search(text, m.end(), m.end() + 120):
+            continue
+        pos, e = m.end(), None
+        while True:
+            e = end_re.search(text, pos)
+            if e is None or _is_heading(text, e):
+                break
+            pos = e.end()
         span = text[m.end(): e.start() if e else len(text)].strip()
         if len(span) > len(best):
             best = span
@@ -120,8 +154,8 @@ def extract_sections(text: str, form: str) -> dict[str, str]:
     base = form.split("/")[0]
     if base in _PERIODIC:
         for label, (start, ends) in _PERIODIC[base].items():
-            s = _cut(text, start, ends)
-            if s:
+            s = _cut(text, start, ends, _NOT_MDNA if (base, label) == ("10-Q", "7") else None)
+            if len(s) >= MIN_PERIODIC_CHARS:
                 out[label] = s
     elif base == "8-K":
         for code in ITEMS_8K:
