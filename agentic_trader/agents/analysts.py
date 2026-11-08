@@ -42,7 +42,10 @@ class Analyst(Agent):
         raise NotImplementedError
 
     def prompt(self, facts: dict[str, Any], state: TradingState) -> str:
-        plain = {k: v for k, v in facts.items() if k not in self.untrusted_keys}
+        # "_"-prefixed facts are private to rules() (e.g. raw headline items) and
+        # must never reach the prompt outside a fence.
+        plain = {k: v for k, v in facts.items()
+                 if k not in self.untrusted_keys and not k.startswith("_")}
         blocks = [untrusted_block(k, [str(x) for x in facts[k]])
                   for k in self.untrusted_keys if facts.get(k)]
         return (
