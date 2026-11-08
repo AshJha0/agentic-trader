@@ -252,8 +252,8 @@ def test_mcp_refuses_signed_over_stdio(monkeypatch):
 
 # ------------------------------------------------------------------ 4. otel extra
 def test_otel_extra_declared_and_locked():
-    import tomllib
     from pathlib import Path
+    tomllib = pytest.importorskip("tomllib")   # Python 3.11+; 3.10 has no stdlib TOML reader
     root = Path(__file__).resolve().parents[1]
     extras = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"]
     assert extras["otel"] == ["opentelemetry-sdk>=1.20", "opentelemetry-exporter-otlp-proto-http>=1.20"]
