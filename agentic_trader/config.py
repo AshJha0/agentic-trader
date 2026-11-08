@@ -62,6 +62,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # ---- Workflow ------------------------------------------------------------
     "analysts": None,  # None -> default set per asset class (see graph.DEFAULT_ANALYSTS)
+    # v0.15 LLM text analysts wired into the desk (text_analysts.text_reports). [] = off (the
+    # desk is unchanged); "fundamentals_text" reads fenced EDGAR sections (needs edgar_text: True),
+    # "macro_text" reads central-bank statements; both point in time at the decision cut-off.
+    "text_analysts": [],
+    "text_analyst_options": {
+        "central_bank_path": None,        # JSON file/dir of {bank, released, title, text}
+        "research_retrieval": False,      # extra passages via research_rag.analyst_retriever (0.8 gate)
+        "research_corpus_path": None,     # corpus JSON (eval-corpus format); None = the statements only
+        "retrieval_questions_path": None, # labelled questions for the gate (None = packaged set)
+        "retrieval_method": "tfidf",
+        "retrieval_k": 3,
+    },
     "max_debate_rounds": 2,
     "max_risk_discuss_rounds": 1,
     "analyst_weights": {
@@ -267,7 +279,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # ---- Agentic layer (agentic_trader.agentic) ----------------------------------
     "agentic": {
-        "approval": "auto",          # auto | queued | deny: what happens to REQUIRE_APPROVAL
+        # auto | queued | deny | signed: what happens to REQUIRE_APPROVAL. Either the mode string
+        # or a block {"gateway": "signed", "approvers": {"alice": "ALICE_APPROVAL_KEY", ...}
+        # (approver id -> secret env var NAME, never a secret), "quorum": 1, "submit_order_quorum": 2,
+        # "tool_quorum": {}, "ttl_s": None, "price_tolerance": 0.01, "log_path": None}
+        # (harness.signed_gateway_from_config).
+        "approval": "auto",
+        # v0.15 follow-up: register the governed decision-memory tools (memory.recall,
+        # memory.remember; governance.MemoryTool) on the tool surface. remember changes state,
+        # so it goes through the approval gateway like an order.
+        "memory_tool": False,
         "llm_planner": False,        # let the model propose the plan (validated either way)
         "llm_critic": True,          # optional model critique (can only lower confidence)
         "llm_reporter": True,        # model-written executive summary (audited either way)

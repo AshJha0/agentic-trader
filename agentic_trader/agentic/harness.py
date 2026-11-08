@@ -55,8 +55,8 @@ from .domain import (EvidenceType, Finding, Plan, PlanStep, PolicyOutcome, StepT
                      TERMINAL_STATES, TRANSITIONS, ToolRequest, new_id, utc_now)
 from .evidence import EvidenceStore
 from .planner import ANALYST_PREFIX, make_plan, max_plan_lookback_bars, plan_cost_bars, plan_to_dict
-from .policy import (ApprovalGateway, AutoApprovalGateway, DenyApprovalGateway, PolicyEngine,
-                     QueuedApprovalGateway)
+from .policy import (AppendOnlyApprovalLog, ApprovalGateway, AutoApprovalGateway, DenyApprovalGateway,
+                     PolicyEngine, QueuedApprovalGateway, SignedApprovalGateway)
 from .rag import KnowledgeBase
 from .reporter import Report, build_report
 from .servers import DeskTools, RecordingProvider, build_registry
@@ -132,11 +132,51 @@ class TaskRun:
         return d
 
 
-def _gateway(kind: str) -> ApprovalGateway:
-    try:
-        return {"auto": AutoApprovalGateway, "queued": QueuedApprovalGateway, "deny": DenyApprovalGateway}[kind]()
-    except KeyError:
-        raise ValueError(f"unknown approval gateway {kind!r} (auto, queued or deny)") from None
+APPROVAL_MODES = ("auto", "queued", "deny", "signed")
+
+
+def approval_mode(approval: Any) -> str:
+    """The gateway kind named by ``config["agentic"]["approval"]``: a plain string (the
+    pre-v0.15 form) or a block ``{"gateway": ..., <signed options>}``."""
+    kind = approval.get("gateway", "auto") if isinstance(approval, dict) else approval
+    if kind not in APPROVAL_MODES:
+        raise ValueError(f"unknown approval gateway {kind!r} ({', '.join(APPROVAL_MODES)})")
+    return kind
+
+
+def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
+                               price_fn: Any = None) -> SignedApprovalGateway:
+    """A ``SignedApprovalGateway`` from the ``approval`` block. ``approvers`` maps an approver
+    id to the NAME of the environment variable holding its secret: secrets never sit in the
+    configuration, and a missing or empty variable is an error, not a silent drop."""
+    env = os.environ if environ is None else environ
+    approvers = block.get("approvers") or {}
+    if not isinstance(approvers, dict) or not approvers:
+        raise ValueError("signed approval needs approvers: {approver_id: SECRET_ENV_VAR_NAME}")
+    keys = {}
+    for who, var in approvers.items():
+        if not isinstance(var, str) or not var.replace("_", "").isalnum():
+            raise ValueError(f"approver {who!r}: give the environment variable NAME, never the secret")
+        secret = env.get(var)
+        if not secret:
+            raise ValueError(f"approver {who!r}: environment variable {var} is not set")
+        keys[str(who)] = secret.encode("utf-8")
+    quorum = {"execution.submit_order": int(block.get("submit_order_quorum", 2))}
+    for tool, n in (block.get("tool_quorum") or {}).items():
+        quorum[str(tool)] = int(n)
+    log_path = block.get("log_path")
+    ttl = block.get("ttl_s")
+    return SignedApprovalGateway(keys, quorum, default_quorum=int(block.get("quorum", 1)),
+                                 ttl_s=None if ttl is None else float(ttl), price_fn=price_fn,
+                                 price_tolerance=float(block.get("price_tolerance", 0.01)),
+                                 store=AppendOnlyApprovalLog(log_path) if log_path else None)
+
+
+def _gateway(approval: Any, environ: Any = None) -> ApprovalGateway:
+    kind = approval_mode(approval)
+    if kind == "signed":
+        return signed_gateway_from_config(approval if isinstance(approval, dict) else {}, environ)
+    return {"auto": AutoApprovalGateway, "queued": QueuedApprovalGateway, "deny": DenyApprovalGateway}[kind]()
 
 
 def default_instance_id() -> str:
@@ -151,7 +191,7 @@ class AgentHarness:
         self.graph = graph
         self.config = graph.config
         acfg = self.config.get("agentic", {})
-        self.tools = DeskTools(graph.provider, self.config, knowledge, positions, capital)
+        self.tools = DeskTools(graph.provider, self.config, knowledge, positions, capital, memory=graph.memory)
         self.registry: ToolRegistry = build_registry(self.tools)
         self.policy = policy or PolicyEngine({
             "symbol_universe": acfg.get("symbol_universe"), "deny_tools": acfg.get("deny_tools", ()),
