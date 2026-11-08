@@ -2692,8 +2692,8 @@ IC combination + HMM regime conditioning; IC combination + conformal interval si
 |---|---|---|---|---|---|---|
 | rules desk (current default) | 0.6477 | 0.6437 | +0.004 | [-0.128, +0.148] | 0.989 | 6/15 |
 | IC combination, window 504 | 0.5125 | 0.6437 | -0.131 | [-0.314, +0.059] | 0.174 | 5/15 |
-| IC + HMM regime conditioning | design run pending | | | | | |
-| IC + conformal sizing | design run pending | | | | | |
+| IC + HMM regime conditioning | 0.4652 | 0.6437 | -0.179 | [-0.307, -0.045] | 0.009 | 3/15 |
+| IC + conformal sizing | 0.5645 | 0.6437 | -0.079 | [-0.220, +0.095] | 0.329 | 2/15 |
 
 CI and p are the paired instrument bootstrap against the vol-targeted buy-and-hold control.
 The pre-registered expectation for 5.1 was "tilt goes to zero, desk about equal to control;
@@ -2712,6 +2712,6 @@ and then runs them.
 | EWMA (lambda 0.94) | 15 | 13 | 13 |
 | FHS | 15 | 10 | 10 |
 
-EWMA beat the FHS default; the default stays `"fhs"` pending an owner decision recorded in the
-round's PR. The earlier "Kupiec rejects 2 of 15, independence rejects 6 of 15" in the v0.7/v0.8
+EWMA beat FHS on the design period; the owner switched the default to `"ewma"` (5.2b follow-up
+PR). The earlier "Kupiec rejects 2 of 15, independence rejects 6 of 15" in the v0.7/v0.8
 sections above is the desk's 250-day historical forecast on the holdout, not the design period.

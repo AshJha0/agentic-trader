@@ -227,15 +227,44 @@ def conformal_halfwidth(residuals: np.ndarray, alpha: float) -> float | None:
     return float(r[k - 1])
 
 
+@dataclass(frozen=True)
+class SignalInputs:
+    """The per-bar inputs of ``desk_forecast``: the signal panel, its trailing z-scores and
+    the ``horizon``-bar volatility, aligned with one price frame.
+
+    Each row uses bars up to its own only, so the inputs of a longer series with the same
+    first bar, cut after bar ``i``, equal the inputs of the series that ends at ``i``. A
+    walk-forward builds them once per series and slices (``head``) per as-of bar.
+    """
+    signals: pd.DataFrame
+    z: pd.DataFrame
+    vol: np.ndarray
+
+    def head(self, n: int) -> "SignalInputs":
+        """The inputs of the first ``n`` bars."""
+        return SignalInputs(self.signals.iloc[:n], self.z.iloc[:n], self.vol[:n])
+
+
+def signal_inputs(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
+                  carry: np.ndarray | None = None) -> SignalInputs:
+    """``SignalInputs`` for every bar of ``df``; ``cfg`` is ``config["combination"]``."""
+    sig = signal_panel(df, instrument, carry)
+    return SignalInputs(sig, standardised(sig, int(cfg["window"])),
+                        horizon_vol(df["Close"].to_numpy(float), int(cfg["horizon"])))
+
+
 def desk_forecast(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
-                  carry: np.ndarray | None = None, regimes: np.ndarray | None = None) -> Forecast:
+                  carry: np.ndarray | None = None, regimes: np.ndarray | None = None,
+                  inputs: SignalInputs | None = None) -> Forecast:
     """The IC-combination forecast at the last bar of ``df`` (the as-of bar).
 
     ``cfg`` is ``config["combination"]`` plus, when conformal sizing is on, the keys of
     ``config["conformal"]`` under ``"conformal"``. ``regimes`` (one integer label per bar of
     ``df``, filtered: each label uses bars up to its own) conditions the estimate on the
     current regime: ICs come only from bars in the last bar's regime, and ``sigma`` from
-    their returns.
+    their returns. ``inputs`` are ``signal_inputs(df, instrument, cfg, carry)`` when the
+    caller already holds them (sliced from a longer series with the same first bar);
+    ``carry`` is then unused.
 
     With conformal sizing the window is split in time: the ICs are estimated on its first
     ``1 - calibration_share`` and the calibration residuals ``r_t - mu_t`` come from the
@@ -246,9 +275,11 @@ def desk_forecast(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
     horizon, window = int(cfg["horizon"]), int(cfg["window"])
     close = df["Close"].to_numpy(float)
     end = len(close) - 1
-    sig = signal_panel(df, instrument, carry)
-    z = standardised(sig, window)
-    vol = horizon_vol(close, horizon)
+    if inputs is None:
+        inputs = signal_inputs(df, instrument, cfg, carry)
+    elif len(inputs.vol) != len(close):
+        raise ValueError(f"inputs cover {len(inputs.vol)} bars, df has {len(close)}")
+    sig, z, vol = inputs.signals, inputs.z, inputs.vol
     rows = None
     regime = None
     if regimes is not None:

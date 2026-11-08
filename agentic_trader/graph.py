@@ -15,7 +15,8 @@ import logging
 import math
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable
 
 import pandas as pd
 
@@ -29,6 +30,22 @@ from .instruments import Instrument
 from .llm import LLM, budget_llm, get_llm
 from .memory import DecisionMemory, series_basis
 from .state import AnalystReport, Book, DebateOutcome, FinalDecision, TradeProposal, TradingState
+
+if TYPE_CHECKING:
+    from .combine import SignalInputs
+    from .regime import RegimeSeries
+
+
+@dataclass
+class _ResearchSeries:
+    """One provider's research history for one name, from a fixed first bar to
+    ``config["research_history_end"]``, with the per-bar inputs built on it once.
+    ``provider`` is held so the ``id()`` in the cache key cannot be reused."""
+    provider: MarketDataProvider
+    hist: pd.DataFrame
+    inputs: "SignalInputs | None" = None
+    regime: "RegimeSeries | None" = None
+
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +69,7 @@ class TradingGraph:
         self.memory = memory if memory is not None else DecisionMemory(
             self.config.get("memory_path"), max_staleness_days=self.max_staleness_days)
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
+        self._research: dict[tuple[int, str, date], _ResearchSeries] = {}
 
         c, m = self.config, self.llm
         self.bull, self.bear = BullResearcher(m, c), BearResearcher(m, c)
@@ -150,28 +168,72 @@ class TradingGraph:
         ins, as_of = state.instrument, state.as_of
         days = int((int(comb["window"]) + 300 + int(comb["horizon"])) * 1.5)
         start = as_of - timedelta(days=max(days, self.config["lookback_days"]))
-        if reg["enabled"]:
-            start = min(start, date.fromisoformat(reg["fit_start"]) - timedelta(days=150))
-        hist = provider.history(ins, start, as_of)
-        hist = hist[hist.index <= pd.Timestamp(as_of)]
+        floor = date.fromisoformat(reg["fit_start"]) - timedelta(days=150) if reg["enabled"] else None
+        if floor is not None:
+            start = min(start, floor)
+        series = self._research_series(provider, state, start, floor)
+        if series is None:
+            hist = provider.history(ins, start, as_of)
+            hist = hist[hist.index <= pd.Timestamp(as_of)]
+        else:
+            hist = series.hist.iloc[:int(series.hist.index.searchsorted(pd.Timestamp(as_of), "right"))]
+        n = len(hist)
         labels = None
         if reg["enabled"]:
-            from .regime import REGIME_NAMES, regime_labels
+            from .regime import REGIME_NAMES, RegimeSeries
             k = int(reg["states"])
             # Refit monthly: the fit ends at the earlier of the design end and the first day
             # of the as-of month, so every fit uses bars before the decision only.
             fit_end = min(pd.Timestamp(reg["fit_end"]), pd.Timestamp(as_of.replace(day=1)))
-            lab, probs, _ = regime_labels(hist["Close"], provider.risk_free_series(hist.index), k,
-                                          pd.Timestamp(reg["fit_start"]), fit_end, ins.periods_per_year)
+            if series is None:
+                rs = RegimeSeries(hist["Close"], provider.risk_free_series(hist.index), ins.periods_per_year)
+            else:
+                if series.regime is None:
+                    series.regime = RegimeSeries(series.hist["Close"], provider.risk_free_series(series.hist.index),
+                                                 ins.periods_per_year)
+                rs = series.regime
+            lab, probs, _ = rs.labels(n - 1, k, pd.Timestamp(reg["fit_start"]), fit_end)
             if probs is not None:
                 state.regime = {"label": int(lab[-1]), "name": REGIME_NAMES[k][int(lab[-1])],
                                 "prob": float(probs[int(lab[-1])])}
                 if reg["condition"]:
                     labels = lab
         if use_ic:
-            from .combine import desk_forecast
-            carry = provider.carry_series(ins, hist.index) if ins.is_fx else None
-            state.forecast = desk_forecast(hist, ins, {**comb, "conformal": conf}, carry, labels)
+            from .combine import desk_forecast, signal_inputs
+            cfg = {**comb, "conformal": conf}
+            if series is None:
+                carry = provider.carry_series(ins, hist.index) if ins.is_fx else None
+                state.forecast = desk_forecast(hist, ins, cfg, carry, labels)
+            else:
+                if series.inputs is None:
+                    carry = provider.carry_series(ins, series.hist.index) if ins.is_fx else None
+                    series.inputs = signal_inputs(series.hist, ins, cfg, carry)
+                state.forecast = desk_forecast(hist, ins, cfg, None, labels, series.inputs.head(n))
+
+    def _research_series(self, provider: MarketDataProvider, state: TradingState, start: date,
+                         floor: date | None) -> _ResearchSeries | None:
+        """The cached research series when it can stand in for the per-decision history.
+
+        That needs ``config["research_history_end"]`` at or after the as-of date and a first
+        bar that does not move with the as-of date: ``start == floor``, the regime model's
+        fixed history start. When the start moves (the IC combination alone), the recursive
+        indicators (EMA, Wilder) and the warm-up of the trailing z-scores depend on it, so a
+        panel sliced from one long series would differ from the per-decision panel; that
+        path rebuilds per decision. Returns ``None`` when the cache does not apply.
+        """
+        end = self.config.get("research_history_end")
+        if end is None or floor is None or start != floor:
+            return None
+        end = date.fromisoformat(end) if isinstance(end, str) else end
+        if state.as_of > end:
+            return None
+        key = (id(provider), state.instrument.symbol, start)
+        series = self._research.get(key)
+        if series is None or series.provider is not provider:
+            hist = provider.history(state.instrument, start, end)
+            series = _ResearchSeries(provider, hist[hist.index <= pd.Timestamp(end)])
+            self._research[key] = series
+        return series
 
     def run_analyst(self, state: TradingState, name: str,
                     provider: MarketDataProvider | None = None) -> AnalystReport:

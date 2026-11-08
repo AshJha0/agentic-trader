@@ -118,6 +118,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # tools). Longer than lookback_days because IC needs hundreds of forward returns
     # after a 273-day signal (tsmom_12_1) has produced its first value.
     "alpha_lookback_days": 900,
+    # Last date of the series a walk-forward runs on (set by backtest.run_agent_backtest to its
+    # end, ISO string or date; None outside a backtest). When the v0.14 research history starts
+    # on a fixed date (regime on), the desk builds its signal panel and regime labels once on
+    # bars up to this date and slices them at each as-of bar instead of rebuilding them; every
+    # value at bar t still uses bars <= t only, so decisions are unchanged.
+    "research_history_end": None,
     "max_data_staleness_days": 7,  # refuse to decide if the latest bar is older than this
     "news_lookback_days": 7,
     "synthetic_seed": 7,
@@ -144,9 +150,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # concentrated or highly correlated books, not tuned on any period; None turns it off.
         # Only multi-sleeve runs (scan) build a book, so a single propagate() is unaffected.
         "max_book_var_95": 0.05,
-        # How book VaR is forecast: "fhs" (filtered historical simulation, risk_model), "ewma",
+        # How book VaR is forecast: "ewma" (owner decision 2026-11-07: design Kupiec and
+        # independence both passed on 13/15 names, FHS on 10/15), "fhs" (filtered historical
+        # simulation, risk_model),
         # or "historical" (the plain quantile of the book history, the rule before v0.14).
-        "book_var_method": "fhs",
+        "book_var_method": "ewma",
         "min_trade_weight": 0.05,  # smaller targets are rounded to flat
         "rebalance_band": 0.10,    # keep the current position if the new target is within this
                                    # distance of it (a no-trade band; 0 disables)

@@ -288,6 +288,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     start, end = _parse(start), _parse(end)
     if end < start:
         raise ValueError(f"end {end} is before start {start}")
+    cfg = {**cfg, "research_history_end": end.isoformat()}  # research inputs may be built once to here
     if not 0 <= rebalance_offset < max(1, rebalance_every):
         raise ValueError(f"rebalance_offset must be in [0, {max(1, rebalance_every)})")
     provider = provider or get_provider(cfg)

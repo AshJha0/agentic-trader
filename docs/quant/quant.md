@@ -121,15 +121,15 @@ On the design period (2016-01-04 to 2021-12-31, the 15 core names, 5% level,
 | FHS | 15/15 | 10/15 | 10/15 |
 
 Conditioning on current volatility fixes most of the clustering the historical window shows.
-EWMA did better than FHS here; the book default stays `"fhs"` pending an owner decision
-recorded in the round's PR, so the default was not switched after seeing the result. The older
+EWMA did better than FHS here, on the design period, and the owner switched the book default
+to `"ewma"` in the 5.2b follow-up (design data is what the protocol allows a choice to use). The older
 figure "Kupiec 2/15, independence 6/15" (PLAN.md section 2) is a different measurement: the
 desk's 250-day historical forecast on the 2022-2023 holdout, from the v0.7/v0.8 evaluation
 ([evaluation.md](../evaluation/evaluation.md), VaR coverage). There the counts are rejections
 (2 of 15 rejected by Kupiec, 6 of 15 by independence); here they are passes, on another period.
 
 **Book VaR is on by default.** `risk.max_book_var_95` is now 0.05 (it was `None`), measured with
-`risk.book_var_method = "fhs"`. The 5% is a loose budget, not tuned on any period; it binds only
+`risk.book_var_method = "ewma"`. The 5% is a loose budget, not tuned on any period; it binds only
 on concentrated or highly correlated books. Only a multi-sleeve `TradingGraph.scan` builds a
 book, so a single `propagate` is unaffected.
 
@@ -427,8 +427,8 @@ miscoverage `alpha`; the PM scales the tilt by `min(1, |mu| / half-width)`.
 The pre-registered expectation was that the tilt would go to zero on what is mostly noise.
 It did not: some signal survived shrinkage on 82.6% of sampled design dates
 (`ic_tilt_design.json`, every fifth date), mostly slow price-level signals whose fold ICs are
-consistently signed. Nothing was adopted or tuned. The regime and conformal trials are
-registered with their design run pending (follow-up 5.2b). See
+consistently signed. Nothing was adopted or tuned. The follow-up 5.2b run
+measured the other two: Regime conditioning: 0.4652 vs 0.6437, diff -0.179, CI [-0.307, -0.045], p 0.009, beats control 3/15 (significantly worse on design). Conformal sizing: 0.5645 vs 0.6437, diff -0.079, CI [-0.220, +0.095], p 0.329, beats control 2/15. Neither adopted, nothing tuned. See
 [LEARN concept 53](../../LEARN.md#53-a-pre-registered-expectation-that-failed).
 
 ## 16. Paper order management (v0.14, plan item 4.7)

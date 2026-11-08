@@ -19,12 +19,12 @@ stated at release.
   volatility, FHS passes both Kupiec and Christoffersen independence on 8 of 8 seeds and the
   250-day historical window on at most 2 of 8. The design-period counts on the 15 real names
   (`scripts/v14_var_design.py`, 2016-01-04 to 2021-12-31, 5% level, `results/v14/var_design.json`)
-  are: historical 250-day window Kupiec 14/15, independence 4/15, both 4/15; EWMA 15/15, 13/15, 13/15; FHS 15/15, 10/15, 10/15. EWMA beat the FHS default on the design period;
-  the default stays `"fhs"` pending an owner decision recorded in the round's PR. (The older
+  are: historical 250-day window Kupiec 14/15, independence 4/15, both 4/15; EWMA 15/15, 13/15, 13/15; FHS 15/15, 10/15, 10/15. EWMA beat FHS on the design period, and the owner switched
+  the default to `"ewma"` (decision recorded in the follow-up PR). (The older
   "Kupiec 2/15, independence 6/15" was the desk's 250-day historical forecast on the
   2022-2023 holdout, v0.7/v0.8 evaluation; a different period, so the two are not comparable.) **Book VaR is now on by default**: `risk.max_book_var_95 = 0.05`, a loose budget
-  not tuned on any period, measured with `risk.book_var_method = "fhs"`
-  (`"ewma"` and `"historical"` also accepted). Only a multi-sleeve `scan` builds a book, so a
+  not tuned on any period, measured with `risk.book_var_method = "ewma"` (default since the 5.2b follow-up;
+  `"fhs"` and `"historical"` also accepted). Only a multi-sleeve `scan` builds a book, so a
   single `propagate` is unaffected. Also: `factor_exposures` (rolling joint OLS betas on SPY,
   IEF, UUP and MTUM proxies, `FACTOR_PROXIES`), `stress_rows` (2008, 2020, 2022; the 2022
   window lies inside the holdout and may only report a series already run there) and
@@ -74,9 +74,13 @@ stated at release.
   **The pre-registered expectation did not hold**: the plan expected the tilt to go to zero on
   noise, but a signal survived shrinkage on 82.6% of design dates (slow price-level signals
   with consistent fold ICs; `results/v14/ic_tilt_design.json`). Nothing was adopted and
-  nothing was tuned after seeing it. The regime and conformal trials are registered with their
-  design run pending: the run was stopped for speed, because the per-date signal panel rebuild
-  dominates the run time (follow-up 5.2b computes the panel and labels once per name).
+  nothing was tuned after seeing it. Follow-up 5.2b ran the other two design trials. Regime conditioning: 0.4652 vs 0.6437, diff -0.179, CI [-0.307, -0.045], p 0.009, beats control 3/15 (significantly worse on design). Conformal sizing: 0.5645 vs 0.6437, diff -0.079, CI [-0.220, +0.095], p 0.329, beats control 2/15. Neither adopted, nothing tuned
+  (`results/v14/`). Each p is one of 65 trials and is read against the deflated Sharpe and BH
+  flag. 5.2b also builds the research inputs (signal panel, z-scores, vol, regime features)
+  once per series when the history start is fixed and slices them per date, runs the HMM
+  forward filter once per monthly refit, and vectorises `rolling_std`/`realized_vol`; outputs
+  are bit-identical to the per-date path (`tests/test_v14_research_cache.py`, canary clean),
+  and the regime trial now takes about 36 minutes instead of several hours.
 - **Paper OMS (4.7, pulled forward from P4).** New `agentic_trader/oms.py`: order state machine
   (`NEW -> ACKED -> PARTIALLY_FILLED -> FILLED`, `CANCELLED`, `REJECTED`; `IllegalTransition`
   otherwise; `client_order_id` is the idempotency key), pre-trade checks (kill switch, fat

@@ -116,9 +116,9 @@ def _book_frame(n: int = 300) -> pd.DataFrame:
                          "B": common + rng.normal(0, 0.004, n)})
 
 
-def test_book_var_default_on_and_fhs():
+def test_book_var_default_on_and_ewma():
     assert DEFAULT_CONFIG["risk"]["max_book_var_95"] == 0.05
-    assert DEFAULT_CONFIG["risk"]["book_var_method"] == "fhs"
+    assert DEFAULT_CONFIG["risk"]["book_var_method"] == "ewma"
 
 
 def test_book_var_methods():
