@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.15.1 — unreleased (v0.15 follow-up)
+
+Wiring for pieces v0.15 built but left out of the desk. Every new switch is off by default, so a
+desk run with the default configuration makes the same decisions as v0.15.0. Offline tests only
+(`tests/test_v15_followup.py`, `tests/test_v15_local_runs.py`); no spend.
+
+- **Text analysts in the desk (3.8).** `config["text_analysts"]` names `fundamentals_text`
+  and/or `macro_text` (default `[]`, off). `TradingGraph.run_text_analysts` adds their reports
+  before the debate, in `propagate` and on the agent-harness path, where each report is
+  evidenced like any analyst's. Inputs are point in time at `text_cutoff(as_of)`: the as-of day
+  at 20:00 UTC, so a filing accepted after the US close is not read that day. Extra research
+  passages reach an analyst only through `research_rag.analyst_retriever` (the 0.8 recall@5
+  gate); a corpus that fails the gate leaves the analyst with its own sections. Options live in
+  `text_analyst_options`.
+- **Memory tools (4.3).** `agentic.memory_tool: true` registers `memory.recall` and
+  `memory.remember` on the tool surface (default off). `remember` changes state, so it is not
+  read-only and goes through the approval gateway like an order; it is append-only with a small
+  write budget per as-of day.
+- **Signed approvals from the configuration (4.5).** `agentic.approval` accepts a block
+  (`gateway: signed`, `approvers`, `quorum`, `submit_order_quorum`, `tool_quorum`, `ttl_s`,
+  `price_tolerance`, `log_path`, `reprice`) as well as the old mode string.
+  `approvers` maps each approver id to the *name* of an environment variable holding its
+  secret; a value that looks like a secret, or an unset variable, is an error.
+  `harness.signed_gateway_from_config` builds the gateway; by default the re-pricing check reads
+  the last close from the desk's data provider (`harness.last_close_price_fn`), and
+  `reprice: false` turns it off. `--approval signed` on `task`, `serve` and `mcp` needs that
+  block in the config file; the stdio MCP server refuses `signed` as it refuses `queued`,
+  because nothing on stdio can answer a parked request. Recipe 113 in COOKBOOK.md.
+- **Planner.** `propose_plan(..., compact=True)` sends a shorter prompt (first sentence of each
+  tool description, short rationales) for slow local models; tools, stages and the validator
+  are unchanged. `scripts/v15_local_runs.py` resumes a plans run and records a failed plan as
+  unusable rather than stopping.
+- **`[otel]` extra.** `pip install -e ".[otel]"` installs the OpenTelemetry SDK and OTLP HTTP
+  exporter for `tracing.export_otel`; `requirements-lock.txt` gains the eight pins it needs and
+  no other pin changes.
+- **Not run here.** GDELT (3.3) stays deferred: the service throttles this machine; the script
+  is on main.
+
 ## v0.15.0 — unreleased (P3 and P4)
 
 Plan items 3.1-3.9 and 4.1-4.6, 4.8, 4.9 in [docs/review/PLAN.md](docs/review/PLAN.md). Offline,

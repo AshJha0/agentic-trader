@@ -9,7 +9,7 @@
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
 | [LEARN.md](LEARN.md) | 55 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 112 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes; every offline one runs in CI |
+| [COOKBOOK.md](COOKBOOK.md) | 113 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, and signed approvals from the configuration (v0.15.1); every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 39 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
@@ -269,6 +269,7 @@ examples/                  equity, FX, baseline comparison
 python -m venv .venv
 .venv\Scripts\activate            # Windows  (source .venv/bin/activate on Linux/macOS)
 pip install -e ".[all]"           # anthropic, yfinance, pybind11, pytest, mcp, fastapi, uvicorn
+pip install -e ".[otel]"          # optional: OpenTelemetry export of traces
 ```
 
 ### Build the C++ core (optional, recommended)
@@ -360,7 +361,9 @@ print(port.table())
 | `llm_provider` · `deep_think_llm` · `quick_think_llm` · `deep_effort` | Model tiers and effort: `claude-sonnet-5-5` at `medium` for the reasoning roles, `claude-haiku-5-5` for the analysts; `claude-opus-5-5` is the optional upgrade for the deep tier |
 | `llm_count_tokens` · `llm_min_input_tokens` · `llm_strict_model` | How budget admission prices a prompt (`auto`: the free `count_tokens` endpoint when `ANTHROPIC_API_KEY` is set, else a conservative local estimate); a floor under that estimate (0); reject a reply served by an unexpected model with no recorded fallback (`True`) |
 | `llm_timeout_s` · `max_llm_calls` · `max_llm_cost_usd` · `llm_anonymize` | Timeout; hard call cap; hard spend cap (USD, list prices); hide ticker, dates and price level from the model |
-| `agentic.approval` | `auto`, `queued` or `deny` for tool calls that need approval |
+| `agentic.approval` | `auto`, `queued`, `deny`, or a block `{"gateway": "signed", "approvers": {id: SECRET_ENV_VAR_NAME}, "quorum", "submit_order_quorum", "tool_quorum", "ttl_s", "price_tolerance", "log_path", "reprice"}` for tool calls that need approval; approver secrets come only from the named environment variables, and re-pricing reads the provider's last close unless `reprice` is false |
+| `agentic.memory_tool` | Register `memory.recall` and `memory.remember` (off); `remember` goes through approvals |
+| `text_analysts` · `text_analyst_options` | LLM text analysts in the desk (`[]`, off): `fundamentals_text`, `macro_text`; statements path, gated research retrieval |
 | `agentic.llm_planner` · `llm_critic` · `llm_reporter` | Which governance steps may use the model (all validated / audited either way) |
 | `agentic.symbol_universe` · `deny_tools` · `tool_timeout_s` · `task_db` | Policy inputs; SQLite path for the persistent task store |
 | `agentic.workers` · `agentic.queue_limit` · `agentic.sweep_interrupted` · `agentic.instance_id` · `agentic.lease_s` | Task threads per API process; tasks in flight beyond which `POST /tasks` answers 503; whether this process sweeps the store's interrupted records at startup (the parent of `serve --processes N` does it once) — the sweep fails only records owned by this `instance_id` or whose heartbeat lease (`lease_s`, 90 s) has expired, so a sibling instance's live runs survive |
@@ -417,7 +420,7 @@ Filing text from EDGAR and GDELT headlines are in, always fenced as untrusted te
 tone-change and GDELT features are registered as trials and **not run**. Research retrieval is
 point in time and gated: on 100 questions over a 34-passage invented corpus, recall@5 is 0.990
 (TF-IDF and hybrid), which shows the mechanism and says nothing about real filings. The text
-analysts are fixture-tested and not wired into the graph. A 150-snippet injection corpus is
+analysts are in the desk behind `text_analysts` (off by default, v0.15.1). A 150-snippet injection corpus is
 150/150 fenced; model compliance is not run. Signed N-of-M approvals (opt-in), deferred tool
 loading, `task --record` / `replay`, and stage SLOs are new. Recipes 106-112 in
 [COOKBOOK.md](COOKBOOK.md); details in [CHANGELOG.md](CHANGELOG.md). Paper trading is unchanged:

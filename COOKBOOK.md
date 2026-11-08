@@ -2413,7 +2413,7 @@ path is untested.
 
 ### 108. Signed N-of-M approval for an order
 
-`SignedApprovalGateway` is opt-in and not wired into the config. Each approver has a shared
+`SignedApprovalGateway` is opt-in; recipe 113 builds it from the configuration. Each approver has a shared
 secret; a decision counts only with a valid HMAC signature from a named approver, and
 `execution.submit_order` needs two distinct approvers by default. An approval older than
 `ttl_s` at execution is refused.
@@ -2511,3 +2511,45 @@ The fixtures were written to exercise the validator; they are not plans from a m
 `outcomes` joins each recorded `TaskRun` to the realised P&L in the decision memory and prints
 per-role hit rates, the correlation of critic flags with losses, false-positive rates per critic
 check and a weekly roll-up. No real TaskRuns have been recorded yet, so today it reports n = 0.
+
+## v0.15.1: the follow-up wiring
+
+### 113. Signed approvals from the configuration
+
+The `agentic.approval` block names each approver and the environment variable that holds its
+secret; the secret itself never goes in the file. Here a dict stands in for `os.environ` so the
+recipe runs anywhere. In a desk run the harness also re-prices from the provider's last close;
+`reprice: false` turns that off, which a recipe with no provider needs. On the CLI the same
+block is selected with `--approval signed` (`task`, `serve`; the stdio `mcp` server refuses it).
+For the OpenTelemetry export, `pip install -e ".[otel]"`.
+
+```python
+from agentic_trader.agentic.domain import ToolRequest
+from agentic_trader.agentic.harness import approval_mode, signed_gateway_from_config
+from agentic_trader.agentic.policy import sign_approval
+from agentic_trader.config import make_config
+
+cfg = make_config({"agentic": {"approval": {
+    "gateway": "signed", "approvers": {"alice": "ALICE_APPROVAL_KEY", "bob": "BOB_APPROVAL_KEY"},
+    "ttl_s": 900, "reprice": False}}})
+block = cfg["agentic"]["approval"]
+print(approval_mode(block))                                    # signed
+
+env = {"ALICE_APPROVAL_KEY": "k-alice", "BOB_APPROVAL_KEY": "k-bob"}   # normally os.environ
+gw = signed_gateway_from_config(block, environ=env)
+order = ToolRequest("execution.submit_order",
+                    {"symbol": "AAPL", "side": "buy", "quantity": 10, "price": 100.0}, "C1")
+print(gw.decide("T1", order, "high risk"))                     # None: parked
+aid = gw.pending()[0].id
+for who in ("alice", "bob"):
+    gw.resolve(aid, True, who, signature=sign_approval(env[who.upper() + "_APPROVAL_KEY"].encode(), aid, order, True))
+    print(who, gw.decide("T1", order, ""))                      # alice None, bob True
+
+try:
+    signed_gateway_from_config({"approvers": {"alice": "k-alice!"}}, environ=env)
+except ValueError as e:
+    print(e)                                                    # a secret where a name belongs
+```
+
+Two approvers sign the order, so the second signature releases it. A value that looks like a
+secret in place of a variable name is refused, as is an unset variable.

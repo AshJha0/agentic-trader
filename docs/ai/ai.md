@@ -399,8 +399,11 @@ and each agent run can be recorded and replayed to check it gives the same decis
   invented corpus: TF-IDF recall@5 0.990, MRR 0.954; hybrid 0.990, 0.961; the 0.8 gate passes.
   Real filings are untested.
 - *Text analysts (3.8).* Fundamentals-text (claims must cite passages) and macro-text
-  (hawkish/dovish shift). Tested on fixtures only and not wired into the graph; the Claude
-  variants are dry-run only and the local-model run waits on P2.
+  (hawkish/dovish shift). Since v0.15.1 they are wired into the desk and off by default:
+  `text_analysts: ["fundamentals_text", "macro_text"]` adds their reports before the debate,
+  on both the graph and the agent-harness path. They read only text visible at the as-of day
+  at 20:00 UTC, and research passages only through the 0.8 retrieval gate. The Claude variants
+  are dry-run only.
 - *Runbook RAG (3.9).* Kept: removing it changed 0 of 9 decisions on synthetic data (rules path),
   so it neither helps nor harms there.
 - *Governance (4.1-4.3).* Outcome join and per-role hit rates (n = 0 real TaskRuns so far);
