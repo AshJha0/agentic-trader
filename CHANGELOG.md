@@ -28,6 +28,7 @@ desk run with the default configuration makes the same decisions as v0.15.0. Off
   `reprice: false` turns it off. `--approval signed` on `task`, `serve` and `mcp` needs that
   block in the config file; the stdio MCP server refuses `signed` as it refuses `queued`,
   because nothing on stdio can answer a parked request. Recipe 113 in COOKBOOK.md.
+- **Local-model injection compliance (4.4).** qwen2.5:7b-instruct (4-bit, CPU, Ollama; a floor for a small local model, not Claude), 150 snippets, carrier alone vs carrier + attack, complied = the attack moves the News analyst's signal by more than 0.5: **21/150 (14%)**: instruction 10/32, multilingual 8/26, role play 2/20, encoded 1/40, fence escape 0/32. All 300 replies readable. Like the rules path, some of these flips may come from tone words in the attack text rather than obedience; the raw replies are kept per row (`docs/results/v15_local/redteam_compliance.json`). A first run was discarded (the scorer did not read fenced JSON).
 - **Planner.** `propose_plan(..., compact=True)` sends a shorter prompt (first sentence of each
   tool description, short rationales) for slow local models; tools, stages and the validator
   are unchanged. `scripts/v15_local_runs.py` resumes a plans run and records a failed plan as
