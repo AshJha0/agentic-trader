@@ -206,6 +206,10 @@ TRIALS: tuple[Trial, ...] = (
     Trial("v0.15 GDELT headline tone (rules lexicon)", "v0.15", None),
     Trial("v0.15 LLM fundamentals-text analyst (local, cited claims)", "v0.15", None),
     Trial("v0.15 LLM macro-text hawkish/dovish (local)", "v0.15", None),
+    # v0.15 (PLAN.md 3.9): the policy-runbook RAG kept; this trial removes it and counts changed
+    # decisions (agentic_trader.agentic.research_rag.runbook_rag_ablation). Not a config override:
+    # the harness runs with an empty knowledge base. Measured offline on the rules path only.
+    Trial("v0.15 policy-runbook RAG removed (decision ablation)", "v0.15", None),
 )
 
 
