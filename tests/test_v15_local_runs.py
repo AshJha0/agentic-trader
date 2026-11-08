@@ -37,3 +37,26 @@ def test_recorded_local_plans_fixture_if_present():
         return
     rows = [json.loads(x) for x in fx.read_text(encoding="utf-8").splitlines() if x.strip()]
     assert len(rows) == 200 and all(r["synthetic"] is False for r in rows)
+
+
+def test_compact_plan_prompt_is_shorter_and_default_prompt_unchanged():
+    from agentic_trader.agentic.planner import propose_plan
+    from agentic_trader.agentic.servers import DeskTools, build_registry
+    from agentic_trader.config import make_config
+    from agentic_trader.data import SyntheticProvider
+    tasks = gov.tasks
+    cfg = make_config()
+    reg = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
+    task, inst = tasks()[0]
+    seen = []
+
+    class Fake:
+        def complete(self, system, prompt, deep=False):
+            seen.append(prompt)
+            return '{"steps": []}'
+
+    propose_plan(Fake(), task, inst, ["technical"], reg)
+    propose_plan(Fake(), task, inst, ["technical"], reg, compact=True)
+    full, short = seen
+    assert '"rationale": "..."}]}' in full and "at most 8 words" in short
+    assert len(short) < 0.7 * len(full)

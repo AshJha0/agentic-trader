@@ -198,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument("--model", default="qwen2.5:7b-instruct")
         s.add_argument("--out", required=True)
         s.add_argument("--timeout", type=float, default=300)
+        s.add_argument("--compact", action="store_true", help="plans: compact tool catalogue, short rationales")
         s.add_argument("--max-tokens", type=int, default=1024,
                        help="reply cap sent as num_predict (an analyst reply is a short JSON object)")
         s.add_argument("--limit", type=int, default=0)

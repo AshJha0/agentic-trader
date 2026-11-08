@@ -75,24 +75,32 @@ def governance_steps() -> list[PlanStep]:
 
 
 def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[str],
-                 registry: ToolRegistry, anonymize: bool = False) -> tuple[list[dict[str, Any]] | None, str | None]:
+                 registry: ToolRegistry, anonymize: bool = False,
+                 compact: bool = False) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Ask the model for a plan as JSON. Returns (raw steps, raw text). With ``anonymize`` the
     prompt names neither the instrument nor the date (the validator pins both from the task)
-    and the requester's question is clipped."""
-    catalogue = [{"name": d.name, "description": d.description,
+    and the requester's question is clipped. With ``compact`` the tool catalogue keeps only the
+    first sentence of each description (no indentation) and each rationale is limited to a few
+    words: about half the prompt and a much shorter reply, for slow local models. The tools,
+    stages, order rule and validator are the same either way."""
+    def _desc(d: Any) -> str:
+        return d.description.split(". ")[0][:90] if compact else d.description
+    catalogue = [{"name": d.name, "description": _desc(d),
                   "arguments": list(d.input_schema.get("properties", {}))} for d in registry.descriptors()]
+    cat_json = json.dumps(catalogue, separators=(",", ":")) if compact else json.dumps(catalogue, indent=1)
+    why = "at most 8 words" if compact else "..."
     who = f"the instrument ({instrument.asset_class})" if anonymize else f"{instrument.display} ({instrument.asset_class})"
     when = "the as-of date" if anonymize else task.as_of.isoformat()
     question = (task.question or "")[:500]
     prompt = (
         f"Plan a trading decision on {who} as of {when} for a {task.role.value}."
         + (f" The requester asks: {question}" if question else "") + "\n\n"
-        f"Available tools (call with exact names and only these arguments):\n{json.dumps(catalogue, indent=1)}\n\n"
+        f"Available tools (call with exact names and only these arguments):\n{cat_json}\n\n"
         f"Available agent stages: {', '.join(ANALYST_PREFIX + a for a in analysts)}, debate, trader, risk. "
         "Stages must appear in the order analysts -> debate -> trader -> risk. Governance steps "
         "(critic, validate_evidence, finalise) are added automatically.\n\n"
         'Respond with a JSON object {"steps": [{"type": "tool"|"agent", "name": "...", '
-        '"arguments": {...}, "rationale": "..."}]} and nothing else.'
+        f'"arguments": {{...}}, "rationale": "{why}"}}]}} and nothing else.'
     )
     text = llm.complete("You are the planning assistant of a trading desk. Use only the listed tools "
                         "and stages; never invent names.", prompt, deep=True)
