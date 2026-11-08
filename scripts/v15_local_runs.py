@@ -68,9 +68,9 @@ FILING_CASES = [
 ]
 
 
-def _llm(model: str, timeout: float) -> LocalLLM:
+def _llm(model: str, timeout: float, max_tokens: int = 1024) -> LocalLLM:
     cfg = {"llm_provider": "local", "local_llm_model": model, "local_llm_timeout_s": timeout,
-           "local_llm_seed": 7, "max_tokens": 1024}
+           "local_llm_seed": 7, "max_tokens": max_tokens}
     if not reachable(LocalLLM(cfg).url):
         raise SystemExit("no Ollama server at 127.0.0.1:11434")
     return LocalLLM(cfg)
@@ -90,19 +90,41 @@ def _write(path: str, obj: dict) -> None:
 
 
 def cmd_redteam(a: argparse.Namespace) -> int:
+    """Per-snippet checkpointed run: each snippet's row is appended to ``<out>.rows.jsonl`` as
+    soon as it is scored, a rerun resumes from that file, and progress is printed per row."""
     from agentic_trader.agentic.redteam import FAMILIES, compliance_run, load_corpus
-    llm, t0 = _llm(a.model, a.timeout), time.time()
+    llm, t0 = _llm(a.model, a.timeout, a.max_tokens), time.time()
     corpus = load_corpus()[: a.limit] if a.limit else load_corpus()
-    out = compliance_run(llm, corpus, make_config(memory_path=None))
+    ckpt = Path(a.out).with_suffix(".rows.jsonl")
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    done = {}
+    if ckpt.exists():
+        for line in ckpt.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                done[r["id"]] = r
+    cfg = make_config(memory_path=None)
+    todo = [s for s in corpus if s["id"] not in done]
+    with ckpt.open("a", encoding="utf-8") as f:
+        for s in todo:
+            r = compliance_run(llm, [s], cfg)["rows"][0]
+            done[r["id"]] = r
+            f.write(json.dumps(r, default=str) + "\n")
+            f.flush()
+            print(f"{len(done)}/{len(corpus)} {time.time() - t0:.0f}s", flush=True)
+    rows = [done[s["id"]] for s in corpus]
+    complied = sum(bool(r["complied"]) for r in rows)
+    out = {"n": len(rows), "complied": complied, "rate": complied / len(rows) if rows else float("nan"),
+           "rows": rows}
     fam = {}
-    for f in FAMILIES:
-        rs = [r for r in out["rows"] if r["category"] == f]
-        fam[f] = {"n": len(rs), "complied": sum(r["complied"] for r in rs),
-                  "unreadable_attacked": sum(r["attacked"] is None for r in rs),
-                  "unreadable_base": sum(r["base"] is None for r in rs)}
+    for fm in FAMILIES:
+        rs = [r for r in rows if r["category"] == fm]
+        fam[fm] = {"n": len(rs), "complied": sum(bool(r["complied"]) for r in rs),
+                   "unreadable_attacked": sum(r["attacked"] is None for r in rs),
+                   "unreadable_base": sum(r["base"] is None for r in rs)}
     out["by_family"] = fam
-    out["unreadable_base"] = sum(r["base"] is None for r in out["rows"])
-    out["unreadable_attacked"] = sum(r["attacked"] is None for r in out["rows"])
+    out["unreadable_base"] = sum(r["base"] is None for r in rows)
+    out["unreadable_attacked"] = sum(r["attacked"] is None for r in rows)
     out["meta"] = _meta(llm, t0)
     _write(a.out, out)
     print(json.dumps({k: v for k, v in out.items() if k != "rows"}, indent=1, default=str))
@@ -116,7 +138,7 @@ def cmd_plans(a: argparse.Namespace) -> int:
     from agentic_trader.graph import DEFAULT_ANALYSTS
     sys.path.insert(0, str(ROOT / "scripts"))
     from v15_governance import tasks
-    llm, t0 = _llm(a.model, a.timeout), time.time()
+    llm, t0 = _llm(a.model, a.timeout, a.max_tokens), time.time()
     cfg = make_config()
     registry = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
     out = Path(a.out)
@@ -137,7 +159,7 @@ def cmd_plans(a: argparse.Namespace) -> int:
 def cmd_text(a: argparse.Namespace) -> int:
     from agentic_trader.data.edgar import FilingSection
     from agentic_trader.text_analysts import FundamentalsTextAnalyst, MacroTextAnalyst
-    llm, t0 = _llm(a.model, a.timeout), time.time()
+    llm, t0 = _llm(a.model, a.timeout, a.max_tokens), time.time()
     macro, agree = [], 0
     for cur, prev, want in MACRO_CASES:
         r = MacroTextAnalyst(llm).analyze(cur, prev)
@@ -176,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument("--model", default="qwen2.5:7b-instruct")
         s.add_argument("--out", required=True)
         s.add_argument("--timeout", type=float, default=300)
+        s.add_argument("--max-tokens", type=int, default=1024,
+                       help="reply cap sent as num_predict (an analyst reply is a short JSON object)")
         s.add_argument("--limit", type=int, default=0)
         s.set_defaults(fn=fn)
     a = p.parse_args(argv)
