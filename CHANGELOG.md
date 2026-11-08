@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.15.1 — unreleased (v0.15 follow-up)
+## v0.15.1 — 2026-11-08 (v0.15 follow-up)
 
 Wiring for pieces v0.15 built but left out of the desk. Every new switch is off by default, so a
 desk run with the default configuration makes the same decisions as v0.15.0. Offline tests only
@@ -39,7 +39,7 @@ desk run with the default configuration makes the same decisions as v0.15.0. Off
 - **Not run here.** GDELT (3.3) stays deferred: the service throttles this machine; the script
   is on main.
 
-## v0.15.0 — unreleased (P3 and P4)
+## v0.15.0 — 2026-11-08 (P3 and P4)
 
 Plan items 3.1-3.9 and 4.1-4.6, 4.8, 4.9 in [docs/review/PLAN.md](docs/review/PLAN.md). Offline,
 fixture and synthetic tests only; no live model call and no spend. Tests:

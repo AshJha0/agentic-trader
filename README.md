@@ -414,7 +414,7 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
-## v0.15 (unreleased): text, retrieval and an auditable agent
+## v0.15 (v0.15.1, 2026-11-08): text, retrieval and an auditable agent
 
 Filing text from EDGAR and GDELT headlines are in, always fenced as untrusted text. The filing
 tone-change and GDELT features are registered as trials and **not run**. Research retrieval is
