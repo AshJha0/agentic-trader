@@ -2726,7 +2726,7 @@ sections above is the desk's 250-day historical forecast on the holdout, not the
 | 3.9 | Remove the runbook RAG (synthetic, rules path) | 0/9 decisions changed | the LLM path |
 | 4.1 | Outcome-aware governance | n = 0 real TaskRuns | any hit rate |
 | 4.2 | Planner survival, 200 tasks | canonical 100%, rule planner 100%, synthetic model-plan fixtures 95.1% (1547/1626) | a model's plans (the fixtures test the validator) |
-| 4.4 | Injection corpus, 150 snippets | 150/150 fenced; rules signal = lexicon score 150/150; 6/150 flips from "buy"/"sell" | model compliance (not run) |
+| 4.4 | Injection corpus, 150 snippets | 150/150 fenced; rules signal = lexicon score 150/150; 6/150 flips from "buy"/"sell" | model compliance (first local run discarded: scorer bug; corrected run in progress) |
 
 The trials registry has 70 entries; the deflated Sharpe counts every one of them whether or not
 it was run or adopted.

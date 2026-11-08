@@ -1,0 +1,262 @@
+{
+ "summary": {
+  "macro": {
+   "n": 12,
+   "usable": 11,
+   "stance_agrees_with_label": 11
+  },
+  "fundamentals": {
+   "n_sections": 10,
+   "usable": 10,
+   "claims_kept": 10,
+   "claims_dropped": 0,
+   "drop_rate": 0.0
+  }
+ },
+ "macro": [
+  {
+   "expected": "hawkish",
+   "ok": false,
+   "stance": "hawkish",
+   "shift": 0.5,
+   "kept_quotes": 0,
+   "dropped": 1,
+   "problem": "no verifiable quote"
+  },
+  {
+   "expected": "dovish",
+   "ok": true,
+   "stance": "dovish",
+   "shift": -0.5,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "neutral",
+   "ok": true,
+   "stance": "neutral",
+   "shift": 0.0,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "hawkish",
+   "ok": true,
+   "stance": "hawkish",
+   "shift": 0.3,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "dovish",
+   "ok": true,
+   "stance": "dovish",
+   "shift": -0.3,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "neutral",
+   "ok": true,
+   "stance": "neutral",
+   "shift": 0.0,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "hawkish",
+   "ok": true,
+   "stance": "hawkish",
+   "shift": 0.5,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "dovish",
+   "ok": true,
+   "stance": "dovish",
+   "shift": -0.3,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "dovish",
+   "ok": true,
+   "stance": "dovish",
+   "shift": -1.0,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "neutral",
+   "ok": true,
+   "stance": "neutral",
+   "shift": 0.0,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "hawkish",
+   "ok": true,
+   "stance": "hawkish",
+   "shift": 0.5,
+   "kept_quotes": 1,
+   "dropped": 0,
+   "problem": null
+  },
+  {
+   "expected": "dovish",
+   "ok": true,
+   "stance": "dovish",
+   "shift": -0.5,
+   "kept_quotes": 2,
+   "dropped": 0,
+   "problem": null
+  }
+ ],
+ "fundamentals": [
+  {
+   "symbol": "WID",
+   "section": "7",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": 1,
+   "problem": null
+  },
+  {
+   "symbol": "ACM",
+   "section": "1A",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": -1,
+   "problem": null
+  },
+  {
+   "symbol": "ACM",
+   "section": "7",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": -1,
+   "problem": null
+  },
+  {
+   "symbol": "BLU",
+   "section": "7",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": 1,
+   "problem": null
+  },
+  {
+   "symbol": "BLU",
+   "section": "1A",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": -1,
+   "problem": null
+  },
+  {
+   "symbol": "CRN",
+   "section": "7",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": -1,
+   "problem": null
+  },
+  {
+   "symbol": "CRN",
+   "section": "2.02",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": 1,
+   "problem": null
+  },
+  {
+   "symbol": "DEL",
+   "section": "7",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": 1,
+   "problem": null
+  },
+  {
+   "symbol": "DEL",
+   "section": "1A",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": -1,
+   "problem": null
+  },
+  {
+   "symbol": "EVO",
+   "section": "7",
+   "ok": true,
+   "kept": 1,
+   "dropped": 0,
+   "drop_reasons": [],
+   "net_direction": 1,
+   "problem": null
+  }
+ ],
+ "meta": {
+  "model": "qwen2.5:7b-instruct",
+  "backend": "ollama (local, $0)",
+  "temperature": 0.0,
+  "seed": 7,
+  "run_utc": "2026-11-08T08:25:41+00:00",
+  "runtime_s": 433.2,
+  "usage": {
+   "calls": 22,
+   "refusals": 0,
+   "errors": 0,
+   "empty_replies": 0,
+   "timeouts": 0,
+   "fallbacks": 0,
+   "model_drift": 0,
+   "cache_read_tokens": 0,
+   "cache_write_tokens": 0,
+   "cost_usd": 0.0,
+   "unpriced_models": [],
+   "by_model": {
+    "qwen2.5:7b-instruct": {
+     "calls": 22,
+     "input_tokens": 3480,
+     "output_tokens": 1269,
+     "cache_read_tokens": 0,
+     "cache_write_tokens": 0,
+     "estimated_calls": 0,
+     "cost_usd": 0.0
+    }
+   }
+  },
+  "note": "7B 4-bit open-weight model: a floor for a small local model, not Claude."
+ },
+ "inputs": "synthetic, written for this run (MACRO_CASES, FILING_CASES in this script)"
+}
