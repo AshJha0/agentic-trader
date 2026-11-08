@@ -275,3 +275,24 @@ Workflows: `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy 
 at 22:30 UTC (`session`, `publish`, `freshness`, `report`). Every action is pinned by commit SHA.
 The OMS kill switch is checked both by `OMS.submit` and by the agentic `submit_order` tool
 (`agentic/servers.py`), so a halt binds both order paths.
+
+## v0.15 additions
+
+| Module or file | Role | Default |
+|---|---|---|
+| `data/edgar_text.py` | EDGAR sections (10-K/10-Q 1A, 7; 8-K 2.02, 7.01, 8.01), acceptance-time dated, fenced | off (needs `EDGAR_USER_AGENT`) |
+| `data/gdelt.py` | GDELT headlines, deduped, language-filtered, rules-lexicon scored | off (flag) |
+| `alpha.py` (tone change) | `filing_tone_changes`, `tone_change_signal`, `text_alpha_decay` | trial only, not run |
+| `text_analysts.py` | Fundamentals-text and macro-text analysts | fixtures only, not in the graph |
+| `agentic/research_rag.py` | Point-in-time research corpus, TF-IDF / hybrid, citations, recall gate | used only through `analyst_retriever` |
+| `agentic/governance.py`, `scripts/v15_governance.py` | Outcome join, governance report, planner survival, memory tool | report on demand |
+| `agentic/redteam.py` | Fence and rules checks over the 150-snippet injection corpus | test and report |
+| `agentic/policy.py` (`SignedApprovalGateway`) | Signed N-of-M approvals, TTL, re-pricing, second store | opt-in, not config-wired |
+| `agentic/tool_search.py` | Deferred tool catalog behind MCP `tool_search` and the HTTP search route | on request (`deferred`) |
+| `agentic/replay.py` | `task --record` and `replay` | off unless `--record` |
+| `agentic/tracing.py` | Stage SLOs, `slo_report`, `export_otel` | SLO report on demand; OTel needs extra packages |
+
+The research retriever is reachable by the analysts only after `evaluate_retrieval` clears
+recall@5 0.8 on the labelled questions (diagram 39). Replay swaps the market-data provider and
+the LLM for ones that serve recorded payloads, so a recorded task re-runs with no network and no
+model. Status, plainly: the 3.2 and 3.3 trials are registered and not run; the 3.8 text analysts are fixture-tested and not wired into the graph; the retrieval numbers come from an invented corpus; signed approvals are opt-in; no real TaskRuns have been recorded for 4.1.

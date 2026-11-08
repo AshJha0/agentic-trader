@@ -2715,3 +2715,17 @@ and then runs them.
 EWMA beat FHS on the design period; the owner switched the default to `"ewma"` (5.2b follow-up
 PR). The earlier "Kupiec rejects 2 of 15, independence rejects 6 of 15" in the v0.7/v0.8
 sections above is the desk's 250-day historical forecast on the holdout, not the design period.
+
+## v0.15 measurements (plan items 3.2, 3.3, 3.7, 3.9, 4.1, 4.2, 4.4)
+
+| Item | What was measured | Result | What it does not show |
+|---|---|---|---|
+| 3.2, 3.3 | Filing tone change, GDELT tone | registered as trials, not run | anything |
+| 3.7 | Retrieval, 100 questions, 34-passage invented corpus | TF-IDF recall@5 0.990, MRR 0.954; hybrid 0.990, 0.961; gate 0.8 passes | recall on real filings; embeddings untested |
+| 3.9 | Remove the runbook RAG (synthetic, rules path) | 0/9 decisions changed | the LLM path |
+| 4.1 | Outcome-aware governance | n = 0 real TaskRuns | any hit rate |
+| 4.2 | Planner survival, 200 tasks | canonical 100%, rule planner 100%, synthetic model-plan fixtures 95.1% (1547/1626) | a model's plans (the fixtures test the validator) |
+| 4.4 | Injection corpus, 150 snippets | 150/150 fenced; rules signal = lexicon score 150/150; 6/150 flips from "buy"/"sell" | model compliance (not run) |
+
+The trials registry has 70 entries; the deflated Sharpe counts every one of them whether or not
+it was run or adopted.

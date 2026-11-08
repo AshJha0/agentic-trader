@@ -441,3 +441,18 @@ daily volume. Equities settle T+1 on the NYSE calendar; FX spot settles T+2 and 
 or after 17:00 New York belongs to the next trade date. Limits: static borrow list, no
 non-USD holidays unless listed, no intraday path.
 [Recipe 104](../../COOKBOOK.md#104-a-paper-order-through-the-oms).
+
+## 17. Text features (v0.15, plan items 3.2, 3.3)
+
+**Plain idea.** If a company's risk-factor section becomes more negative than last year's, that
+change might predict returns. It is measured like any other alpha, by IC and decay, and
+registered as a trial before it is run.
+
+**Formally.** `filing_tone(text)` is the rules-lexicon score of a section; a tone change is the
+difference between consecutive filings of the same form and section. The signal enters on the
+first session after the acceptance time (UTC) and is held `hold_bars` (default 63) bars;
+`text_alpha_decay` gives the IC at horizons 1, 5, 10, 21 and 63. GDELT headlines (behind a flag)
+are deduplicated, filtered to one language and scored by the same lexicon into a daily tone.
+
+**Status.** Both are registered in `evaluation.TRIALS` (now 70 entries) and **have not been
+run** on the design period, so there is no IC to report.

@@ -381,3 +381,40 @@ seeds, priced at Claude list prices: `local_all` makes 16,800 calls, estimate $2
 ceiling $1,992.26. The estimate assumes 400 output tokens per quick call and 1,500 per deep
 call; the ceiling assumes every reply runs to `max_tokens`. On a local model the same study
 costs $0, which is why it is planned there.
+
+## 11. Text, research retrieval and an auditable agent (v0.15, plan items 3.1-3.9, 4.1-4.6, 4.8, 4.9)
+
+**Plain idea.** The desk can now read filing text and central-bank statements, but every
+piece of that text is treated as untrusted, retrieval is measured before an analyst may use it,
+and each agent run can be recorded and replayed to check it gives the same decision.
+
+**What exists.**
+
+- *Filing text (3.1).* Sections of 10-K, 10-Q and 8-K filings, dated by SEC acceptance time,
+  each wrapped in an `<untrusted_data>` fence before it reaches a prompt.
+- *Research retrieval (3.4-3.7).* A point-in-time corpus; hashed TF-IDF by default, hybrid
+  TF-IDF + BM25 by reciprocal-rank fusion, optional local embeddings (`[rag]`, untested).
+  Passages go to the model as `document` blocks with citations enabled, and an audit rejects a
+  claim whose quoted span is not in the cited passage. On 100 questions over a 34-passage
+  invented corpus: TF-IDF recall@5 0.990, MRR 0.954; hybrid 0.990, 0.961; the 0.8 gate passes.
+  Real filings are untested.
+- *Text analysts (3.8).* Fundamentals-text (claims must cite passages) and macro-text
+  (hawkish/dovish shift). Tested on fixtures only and not wired into the graph; the Claude
+  variants are dry-run only and the local-model run waits on P2.
+- *Runbook RAG (3.9).* Kept: removing it changed 0 of 9 decisions on synthetic data (rules path),
+  so it neither helps nor harms there.
+- *Governance (4.1-4.3).* Outcome join and per-role hit rates (n = 0 real TaskRuns so far);
+  planner survival: canonical 100%, rule planner 100%, synthetic model-plan fixtures 95.1%
+  (1547/1626), which tests the validator, not a model; a governed memory tool.
+- *Injection red team (4.4).* 150 snippets: 150/150 fenced, rules signal equal to the lexicon
+  score 150/150, 6/150 direction flips from the words "buy" and "sell" in the attack text. Model
+  compliance not run. A leak of `_`-prefixed facts into `Analyst.prompt` was found and fixed.
+- *Approvals and tools (4.5, 4.6).* Signed N-of-M approvals (opt-in; shared-secret HMAC is the
+  residual risk). Deferred tool loading on MCP and HTTP: the model sees names and loads schemas by
+  search.
+- *Replay and SLOs (4.8, 4.9).* `task --record` / `replay`; per-stage SLOs; optional OTel export;
+  golden transcripts on three frozen states.
+
+**Example.** `agentic-trader task AAPL 2024-03-01 --record` then `agentic-trader replay <id>`
+prints `MATCH` when the decision and end state are reproduced from the recording
+([recipe 110](../../COOKBOOK.md#110-record-a-task-and-replay-it-offline)).
