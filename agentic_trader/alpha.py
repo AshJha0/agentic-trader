@@ -21,8 +21,10 @@ point-in-time by construction: every value at bar t uses bars <= t only.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
-from typing import Callable
+from datetime import datetime
+from typing import Any, Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -400,3 +402,123 @@ def significant_alpha_signal(latest: dict[str, float | None], ic: dict[str, dict
         return None, []
     names = sorted(weights, key=lambda k: -abs(weights[k]))
     return max(-1.0, min(1.0, num / den)), names
+
+
+# --------------------------------------------------------------------------- text alphas
+# v0.15 (PLAN.md 3.2): the filing tone-change feature. Rules only: a lexicon tone per
+# section, differenced against the previous filing of the same form and section. The value is
+# known at the filing's acceptance time and held as a step for a fixed number of sessions, so
+# the daily series is point in time by construction. Measured with the same purged IC and
+# decay as the price alphas (``text_alpha_decay``).
+# Word classes in the Loughran-McDonald spirit, kept small and in the open: the "negative"
+# vocabulary of a filing differs from everyday sentiment, so the headline lexicon is not reused.
+FILING_NEGATIVE = frozenset({
+    "adverse", "adversely", "impairment", "impairments", "litigation", "decline", "declined",
+    "declines", "loss", "losses", "weak", "weakness", "deteriorate", "deteriorated", "deterioration",
+    "default", "defaults", "restructuring", "restatement", "uncertain", "uncertainty", "uncertainties",
+    "volatility", "disruption", "disruptions", "unfavorable", "shortfall", "delay", "delays",
+    "decrease", "decreased", "decreases", "challenging", "difficult", "downturn", "termination",
+    "penalties", "investigation", "breach", "failure", "fail", "slowdown", "recession",
+})
+FILING_POSITIVE = frozenset({
+    "improve", "improved", "improvement", "improvements", "increase", "increased", "increases",
+    "growth", "strong", "stronger", "record", "favorable", "gain", "gains", "achieve", "achieved",
+    "exceed", "exceeded", "robust", "expand", "expanded", "expansion", "profitable", "profitability",
+    "efficiency", "momentum", "opportunity", "opportunities", "success", "successful", "benefit",
+})
+_TEXT_WORD = re.compile(r"[a-z][a-z\-']*")
+
+
+def filing_tone(text: str) -> float:
+    """(positive - negative) words per 100 words; 0.0 for empty text."""
+    words = _TEXT_WORD.findall(text.lower())
+    if not words:
+        return 0.0
+    pos = sum(w in FILING_POSITIVE for w in words)
+    neg = sum(w in FILING_NEGATIVE for w in words)
+    return 100.0 * (pos - neg) / len(words)
+
+
+@dataclass(frozen=True)
+class ToneChange:
+    symbol: str
+    accession: str
+    prev_accession: str
+    form: str
+    section: str
+    visible_date: datetime   # UTC acceptance time of ``accession``
+    tone: float
+    change: float
+
+
+def filing_tone_changes(sections: Iterable[Any]) -> list[ToneChange]:
+    """Tone change of every section against the previous filing of the same symbol, form and
+    section, in acceptance order. The first filing of each series has no change.
+    ``sections`` are ``data.edgar_text.FilingSection`` objects."""
+    out: list[ToneChange] = []
+    last: dict[tuple[str, str, str], tuple[str, float]] = {}
+    for s in sorted(sections, key=lambda s: (s.visible_date, s.accession)):
+        key = (s.symbol, s.form.split("/")[0], s.section)
+        tone = filing_tone(s.text)
+        if key in last and last[key][0] != s.accession:
+            out.append(ToneChange(s.symbol, s.accession, last[key][0], key[1], s.section, s.visible_date,
+                                  tone, tone - last[key][1]))
+        last[key] = (s.accession, tone)
+    return out
+
+
+def _session_of(accepted_utc: datetime) -> pd.Timestamp:
+    """The first session whose close can know a filing accepted at ``accepted_utc``: the
+    acceptance day (Eastern) if before 16:00 ET, else the next business day."""
+    t = pd.Timestamp(accepted_utc)
+    t = (t.tz_localize("UTC") if t.tzinfo is None else t).tz_convert("America/New_York").tz_localize(None)
+    day = t.normalize()
+    if t.hour >= 16 or day.dayofweek >= 5:
+        day = day + pd.offsets.BDay(1)
+    return day
+
+
+def tone_change_signal(index: pd.DatetimeIndex, changes: list[ToneChange], hold_bars: int = 63,
+                       scale: float = 0.5) -> np.ndarray:
+    """A daily signal in [-1, 1] on ``index`` (session dates): each filing's mean section tone
+    change as ``tanh(change / scale)``, from the first session whose close follows its
+    acceptance, for ``hold_bars`` bars; 0 between filings, NaN before the first one."""
+    idx = pd.DatetimeIndex(index)
+    idx = idx.tz_localize(None) if idx.tz is not None else idx
+    sig = np.full(len(idx), np.nan)
+    by_accn: dict[str, list[ToneChange]] = {}
+    for c in changes:
+        by_accn.setdefault(c.accession, []).append(c)
+    starts = sorted((int(idx.searchsorted(_session_of(cs[0].visible_date))), float(np.mean([c.change for c in cs])))
+                    for cs in by_accn.values())
+    starts = [(i, ch) for i, ch in starts if i < len(idx)]
+    if not starts:
+        return sig
+    sig[starts[0][0]:] = 0.0
+    for i, ch in starts:
+        sig[i:i + hold_bars] = math.tanh(ch / scale)
+    return sig
+
+
+def tone_change_records(changes: list[ToneChange], source: str = "edgar") -> list[Any]:
+    """Feature-table rows (``leakage.FeatureRecord``) for ``PointInTimeStore``: one per filing
+    section, visible from the acceptance session, keyed by accession."""
+    from .leakage import FeatureRecord
+    out = []
+    for c in changes:
+        d = _session_of(c.visible_date).date()
+        out.append(FeatureRecord(f"filing_tone_change:{c.form}:{c.section}", c.symbol, d, d,
+                                 round(float(c.change), 6), source, c.accession))
+    return out
+
+
+def text_alpha_decay(signal: Any, close: Any, horizons: tuple[int, ...] = (1, 5, 10, 21, 63)
+                     ) -> dict[int, dict[str, float]]:
+    """IC decay of a text signal: purged IC and t at each horizon, measured as the price
+    alphas are (``leakage.ic_purged`` on forward returns)."""
+    s = np.asarray(signal, float)
+    out: dict[int, dict[str, float]] = {}
+    for h in horizons:
+        r = ic_purged(s, forward_returns(close, h), h)
+        out[h] = {"ic": r.ic, "t": r.t, "n": float(r.n)}
+    return out

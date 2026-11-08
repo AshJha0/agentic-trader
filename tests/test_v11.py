@@ -178,7 +178,9 @@ def test_trials_registry_counts_the_v09_v010_and_v011_variants():
     versions = [t.version for t in TRIALS]
     assert versions.count("v0.9") == 10 and versions.count("v0.10") == 5 and versions.count("v0.11") == 3
     assert all(t.overrides is None and t.recorded_portfolio_sharpe is not None for t in TRIALS if t.version in ("v0.9", "v0.10", "v0.12"))
-    assert len({t.name for t in TRIALS}) == len(TRIALS) == 65   # 62 through v0.12, three v0.14
+    # 62 through v0.12, three v0.14; v0.15 lanes add text trials after these
+    assert len({t.name for t in TRIALS}) == len(TRIALS)
+    assert sum(t.version != "v0.15" for t in TRIALS) == 65
     for t in TRIALS:
         if t.version == "v0.11":
             make_config(t.overrides)
