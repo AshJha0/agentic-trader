@@ -19,11 +19,9 @@ is requested, so the holdout is never read. Each output is skipped when it alrea
 
 Uses the Yahoo provider (network); the test suite never runs this script.
 
-Status (2026-11-07): the tilt diagnostic, the rules-desk reference and the IC-combination
-trial have run (``results/v14/``). The regime-conditioned and conformal-sized trials are
-registered, design run pending: the run was stopped after the IC trial took about an hour
-(five times the rules desk), because every decision rebuilds the full signal panel from a
-long history. Re-running this script fills only the missing files.
+Status (2026-11-08): every output has run (``results/v14/``). The regime-conditioned and
+conformal-sized trials ran after follow-up 5.2b cached the per-series research inputs.
+Re-running this script fills only missing files.
 """
 from __future__ import annotations
 

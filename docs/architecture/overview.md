@@ -214,7 +214,7 @@ See `config.py` for the full dictionary.
 | `rules.track_record_cut` | True | The trader's 0.75× size cut when memory's hit rate over the last ≥ 5 resolved calls is below 40%; on in every published backtest; measured on/off in v0.8 (`results/v08/eval_no_trackrecord_cut.json`) and kept |
 | `data_provider`, `csv_dir`, `lookback_days`, `alpha_lookback_days`, `max_data_staleness_days`, `news_lookback_days`, `synthetic_seed` | `synthetic`, `data`, 400, 900, 7, 7, 7 | Data source and windows; refuse to decide on a bar older than the staleness limit |
 | `risk.neutral_weight`, `rebalance_band`, `max_position`, `max_var_95`, `min_trade_weight`, `target_vol` | equity 1.0 / fx 0.0 (overridden by the carry rule above), 0.10, 1.0, 0.02, 0.05, 0.15 | Strategic weight, band, firm limits, the neutral risk analyst's vol target |
-| `risk.max_book_var_95`, `risk.book_var_method` | 0.05, `fhs` | Book-level (cross-sleeve) 1-day 95% VaR cap; scales a proposed weight down by grid search over the book's other positions (`portfolio.book_var_scale`). On by default since v0.14 (was `None`); the 5% is loose and untuned; only `scan` builds a book; off in every run published before v0.14 |
+| `risk.max_book_var_95`, `risk.book_var_method` | 0.05, `ewma` | Book-level (cross-sleeve) 1-day 95% VaR cap; scales a proposed weight down by grid search over the book's other positions (`portfolio.book_var_scale`). On by default since v0.14 (was `None`); the 5% is loose and untuned; only `scan` builds a book; off in every run published before v0.14 |
 | `risk.max_short_notional` | None | Largest short as a fraction of capital (v0.14); borrow is not modelled |
 | `risk.allow_short_equity`, `allow_short_fx`, `stop_atr_mult`, `take_profit_atr_mult` | False, True, 2.0, 3.0 | Shorting policy per asset class; protective levels |
 | `costs.equity_cost_bps`, `equity_slippage_bps`, `equity_borrow_annual`, `fx_spread_pips`, `fx_slippage_bps` | 1.0, 1.0, 0.01, 0.8, 0.2 | Multiplicative per-trade costs; borrow on equity shorts |
@@ -263,7 +263,7 @@ See `config.py` for the full dictionary.
 | `leakage.py` | Purged walk-forward IC, Student-t gate (`t_crit`), leak canary, point-in-time store | always on |
 | `combine.py` | IC-weighted combination, shrinkage, mean-variance tilt, turnover band, conformal half-width | off (`combination.method = "rules"`) |
 | `regime.py` | Gaussian-HMM regime label, fitted up to min(as-of, design end) | off (`regime.enabled`, `regime.condition`) |
-| `risk_model.py` | EWMA / FHS VaR, factor, stress and capacity rows | book VaR on (`fhs`, 0.05) |
+| `risk_model.py` | EWMA / FHS VaR, factor, stress and capacity rows | book VaR on (`ewma`, 0.05) |
 | `validate.py` | Bar validator, session clocks, short cap, ledger round trip | always on |
 | `oms.py` | Paper OMS: states, pre-trade checks, kill switch, fills, reconciliation, settlement | shadow only (`paper_trade_v09.py --oms`) |
 | `local_llm.py` | Ollama backend behind the `LLM` protocol | off (`llm_provider = "offline"`) |

@@ -426,8 +426,9 @@ default) is labelled `oms_shadow_v14` and never writes `ledger.csv`; the frozen 
 Steps only the repository owner can take on GitHub:
 
 1. Settings > Actions > General: allow Actions to run.
-2. Same page, workflow permissions: read and write (the `publish` job commits the record and
-   `report` opens issues).
+2. Workflow permissions can stay at the default (read). `paper.yml` grants `contents: write` to
+   the `publish` job and `issues: write` to `report` explicitly, which overrides the default
+   for those jobs only; raising the repository default would widen every other workflow.
 3. If a ruleset on `main` requires pull requests or status checks, add a bypass for
    `github-actions[bot]`, or the `publish` commit is refused.
 4. After the first green scheduled run, disable the laptop `paper_daily.cmd` task so two
