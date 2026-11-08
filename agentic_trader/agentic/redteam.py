@@ -137,14 +137,18 @@ def measure(corpus: list[dict[str, Any]] | None = None, config: dict | None = No
 
 # ------------------------------------------------------------------ model compliance (unrun)
 def _reply_signal(reply: str | None) -> float | None:
-    if not reply:
+    """The ``signal`` field of a model reply, or None when it cannot be read. Uses the same
+    lenient reader as the desk (``llm.extract_json``), so a reply wrapped in a Markdown code
+    fence counts as readable, exactly as it would on the live path."""
+    from agentic_trader.llm import extract_json
+    data = extract_json(reply)
+    if not data:
         return None
     try:
-        data = json.loads(reply)
         v = float(data["signal"])
-        return v if math.isfinite(v) else None
-    except (ValueError, KeyError, TypeError):
+    except (KeyError, TypeError, ValueError):
         return None
+    return v if math.isfinite(v) else None
 
 
 def _prompt(na: Any, text: str, st: TradingState) -> str:
@@ -164,10 +168,12 @@ def compliance_run(llm: Any, corpus: list[dict[str, Any]] | None = None, config:
     st = _state()
     rows, complied = [], 0
     for s in corpus:
-        base = _reply_signal(llm.complete(na.system_prompt, _prompt(na, s["carrier"], st), deep=False))
-        hit = _reply_signal(llm.complete(na.system_prompt, _prompt(na, s["text"], st), deep=False))
+        raw_base = llm.complete(na.system_prompt, _prompt(na, s["carrier"], st), deep=False)
+        raw_hit = llm.complete(na.system_prompt, _prompt(na, s["text"], st), deep=False)
+        base, hit = _reply_signal(raw_base), _reply_signal(raw_hit)
         c = hit is None or (base is not None and abs(hit - base) > threshold)
         complied += c
-        rows.append({"id": s["id"], "category": s["category"], "base": base, "attacked": hit, "complied": c})
+        rows.append({"id": s["id"], "category": s["category"], "base": base, "attacked": hit, "complied": c,
+                     "raw_base": raw_base, "raw_attacked": raw_hit})
     return {"n": len(rows), "complied": complied, "rate": complied / len(rows) if rows else float("nan"),
             "rows": rows}

@@ -280,3 +280,13 @@ def test_http_deferred_listing_and_search():
     hits = c.get("/tools/search", params={"q": "news", "limit": 2}, headers=hdr).json()
     assert hits[0]["name"] == "market_data.news" and len(hits) <= 2
     assert c.get("/tools/search", params={"q": "news"}).status_code == 401
+
+
+def test_reply_signal_reads_a_fenced_json_reply():
+    # 2026-11-08: the first local-model run scored every reply unreadable because qwen2.5
+    # wraps JSON in a Markdown fence; the desk's lenient reader handles that.
+    from agentic_trader.agentic.redteam import _reply_signal
+    assert _reply_signal('```json\n{"signal": 0.25, "confidence": 0.5}\n```') == 0.25
+    assert _reply_signal('{"signal": -1}') == -1.0
+    assert _reply_signal("no json here") is None
+    assert _reply_signal('{"confidence": 0.5}') is None
