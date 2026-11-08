@@ -1,0 +1,138 @@
+{
+  "decision": {
+    "action": "BUY",
+    "confidence": 0.5178,
+    "evidence_ids": 18,
+    "target_weight": 0.4281
+  },
+  "errors": [],
+  "evidence_sources": [
+    "analyst.fundamentals",
+    "analyst.news",
+    "analyst.sentiment",
+    "analyst.technical",
+    "facilitator",
+    "knowledge.search",
+    "market_data.fundamentals",
+    "market_data.history",
+    "market_data.news",
+    "market_data.social",
+    "portfolio_manager",
+    "quant.alpha",
+    "quant.risk",
+    "risk.aggressive",
+    "risk.conservative",
+    "risk.neutral",
+    "trader"
+  ],
+  "findings": [
+    [
+      "technical",
+      0.6858
+    ],
+    [
+      "fundamentals",
+      0.4282
+    ],
+    [
+      "news",
+      0.4572
+    ],
+    [
+      "sentiment",
+      0.45
+    ],
+    [
+      "facilitator",
+      0.5178
+    ],
+    [
+      "trader",
+      0.5178
+    ],
+    [
+      "portfolio_manager",
+      0.5178
+    ]
+  ],
+  "plan_source": "canonical",
+  "state": "COMPLETED",
+  "states": [
+    "PLANNING",
+    "VALIDATING_PLAN",
+    "EXECUTING",
+    "CRITIQUING",
+    "VALIDATING_EVIDENCE",
+    "FINALISING",
+    "COMPLETED"
+  ],
+  "steps": [
+    [
+      "tool",
+      "knowledge.search",
+      {
+        "k": "3",
+        "query": "position sizing risk limits stop loss equity strategic weight"
+      }
+    ],
+    [
+      "tool",
+      "quant.alpha",
+      {
+        "as_of": "2024-03-01",
+        "horizon": "10",
+        "symbol": "AAPL"
+      }
+    ],
+    [
+      "agent",
+      "analyst:technical",
+      {}
+    ],
+    [
+      "agent",
+      "analyst:fundamentals",
+      {}
+    ],
+    [
+      "agent",
+      "analyst:news",
+      {}
+    ],
+    [
+      "agent",
+      "analyst:sentiment",
+      {}
+    ],
+    [
+      "agent",
+      "debate",
+      {}
+    ],
+    [
+      "agent",
+      "trader",
+      {}
+    ],
+    [
+      "agent",
+      "risk",
+      {}
+    ],
+    [
+      "critic",
+      "critic",
+      {}
+    ],
+    [
+      "validate",
+      "validate_evidence",
+      {}
+    ],
+    [
+      "finalise",
+      "finalise",
+      {}
+    ]
+  ]
+}

@@ -102,12 +102,18 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
          <a href="https://github.com/AshJha0/agentic-trader/tree/main/results/paper">ledger and revision log</a>
          are published and updated after each run; the job missed 2026-10-31 to 11-06, filled in afterwards and marked. It is the only
          unseen data, and a Sharpe near 1 needs years before its interval excludes zero.</p></div>
+    <div class="card"><h3>v0.15 (unreleased): text, retrieval, an auditable agent</h3>
+      <p>Filing sections from EDGAR, fenced as untrusted text; a filing tone-change feature and a GDELT
+         headline feed, both registered as trials and not yet run. Point-in-time research retrieval with a
+         recall gate: on 100 questions over a 34-passage invented corpus, recall@5 0.990 (TF-IDF and hybrid),
+         which says nothing about real filings. A 150-snippet injection corpus: 150/150 fenced. Signed N-of-M
+         approvals (opt-in), deferred tool loading, record and replay, stage SLOs. Paper trading unchanged.</p></div>
     <div class="card"><h3>Two new guides</h3>
       <p><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md">How the AI works</a>: what each
          agent does, when the model is called, what it may decide and what stops it.
          <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md">How the quant works</a>: the
          two-backend core, the backtester's conventions, risk, alphas, portfolios and the statistics.
-         The guide now has 53 concepts, the cookbook 105 recipes, and there are 38 diagrams.</p></div>
+         The guide now has 55 concepts, the cookbook 112 recipes, and there are 39 diagrams.</p></div>
     <div class="card"><h3>Engineering</h3>
       <p>879 tests collected on both backends (C++ 879 passed; numpy 839 passed, 40 C++-only skipped) and
          26 C++ test functions. Every function the quant facade exports is fuzzed on both backends; that

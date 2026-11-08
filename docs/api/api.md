@@ -1051,6 +1051,30 @@ Scripts: `scripts/llm_study.py --describe | --dry-run | --live --model NAME --ou
 `scripts/paper_ops.py freshness [--runs FILE] [--today DATE]`, `scripts/paper_ops.py commit
 [--message TEXT]`; `scripts/paper_trade_v09.py --oms`.
 
+### v0.15: `edgar_text`, `gdelt`, `research_rag`, `text_analysts`, `governance`, `redteam`, `tool_search`, `replay`, SLOs
+
+| Name | What it does |
+|---|---|
+| `data.edgar_text.FilingSection(symbol, accession, form, section, visible_date, text)` | One section of one filing; `visible_date` is the UTC acceptance time, `text` is untrusted |
+| `extract_sections(text, form)`, `chunk_text(text, max_chars=4000, overlap=200)`, `fence(section)` | Section cutter, chunker, `<untrusted_data>` wrapper |
+| `EdgarProvider.from_config(cfg)` | Filing index, documents and sections, cached by accession; `None` without a user agent |
+| `data.gdelt.GdeltProvider.from_config(cfg)`, `.news(query, as_of, lookback_days=7)`, `daily_tone(items)` | Headlines behind a flag, scored by the rules lexicon |
+| `alpha.filing_tone(text)`, `filing_tone_changes(sections)`, `tone_change_signal(index, changes, hold_bars=63)`, `text_alpha_decay(signal, close)` | Filing tone-change feature (registered trial, not run) |
+| `text_analysts.FundamentalsTextAnalyst`, `MacroTextAnalyst`, `FixtureLLM`, `dry_run(analyst, ...)` | Text analysts against fixtures; not in the graph |
+| `agentic.research_rag.ResearchCorpus.build(filings=(), statements=())`, `.search(query, as_of, k=5, method="tfidf")` | Point-in-time search; `as_of` must be timezone-aware; `method="hybrid"` fuses TF-IDF and BM25 |
+| `to_document_blocks(hits)`, `build_cited_request(question, hits)`, `audit_citations(claims, passages)` | Citation payloads (no call is made) and the span audit |
+| `load_eval_corpus()`, `load_questions()`, `evaluate_retrieval(corpus, questions, method)`, `comparison_table(reports)` | Recall@5 and MRR |
+| `analyst_retriever(corpus, questions=None, method="tfidf")` | Returns a retriever, or raises `RetrievalGateError` below `RECALL_GATE` (0.8) |
+| `agentic.governance.join_outcomes`, `governance_report`, `weekly_rollup`, `planner_survival`, `survival_table` | Plan items 4.1 and 4.2 |
+| `agentic.redteam.load_corpus`, `fence_check`, `rules_view`, `measure`, `compliance_run(llm, ...)` | Plan item 4.4 |
+| `agentic.policy.SignedApprovalGateway(keys, quorum=None, default_quorum=1, ttl_s=None, price_fn=None, price_tolerance=0.01, store=None)`, `sign_approval(secret, approval_id, request, approve)` | Signed N-of-M approvals; opt-in |
+| `agentic.tool_search.DeferredToolCatalog(registry, preloaded=())`, `.names()`, `.search(query, limit=5, load=True)`, `.load(name)` | Deferred tools; MCP tool `tool_search`, HTTP `GET /tools?deferred=true` and `GET /tools/search?q=...` |
+| `agentic.replay.Recorder(cfg)`, `load_recording(path)`, `replay(rec, check=True)` | Record and replay; recordings are pickles, load only your own |
+| `agentic.tracing.SLO(latency_ms=10000, max_failure_rate=0.05, latency_quantile=0.95, min_samples=1)`, `Metrics.slo_report(slos, default)`, `slos_from_config(cfg)`, `export_otel(tracer, endpoint)` | Stage SLOs and OTel export (extra packages needed) |
+
+CLI additions: `agentic-trader task ... --record [DIR]` and
+`agentic-trader replay TASK_ID [--dir DIR] [--json]` (exit 0 match, 1 diverged, 2 missing payload).
+
 ## Part 4 — CLI
 
 ```text

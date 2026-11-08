@@ -8,9 +8,9 @@
 | Guide | For |
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
-| [LEARN.md](LEARN.md) | 53 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 105 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools and the v0.14 risk, leakage, Student-t gate and paper OMS recipes; every offline one runs in CI |
-| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 38 diagrams |
+| [LEARN.md](LEARN.md) | 55 concepts: how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 112 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes; every offline one runs in CI |
+| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 39 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
 
@@ -411,6 +411,18 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
+## v0.15 (unreleased): text, retrieval and an auditable agent
+
+Filing text from EDGAR and GDELT headlines are in, always fenced as untrusted text. The filing
+tone-change and GDELT features are registered as trials and **not run**. Research retrieval is
+point in time and gated: on 100 questions over a 34-passage invented corpus, recall@5 is 0.990
+(TF-IDF and hybrid), which shows the mechanism and says nothing about real filings. The text
+analysts are fixture-tested and not wired into the graph. A 150-snippet injection corpus is
+150/150 fenced; model compliance is not run. Signed N-of-M approvals (opt-in), deferred tool
+loading, `task --record` / `replay`, and stage SLOs are new. Recipes 106-112 in
+[COOKBOOK.md](COOKBOOK.md); details in [CHANGELOG.md](CHANGELOG.md). Paper trading is unchanged:
+`paper.yml` has no runs yet, and the laptop task still produces the forward record.
+
 ## Operations (v0.14)
 
 The forward paper record runs on GitHub Actions (`.github/workflows/paper.yml`, weekdays
@@ -437,7 +449,7 @@ Steps only the repository owner can take on GitHub:
 ## Tests
 
 ```bash
-pytest -q                                   # the full-suite count for v0.14.0 will be stated at release (879 at v0.12.0, all passed on the C++ backend) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
+pytest -q                                   # 1494 passed, 2 skipped on the numpy backend at the v0.15 round (879 at v0.12.0 on the C++ backend) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
 pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend at v0.8.0 (a report, not a gate); weakest file data/yahoo.py at 75% (network branches)
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 839 passed, 40 skipped (C++-only tests)
 ctest --test-dir build -C Release           # 26 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests

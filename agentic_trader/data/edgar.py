@@ -993,5 +993,9 @@ def ttm(q: pd.Series, back: int = 0) -> float | None:
     return float(window.sum())
 
 
-__all__ = ["EdgarClient", "ITEM_8K", "OTHER_FORMS", "quarterly_series", "quarterly_table", "latest_instant",
+# v0.15 (PLAN.md 3.1): full-text sections live in edgar_text; re-exported here so the shared
+# contract is importable as ``agentic_trader.data.edgar.FilingSection`` / ``EdgarProvider``.
+from .edgar_text import EdgarProvider, FilingSection, fence  # noqa: E402
+
+__all__ = ["EdgarClient", "EdgarProvider", "FilingSection", "fence", "ITEM_8K", "OTHER_FORMS", "quarterly_series", "quarterly_table", "latest_instant",
            "ttm", "rebase_per_share", "SHARE_CLASS_RATIO"]

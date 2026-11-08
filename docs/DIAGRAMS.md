@@ -53,6 +53,7 @@ Mermaid 11 parser before release. The prose explanation is in
 36. [The research protocol once the holdout is spent](#36-the-research-protocol-once-the-holdout-is-spent)
 37. [Adding a quant routine to both backends](#37-adding-a-quant-routine-to-both-backends)
 38. [Evaluation periods and what each may be used for](#38-evaluation-periods-and-what-each-may-be-used-for)
+39. [Research retrieval behind its gate, and record/replay (v0.15)](#39-research-retrieval-behind-its-gate-and-recordreplay-v015)
 
 ## 1. Decision pipeline
 
@@ -994,4 +995,21 @@ flowchart LR
     EX["extended universe<br/>45 instruments"] --> RP
     FW["forward record<br/>from 2026-09-29"] --> TEST["the test"]
     CH --> TR["every variant registered as a trial"]
+```
+
+## 39. Research retrieval behind its gate, and record/replay (v0.15)
+
+```mermaid
+flowchart LR
+    F["filing sections<br/>(acceptance time, UTC)"] --> C["research corpus<br/>symbol, accession, visible_date, section"]
+    S["central-bank statements<br/>(release time, UTC)"] --> C
+    C --> PIT["filter visible_date <= as_of<br/>fit IDF on visible passages"]
+    PIT --> R["TF-IDF, or hybrid:<br/>TF-IDF + BM25 by reciprocal rank"]
+    Q["100 labelled questions"] --> G{"recall@5 >= 0.8?"}
+    R --> G
+    G -- yes --> A["analyst_retriever"]
+    G -- no --> X["RetrievalGateError"]
+    T["task --record"] --> P[".replay.pkl<br/>data and model payloads"]
+    P --> RP["replay: served payloads,<br/>no network, no model"]
+    RP --> M{"same decision<br/>and end state?"}
 ```

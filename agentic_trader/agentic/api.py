@@ -17,7 +17,9 @@ and the role decides what the task and the approval endpoints may do.
 | POST   | /tasks/{id}/cancel         | analyst+     | cooperative cancellation               |
 | GET    | /approvals                 | risk, admin  | pending approvals                      |
 | POST   | /approvals/{id}            | risk, admin  | approve or reject, resumes the task    |
-| GET    | /tools                     | viewer+      | the tool catalogue                     |
+| GET    | /tools                     | viewer+      | the tool catalogue (``?deferred=true``:|
+|        |                            |              | names only)                            |
+| GET    | /tools/search?q=           | viewer+      | full descriptors of the best matches   |
 | GET    | /health, /metrics          | none         | liveness; Prometheus text metrics      |
 
 No ``from __future__ import annotations`` here: FastAPI resolves the request
@@ -31,7 +33,7 @@ import tempfile
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date
-from typing import Any
+from typing import Any, Optional
 
 from ..graph import TradingGraph
 from .domain import Capability, ROLE_CAPABILITIES, Role, Task
@@ -72,6 +74,8 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
     if n_workers < 1 or limit < 0:
         raise ValueError("workers must be >= 1 and queue_limit >= 0")
     keys = {k: Role(v) for k, v in (api_keys or acfg.get("api_keys", {})).items()}
+    from .tool_search import DeferredToolCatalog
+    catalog = DeferredToolCatalog(harness.registry)
     pool = ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="task")
     futures: dict[str, Future] = {}
     futures_lock = threading.Lock()   # request handlers run on FastAPI's own thread pool
@@ -123,6 +127,8 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
     class ApprovalIn(BaseModel):
         approve: bool
         note: str = ""
+        approver: Optional[str] = None     # signed gateway: the approver id (default: the role)
+        signature: Optional[str] = None    # signed gateway: sign_approval(...) hex digest
 
     def role_of(x_api_key: str | None = Header(default=None)) -> Role:
         if x_api_key is None or x_api_key not in keys:
@@ -163,8 +169,13 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
         return harness.metrics.render() or "# no tasks yet\n"
 
     @app.get("/tools")
-    def tools(role: Role = Depends(role_of)) -> list[dict[str, Any]]:
-        return harness.registry.catalogue()
+    def tools(deferred: bool = False, role: Role = Depends(role_of)) -> list[Any]:
+        # ``deferred=true`` (plan 4.6): names only; descriptors come from /tools/search.
+        return catalog.names() if deferred else harness.registry.catalogue()
+
+    @app.get("/tools/search")
+    def tools_search(q: str, limit: int = 5, role: Role = Depends(role_of)) -> list[dict[str, Any]]:
+        return catalog.search(q, limit, load=False)
 
     @app.post("/tasks", status_code=202)
     def create_task(body: TaskIn, role: Role = Depends(role_of)) -> dict[str, Any]:
@@ -252,7 +263,8 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
     def decide(approval_id: str, body: ApprovalIn, role: Role = Depends(role_of)) -> dict[str, Any]:
         require(role, Capability.APPROVE_TRADES)
         try:
-            run = harness.decide_approval(approval_id, body.approve, role.value, body.note, resume=False)
+            run = harness.decide_approval(approval_id, body.approve, body.approver or role.value, body.note,
+                                         resume=False, signature=body.signature)
         except KeyError:
             raise HTTPException(404, f"unknown approval {approval_id} (approvals live on the process that queued them)")
         except ValueError as e:

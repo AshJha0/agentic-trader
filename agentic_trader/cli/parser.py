@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 
-from .decisions import cmd_analyze, cmd_scan, cmd_task
+from .decisions import cmd_analyze, cmd_replay, cmd_scan, cmd_task
 from .evaluate import cmd_calibrate, cmd_evaluate
 from .research import cmd_alpha, cmd_backtest, cmd_execute, cmd_portfolio, cmd_stats, cmd_xalpha
 from .services import cmd_info, cmd_mcp, cmd_serve, cmd_tools
@@ -101,7 +101,17 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--save", action="store_true", help="write results/<SYM>/<date>/report.md")
     t.add_argument("--json", action="store_true", help="print the full task record as JSON")
     t.add_argument("--no-memory", action="store_true", help="do not read/write the memory log")
+    t.add_argument("--record", nargs="?", const="results/replay", default=None, metavar="DIR",
+                   help="record every data and model payload to DIR/<task id>.replay.pkl for `replay` "
+                        "(switches the decision memory off; default DIR results/replay)")
     t.set_defaults(func=cmd_task)
+
+    rp = sub.add_parser("replay", help="re-run a recorded task offline from its payloads and check the decision")
+    rp.add_argument("task_run_id", help="task id printed by `task --record`, or a path to a .replay.pkl file")
+    rp.add_argument("--dir", default="results/replay", help="where `task --record` wrote recordings")
+    rp.add_argument("--json", action="store_true", help="print the replayed record as JSON")
+    rp.add_argument("-v", "--verbose", action="store_true")
+    rp.set_defaults(func=cmd_replay)
 
     s = sub.add_parser("scan", help="decisions for a comma-separated watchlist")
     common(s, "comma-separated symbols, e.g. AAPL,MSFT,EURUSD")

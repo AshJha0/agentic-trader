@@ -28,8 +28,13 @@ Approval gateways decide what happens to REQUIRE_APPROVAL:
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import math
+import os
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import date
@@ -295,7 +300,9 @@ class QueuedApprovalGateway(ApprovalGateway):
                 del self._queue[k]
         return len(gone)
 
-    def resolve(self, approval_id: str, approve: bool, decided_by: str = "human", note: str = "") -> ApprovalRequest:
+    def resolve(self, approval_id: str, approve: bool, decided_by: str = "human", note: str = "",
+                signature: str | None = None) -> ApprovalRequest:
+        # ``signature`` is ignored here; ``SignedApprovalGateway`` requires it.
         with self._lock:
             a = self._queue.get(approval_id)
             if a is None:
@@ -304,3 +311,173 @@ class QueuedApprovalGateway(ApprovalGateway):
                 raise ValueError(f"approval {approval_id} already decided")
             a.decided, a.approved, a.decided_by, a.note = True, bool(approve), decided_by, note
             return a
+
+
+# ------------------------------------------------------------ signed approvals (plan 4.5)
+def approval_message(approval_id: str, request: ToolRequest, approve: bool) -> bytes:
+    """The canonical bytes an approver signs: the approval, the exact request (tool and
+    arguments, via ``request_id``) and the verdict. A signature for one verdict or one
+    request does not verify for another."""
+    return json.dumps({"approval": approval_id, "request": request.request_id, "tool": request.tool,
+                       "approve": bool(approve)}, sort_keys=True).encode()
+
+
+def sign_approval(secret: bytes, approval_id: str, request: ToolRequest, approve: bool) -> str:
+    """HMAC-SHA256 (stdlib only) of ``approval_message`` under the approver's key."""
+    return hmac.new(secret, approval_message(approval_id, request, approve), hashlib.sha256).hexdigest()
+
+
+class AppendOnlyApprovalLog:
+    """A second, append-only record of approval events: one JSON line per event, each line
+    carrying the SHA-256 of the previous line, so an edited, removed or reordered line breaks
+    ``verify``. The file is only ever opened in append mode. Optional; independent of the
+    in-memory queue and of the evidence store."""
+
+    GENESIS = "0" * 64
+
+    def __init__(self, path: str | os.PathLike) -> None:
+        self.path = os.fspath(path)
+        self._lock = threading.Lock()
+
+    def _lines(self) -> list[str]:
+        if not os.path.exists(self.path):
+            return []
+        with open(self.path, encoding="utf-8") as f:
+            return [x.rstrip("\n") for x in f if x.strip()]
+
+    def append(self, event: dict[str, Any]) -> None:
+        with self._lock:
+            lines = self._lines()
+            prev = hashlib.sha256(lines[-1].encode()).hexdigest() if lines else self.GENESIS
+            line = json.dumps({**event, "prev": prev}, sort_keys=True, default=str)
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+    def entries(self) -> list[dict[str, Any]]:
+        return [json.loads(x) for x in self._lines()]
+
+    def verify(self) -> bool:
+        prev = self.GENESIS
+        for line in self._lines():
+            try:
+                if json.loads(line).get("prev") != prev:
+                    return False
+            except ValueError:
+                return False
+            prev = hashlib.sha256(line.encode()).hexdigest()
+        return True
+
+
+class SignedApprovalGateway(QueuedApprovalGateway):
+    """A queued gateway whose decisions are signed by named approvers (opt-in).
+
+    * **identity + signature** -- every decision names an approver from ``keys``
+      (approver id -> shared secret) and carries ``sign_approval`` under that key; an unknown
+      approver, a missing or bad signature, or a second signature by the same approver is
+      refused and nothing is recorded;
+    * **N-of-M** -- ``quorum`` maps a tool to the number of distinct approvers it needs
+      (default: two for ``execution.submit_order``, ``default_quorum`` otherwise); one valid
+      rejection rejects at once;
+    * **TTL** -- an approval older than ``ttl_s`` seconds when the request executes is
+      rejected as expired;
+    * **re-pricing** -- with ``price_fn(request) -> float | None`` the price is captured when
+      the quorum is reached and read again at execution; a relative move beyond
+      ``price_tolerance`` (or no price) rejects the stale approval;
+    * **second store** -- every signature, decision and execution-time check is also written
+      to ``store`` (an ``AppendOnlyApprovalLog``) when given.
+    """
+
+    name = "signed"
+
+    def __init__(self, keys: dict[str, bytes], quorum: dict[str, int] | None = None, default_quorum: int = 1,
+                 ttl_s: float | None = None, price_fn: Callable[[ToolRequest], float | None] | None = None,
+                 price_tolerance: float = 0.01, store: AppendOnlyApprovalLog | None = None,
+                 clock: Callable[[], float] = time.time) -> None:
+        super().__init__()
+        if not keys:
+            raise ValueError("a signed gateway needs at least one approver key")
+        self.keys = {k: bytes(v) for k, v in keys.items()}
+        self.quorum = {"execution.submit_order": 2} if quorum is None else dict(quorum)
+        self.default_quorum = int(default_quorum)
+        for tool, n in {**self.quorum, "*": self.default_quorum}.items():
+            if not 1 <= n <= len(self.keys):
+                raise ValueError(f"quorum {n} for {tool} must be between 1 and {len(self.keys)} approvers")
+        self.ttl_s, self.price_fn, self.price_tolerance = ttl_s, price_fn, float(price_tolerance)
+        self.store, self.clock = store, clock
+        self._sigs: dict[str, dict[str, str]] = {}          # approval id -> approver -> signature
+        self._approved_at: dict[str, float] = {}
+        self._price_at: dict[str, float | None] = {}
+
+    def needed(self, tool: str) -> int:
+        return self.quorum.get(tool, self.default_quorum)
+
+    def signatures(self, approval_id: str) -> dict[str, str]:
+        with self._lock:
+            return dict(self._sigs.get(approval_id, {}))
+
+    def _log(self, **event: Any) -> None:
+        if self.store is not None:
+            self.store.append({"at": self.clock(), **event})
+
+    def resolve(self, approval_id: str, approve: bool, decided_by: str = "human", note: str = "",
+                signature: str | None = None) -> ApprovalRequest:
+        """Add one approver's signed decision; ``decided_by`` is the approver id. The request
+        stays pending until the quorum is reached (or one approver rejects)."""
+        secret = self.keys.get(decided_by)
+        if secret is None:
+            raise ValueError(f"unknown approver {decided_by!r}")
+        if not signature:
+            raise ValueError("a signed gateway needs the approver's signature")
+        with self._lock:
+            a = self._queue.get(approval_id)
+            if a is None:
+                raise KeyError(f"unknown approval {approval_id}")
+            if a.decided:
+                raise ValueError(f"approval {approval_id} already decided")
+            expected = sign_approval(secret, approval_id, a.request, approve)
+            if not hmac.compare_digest(expected, str(signature)):
+                raise ValueError(f"bad signature from {decided_by!r} on approval {approval_id}")
+            sigs = self._sigs.setdefault(approval_id, {})
+            if decided_by in sigs:
+                raise ValueError(f"{decided_by!r} already signed approval {approval_id}")
+            sigs[decided_by] = str(signature)
+            need = self.needed(a.request.tool)
+            if not approve:
+                a.decided, a.approved, a.decided_by, a.note = True, False, decided_by, note
+            elif len(sigs) >= need:
+                a.decided, a.approved, a.decided_by, a.note = True, True, ",".join(sorted(sigs)), note
+                self._approved_at[approval_id] = self.clock()
+                self._price_at[approval_id] = self.price_fn(a.request) if self.price_fn else None
+            else:
+                a.note = f"{len(sigs)} of {need} signatures"
+        self._log(kind="signature", approval=approval_id, approver=decided_by, approve=bool(approve),
+                  request=a.request.request_id, tool=a.request.tool, signature=str(signature))
+        if a.decided:
+            self._log(kind="decision", approval=approval_id, approved=a.approved, by=a.decided_by,
+                      price=self._price_at.get(approval_id))
+        return a
+
+    def decide(self, task_id: str, request: ToolRequest, reason: str) -> bool | None:
+        verdict = super().decide(task_id, request, reason)
+        if verdict is not True:
+            return verdict
+        with self._lock:
+            a = next(x for x in self._queue.values()
+                     if x.task_id == task_id and x.request.request_id == request.request_id)
+            approved_at, price_at = self._approved_at.get(a.id), self._price_at.get(a.id)
+        problem = None
+        now = self.clock()
+        if self.ttl_s is not None and approved_at is not None and now - approved_at > self.ttl_s:
+            problem = f"approval expired ({now - approved_at:.0f}s > ttl {self.ttl_s:.0f}s)"
+        elif self.price_fn is not None and price_at:
+            px = self.price_fn(request)
+            if px is None or not math.isfinite(px) or abs(px / price_at - 1.0) > self.price_tolerance:
+                problem = (f"price moved since approval ({price_at:g} -> {px}); tolerance "
+                           f"{self.price_tolerance:.2%}")
+        if problem is not None:
+            with self._lock:
+                a.approved, a.note = False, problem
+            self._log(kind="stale", approval=a.id, reason=problem)
+            return False
+        self._log(kind="executed", approval=a.id, request=request.request_id)
+        return True

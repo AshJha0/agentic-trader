@@ -601,7 +601,7 @@ class AgentHarness:
         return []
 
     def decide_approval(self, approval_id: str, approve: bool, decided_by: str = "human",
-                        note: str = "", resume: bool = True) -> TaskRun:
+                        note: str = "", resume: bool = True, signature: str | None = None) -> TaskRun:
         """Record a decision and, by default, resume the run on the calling thread when it
         is parked and nobody else drives it; the API passes ``resume=False`` and hands the
         continuation to its task pool instead (see ``continuation_due``). A decision for a
@@ -615,10 +615,11 @@ class AgentHarness:
             rec = self.record(a.task_id) if run is None else None
             state = run.state.value if run is not None else (rec["state"] if rec else "evicted")
             raise ValueError(f"task {a.task_id} is {state}; approval {approval_id} can no longer be decided")
-        a = self.gateway.resolve(approval_id, approve, decided_by, note)
+        a = self.gateway.resolve(approval_id, approve, decided_by, note, signature=signature)
         run.evidence.record(EvidenceType.APPROVAL, decided_by,
                             f"{'approved' if approve else 'rejected'} {a.request.tool}",
-                            {"approval": a.id, "note": note}, run.correlation_id)
+                            {"approval": a.id, "note": note, **({"signature": signature} if signature else {})},
+                            run.correlation_id)
         if resume and self.continuation_due(run):
             return self.resume(run)
         return run

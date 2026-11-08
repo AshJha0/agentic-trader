@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.15.0 — unreleased (P3 and P4)
+
+Plan items 3.1-3.9 and 4.1-4.6, 4.8, 4.9 in [docs/review/PLAN.md](docs/review/PLAN.md). Offline,
+fixture and synthetic tests only; no live model call and no spend. Tests:
+`tests/test_v15_text.py`, `test_v15_rag.py`, `test_v15_governance.py`, `test_v15_security.py`,
+`test_v15_replay.py`. Full suite on the numpy backend: 1494 passed, 2 skipped (the one key-gated API check skips in CI and fails locally only against an invalid key). Trials registry:
+70. Paper trading is unchanged; `paper.yml` on GitHub Actions has no runs yet, so the laptop task
+remains the producer of the forward record.
+
+- **EDGAR full text (3.1).** `data/edgar_text.py`: 10-K/10-Q Items 1A and 7, 8-K Items 2.02, 7.01
+  and 8.01, dated by acceptance time in UTC, cached by accession, chunked by section. Every
+  section is fenced as untrusted text.
+- **Filing tone change (3.2) and GDELT headlines (3.3).** `alpha.filing_tone_changes`,
+  `tone_change_signal` and `text_alpha_decay`; `data/gdelt.py` behind a flag (dedupe, language
+  filter), scored by the rules lexicon. Both are registered as trials before any design-period
+  run. 3.2 has now run on real SEC filings, design period only (9 single-name equities, 201
+  10-K/10-Q filings, 327 section changes): mean purged IC is negative at every horizon from 1 to
+  63 sessions and no horizon reaches |t| = 2. **Not supported**; nothing tuned. Four section-cutter
+  bugs found on real filings were fixed first, with regression tests from short real excerpts.
+  3.3 is **not run**: GDELT has throttled this machine's requests (HTTP 429) since the first
+  call; the design-run script (`scripts/v15_gdelt_design.py`, 2017-2021 overlap only) is in.
+- **Research RAG (3.4-3.6).** `agentic/research_rag.py`: filing sections and central-bank
+  statements with `{symbol, accession, visible_date, section}`; point-in-time filter with IDF
+  fitted on visible passages; hashed TF-IDF default, hybrid TF-IDF + BM25 by reciprocal-rank
+  fusion, optional local embeddings (`[rag]` extra, `sentence-transformers`, deliberately not in
+  the lock file, untested); passages as `document` blocks with citations enabled, and an audit
+  that maps every quoted span to a passage id.
+- **Retrieval evaluation and gate (3.7).** 100 questions over a 34-passage invented fixture
+  corpus: TF-IDF recall@5 0.990, MRR 0.954; hybrid 0.990, 0.961. The 0.8 gate passes. This
+  says nothing about real filings. `analyst_retriever` refuses below the gate. On real design-
+  period filings (2,702 passages, 50 hand-labelled questions, 16 as-of dates): TF-IDF recall@5
+  0.92, MRR 0.820; hybrid 0.98, 0.849; the gate passes. The questions were written after reading
+  the gold passages, so the real figure is likely lower.
+- **Text analysts (3.8).** `text_analysts.py`: fundamentals-text with cited claims and
+  macro-text hawkish/dovish shift; **not wired into the graph**. Claude variants are dry-run only.
+  Run on a local open-weight model (qwen2.5:7b-instruct, 4-bit, CPU, Ollama; a floor for a small
+  model, not Claude) over synthetic fixtures: macro 11/12 replies usable, all 11 agree with the
+  written stance label; fundamentals 10/10 sections usable, 10 cited claims kept, 0 dropped.
+  Small and easy inputs (`docs/results/v15_local/text_analysts.json`).
+- **Runbook RAG ablation (3.9).** Removing the policy-runbook RAG changed 0 of 9 decisions
+  (synthetic data, rules path). The runbook RAG is kept.
+- **Outcome-aware governance (4.1).** `agentic/governance.py` and `scripts/v15_governance.py
+  outcomes`: realised P&L joined to each `TaskRun`, per-role hit rates, critic-flag correlation
+  with losses, false-positive rate per check, weekly roll-up. No real TaskRuns have been
+  recorded, so n = 0.
+- **Planner survival (4.2).** `scripts/v15_governance.py survival` on 200 tasks: canonical
+  100%, rule planner 100%, synthetic model-plan fixtures 95.1% (1547/1626). The fixtures test
+  the validator, not a model.
+- **Memory tool (4.3).** Governed, fenced, append-only backend for decision memory.
+- **Injection red team (4.4).** `docs/threat-model/injection_corpus.json` and
+  `agentic/redteam.py`: 150 snippets, 150/150 fenced, rules signal equal to the lexicon score
+  150/150, 6/150 direction flips from the lexicon words "buy" and "sell". Local-model compliance:
+  a first run was **discarded** because the scorer read every reply as unreadable (the model wraps
+  JSON in a Markdown fence); the scorer now uses the desk's `llm.extract_json` and keeps raw
+  replies. The corrected run is in progress and its number follows in the next PR. Fixed: `_`-prefixed facts could reach `Analyst.prompt` outside the fence.
+- **Signed approvals (4.5).** `SignedApprovalGateway` and `sign_approval`: named approvers,
+  HMAC signatures, N-of-M (two for `execution.submit_order`), TTL, re-pricing check, optional
+  second append-only store. Opt-in and not wired into the config; a shared-secret HMAC means
+  anyone holding a key can sign as that approver.
+- **Deferred tools (4.6).** `agentic/tool_search.py`: names visible, descriptors loaded on
+  search, only loaded tools callable; on the MCP server and the HTTP API.
+- **Replay (4.8).** `agentic/replay.py`, `task --record [DIR]` and `replay <task id>`.
+  Recordings are pickles: load only your own.
+- **SLOs, OTel, golden transcripts (4.9).** Per-stage latency and failure SLOs in `Metrics`
+  (`slo_report`); `export_otel` to a local collector (the `[otel]` extra is not declared yet, a
+  lock regeneration is needed); golden transcripts of the canonical plan on three frozen states
+  in `tests/golden/`, generated on the numpy backend.
+
 ## v0.14.0 — unreleased (P5)
 
 Plan items of phase P5 in [docs/review/PLAN.md](docs/review/PLAN.md), plus 4.7, 4.10 and 4.11
