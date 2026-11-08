@@ -143,15 +143,29 @@ def cmd_plans(a: argparse.Namespace) -> int:
     registry = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    todo = tasks()[: a.limit] if a.limit else tasks()
-    with out.open("w", encoding="utf-8") as f:
-        for i, (task, inst) in enumerate(todo):
-            steps, _text = propose_plan(llm, task, inst, list(DEFAULT_ANALYSTS[inst.asset_class]), registry,
-                                        anonymize=False)
-            f.write(json.dumps({"task_id": task.id, "synthetic": False, "model": a.model, "steps": steps}) + "\n")
+    allt = tasks()[: a.limit] if a.limit else tasks()
+    # Resumable: tasks already recorded are skipped. A failed or timed-out call is recorded with
+    # steps null and the error set (never a rule-planner substitute), so it counts as unusable.
+    done: set[str] = set()
+    if out.exists():
+        done = {json.loads(x)["task_id"] for x in out.read_text(encoding="utf-8").splitlines() if x.strip()}
+    todo = [(t, ins) for t, ins in allt if t.id not in done]
+    with out.open("a", encoding="utf-8") as f:
+        for task, inst in todo:
+            err = None
+            try:
+                steps, text = propose_plan(llm, task, inst, list(DEFAULT_ANALYSTS[inst.asset_class]), registry,
+                                           anonymize=False, compact=a.compact, structured=a.structured)
+            except Exception as e:  # noqa: BLE001 - recorded, never substituted
+                steps, text, err = None, None, f"{type(e).__name__}: {e}"
+            if steps is None and err is None:
+                err = "no usable plan (timeout, refusal or unparseable reply)"
+            f.write(json.dumps({"task_id": task.id, "synthetic": False, "model": a.model, "compact": a.compact,
+                                "structured": a.structured,
+                                "steps": steps, "raw": text, "error": err}) + "\n")
             f.flush()
-            if i % 20 == 0:
-                print(f"{i + 1}/{len(todo)} {time.time() - t0:.0f}s", flush=True)
+            done.add(task.id)
+            print(f"{len(done)}/{len(allt)} {time.time() - t0:.0f}s" + (f" ERROR {err}" if err else ""), flush=True)
     _write(str(out.with_suffix(".meta.json")), _meta(llm, t0))
     return 0
 
@@ -199,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument("--out", required=True)
         s.add_argument("--timeout", type=float, default=300)
         s.add_argument("--compact", action="store_true", help="plans: compact tool catalogue, short rationales")
+        s.add_argument("--structured", action="store_true", help="plans: grammar-constrained JSON (LocalLLM)")
         s.add_argument("--max-tokens", type=int, default=1024,
                        help="reply cap sent as num_predict (an analyst reply is a short JSON object)")
         s.add_argument("--limit", type=int, default=0)

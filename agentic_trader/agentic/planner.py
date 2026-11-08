@@ -74,15 +74,29 @@ def governance_steps() -> list[PlanStep]:
             PlanStep.make(StepType.FINALISE, "finalise", id_="STEP-finalise")]
 
 
+# Grammar for local constrained decoding (Ollama ``format``): the reply is guaranteed to be a
+# parseable {"steps": [...]} object. Not part of ``contracts.ALL`` because ``arguments`` is an
+# open object, which strict API structured outputs do not accept; the validator still checks
+# every name and argument.
+PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object", "required": ["steps"],
+    "properties": {"steps": {"type": "array", "items": {
+        "type": "object", "required": ["type", "name", "arguments"],
+        "properties": {"type": {"type": "string", "enum": ["tool", "agent"]},
+                       "name": {"type": "string"}, "arguments": {"type": "object"},
+                       "rationale": {"type": "string"}}}}}}
+
+
 def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[str],
                  registry: ToolRegistry, anonymize: bool = False,
-                 compact: bool = False) -> tuple[list[dict[str, Any]] | None, str | None]:
+                 compact: bool = False, structured: bool = False) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Ask the model for a plan as JSON. Returns (raw steps, raw text). With ``anonymize`` the
     prompt names neither the instrument nor the date (the validator pins both from the task)
     and the requester's question is clipped. With ``compact`` the tool catalogue keeps only the
     first sentence of each description (no indentation) and each rationale is limited to a few
     words: about half the prompt and a much shorter reply, for slow local models. The tools,
-    stages, order rule and validator are the same either way."""
+    stages, order rule and validator are the same either way. With ``structured`` and a backend
+    that has ``complete_json`` (``LocalLLM``), the reply is decoded under ``PLAN_SCHEMA``."""
     def _desc(d: Any) -> str:
         return d.description.split(". ")[0][:90] if compact else d.description
     catalogue = [{"name": d.name, "description": _desc(d),
@@ -102,8 +116,12 @@ def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[st
         'Respond with a JSON object {"steps": [{"type": "tool"|"agent", "name": "...", '
         f'"arguments": {{...}}, "rationale": "{why}"}}]}} and nothing else.'
     )
-    text = llm.complete("You are the planning assistant of a trading desk. Use only the listed tools "
-                        "and stages; never invent names.", prompt, deep=True)
+    system = ("You are the planning assistant of a trading desk. Use only the listed tools "
+              "and stages; never invent names.")
+    if structured and hasattr(llm, "complete_json"):
+        text = llm.complete_json(system, prompt, deep=True, schema=PLAN_SCHEMA)
+    else:
+        text = llm.complete(system, prompt, deep=True)
     data = extract_json(text)
     if not data or not isinstance(data.get("steps"), list):
         return None, text

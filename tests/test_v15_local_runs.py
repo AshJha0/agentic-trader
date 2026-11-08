@@ -60,3 +60,26 @@ def test_compact_plan_prompt_is_shorter_and_default_prompt_unchanged():
     full, short = seen
     assert '"rationale": "..."}]}' in full and "at most 8 words" in short
     assert len(short) < 0.7 * len(full)
+
+
+def test_plans_run_records_failures_and_resumes(tmp_path, monkeypatch):
+    import argparse
+    calls = []
+
+    class FakeLLM:
+        def complete(self, system, prompt, deep=False):
+            calls.append(prompt)
+            return None if len(calls) == 2 else '{"steps": [{"type": "agent", "name": "trader", "arguments": {}}]}'
+
+    monkeypatch.setattr(runs, "_llm", lambda *a, **k: FakeLLM())
+    monkeypatch.setattr(runs, "_meta", lambda llm, t0: {})
+    out = tmp_path / "plans.jsonl"
+    ns = argparse.Namespace(model="m", timeout=1, max_tokens=10, limit=3, compact=True, structured=False,
+                            out=str(out))
+    runs.cmd_plans(ns)
+    rows = [json.loads(x) for x in out.read_text().splitlines()]
+    assert [r["steps"] is None for r in rows] == [False, True, False]
+    assert rows[1]["error"] and all(r["compact"] for r in rows)
+    assert "at most 8 words" in calls[0]
+    runs.cmd_plans(ns)                      # resume: nothing left to do
+    assert len(calls) == 3 and len(out.read_text().splitlines()) == 3
