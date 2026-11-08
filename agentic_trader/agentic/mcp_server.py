@@ -79,8 +79,14 @@ def governed_executor(registry: ToolRegistry, config: dict[str, Any], role: Role
 
 def build_mcp_server(registry: ToolRegistry, name: str = "agentic-trader", executor: ToolExecutor | None = None,
                      config: dict[str, Any] | None = None, role: Role = Role.TRADER,
-                     gateway: ApprovalGateway | None = None, order_cap: float | None = None):
+                     gateway: ApprovalGateway | None = None, order_cap: float | None = None,
+                     deferred: bool = False):
     """An ``MCPServer`` exposing every registered tool with its annotations.
+
+    With ``deferred=True`` (plan 4.6) the server lists only three tools: ``tool_names``
+    (names only), ``tool_search`` (full descriptors of the best matches, which become
+    callable) and ``tool_call`` (invoke a loaded tool by name through the same executor).
+    A tool that was not searched or loaded is refused.
 
     Handlers never bind a tool function directly: each call goes through ``executor``
     (built with ``governed_executor`` from ``config`` when not given, with ``order_cap``
@@ -101,6 +107,10 @@ def build_mcp_server(registry: ToolRegistry, name: str = "agentic-trader", execu
                                           "knowledge and execution simulation for a trading desk. "
                                           f"Calls run under policy for role {ex.role.value}; approval "
                                           f"mode {ex.gateway.name}.")
+    if deferred:
+        _deferred_tools(server, ex, registry)
+        server.executor = ex   # type: ignore[attr-defined]
+        return server
     for d in registry.descriptors():
         fn = registry.get(d.name).fn
         ann = McpAnnotations(read_only_hint=d.annotations.read_only,
@@ -111,6 +121,41 @@ def build_mcp_server(registry: ToolRegistry, name: str = "agentic-trader", execu
                           "evidence_type": d.annotations.evidence_type.value})(_governed(ex, d.name, fn))
     server.executor = ex   # type: ignore[attr-defined]  # evidence and metrics stay reachable for tests / operators
     return server
+
+
+def _deferred_tools(server, ex: ToolExecutor, registry: ToolRegistry) -> None:
+    from mcp.server.mcpserver.exceptions import ToolError
+    from mcp.types import ToolAnnotations as McpAnnotations
+
+    from .tool_search import DeferredToolCatalog
+    catalog = DeferredToolCatalog(registry)
+    server.catalog = catalog   # type: ignore[attr-defined]
+
+    def tool_names() -> list[str]:
+        """Names of every tool on this server. Descriptions and schemas are deferred:
+        call tool_search to load the ones you need."""
+        return catalog.names()
+
+    def tool_search(query: str, limit: int = 5) -> list[dict]:
+        """Search the tool catalogue; returns full descriptors (description, input schema,
+        risk) of the best matches and makes them callable through tool_call."""
+        return catalog.search(query, limit)
+
+    def tool_call(name: str, arguments: dict | None = None) -> Any:
+        """Call a tool loaded by tool_search, by its dotted name, under the server's policy."""
+        try:
+            catalog.require_loaded(name)
+        except (KeyError, PermissionError) as e:
+            raise ToolError(str(e)) from None
+        res = ex.call(name, requested_by="mcp", **(arguments or {}))
+        if not res.ok:
+            raise ToolError(res.error or "tool call failed")
+        return res.payload
+
+    ro = McpAnnotations(read_only_hint=True, destructive_hint=False)
+    server.tool(name="tool_names", annotations=ro)(tool_names)
+    server.tool(name="tool_search", annotations=ro)(tool_search)
+    server.tool(name="tool_call", annotations=McpAnnotations(read_only_hint=False, destructive_hint=True))(tool_call)
 
 
 def _governed(ex: ToolExecutor, name: str, fn):

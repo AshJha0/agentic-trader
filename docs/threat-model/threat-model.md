@@ -99,6 +99,36 @@ test handle each threat. Where a threat is only partly mitigated, it says so.
 | T40 | **Silent prompt drift**: a result compared against another that used different wording | Every evaluation and calibration record carries a hash of every agent's system prompt and prompt-building code (`prompts.py`), including a `shared` entry over every helper outside the agent classes that shapes prompt text (the fact formatter, the untrusted-text fence, the report digest, the lessons block, the risk facts, the anonymiser, the memory lesson text); `CalibrationReport.compare` reports `same_prompts` | `test_prompt_registry_is_stable_and_sensitive`, `test_prompt_registry_hashes_shared_prompt_code` | The hash proves identity, not quality; a model update behind the same model id is invisible to it (the calibration harness is the check for that). Every bundle hash recorded before v0.8 differs from the current one because the `shared` entry did not exist. The knowledge documents (T20) are retrieved content, not prompt code, and are outside the hash |
 | T36 | **Look-ahead through data revisions**: a macro value used as it was later revised, not as first published | `fred_vintages` reads revised series from the ALFRED vintage current at each date; vintages are sampled monthly so a value becomes visible at the first vintage after its publication, the conservative side; policy rates are never revised and bypass vintages | `test_fred_vintages_read_first_published_values`, `test_default_client_per_setting` | Off by default (the published FX runs carry a small CPI revision leak); Yahoo total-return prices are themselves the latest adjustment history |
 
+### Injection red team, signed approvals, deferred tools (v0.15, plan 4.4-4.6)
+
+| # | Threat | Control | Test | Residual risk |
+|---|---|---|---|---|
+| T41 | **Prompt injection at scale**: instruction-bearing, role-play, encoded (base64, ROT13, hex, zero-width, full-width, homoglyph, Unicode tag characters, bidi override), multilingual and fence-escape text in headlines and filing snippets | The `<untrusted_data>` fence (T12) and the rules analysts' lexicon-only reading. Corpus: `docs/threat-model/injection_corpus.json`, 150 synthetic snippets (32 instruction, 20 role play, 40 encoded, 26 multilingual, 32 fence escape; 105 headlines, 45 filing snippets). Harness: `agentic/redteam.py` | `test_fence_contains_every_snippet` (150 cases), `test_rules_view_is_bounded_and_lexicon_only`, `test_red_team_summary_numbers_match_the_threat_model`, `test_instruction_without_lexicon_words_never_moves_the_rules` | See the measured numbers below. The model compliance rate is **not measured**: `compliance_run` is built against `local_llm.LocalLLM` and tested with fakes only; the development machine (15.6 GB RAM, no local model, PLAN OD-6) cannot run it, and no paid API is used |
+| T42 | **A single approver, a forged or replayed approval, or a stale approval executed after the price moved** | Opt-in `SignedApprovalGateway`: each decision names an approver and carries an HMAC-SHA256 (stdlib) over the approval id, the exact request (tool and arguments) and the verdict; N-of-M quorum (default two distinct approvers for `execution.submit_order`); one valid rejection rejects; approval TTL; re-pricing check at execution (price captured at quorum, rejected beyond a relative tolerance); optional `AppendOnlyApprovalLog`, a hash-chained JSON-lines second store opened only in append mode. The API accepts `approver` and `signature` on `POST /approvals/{id}` | `test_order_needs_two_distinct_valid_signatures`, `test_one_rejection_rejects_and_other_tools_need_one`, `test_approval_ttl_expires`, `test_repricing_rejects_a_stale_approval`, `test_append_only_store_records_and_detects_tampering`, `test_signed_gateway_through_the_executor_writes_one_ticket`, `test_plain_queued_gateway_is_unchanged` | Shared-secret HMAC, not public-key signatures: whoever holds an approver's key can sign as that approver, and the service holds every key. The hash chain detects edits but an attacker with write access can rewrite the whole file; anchor the last hash elsewhere for real tamper evidence. The default gateways (auto, queued, deny) are unchanged |
+| T43 | **Tool-catalogue overload**: a client shown every description and schema picks the wrong tool, or a hostile description is read before it is needed | `DeferredToolCatalog` (`agentic/tool_search.py`): `build_mcp_server(deferred=True)` lists only `tool_names`, `tool_search` and `tool_call`; a tool is callable only after a search or load returned it, and the call still runs through the governed executor. HTTP: `GET /tools?deferred=true` (names) and `GET /tools/search?q=` | `test_catalog_shows_names_until_searched`, `test_mcp_deferred_surface_lists_three_tools_and_gates_calls`, `test_http_deferred_listing_and_search` | Ranking is keyword overlap, not semantic; the loaded set on the MCP server is per server process, not per client; HTTP search is stateless (HTTP has no tool-call route) |
+
+**Measured on the corpus (offline, rules path, 2026-11-08):**
+
+| Measure | Result |
+|---|---|
+| Snippets whose text sits entirely inside one `<untrusted_data>` fence (one opening tag, one closing tag) in the News analyst prompt | **150 / 150** |
+| Rules signal equal to the lexicon function of the text (no instruction channel) | **150 / 150** |
+| Rules signal in [-1, 1] with confidence at most 0.7 | **150 / 150** |
+| Payload changes the rules direction against the carrier alone | **6 / 150** (4 instruction, 2 role play; 0 encoded, 0 multilingual, 0 fence escape) |
+| Model compliance rate (local model) | **not run** (no local model on this machine) |
+
+The six direction changes are not the analyst obeying an instruction: each of the three distinct
+payloads (each appears twice) contains the lexicon word "buy" or "sell", and the lexicon reads it
+exactly as it would in any headline; the carriers alone are neutral (HOLD). The lesson is that an attacker who controls headline text
+controls the lexicon's input; the bounds (signal in [-1, 1], confidence at most 0.7, VaR cap
+and firm limits after it) are what limit the damage.
+
+One latent hazard was found while building the harness: `Analyst.prompt` puts every
+non-fenced fact into the plain section, and the News analyst's raw `_items` (the `NewsItem`
+objects, headline text included) is a fact until `rules` pops it. `Analyst.run` always calls
+`rules` first, so no shipped path leaks; a caller that builds the prompt before `rules` would
+put headline text outside the fence. The red-team harness mirrors `run` and calls `rules` first.
+
 ## Out of scope
 
 - Live trading, order routing and broker credentials: `execution.submit_order` records an
