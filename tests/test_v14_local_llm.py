@@ -189,7 +189,7 @@ def test_dry_run_table_is_deterministic() -> None:
     b = study.dry_run_table(["AAPL", "EURUSD"], 3, 2, cfg)
     assert a == b
     per = {r["cell"]: r["calls_per_decision"] for r in a}
-    assert per == {"rules": 0, "local_all": 14, "local_text": 4, "local_pm": 1, "no_debate": 9,
+    assert per == {"rules": 0, "local_all": 14, "local_text": 4, "local_pm": 1, "local_analysts": 4, "no_debate": 9,
                    "debate_1": 12, "neutral_risk": 12}
     for r in a:
         assert r["decisions"] == 12 and r["calls"] == r["calls_per_decision"] * 12
@@ -200,7 +200,7 @@ def test_dry_run_table_is_deterministic() -> None:
 def test_cells_are_described_and_live_refuses_without_server(capsys: pytest.CaptureFixture[str]) -> None:
     study = _study()
     names = [c.name for c in study.CELLS]
-    assert len(names) == len(set(names)) == 7
+    assert len(names) == len(set(names)) == 8
     assert all(c["trial_name"].startswith("P2 ") for c in (cell.describe() for cell in study.CELLS))
     assert study.design_dates(40)[0].isoformat() == "2016-01-01" and len(study.design_dates(40)) == 40
     assert study.main(["--live", "--model", MODEL, "--url", "http://127.0.0.1:9"]) == 2

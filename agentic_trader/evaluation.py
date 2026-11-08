@@ -210,6 +210,13 @@ TRIALS: tuple[Trial, ...] = (
     # decisions (agentic_trader.agentic.research_rag.runbook_rag_ablation). Not a config override:
     # the harness runs with an empty knowledge base. Measured offline on the rules path only.
     Trial("v0.15 policy-runbook RAG removed (decision ablation)", "v0.15", None),
+    # v0.16 (PLAN.md 2.3): the LLM study's reduced first pass, registered before any decision
+    # is run (15 core names x 20 design dates x 1 seed, local 7-8B model; rules is the control).
+    # Desk-cell trials built by scripts/llm_study.py StudyGraph, not plain config overrides.
+    # Names must equal llm_study.Cell.trial_name (the --live run refuses an unregistered cell).
+    Trial("P2 local_analysts: local model at the analysts only, rules downstream (trader, risk, PM)",
+          "v0.16", None),
+    Trial("P2 local_all: local model in every role", "v0.16", None),
 )
 
 
