@@ -1,0 +1,453 @@
+[
+ {
+  "id": "r001",
+  "question": "By how much did Johnson & Johnson raise its quarterly dividend in April 2016?",
+  "as_of": "2016-06-01T23:59:59+00:00",
+  "gold": [
+   "0000200406-16-000079#8.01#0"
+  ],
+  "gold_accession": "0000200406-16-000079"
+ },
+ {
+  "id": "r002",
+  "question": "When did J&J lift its quarterly dividend from 80 cents to 84 cents a share?",
+  "as_of": "2017-12-31T23:59:59+00:00",
+  "gold": [
+   "0000200406-17-000022#8.01#0"
+  ],
+  "gold_accession": "0000200406-17-000022"
+ },
+ {
+  "id": "r003",
+  "question": "Johnson & Johnson dividend increase from $0.84 to $0.90 per share",
+  "as_of": "2018-12-31T23:59:59+00:00",
+  "gold": [
+   "0000200406-18-000017#8.01#0"
+  ],
+  "gold_accession": "0000200406-18-000017"
+ },
+ {
+  "id": "r004",
+  "question": "J&J board raises quarterly dividend to 95 cents",
+  "as_of": "2019-12-31T23:59:59+00:00",
+  "gold": [
+   "0000200406-19-000028#8.01#0"
+  ],
+  "gold_accession": "0000200406-19-000028"
+ },
+ {
+  "id": "r005",
+  "question": "Did the Federal Reserve object to JPMorgan's capital plan in the 2017 CCAR?",
+  "as_of": "2017-12-31T23:59:59+00:00",
+  "gold": [
+   "0000019617-17-000452#8.01#0"
+  ],
+  "gold_accession": "0000019617-17-000452"
+ },
+ {
+  "id": "r006",
+  "question": "JPMorgan 2018 Comprehensive Capital Analysis and Review result for its capital plan",
+  "as_of": "2018-12-31T23:59:59+00:00",
+  "gold": [
+   "0000019617-18-000145#8.01#0"
+  ],
+  "gold_accession": "0000019617-18-000145"
+ },
+ {
+  "id": "r007",
+  "question": "Fed non-objection to JPMorgan Chase capital plan after the 2019 stress test",
+  "as_of": "2019-12-31T23:59:59+00:00",
+  "gold": [
+   "0000019617-19-000118#8.01#0"
+  ],
+  "gold_accession": "0000019617-19-000118"
+ },
+ {
+  "id": "r008",
+  "question": "What stress capital buffer did the Federal Reserve tell JPMorgan to expect in June 2020?",
+  "as_of": "2020-07-31T23:59:59+00:00",
+  "gold": [
+   "0000019617-20-000351#8.01#0"
+  ],
+  "gold_accession": "0000019617-20-000351"
+ },
+ {
+  "id": "r009",
+  "question": "JPMorgan indicative stress capital buffer requirement notified by the Fed in June 2021",
+  "as_of": "2021-12-31T23:59:59+00:00",
+  "gold": [
+   "0000019617-21-000352#8.01#0"
+  ],
+  "gold_accession": "0000019617-21-000352"
+ },
+ {
+  "id": "r010",
+  "question": "European Commission ruling against Google over comparison shopping results",
+  "as_of": "2017-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-17-214148#8.01#0"
+  ],
+  "gold_accession": "0001193125-17-214148"
+ },
+ {
+  "id": "r011",
+  "question": "EC decision on contractual provisions in Google's agreements with Android device makers",
+  "as_of": "2018-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-18-220240#8.01#0"
+  ],
+  "gold_accession": "0001193125-18-220240"
+ },
+ {
+  "id": "r012",
+  "question": "European Commission decision on Google search advertising contracts with third-party websites (AdSense)",
+  "as_of": "2019-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-19-080167#8.01#0"
+  ],
+  "gold_accession": "0001193125-19-080167"
+ },
+ {
+  "id": "r013",
+  "question": "Justice Department antitrust lawsuit against Google over search after civil investigative demands",
+  "as_of": "2020-11-30T23:59:59+00:00",
+  "gold": [
+   "0001193125-20-272940#8.01#0"
+  ],
+  "gold_accession": "0001193125-20-272940"
+ },
+ {
+  "id": "r014",
+  "question": "Antitrust complaint filed by ten state attorneys general against Google in the Eastern District of Texas",
+  "as_of": "2021-01-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-20-323272#8.01#0"
+  ],
+  "gold_accession": "0001193125-20-323272"
+ },
+ {
+  "id": "r015",
+  "question": "State attorneys general antitrust suit against Alphabet and Google filed in July 2021",
+  "as_of": "2021-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-21-210942#8.01#0"
+  ],
+  "gold_accession": "0001193125-21-210942"
+ },
+ {
+  "id": "r016",
+  "question": "How large was the share repurchase Facebook's board authorized in November 2016?",
+  "as_of": "2016-12-31T23:59:59+00:00",
+  "gold": [
+   "0001326801-16-000093#8.01#0"
+  ],
+  "gold_accession": "0001326801-16-000093"
+ },
+ {
+  "id": "r017",
+  "question": "Facebook adds $9 billion to its buyback authorization in April 2018",
+  "as_of": "2018-06-30T23:59:59+00:00",
+  "gold": [
+   "0001326801-18-000026#8.01#0"
+  ],
+  "gold_accession": "0001326801-18-000026"
+ },
+ {
+  "id": "r018",
+  "question": "Facebook board approves another $9 billion buyback increase in December 2018",
+  "as_of": "2019-06-30T23:59:59+00:00",
+  "gold": [
+   "0001326801-18-000069#8.01#0"
+  ],
+  "gold_accession": "0001326801-18-000069"
+ },
+ {
+  "id": "r019",
+  "question": "Facebook raises share repurchase authorization by $10 billion",
+  "as_of": "2020-06-30T23:59:59+00:00",
+  "gold": [
+   "0001326801-20-000010#8.01#0"
+  ],
+  "gold_accession": "0001326801-20-000010"
+ },
+ {
+  "id": "r020",
+  "question": "Facebook plan to create a new class of non-voting capital stock",
+  "as_of": "2016-06-30T23:59:59+00:00",
+  "gold": [
+   "0001326801-16-000060#8.01#0"
+  ],
+  "gold_accession": "0001326801-16-000060"
+ },
+ {
+  "id": "r021",
+  "question": "How many Facebook shares did Mark Zuckerberg expect to sell, and why?",
+  "as_of": "2017-12-31T23:59:59+00:00",
+  "gold": [
+   "0001326801-17-000042#8.01#0"
+  ],
+  "gold_accession": "0001326801-17-000042"
+ },
+ {
+  "id": "r022",
+  "question": "New reportable segments Family of Apps and Facebook Reality Labs",
+  "as_of": "2021-12-31T23:59:59+00:00",
+  "gold": [
+   "0001326801-21-000071#8.01#0"
+  ],
+  "gold_accession": "0001326801-21-000071"
+ },
+ {
+  "id": "r023",
+  "question": "What did Microsoft agree to pay to acquire GitHub?",
+  "as_of": "2018-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-18-182975#8.01#0"
+  ],
+  "gold_accession": "0001193125-18-182975"
+ },
+ {
+  "id": "r024",
+  "question": "Microsoft board elects Satya Nadella as chair",
+  "as_of": "2021-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-21-192783#8.01#0"
+  ],
+  "gold_accession": "0001193125-21-192783"
+ },
+ {
+  "id": "r025",
+  "question": "NVIDIA merger agreement with Mellanox joint press release",
+  "as_of": "2019-06-30T23:59:59+00:00",
+  "gold": [
+   "0001045810-19-000031#8.01#0"
+  ],
+  "gold_accession": "0001045810-19-000031"
+ },
+ {
+  "id": "r026",
+  "question": "Chinese regulator SAMR approval of the NVIDIA Mellanox deal",
+  "as_of": "2020-06-30T23:59:59+00:00",
+  "gold": [
+   "0001045810-20-000048#8.01#0"
+  ],
+  "gold_accession": "0001045810-20-000048"
+ },
+ {
+  "id": "r027",
+  "question": "NVIDIA four-for-one stock split declared as a stock dividend",
+  "as_of": "2021-12-31T23:59:59+00:00",
+  "gold": [
+   "0001045810-21-000056#8.01#0"
+  ],
+  "gold_accession": "0001045810-21-000056"
+ },
+ {
+  "id": "r028",
+  "question": "NVIDIA and Samsung settle patent litigation",
+  "as_of": "2016-12-31T23:59:59+00:00",
+  "gold": [
+   "0001045810-16-000235#8.01#0"
+  ],
+  "gold_accession": "0001045810-16-000235"
+ },
+ {
+  "id": "r029",
+  "question": "About 4 percent of Amazon common stock to be registered in another holder's name as separate property",
+  "as_of": "2019-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-19-097640#8.01#0"
+  ],
+  "gold_accession": "0001193125-19-097640"
+ },
+ {
+  "id": "r030",
+  "question": "Amazon board authorizes $5 billion stock repurchase",
+  "as_of": "2016-12-31T23:59:59+00:00",
+  "gold": [
+   "0001018724-16-000176#8.01#0"
+  ],
+  "gold_accession": "0001018724-16-000176"
+ },
+ {
+  "id": "r031",
+  "question": "Amazon establishes a commercial paper program",
+  "as_of": "2018-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-18-139368#8.01#0"
+  ],
+  "gold_accession": "0001193125-18-139368"
+ },
+ {
+  "id": "r032",
+  "question": "How much did ExxonMobil cut 2020 capital spending in response to low oil prices?",
+  "as_of": "2020-06-30T23:59:59+00:00",
+  "gold": [
+   "0000034088-20-000028#8.01#0"
+  ],
+  "gold_accession": "0000034088-20-000028"
+ },
+ {
+  "id": "r033",
+  "question": "ExxonMobil suspends the 2020 employee bonus program",
+  "as_of": "2020-12-31T23:59:59+00:00",
+  "gold": [
+   "0000034088-20-000093#8.01#0"
+  ],
+  "gold_accession": "0000034088-20-000093"
+ },
+ {
+  "id": "r034",
+  "question": "Unsolicited mini-tender offer for ExxonMobil shares by TRC Capital",
+  "as_of": "2017-12-31T23:59:59+00:00",
+  "gold": [
+   "0000034088-17-000022#8.01#0"
+  ],
+  "gold_accession": "0000034088-17-000022"
+ },
+ {
+  "id": "r035",
+  "question": "J&J agreement to buy Abbott Medical Optics for $4.3 billion",
+  "as_of": "2016-12-31T23:59:59+00:00",
+  "gold": [
+   "0000200406-16-000108#8.01#0"
+  ],
+  "gold_accession": "0000200406-16-000108"
+ },
+ {
+  "id": "r036",
+  "question": "Ethicon completes acquisition of Auris Health",
+  "as_of": "2019-12-31T23:59:59+00:00",
+  "gold": [
+   "0000200406-19-000019#8.01#0"
+  ],
+  "gold_accession": "0000200406-19-000019"
+ },
+ {
+  "id": "r037",
+  "question": "Johnson & Johnson appeal of the $572 million Oklahoma opioid judgment",
+  "as_of": "2019-12-31T23:59:59+00:00",
+  "gold": [
+   "0000200406-19-000057#8.01#0"
+  ],
+  "gold_accession": "0000200406-19-000057"
+ },
+ {
+  "id": "r038",
+  "question": "J&J intends to separate its Consumer Health business",
+  "as_of": "2021-12-31T23:59:59+00:00",
+  "gold": [
+   "0000200406-21-000072#8.01#0"
+  ],
+  "gold_accession": "0000200406-21-000072"
+ },
+ {
+  "id": "r039",
+  "question": "Divestiture of LifeScan to Platinum Equity",
+  "as_of": "2018-12-31T23:59:59+00:00",
+  "gold": [
+   "0000200406-18-000046#8.01#0"
+  ],
+  "gold_accession": "0000200406-18-000046"
+ },
+ {
+  "id": "r040",
+  "question": "JPMorgan settlement of disputes with Lehman Brothers Holdings",
+  "as_of": "2016-06-30T23:59:59+00:00",
+  "gold": [
+   "0001193125-16-437019#8.01#0"
+  ],
+  "gold_accession": "0001193125-16-437019"
+ },
+ {
+  "id": "r041",
+  "question": "Preliminary approval of the Apple e-book derivative litigation settlement",
+  "as_of": "2018-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-18-154515#8.01#0"
+  ],
+  "gold_accession": "0001193125-18-154515"
+ },
+ {
+  "id": "r042",
+  "question": "JPMorgan resolution with the Department of Justice in September 2020",
+  "as_of": "2020-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-20-257478#8.01#0"
+  ],
+  "gold_accession": "0001193125-20-257478"
+ },
+ {
+  "id": "r043",
+  "question": "Risk from the FCA saying it will stop compelling banks to submit LIBOR after 2021",
+  "as_of": "2018-03-31T23:59:59+00:00",
+  "gold": [
+   "0000019617-18-000057#1A#18"
+  ],
+  "gold_accession": "0000019617-18-000057"
+ },
+ {
+  "id": "r044",
+  "question": "Why did NVIDIA GPU revenue jump by more than 90% in fiscal 2018?",
+  "as_of": "2018-06-30T23:59:59+00:00",
+  "gold": [
+   "0001045810-18-000010#7#5"
+  ],
+  "gold_accession": "0001045810-18-000010"
+ },
+ {
+  "id": "r045",
+  "question": "Cryptocurrency mining after-effects distorting NVIDIA gaming revenue trends",
+  "as_of": "2019-06-30T23:59:59+00:00",
+  "gold": [
+   "0001045810-19-000023#7#1"
+  ],
+  "gold_accession": "0001045810-19-000023"
+ },
+ {
+  "id": "r046",
+  "question": "What price per share did Microsoft agree to pay for LinkedIn?",
+  "as_of": "2016-12-31T23:59:59+00:00",
+  "gold": [
+   "0001193125-16-662209#7#0"
+  ],
+  "gold_accession": "0001193125-16-662209"
+ },
+ {
+  "id": "r047",
+  "question": "COVID-19 update in Apple's fiscal 2020 MD&A highlights",
+  "as_of": "2021-06-30T23:59:59+00:00",
+  "gold": [
+   "0000320193-20-000096#7#0"
+  ],
+  "gold_accession": "0000320193-20-000096"
+ },
+ {
+  "id": "r048",
+  "question": "How did Amazon fund the Whole Foods Market acquisition?",
+  "as_of": "2018-06-30T23:59:59+00:00",
+  "gold": [
+   "0001018724-18-000005#7#5"
+  ],
+  "gold_accession": "0001018724-18-000005"
+ },
+ {
+  "id": "r049",
+  "question": "J&J 2020 litigation expense from talc related reserves and settlements",
+  "as_of": "2021-06-30T23:59:59+00:00",
+  "gold": [
+   "0000200406-21-000008#7#14",
+   "0000200406-21-000008#7#13"
+  ],
+  "gold_accession": "0000200406-21-000008"
+ },
+ {
+  "id": "r050",
+  "question": "ExxonMobil risk factor on climate change and greenhouse gas restrictions",
+  "as_of": "2016-06-30T23:59:59+00:00",
+  "gold": [
+   "0000034088-16-000065#1A#4"
+  ],
+  "gold_accession": "0000034088-16-000065"
+ }
+]

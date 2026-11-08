@@ -92,12 +92,38 @@ def _paragraphs(text: str) -> list[str]:
     return [p.strip() for p in text.split("\n\n") if p.strip()]
 
 
-def passages_from_filings(sections: Iterable[FilingSectionLike]) -> list[ResearchPassage]:
-    """One passage per paragraph of each filing section; id ``{accession}#{section}#{i}``."""
+def _merge_paragraphs(paras: list[str], min_chars: int) -> list[str]:
+    """Consecutive paragraphs joined until each passage has at least ``min_chars`` characters.
+    Real filings converted from HTML split tables and headings into lines of a few characters
+    (median 9 on the 2016-2021 core-name filings), which are useless as passages alone."""
+    out: list[str] = []
+    cur: list[str] = []
+    n = 0
+    for p in paras:
+        cur.append(p)
+        n += len(p)
+        if n >= min_chars:
+            out.append("\n\n".join(cur))
+            cur, n = [], 0
+    if cur:
+        if out and n < min_chars // 4:
+            out[-1] = out[-1] + "\n\n" + "\n\n".join(cur)
+        else:
+            out.append("\n\n".join(cur))
+    return out
+
+
+def passages_from_filings(sections: Iterable[FilingSectionLike], min_chars: int = 0) -> list[ResearchPassage]:
+    """One passage per paragraph of each filing section; id ``{accession}#{section}#{i}``.
+    With ``min_chars > 0`` consecutive paragraphs are merged into passages of at least that
+    many characters (real filings; the fixture corpus keeps one passage per paragraph)."""
     out: list[ResearchPassage] = []
     for s in sections:
         vis = _utc(s.visible_date)
-        for i, para in enumerate(_paragraphs(s.text)):
+        paras = _paragraphs(s.text)
+        if min_chars > 0:
+            paras = _merge_paragraphs(paras, min_chars)
+        for i, para in enumerate(paras):
             out.append(ResearchPassage(f"{s.accession}#{s.section}#{i}", "edgar", s.symbol, s.accession,
                                        s.form, s.section, vis, para, f"{s.symbol} {s.form} {s.section}"))
     return out
@@ -218,8 +244,8 @@ class ResearchCorpus:
 
     @classmethod
     def build(cls, filings: Iterable[FilingSectionLike] = (), statements: Iterable[CentralBankStatement] = (),
-              **kw) -> "ResearchCorpus":
-        return cls(passages_from_filings(filings) + passages_from_statements(statements), **kw)
+              min_chars: int = 0, **kw) -> "ResearchCorpus":
+        return cls(passages_from_filings(filings, min_chars) + passages_from_statements(statements), **kw)
 
     @staticmethod
     def _doc_text(p: ResearchPassage) -> str:
