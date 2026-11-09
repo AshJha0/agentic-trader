@@ -74,6 +74,14 @@ struct BacktestConfig {
     // (needs open; not combinable with stop/take levels). Mirrors pycore.run_backtest_ex.
     int exec_lag = 0;
     bool fill_next_open = false;
+    // Financing spreads (v0.17, review A5): annual fractions, charged per bar next to the cash
+    // leg as max(|w|-1,0)*funding_spread + max(1-|w|,0)*cash_spread. 0 = unchanged results.
+    double funding_spread = 0.0;
+    double cash_spread = 0.0;
+    // Stop slippage (v0.17, review C1): price-fraction half spread and share of the
+    // stop-to-extreme distance lost on a triggered stop. 0, 0 = the historical fill.
+    double stop_half_spread = 0.0;
+    double stop_range_frac = 0.0;
 };
 
 struct Trade {

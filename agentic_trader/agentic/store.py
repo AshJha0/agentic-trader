@@ -26,7 +26,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .domain import TERMINAL_STATES, TaskState
 
@@ -55,7 +55,10 @@ def _now() -> str:
 class TaskStore:
     """SQLite-backed record store. Thread-safe; one connection per store."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, clock: Callable[[], float] | None = None):
+        """``clock`` (epoch seconds; default ``time.time``) stamps heartbeats and dates the
+        lease cutoff; tests inject a manual clock so lease expiry needs no sleeping."""
+        self.clock: Callable[[], float] = clock or time.time
         self.path = Path(path)
         if str(self.path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -81,7 +84,7 @@ class TaskStore:
                 "state=excluded.state, record=excluded.record, updated_at=excluded.updated_at, "
                 "owner=excluded.owner, heartbeat=excluded.heartbeat",
                 (record["task_id"], record["symbol"], record["as_of"], record["role"], record["state"],
-                 json.dumps(record, default=str), _now(), owner, time.time()))
+                 json.dumps(record, default=str), _now(), owner, self.clock()))
             self._conn.commit()
 
     def save(self, run, owner: str | None = None) -> None:
@@ -92,7 +95,7 @@ class TaskStore:
         """Refresh the lease on the live records this owner drives: the given ``task_ids``
         (what the instance actually holds; a predecessor's orphans under the same configured
         owner id are not kept alive), or every non-terminal record of the owner when omitted."""
-        now = time.time()
+        now = self.clock()
         with self._lock:
             if task_ids is None:
                 cur = self._conn.execute(f"UPDATE tasks SET heartbeat=? WHERE owner=? AND {_NOT_TERMINAL}",
@@ -136,7 +139,7 @@ class TaskStore:
             lease = float(lease_s)
             if not lease > 0:
                 raise ValueError(f"lease_s must be a positive number of seconds, got {lease_s!r}")
-            cutoff = time.time() - lease
+            cutoff = self.clock() - lease
         with self._lock:
             if cutoff is None:
                 rows = self._conn.execute(

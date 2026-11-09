@@ -403,6 +403,17 @@ class BacktestConfig:
     # overnight move close[t] -> open[t+1]. Needs ``open``; not combinable with stop/take levels.
     exec_lag: int = 0
     fill_next_open: bool = False
+    # Financing spreads (v0.17, review A5; agentic_trader.financing): annual fractions charged
+    # each bar as max(|w|-1,0)*funding_spread + max(1-|w|,0)*cash_spread, next to the cash leg.
+    # 0 (default) leaves every published number unchanged.
+    funding_spread: float = 0.0
+    cash_spread: float = 0.0
+    # Stop slippage (v0.17, review C1; execution_realism.stop_fill_with_slippage): a triggered
+    # stop fills half_spread (price fraction) worse plus range_frac of the stop-to-extreme
+    # distance, floored at the bar's extreme; a gap fills at the open less the half spread.
+    # Both 0 (default) is the historical fill. Take-profit fills are unchanged.
+    stop_half_spread: float = 0.0
+    stop_range_frac: float = 0.0
 
 
 @dataclass
@@ -556,24 +567,30 @@ def compute_metrics(equity, positions, periods_per_year: float,
     return m
 
 
-def _exit_fill(w, stop, take, o, h, l):
+def _exit_fill(w, stop, take, o, h, l, half_spread=0.0, range_frac=0.0):
     """Fill price if a protective level trades inside the bar, else NaN (see backtest.hpp):
-    the open is resolved first against both levels, then the range, stop before target."""
+    the open is resolved first against both levels, then the range, stop before target.
+    ``half_spread``/``range_frac`` slip the stop fill exactly as
+    ``execution_realism.stop_fill_with_slippage`` (0, 0 = the historical fill)."""
     if w > 0:
         if not np.isnan(stop) and o <= stop:
-            return o
+            return max(l, o * (1.0 - half_spread)) if half_spread else o
         if not np.isnan(take) and o >= take:
             return o
         if not np.isnan(stop) and l <= stop:
+            if half_spread or range_frac:
+                return max(l, stop * (1.0 - half_spread) - range_frac * (stop - l))
             return stop
         if not np.isnan(take) and h >= take:
             return take
     elif w < 0:
         if not np.isnan(stop) and o >= stop:
-            return o
+            return min(h, o * (1.0 + half_spread)) if half_spread else o
         if not np.isnan(take) and o <= take:
             return o
         if not np.isnan(stop) and h >= stop:
+            if half_spread or range_frac:
+                return min(h, stop * (1.0 + half_spread) + range_frac * (h - stop))
             return stop
         if not np.isnan(take) and l <= take:
             return take
@@ -603,7 +620,8 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
         raise ValueError("periods_per_year must be > 0")
     if not (config.initial_capital > 0) or np.isinf(config.initial_capital):
         raise ValueError("initial_capital must be positive and finite")
-    for name in ("cost_bps", "slippage_bps", "borrow_annual"):
+    for name in ("cost_bps", "slippage_bps", "borrow_annual", "funding_spread", "cash_spread",
+                 "stop_half_spread"):
         v = float(getattr(config, name))
         if not np.isfinite(v) or v < 0:
             raise ValueError(f"{name} must be a finite non-negative number, got {v}")
@@ -613,16 +631,8 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
         raise ValueError(f"carry_annual must be finite, got {config.carry_annual}")
     if np.isinf(config.risk_free_annual):
         raise ValueError("risk_free_annual must be finite or NaN (unknown = 0)")
-    for name in ("cost_bps", "slippage_bps", "borrow_annual"):
-        v = float(getattr(config, name))
-        if not np.isfinite(v) or v < 0:
-            raise ValueError(f"{name} must be a finite non-negative number, got {v}")
-    if not np.isfinite(config.max_leverage) or config.max_leverage < 0:
-        raise ValueError(f"max_leverage must be finite and >= 0, got {config.max_leverage}")
-    if not np.isfinite(config.carry_annual):
-        raise ValueError(f"carry_annual must be finite, got {config.carry_annual}")
-    if np.isinf(config.risk_free_annual):
-        raise ValueError("risk_free_annual must be finite or NaN (unknown = 0)")
+    if not 0.0 <= float(config.stop_range_frac) <= 1.0:
+        raise ValueError(f"stop_range_frac must be in [0, 1], got {config.stop_range_frac}")
     lag = config.exec_lag
     if isinstance(lag, bool) or int(lag) != lag or lag < 0:
         raise ValueError(f"exec_lag must be a non-negative integer, got {lag}")
@@ -736,7 +746,7 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
             s = NaN if (stop_a is None or j < 0) else stop_a[j]
             k = NaN if (take_a is None or j < 0) else take_a[j]
             exit_px = _exit_fill(w, s, k, extras["open"][t + 1], extras["high"][t + 1],
-                                 extras["low"][t + 1])
+                                 extras["low"][t + 1], config.stop_half_spread, config.stop_range_frac)
         exited = not np.isnan(exit_px)
         px_end = exit_px if exited else p[t + 1]
 
@@ -753,6 +763,8 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         price_ret = gross - 1.0
         carry = w * rate / ppy
         cash = (1.0 - abs(w) if config.funded else 1.0) * cash_rate_t / ppy
+        aw = abs(w)
+        cash -= (max(aw - 1.0, 0.0) * config.funding_spread + max(1.0 - aw, 0.0) * config.cash_spread) / ppy
         borrow = -w * config.borrow_annual / ppy if w < 0 else 0.0
         scale = np.sqrt(equity[t] / E0)
         impact_in = abs(trade) ** 1.5 * impact_k(t) * scale if trade != 0.0 else 0.0

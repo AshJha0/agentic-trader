@@ -1,6 +1,7 @@
 #include "at/backtest.hpp"
 
 #include <cstddef>
+#include <initializer_list>
 
 #include <algorithm>
 #include <cmath>
@@ -128,17 +129,22 @@ void check_len(const Series& s, std::size_t T, const char* name) {
 // Fill price if a protective level trades inside the next bar, else NaN. The open is
 // resolved first against both levels (a gap through either fills at the open); only
 // then is the intrabar range consulted, stop before target.
-double exit_fill(double w, double stop, double take, double o, double h, double l) {
+// hs / rf slip a stop fill (v0.17, review C1; mirrors pycore._exit_fill and
+// execution_realism.stop_fill_with_slippage); 0, 0 is the historical fill.
+double exit_fill(double w, double stop, double take, double o, double h, double l,
+                 double hs = 0.0, double rf = 0.0) {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     if (w > 0.0) {
-        if (!std::isnan(stop) && o <= stop) return o;
+        if (!std::isnan(stop) && o <= stop) return hs != 0.0 ? std::max(l, o * (1.0 - hs)) : o;
         if (!std::isnan(take) && o >= take) return o;
-        if (!std::isnan(stop) && l <= stop) return stop;
+        if (!std::isnan(stop) && l <= stop)
+            return (hs != 0.0 || rf != 0.0) ? std::max(l, stop * (1.0 - hs) - rf * (stop - l)) : stop;
         if (!std::isnan(take) && h >= take) return take;
     } else if (w < 0.0) {
-        if (!std::isnan(stop) && o >= stop) return o;
+        if (!std::isnan(stop) && o >= stop) return hs != 0.0 ? std::min(h, o * (1.0 + hs)) : o;
         if (!std::isnan(take) && o <= take) return o;
-        if (!std::isnan(stop) && h >= stop) return stop;
+        if (!std::isnan(stop) && h >= stop)
+            return (hs != 0.0 || rf != 0.0) ? std::min(h, stop * (1.0 + hs) + rf * (h - stop)) : stop;
         if (!std::isnan(take) && l <= take) return take;
     }
     return nan;
@@ -172,6 +178,11 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
     const bool has_ohlc = !in.open.empty() && !in.high.empty() && !in.low.empty();
     if (has_levels && !has_ohlc)
         throw std::invalid_argument("run_backtest: stop/take levels need open, high and low");
+    for (double v : {cfg.funding_spread, cfg.cash_spread, cfg.stop_half_spread})
+        if (!(v >= 0.0) || std::isinf(v))
+            throw std::invalid_argument("financing spreads and stop_half_spread must be finite and >= 0");
+    if (!(cfg.stop_range_frac >= 0.0 && cfg.stop_range_frac <= 1.0))
+        throw std::invalid_argument("stop_range_frac must be in [0, 1]");
     if (cfg.exec_lag < 0) throw std::invalid_argument("exec_lag must be a non-negative integer");
     if (cfg.fill_next_open && in.open.empty())
         throw std::invalid_argument("run_backtest: fill_next_open needs open prices");
@@ -245,7 +256,8 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         if (w != 0.0 && has_levels) {
             const double s = (in.stop.empty() || !have) ? nan : in.stop[jj];
             const double k = (in.take.empty() || !have) ? nan : in.take[jj];
-            exit_px = exit_fill(w, s, k, in.open[t + 1], in.high[t + 1], in.low[t + 1]);
+            exit_px = exit_fill(w, s, k, in.open[t + 1], in.high[t + 1], in.low[t + 1],
+                                cfg.stop_half_spread, cfg.stop_range_frac);
         }
         const bool exited = !std::isnan(exit_px);
         const double px_end = exited ? exit_px : prices[t + 1];
@@ -261,7 +273,10 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         const double gross = px_end / (next_open ? in.open[t + 1] : prices[t]);  // kept as a ratio: 1 + (gross - 1) loses digits on a huge move
         const double price_ret = gross - 1.0;
         const double carry = w * carry_rate / ppy;
-        const double cash = (cfg.funded ? 1.0 - std::fabs(w) : 1.0) * cash_rate / ppy;
+        double cash = (cfg.funded ? 1.0 - std::fabs(w) : 1.0) * cash_rate / ppy;
+        // Financing spreads (v0.17, review A5; agentic_trader/financing.py), 0 by default.
+        cash -= (std::max(std::fabs(w) - 1.0, 0.0) * cfg.funding_spread +
+                 std::max(1.0 - std::fabs(w), 0.0) * cfg.cash_spread) / ppy;
         const double borrow = w < 0.0 ? -w * cfg.borrow_annual / ppy : 0.0;
         const double scale = std::sqrt(res.equity[t] / cfg.initial_capital);
         const double impact_in = trade != 0.0 ? std::pow(std::fabs(trade), 1.5) * impact_k(t) * scale : 0.0;

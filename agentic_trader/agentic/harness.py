@@ -147,12 +147,18 @@ def approval_mode(approval: Any) -> str:
 def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
                                price_fn: Any = None) -> SignedApprovalGateway:
     """A ``SignedApprovalGateway`` from the ``approval`` block. ``approvers`` maps an approver
-    id to the NAME of the environment variable holding its secret: secrets never sit in the
-    configuration, and a missing or empty variable is an error, not a silent drop."""
+    id to the NAME of the environment variable holding its HMAC secret (legacy mode): secrets
+    never sit in the configuration, and a missing or empty variable is an error, not a silent
+    drop. ``public_keys`` (v0.17, review A6) maps an approver id to its raw 32-byte Ed25519
+    public key as 64 hex characters: public material may sit in the configuration, the
+    approver signs on their own machine with ``sign_approval_ed25519``. Either map may be
+    empty but not both; an approver may not appear in both."""
     env = os.environ if environ is None else environ
     approvers = block.get("approvers") or {}
-    if not isinstance(approvers, dict) or not approvers:
-        raise ValueError("signed approval needs approvers: {approver_id: SECRET_ENV_VAR_NAME}")
+    public = block.get("public_keys") or {}
+    if not isinstance(approvers, dict) or not isinstance(public, dict) or not (approvers or public):
+        raise ValueError("signed approval needs approvers: {approver_id: SECRET_ENV_VAR_NAME} "
+                         "and/or public_keys: {approver_id: ED25519_PUBLIC_KEY_HEX}")
     keys = {}
     for who, var in approvers.items():
         if not isinstance(var, str) or not var.replace("_", "").isalnum():
@@ -161,6 +167,15 @@ def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
         if not secret:
             raise ValueError(f"approver {who!r}: environment variable {var} is not set")
         keys[str(who)] = secret.encode("utf-8")
+    pubs = {}
+    for who, hexkey in public.items():
+        try:
+            raw = bytes.fromhex(str(hexkey).strip())
+        except ValueError:
+            raw = b""
+        if len(raw) != 32:
+            raise ValueError(f"approver {who!r}: public key must be 64 hex characters (32 raw Ed25519 bytes)")
+        pubs[str(who)] = raw
     quorum = {"execution.submit_order": int(block.get("submit_order_quorum", 2))}
     for tool, n in (block.get("tool_quorum") or {}).items():
         quorum[str(tool)] = int(n)
@@ -169,7 +184,8 @@ def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
     return SignedApprovalGateway(keys, quorum, default_quorum=int(block.get("quorum", 1)),
                                  ttl_s=None if ttl is None else float(ttl), price_fn=price_fn,
                                  price_tolerance=float(block.get("price_tolerance", 0.01)),
-                                 store=AppendOnlyApprovalLog(log_path) if log_path else None)
+                                 store=AppendOnlyApprovalLog(log_path) if log_path else None,
+                                 public_keys=pubs)
 
 
 def last_close_price_fn(provider: Any) -> Any:
@@ -256,9 +272,12 @@ class AgentHarness:
             for rec in store.load_all():
                 if rec.get("state") in _TERMINAL_VALUES:
                     self._archive_put(rec["task_id"], rec)
-            self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="harness-heartbeat",
-                                                      daemon=True)
-            self._heartbeat_thread.start()
+            # agentic.heartbeat_thread False: no background thread; the owner (a test with an
+            # injected store clock, or an external scheduler) calls heartbeat_once() itself.
+            if acfg.get("heartbeat_thread", True):
+                self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="harness-heartbeat",
+                                                          daemon=True)
+                self._heartbeat_thread.start()
 
     # -------------------------------------------------------------- records
     def _archive_put(self, task_id: str, rec: dict[str, Any]) -> None:
@@ -299,20 +318,28 @@ class AgentHarness:
             except Exception as e:  # persistence must never take a decision down with it
                 log.exception("could not persist task %s: %s", run.id, e)
 
+    def heartbeat_once(self) -> int:
+        """One heartbeat tick: refresh the lease on this instance's live runs, then sweep the
+        records whose owner stopped heartbeating. Returns the number swept."""
+        store = self.store
+        if store is None:
+            return 0
+        with self._lock:
+            live = [r.id for r in self.runs.values() if not r.done]
+        store.heartbeat(self.owner, live)
+        # Periodic sweep of records whose owner stopped heartbeating (a crashed
+        # sibling, or a predecessor that died within the lease before we started).
+        swept = store.mark_interrupted(lease_s=self.lease_s)
+        if swept:
+            log.warning("%d task(s) lost their owner's heartbeat; marked FAILED", swept)
+        return swept
+
     def _heartbeat_loop(self) -> None:
         interval = max(self.lease_s / 3.0, 0.02)
-        store = self.store
-        assert store is not None  # the heartbeat thread is only started with a store
+        assert self.store is not None  # the heartbeat thread is only started with a store
         while not self._stop.wait(interval):
             try:
-                with self._lock:
-                    live = [r.id for r in self.runs.values() if not r.done]
-                store.heartbeat(self.owner, live)
-                # Periodic sweep of records whose owner stopped heartbeating (a crashed
-                # sibling, or a predecessor that died within the lease before we started).
-                swept = store.mark_interrupted(lease_s=self.lease_s)
-                if swept:
-                    log.warning("%d task(s) lost their owner's heartbeat; marked FAILED", swept)
+                self.heartbeat_once()
             except Exception as e:  # noqa: BLE001 - a closed store ends the loop, anything else is logged
                 if getattr(self.store, "closed", False):
                     return

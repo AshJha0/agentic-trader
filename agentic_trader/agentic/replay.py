@@ -21,7 +21,13 @@ The same ``ReplayLLM`` is the fixture mechanism for model tests: record a run on
 local model, save it, and serve the model's answers from the file in an offline test.
 
 Recordings are pickled (exact DataFrames and floats, so the replay is bit-for-bit). Load
-only recordings you made yourself: unpickling runs code from the file.
+only recordings you made yourself: unpickling runs code from the file. Since v0.17 (review
+A7, second half) that rule is enforced: ``Recording.save`` writes the SHA-256 of the file's
+bytes to a digest allowlist outside the recording directory (``replay_allowlist_path``:
+``$AGENTIC_TRADER_REPLAY_ALLOWLIST`` or ``~/.agentic_trader/replay_allowlist.txt``), and
+``load_recording`` hashes the bytes and refuses to unpickle a file whose digest is not listed
+(an edited recording, or one made on another machine). ``allow_recording(path)`` lists a file
+you have checked; ``trust=True`` skips the check for one call.
 
 Request keys (v0.17 R2.4, format 2) are SHA-256 digests of a canonical JSON form of the
 request (``canonical``: sorted keys, floats by ``repr``, dates ISO, frames by
@@ -52,6 +58,41 @@ from ..memory import series_basis
 
 FORMAT_VERSION = 2   # 2: canonical JSON request keys (v0.17); 1: pickle keys
 DEFAULT_DIR = "results/replay"
+ALLOWLIST_ENV = "AGENTIC_TRADER_REPLAY_ALLOWLIST"
+
+
+class ReplayUntrusted(ValueError):
+    """A recording whose bytes are not on the digest allowlist (not made, or not checked, here)."""
+
+
+def replay_allowlist_path() -> Path:
+    """Where recording digests are listed: ``$AGENTIC_TRADER_REPLAY_ALLOWLIST`` when set, else
+    ``~/.agentic_trader/replay_allowlist.txt`` (outside any recording directory)."""
+    import os
+    env = os.environ.get(ALLOWLIST_ENV)
+    return Path(env) if env else Path.home() / ".agentic_trader" / "replay_allowlist.txt"
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _allowed_digests(path: Path) -> set[str]:
+    if not path.is_file():
+        return set()
+    return {ln.split()[0] for ln in path.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.startswith("#")}
+
+
+def allow_recording(path: str | Path, allowlist: str | Path | None = None) -> str:
+    """Add the SHA-256 of ``path``'s current bytes to the allowlist; returns the digest."""
+    al = Path(allowlist) if allowlist is not None else replay_allowlist_path()
+    d = _digest(Path(path).read_bytes())
+    if d not in _allowed_digests(al):
+        al.parent.mkdir(parents=True, exist_ok=True)
+        with open(al, "a", encoding="utf-8") as f:
+            f.write(f"{d} {Path(path).name}\n")
+    return d
 
 
 class ReplayMissingPayload(RuntimeError):
@@ -325,19 +366,30 @@ class Recording:
     evidence_rows: list[dict[str, Any]] = field(default_factory=list)
     version: int = FORMAT_VERSION
 
-    def save(self, path: str | Path) -> Path:
+    def save(self, path: str | Path, allowlist: str | Path | None = None) -> Path:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         body = {k: v for k, v in self.__dict__.items() if k not in ("data_tape", "llm_tape")}
         body["data_tape"] = (self.data_tape.entries, self.data_tape.labels)
         body["llm_tape"] = None if self.llm_tape is None else (self.llm_tape.entries, self.llm_tape.labels)
         p.write_bytes(pickle.dumps(body, protocol=4))
+        allow_recording(p, allowlist)
         return p
 
 
-def load_recording(path: str | Path) -> Recording:
-    """Load a recording written by ``Recording.save`` (only load files you made yourself)."""
-    body = pickle.loads(Path(path).read_bytes())  # noqa: S301 - own recordings only, documented
+def load_recording(path: str | Path, *, allowlist: str | Path | None = None, trust: bool = False) -> Recording:
+    """Load a recording written by ``Recording.save``. The file's SHA-256 must be on the digest
+    allowlist (``replay_allowlist_path``) before anything is unpickled; ``trust=True`` skips
+    that check for a file you have inspected yourself. Raises ``ReplayUntrusted`` otherwise."""
+    data = Path(path).read_bytes()
+    if not trust:
+        al = Path(allowlist) if allowlist is not None else replay_allowlist_path()
+        if _digest(data) not in _allowed_digests(al):
+            raise ReplayUntrusted(
+                f"{path}: SHA-256 {_digest(data)[:16]}... is not on the replay allowlist {al}; unpickling "
+                "runs code from the file, so only recordings saved here (or added with "
+                "allow_recording after checking them) are loaded")
+    body = pickle.loads(data)  # noqa: S301 - digest-allowlisted own recordings only
     if body.get("version") == 1:
         raise ValueError(f"{path}: replay format 1 keys requests by a pickle digest, which v0.17 replaced "
                          "with canonical JSON keys (format 2); a digest cannot be re-keyed, so record the "
