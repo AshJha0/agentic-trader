@@ -50,7 +50,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -133,7 +133,7 @@ class StudyGraph(TradingGraph):
         self.llm_roles = frozenset(cell.llm_roles)
         if cell.neutral_risk_only:
             self.risk_team = [RiskAnalyst(self.llm, self.config, "neutral")]
-        agents = {"bull": [self.bull], "bear": [self.bear], "facilitator": [self.facilitator],
+        agents: dict[str, list[Any]] = {"bull": [self.bull], "bear": [self.bear], "facilitator": [self.facilitator],
                   "trader": [self.trader], "risk": self.risk_team, "pm": [self.pm]}
         for role, members in agents.items():
             if role not in self.llm_roles:
@@ -159,6 +159,14 @@ class RecordingLLM:
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
         self.requests.append((deep, estimate_tokens(system, prompt)))
         return None
+
+
+def _price(model: str) -> tuple[float, float]:
+    """``price_for`` with the unknown-model case made explicit (it used to fail on unpacking None)."""
+    price = price_for(model)
+    if price is None:
+        raise ValueError(f"no price table entry for model {model!r}")
+    return price
 
 
 def design_dates(n: int, start: date = DESIGN_START, end: date = DESIGN_END) -> list[date]:
@@ -190,7 +198,7 @@ def dry_run_table(names: list[str], n_dates: int, seeds: int, config: dict) -> l
         est = ceiling = 0.0
         input_tokens = 0
         for deep, tin in reqs:
-            pin, pout = price_for(models[deep])
+            pin, pout = _price(models[deep])
             input_tokens += tin
             est += (tin * pin + ASSUMED_OUTPUT_TOKENS[deep] * pout) / 1e6
             ceiling += (tin * pin + config["max_tokens"] * pout) / 1e6
@@ -217,7 +225,13 @@ def render(rows: list[dict[str, Any]], config: dict) -> str:
 
 # The reduced first pass (v0.16): 15 core names x 20 design dates x 1 seed = 300 decisions per
 # cell, on three cells. Each model cell is registered in evaluation.TRIALS before it runs.
-FIRST_PASS = {"dates": 20, "seeds": 1, "cells": ("rules", "local_analysts", "local_all")}
+class _FirstPass(TypedDict):
+    dates: int
+    seeds: int
+    cells: tuple[str, ...]
+
+
+FIRST_PASS: _FirstPass = {"dates": 20, "seeds": 1, "cells": ("rules", "local_analysts", "local_all")}
 
 # Prompt and timeout budget for a 7-8B Q4 model on CPU (~5 output tokens/s). A contract reply
 # (analyst JSON, trade proposal) is 100-250 tokens; 384 leaves headroom without letting a
@@ -490,7 +504,7 @@ def _cost_per_decision(rows: list[dict[str, Any]], config: dict) -> float:
     usd = 0.0
     for r in rows:
         for c in r["calls"]:
-            pin, pout = price_for(models[bool(c["deep"])])
+            pin, pout = _price(models[bool(c["deep"])])
             usd += (c["in_tok_est"] * pin + c["out_tok_est"] * pout) / 1e6
     return usd / max(1, len(rows))
 

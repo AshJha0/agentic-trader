@@ -1108,6 +1108,7 @@ agentic-trader xalpha    SYM1,SYM2,... --start D --end D [--horizon N] [--standa
 agentic-trader execute   SYMBOL --target W [--current W] [--date D] [--capital X] [--algo twap|vwap|pov|ac]
                                 [--participation P] [--ac-kappa X] [--spread-bps X] [--impact X] [--seed N] [common]
 agentic-trader stats     returns.csv [--column NAME] [--ppy N] [--trials N] [--trial-sharpes a,b,c]
+                                [--pre-registry-trials N] [--trial-returns trials.csv]
                                 [--var-backtest] [--var-window N] [--var-alpha A]
 agentic-trader tools     [--json] [common]
 agentic-trader serve     [--host H] [--port P] [--approval auto|queued|deny] [--capital X] [--task-db FILE]

@@ -24,6 +24,10 @@ Lane notes in `docs/review/v018_notes/`. Evidence class: code + offline tests; n
   was written after seeing the miss, so no out-of-sample rate is claimed.
 - **Behaviour change, paper OMS:** corporate actions are applied only with
   `--oms-corporate-actions` (default off). Paper engine freeze hash unchanged.
+- **Typing and docs**: the advisory mypy errors in `scripts/llm_study.py` and
+  `agentic_trader/cli/research.py` are fixed (annotations and an explicit unknown-model error in
+  the cost estimate; no other behaviour change). The `stats` flags `--pre-registry-trials` and
+  `--trial-returns` are documented in the README, `docs/api/api.md` and `docs/evaluation/evaluation.md`.
 - **Model-swap guard in `llm_study`**: the served model digest is checked before the first new row
   and every 25 rows; a change raises `ModelSwapped` and keeps rows already written.
 - **Red-team v2 scope** (owner-authorised, 2026-11-09): the 1,500-unit end-to-end run (~19 CPU-days)

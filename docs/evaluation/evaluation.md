@@ -532,6 +532,26 @@ mean Sharpe ratios as the trials:
 The same report is available for any returns series with `agentic-trader stats returns.csv
 --trial-sharpes ...` (cookbook recipe 56).
 
+Two flags make the trial count harder to understate. The deflated Sharpe is only as honest as
+the number of variants it is told about: count too few and the expected maximum of the null
+trials drops, so an ordinary result looks selected-for-skill.
+
+- `--pre-registry-trials N` adds the deflated Sharpe at `--trials + N` beside the
+  registered-count figure. Use it for variants tried before the trials registry existed (rule
+  constants, blends, lookbacks); `evaluation.PRE_REGISTRY_TRIALS_ESTIMATE` is 64. The
+  registered count is a floor, the sum a conservative ceiling.
+- `--trial-returns trials.csv` takes the trials' return series (periods x trials, first
+  column = dates, at least two trial columns) and adds the deflated Sharpe at the effective
+  number of trials: the participation ratio of the eigenvalues of the trial-return
+  correlation matrix. Highly correlated variants count as fewer independent tries, so this
+  figure sits between one trial and the raw count.
+
+```bash
+agentic-trader stats returns.csv --trials 26 --pre-registry-trials 64 --trial-returns trials.csv
+```
+
+Report all three figures; quoting only the most favourable one would defeat the purpose.
+
 ## The extended universe (v0.5): out of sample on every period
 
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*

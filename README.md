@@ -322,6 +322,7 @@ agentic-trader alpha     USDJPY --start 2021-01-04 --end 2024-03-28 --horizon 10
 agentic-trader xalpha    AAPL,MSFT,NVDA,JPM,XOM --start 2021-01-04 --end 2024-03-28
 agentic-trader execute   AAPL --date 2024-03-01 --target 0.6 --current 0.1 --capital 5000000   # --capital defaults to config initial_capital; whole shares (FX: whole lots of the base currency); sized at the as-of close, simulated on the next session
 agentic-trader stats     returns.csv --trials 26
+agentic-trader stats     returns.csv --trials 26 --pre-registry-trials 64 --trial-returns trials.csv   # DSR at the registered, registered + pre-registry, and effective trial counts
 agentic-trader stats     returns.csv --var-backtest                        # Kupiec and Christoffersen coverage tests of a rolling VaR
 agentic-trader evaluate  AAPL,EURUSD --periods q1_2024
 ```

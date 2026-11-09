@@ -171,8 +171,9 @@ def cmd_execute(args) -> int:
     else:
         adv = float(df["Volume"].tail(20).mean()) if df["Volume"].sum() > 0 else None
     account = str(cfg.get("account_currency", "USD")).upper()
-    rate = base_to_account_rate(provider, ins.base, account, as_of) \
-        if ins.is_fx and account not in (ins.base, ins.quote) else None
+    rate = None
+    if ins.is_fx and ins.base is not None and account not in (ins.base, ins.quote):
+        rate = base_to_account_rate(provider, ins.base, account, as_of)
     allow_short = bool(cfg["risk"]["allow_short_fx"] if ins.is_fx else cfg["risk"]["allow_short_equity"])
     dec = FinalDecision(ins.symbol, as_of, Action.BUY if args.target > args.current else Action.SELL,
                         args.target, 0.0, None, None, "")
@@ -213,7 +214,7 @@ def cmd_execute(args) -> int:
     rep = simulate_execution(plan.schedule(bars, participation=args.participation), bars, plan.side,
                              plan.algo, spread, args.impact, daily_vol, adv, requested=plan.quantity)
     print(f"executed {rep.executed:,.0f} of {rep.requested:,.0f} {plan.quantity_unit} ({rep.completion:.0%}) on "
-          f"{pd.Timestamp(day.name).date()}; arrival {rep.arrival:.5g}, avg fill {rep.avg_price:.5g}, "
+          f"{pd.Timestamp(nxt.index[0]).date()}; arrival {rep.arrival:.5g}, avg fill {rep.avg_price:.5g}, "
           f"session VWAP {rep.session_vwap:.5g}, close {rep.close:.5g}")
     line = (f"implementation shortfall {rep.is_bps:+.1f} bps, vs VWAP {rep.vs_vwap_bps:+.1f} bps "
             f"(spread {rep.spread_cost_bps:.1f} bps, impact {rep.impact_cost_bps:.1f} bps")
