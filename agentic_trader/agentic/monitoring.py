@@ -117,7 +117,7 @@ def daily_drift(rows: Iterable[dict[str, Any]], cell: str, control_cell: str | N
         div = sum(_sign(a) != _sign(b) for a, b in pairs) / len(pairs) if pairs else None
         in_base = baseline_signals is None and i < baseline_days
         psi = _psi(base, s) if s and base and not in_base else None
-        st = {"day": d, "decisions": len(rs), "calls": len(calls), "rejection_rate": rej, "signal_mean": mean,
+        st: dict[str, Any] = {"day": d, "decisions": len(rs), "calls": len(calls), "rejection_rate": rej, "signal_mean": mean,
               "signal_std": std, "extreme_share": ext, "divergence_rate": div, "psi": psi}
         stats.append(st)
         for m, lim in th.items():
