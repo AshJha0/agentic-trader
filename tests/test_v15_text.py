@@ -176,8 +176,8 @@ def test_trials_registered():
 
 # ------------------------------------------------------------------ 3.3
 ARTICLES = {"articles": [
-    {"title": "Widget Corp beats estimates - Reuters", "seendate": "20240102T130000Z", "language": "English",
-     "domain": "reuters.com"},
+    {"title": "Widget Corp beats estimates - Example News", "seendate": "20240102T130000Z", "language": "English",
+     "domain": "example-news.com"},
     {"title": "Widget Corp beats estimates - AP", "seendate": "20240102T140000Z", "language": "English",
      "domain": "ap.org"},
     {"title": "Widget Corp übertrifft Schätzungen", "seendate": "20240102T150000Z", "language": "German",
@@ -195,7 +195,7 @@ def test_gdelt_flag_dedupe_language_and_pit():
     urls: list[str] = []
     g = GdeltProvider(fetch=lambda u: (urls.append(u), json.dumps(ARTICLES).encode())[1], min_interval=0)
     items = g.news('"Widget Corp"', datetime(2024, 1, 5, tzinfo=UTC))
-    assert [i.headline for i in items] == ["Widget Corp beats estimates - Reuters", "Widget Corp shares plunge on probe"]
+    assert [i.headline for i in items] == ["Widget Corp beats estimates - Example News", "Widget Corp shares plunge on probe"]
     assert items[0].sentiment > 0 > items[1].sentiment and "untrusted" in items[0].tags
     tone = daily_tone(items)
     assert list(tone) == [date(2024, 1, 2), date(2024, 1, 3)]
