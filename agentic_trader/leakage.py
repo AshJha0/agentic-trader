@@ -1,5 +1,5 @@
-"""Leakage rigour: purged walk-forward cross-validation, a future-leak canary and a
-point-in-time feature table (PLAN.md item 5.8).
+"""Leakage rigour: purged walk-forward folds, a future-leak canary and a point-in-time
+feature table (PLAN.md item 5.8).
 
 Three separate guards, each against a different way the future reaches a backtest.
 
@@ -10,9 +10,15 @@ Three separate guards, each against a different way the future reaches a backtes
    contiguous test folds, trains each fold only on earlier bars whose label ends before the
    fold starts (the purge) and drops the bars just after every earlier test fold (the
    embargo), after Lopez de Prado, *Advances in Financial Machine Learning* (2018), ch. 7.
-   ``ic_purged`` and ``ic_purged_series`` score a signal fold by fold on that split and
-   take the t-statistic from the dispersion of the fold ICs, which are independent by
-   construction, instead of from a pooled ``n`` that over-counts overlapping pairs.
+   The purge and the embargo only matter when something is *fitted* on the training side
+   (IC-weight combination, regime model, conformal calibration). ``ic_blocked_folds`` and
+   ``ic_blocked_folds_series`` (old names ``ic_purged`` / ``ic_purged_series``, kept as
+   aliases) score a *fixed* signal: no training set is used, so for them this is not purged
+   cross-validation but a blocked-fold IC -- contiguous test blocks, a fold-mean IC and a t
+   on ``k - 1`` degrees of freedom (2.776 bar at five folds). That test has little power, so
+   since v0.17 every result also carries a Newey-West (HAC) t on all scored pairs (lag
+   ``max(NW-1994 rule, horizon)``) and the minimum detectable IC at 5% / 80% power; a null
+   then reads "cannot detect |IC| below x", not "no edge".
 
 2. **Code that reads past the as-of date.** ``future_leak_canary`` runs the whole offline
    desk twice, once on the data and once on a copy carrying a large shock from date ``T``,
@@ -39,6 +45,7 @@ import numpy as np
 import pandas as pd
 
 from . import quant
+from .stats import benjamini_hochberg, min_detectable_ic, newey_west_t, rank_ic_newey_west
 from .data.base import MarketDataProvider, NewsItem
 from .instruments import Instrument
 
@@ -191,6 +198,10 @@ class PurgedIC:
     t: float
     n: int
     folds: tuple[float, ...]
+    t_nw: float = float("nan")      # Newey-West HAC t on every scored pair / date (v0.17)
+    nw_lag: int = 0                 # Bartlett lag behind t_nw
+    mde_ic: float = float("nan")    # min detectable |IC|, 5% two-sided, 80% power (HAC se)
+    method: str = "blocked folds, fixed signal (no fit, purge inactive)"
 
     @property
     def k(self) -> int:
@@ -211,7 +222,11 @@ class PurgedIC:
     def as_gate(self) -> dict[str, float | int]:
         """The ``{"IC", "t(IC)", "n", "t_crit"}`` shape ``alpha.significant_alpha_signal``
         reads."""
-        return {"IC": self.ic, "t(IC)": self.t, "n": self.n, "t_crit": self.t_crit}
+        return {"IC": self.ic, "t(IC)": self.t, "n": self.n, "t_crit": self.t_crit,
+                "t_NW": self.t_nw, "MDE_IC": self.mde_ic, "df": self.k - 1 if self.k >= 3 else 0}
+
+
+FoldIC = PurgedIC   # v0.17 name: for a fixed signal nothing is purged
 
 
 def gate_threshold(entry: dict, fallback: float = 2.0) -> float:
@@ -238,22 +253,28 @@ def passes_gate(entry: Any, min_n: int = 30, fallback_tstat: float = 2.0) -> boo
     return abs(float(t)) >= gate_threshold(entry, fallback_tstat) and (n or 0) >= min_n
 
 
-def _summarise(fold_ics: list[float], n: int) -> PurgedIC:
+def _summarise(fold_ics: list[float], n: int, nw: Any = None) -> PurgedIC:
+    extra: dict[str, Any] = {}
+    if nw is not None:
+        extra = {"t_nw": nw.t, "nw_lag": nw.lag,
+                 "mde_ic": min_detectable_ic(nw.n, se=nw.se) if math.isfinite(nw.se) else float("nan")}
     v = np.array([x for x in fold_ics if math.isfinite(x)])
     if v.size == 0:
-        return PurgedIC(float("nan"), float("nan"), n, tuple(fold_ics))
+        return PurgedIC(float("nan"), float("nan"), n, tuple(fold_ics), **extra)
     mean = float(v.mean())
     t = float("nan")
     if v.size >= 3:
         sd = float(v.std(ddof=1))
         t = mean / (sd / math.sqrt(v.size)) if sd > 0 else float("nan")
-    return PurgedIC(mean, t, n, tuple(fold_ics))
+    return PurgedIC(mean, t, n, tuple(fold_ics), **extra)
 
 
-def ic_purged(signal: Any, fwd_returns: Any, horizon: int, n_folds: int = 5,
-              embargo: int | None = None, min_pairs: int = 10) -> PurgedIC:
-    """Spearman IC of one signal series against its ``horizon``-bar forward returns,
-    estimated fold by fold on ``purged_walk_forward``.
+def ic_blocked_folds(signal: Any, fwd_returns: Any, horizon: int, n_folds: int = 5,
+                     embargo: int | None = None, min_pairs: int = 10) -> PurgedIC:
+    """Spearman IC of one fixed signal series against its ``horizon``-bar forward returns,
+    estimated fold by fold on the test blocks of ``purged_walk_forward`` (blocked folds: the
+    training side is unused, so this is not purged CV). ``t_nw`` is the HAC t of the rank IC
+    on every scored pair (``stats.rank_ic_newey_west``), ``mde_ic`` the IC it could detect.
 
     Each fold's IC uses only its ``scored`` positions with finite pairs (NaN for a fold with
     fewer than ``min_pairs``). A fixed signal is fitted on nothing, so the training sets are
@@ -271,19 +292,22 @@ def ic_purged(signal: Any, fwd_returns: Any, horizon: int, n_folds: int = 5,
             raise
         return PurgedIC(float("nan"), float("nan"), 0, ())
     ics, n = [], 0
+    mask = np.zeros(s.size, dtype=bool)
     for fold in folds:
+        mask[fold.scored] = True
         x, y = s[fold.scored], f[fold.scored]
         ok = np.isfinite(x) & np.isfinite(y)
         k = int(ok.sum())
         n += k
         v = quant.spearman(x[ok], y[ok]) if k >= min_pairs else float("nan")
         ics.append(float(v) if math.isfinite(v) else float("nan"))
-    return _summarise(ics, n)
+    return _summarise(ics, n, rank_ic_newey_west(s[mask], f[mask], horizon))
 
 
-def ic_purged_series(daily_ic: pd.Series, horizon: int, n_folds: int = 5,
-                     embargo: int | None = None, min_dates: int = 5) -> PurgedIC:
-    """The cross-sectional counterpart of ``ic_purged``: ``daily_ic`` is a per-date IC
+def ic_blocked_folds_series(daily_ic: pd.Series, horizon: int, n_folds: int = 5,
+                            embargo: int | None = None, min_dates: int = 5) -> PurgedIC:
+    """The cross-sectional counterpart of ``ic_blocked_folds`` (``t_nw``: HAC t of the
+    scored daily ICs): ``daily_ic`` is a per-date IC
     (``xalpha.cross_sectional_ic``) whose date ``i`` scores the ``horizon``-bar return from
     ``i``; each fold's IC is the mean over its ``scored`` dates (NaN with fewer than
     ``min_dates`` finite values), and ``n`` counts the dates used."""
@@ -295,12 +319,92 @@ def ic_purged_series(daily_ic: pd.Series, horizon: int, n_folds: int = 5,
             raise
         return PurgedIC(float("nan"), float("nan"), 0, ())
     ics, n = [], 0
+    mask = np.zeros(v.size, dtype=bool)
     for fold in folds:
+        mask[fold.scored] = True
         x = v[fold.scored]
         x = x[np.isfinite(x)]
         n += int(x.size)
         ics.append(float(x.mean()) if x.size >= min_dates else float("nan"))
-    return _summarise(ics, n)
+    return _summarise(ics, n, newey_west_t(v[mask], horizon=horizon))
+
+
+# Pre-v0.17 names, kept so callers and stored reports keep working.
+ic_purged = ic_blocked_folds
+ic_purged_series = ic_blocked_folds_series
+
+
+# ------------------------------------------------------------------ gate family (v0.17 R1.3)
+# The test families BH runs over, stated once. A family is every test whose verdicts are read
+# together to decide one thing; BH uses the Newey-West p (every scored pair, overlap-aware),
+# while the per-entry nominal gate stays the blocked-fold t against its own t_crit.
+GATE_FAMILIES: dict[str, str] = {
+    "time_series": "alphas x names x horizons of one alpha-report run (alpha.alpha_report over "
+                   "the universe; 9 alphas x 15 names x 3 horizons = 405 tests on the core set)",
+    "cross_sectional": "alphas of one xalpha_report (one universe, one horizon); the gate that "
+                       "builds the significance_gated row (xalpha.significance_gated_scores)",
+}
+
+
+def gate_p_value(entry: dict, use: str = "nw") -> float:
+    """Two-sided p of one gate entry. ``use="fold"`` reads ``t(IC)`` against Student t on
+    ``df`` (k - 1) degrees of freedom; ``use="nw"`` reads ``t_NW`` against the normal. NaN when
+    the statistic is missing or undefined (such entries do not count in BH's ``m``)."""
+    if use == "fold":
+        t, df = entry.get("t(IC)"), entry.get("df")
+        if t is None or t != t or not df or df <= 0:
+            return float("nan")
+        return min(1.0, 2.0 * student_t_sf(abs(float(t)), float(df)))
+    if use == "nw":
+        t = entry.get("t_NW")
+        if t is None or t != t:
+            return float("nan")
+        return math.erfc(abs(float(t)) / math.sqrt(2.0))
+    raise ValueError("use must be 'fold' or 'nw'")
+
+
+def gate_family_bh(entries: dict[Any, dict], q: float = 0.05, use: str = "nw",
+                   min_n: int = 30) -> dict[Any, dict[str, Any]]:
+    """Benjamini-Hochberg over a whole gate family.
+
+    ``entries`` maps a key such as ``(alpha, symbol, horizon)`` to an ``as_gate`` dict. Each
+    entry is judged alone by ``passes_gate`` (``nominal``); the family's p-values
+    (``gate_p_value``) then go through ``stats.benjamini_hochberg`` at ``q`` (``bh``). An entry
+    passes the family gate only when both hold. With 9 alphas x 15 names x 3 horizons = 405
+    tests, about 20 nominal passes are expected at 5% under a global null; BH is what stops
+    one of them being read as a discovery.
+    """
+    keys = list(entries)
+    p = np.array([gate_p_value(entries[k], use) for k in keys], dtype=float)
+    bh = benjamini_hochberg(p, q)
+    out = {}
+    for i, k in enumerate(keys):
+        nominal = passes_gate(entries[k], min_n=min_n)
+        out[k] = {"p": float(p[i]), "nominal": nominal, "bh": bool(bh[i]),
+                  "passes": bool(nominal and bh[i])}
+    return out
+
+
+def format_gate_family(entries: dict[Any, dict], q: float = 0.05, use: str = "nw") -> str:
+    """Markdown gate table: IC, blocked-fold t, HAC t, minimum detectable IC, p, nominal and
+    family (BH) verdicts, with a footer naming the family size so no row is read alone."""
+    res = gate_family_bh(entries, q, use)
+
+    def f(x: Any, d: int = 3) -> str:
+        return "n/a" if x is None or x != x else f"{float(x):.{d}f}"
+    lines = ["| test | IC | t (blocked folds) | t (Newey-West) | min detectable IC | p | nominal | family (BH) |",
+             "|---|---:|---:|---:|---:|---:|---|---|"]
+    for k, e in entries.items():
+        r = res[k]
+        name = " / ".join(map(str, k)) if isinstance(k, tuple) else str(k)
+        lines.append(f"| {name} | {f(e.get('IC'), 4)} | {f(e.get('t(IC)'), 2)} | {f(e.get('t_NW'), 2)} | "
+                     f"{f(e.get('MDE_IC'), 4)} | {f(r['p'], 4)} | {'yes' if r['nominal'] else 'no'} | "
+                     f"{'yes' if r['passes'] else 'no'} |")
+    m = sum(1 for r in res.values() if r["p"] == r["p"])
+    basis = "blocked-fold" if use == "fold" else "Newey-West"
+    lines += ["", f"Family: {len(entries)} tests ({m} with a defined p), BH at q = {q} on the {basis} p; "
+                  f"{sum(r['passes'] for r in res.values())} pass."]
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ future-leak canary
@@ -358,13 +462,13 @@ class ShockedProvider(MarketDataProvider):
     def macro(self, instrument: Instrument, as_of: date) -> dict[str, Any]:
         return self.base.macro(instrument, as_of)
 
-    def carry_series(self, instrument: Instrument, dates: pd.DatetimeIndex) -> np.ndarray:
+    def carry_series(self, instrument: Instrument, dates: pd.Index) -> np.ndarray:
         return self.base.carry_series(instrument, dates)
 
     def as_traded_closes(self, instrument: Instrument, dates: pd.DatetimeIndex) -> np.ndarray | None:
         return self.base.as_traded_closes(instrument, dates)
 
-    def risk_free_series(self, dates: pd.DatetimeIndex) -> np.ndarray:
+    def risk_free_series(self, dates: pd.Index) -> np.ndarray:
         return self.base.risk_free_series(dates)
 
 

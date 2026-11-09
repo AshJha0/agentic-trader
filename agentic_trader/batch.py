@@ -13,6 +13,10 @@ Results live in an append-only JSONL store keyed by ``custom_id`` (a hash of the
 results may arrive in any order and a crashed run resumes without paying again. Note that the
 server-side ``fallbacks`` parameter is rejected on Batches: the request body is built from
 ``AnthropicLLM.build_request`` alone, which never carries it.
+
+NEVER RUN AGAINST THE LIVE API (review 2026-11-09, section d): ``BatchLLM`` and
+``AnthropicBatchBackend`` are tested only against ``FakeBatchBackend``. No funded batch has
+been submitted. Frozen until one is; see the box in ``llm.py``.
 """
 from __future__ import annotations
 

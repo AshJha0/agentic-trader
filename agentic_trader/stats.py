@@ -130,7 +130,9 @@ DEFLATED_SHARPE_CAVEAT = (
 )
 
 
-def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: float = 252.0) -> dict:
+def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: float = 252.0,
+                     n_trials: int | None = None, pre_registry_trials: int = 0,
+                     trial_returns=None) -> dict:
     """Everything a reader needs to judge a chosen variant after a search.
 
     ``trial_sharpes_annual`` are the annualised Sharpe ratios of every variant tried
@@ -141,17 +143,33 @@ def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: flo
     signature of that mismatch). The probabilities in the result are an upper bound
     (``DEFLATED_SHARPE_CAVEAT``, attached as ``"caveat"`` so it travels with the number
     wherever this dict is printed or logged, not only where the docs happen to repeat it).
+
+    ``n_trials`` (v0.16, PLAN 6.1) is the number of trials registered, when some have no
+    Sharpe yet (pending LLM cells): the count used for the expected maximum is the larger of
+    it and ``len(trial_sharpes_annual)``; the dispersion still comes from the measured ones.
+
+    ``pre_registry_trials`` (v0.17, R1.3) is an estimate of the variants tried before the
+    registry existed (rule constants, blends, lookbacks; ``evaluation.PRE_REGISTRY_TRIALS_ESTIMATE``).
+    When positive the result also carries the deflated Sharpe at ``n_trials + pre_registry_trials``
+    beside the registered-count figure; the registered count stays a floor, the sum a
+    conservative ceiling of the search.
+
+    ``trial_returns`` (v0.17 N8), a (periods x trials) matrix of the trials' return series,
+    adds the DSR at the effective number of trials (``deflated_sharpe_effective``).
     """
     s = sharpe_stats(chosen_returns, periods_per_year)
     trials = np.asarray(trial_sharpes_annual, dtype=float) / math.sqrt(periods_per_year)
-    n_trials = int(trials.size)
+    n_measured = int(trials.size)
+    if n_trials is not None and n_trials < 1:
+        raise ValueError("n_trials must be >= 1")
+    n_trials = max(n_measured, n_trials or 0)
     warning = None
-    if n_trials > 1:
+    if n_measured > 1:
         sd_annual = float(np.std(trial_sharpes_annual, ddof=1))
         if s.sharpe_annual > float(np.max(trial_sharpes_annual)) + 3.0 * sd_annual:
             warning = ("chosen Sharpe exceeds the best trial by more than three trial standard deviations: "
                        "the trials are probably not the same statistic as the chosen series")
-    var_trials = float(trials.var(ddof=1)) if n_trials > 1 else 0.0
+    var_trials = float(trials.var(ddof=1)) if n_measured > 1 else 0.0
     sr0 = expected_max_sharpe(n_trials, var_trials)
     lo, hi = sharpe_ci_bootstrap(chosen_returns, periods_per_year)
     return {
@@ -160,11 +178,35 @@ def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: flo
         "skew": round(s.skew, 3), "kurtosis": round(s.kurt, 2),
         "bootstrap_ci_95": (round(lo, 3), round(hi, 3)),
         "psr_vs_zero": round(probabilistic_sharpe(s.sharpe, s.n, s.skew, s.kurt), 3),
-        "trials": n_trials, "expected_max_sharpe_annual": round(sr0 * math.sqrt(periods_per_year), 3),
+        "trials": n_trials, "trials_measured": n_measured, "expected_max_sharpe_annual": round(sr0 * math.sqrt(periods_per_year), 3),
         "deflated_sharpe_prob": round(deflated_sharpe(s.sharpe, s.n, n_trials, var_trials, s.skew, s.kurt), 3),
         "min_track_record_periods": (None if not math.isfinite(m := min_track_record(s.sharpe, sr0, s.skew, s.kurt))
                                      else round(m)),
         "caveat": DEFLATED_SHARPE_CAVEAT if n_trials > 1 else None,
+        **(_pre_registry_rows(s, n_trials, pre_registry_trials, var_trials, periods_per_year)
+           if pre_registry_trials > 0 else {}),
+        **(_effective_rows(s, trial_returns, var_trials) if trial_returns is not None else {}),
+    }
+
+
+def _effective_rows(s: SharpeStats, trial_returns, var_trials: float) -> dict:
+    e = deflated_sharpe_effective(s.sharpe, s.n, trial_returns, var_trials, s.skew, s.kurt)
+    return {"trials_effective": round(e["n_eff"], 2), "trials_mean_corr": round(e["mean_corr"], 3),
+            "deflated_sharpe_prob_effective": round(e["deflated_sharpe_prob"], 3),
+            "effective_trials_method": "participation ratio of trial-return correlation eigenvalues; "
+                                       "trial-Sharpe variance / (1 - mean correlation)"}
+
+
+def _pre_registry_rows(s: SharpeStats, n_trials: int, pre: int, var_trials: float,
+                       periods_per_year: float) -> dict:
+    total = n_trials + int(pre)
+    sr0 = expected_max_sharpe(total, var_trials)
+    return {
+        "trials_pre_registry_estimate": int(pre),
+        "trials_incl_pre_registry": total,
+        "expected_max_sharpe_annual_incl_pre_registry": round(sr0 * math.sqrt(periods_per_year), 3),
+        "deflated_sharpe_prob_incl_pre_registry": round(
+            deflated_sharpe(s.sharpe, s.n, total, var_trials, s.skew, s.kurt), 3),
     }
 
 
@@ -217,7 +259,7 @@ def benjamini_hochberg(p_values, q: float = 0.05) -> np.ndarray:
     if not ok.any():
         return out
     # BH: reject every hypothesis up to the largest k whose own p clears its threshold.
-    largest = int(np.flatnonzero(ok).max())
+    largest = int(np.max(np.flatnonzero(ok)))
     out[order[:largest + 1]] = True
     return out
 
@@ -292,7 +334,7 @@ def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0
     codes = None
     if groups is not None:
         _, codes = np.unique(groups[ok], return_inverse=True)
-        n_groups = int(codes.max()) + 1 if codes.size else 0
+        n_groups = int(np.max(codes)) + 1 if codes.size else 0
     n = int(d.size)
     if n == 0:
         return PairedBootstrap(0, float("nan"), float("nan"), float("nan"), 1.0, 0, "instruments", n_groups)
@@ -307,6 +349,7 @@ def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0
         idx = rng.integers(0, n, size=(n_boot, n))
         means = d[idx].mean(axis=1)
     else:
+        assert codes is not None  # clustered implies groups were given
         means = _two_stage_cluster_means(d, codes, n_groups, n_boot, rng)
     lo, hi = np.quantile(means, [(1 - ci) / 2, 1 - (1 - ci) / 2])
     tail = float(min((means <= 0).mean(), (means >= 0).mean()))
@@ -318,7 +361,7 @@ def _two_stage_cluster_means(d: np.ndarray, codes: np.ndarray, n_groups: int, n_
     """Replicate pooled means: ``n_groups`` groups drawn with replacement, then each drawn
     group's own size of instruments drawn with replacement from inside it."""
     sizes = np.bincount(codes, minlength=n_groups)
-    widest = int(sizes.max())
+    widest = int(np.max(sizes))
     members = np.zeros((n_groups, widest), dtype=int)
     for g in range(n_groups):
         gi = np.flatnonzero(codes == g)
@@ -528,3 +571,153 @@ def paired_sharpe_block_bootstrap(a, b, periods_per_year: float = 252.0, rf=None
         other = np.mean(diffs <= 0.0) if point > 0 else np.mean(diffs >= 0.0)
         p = float(min(1.0, 2.0 * other))
     return SharpeDifference(n, sa, sb, point, float(lo), float(hi), p, blk, n_boot)
+
+
+# ------------------------------------------------- HAC (Newey-West) inference, v0.17 R1.2
+def newey_west_lag(n: int, horizon: int = 1) -> int:
+    """Bartlett-kernel truncation lag: the Newey-West (1994) plug-in rule
+    ``floor(4 * (n / 100) ** (2 / 9))``, raised to ``horizon`` when the series is built from
+    overlapping ``horizon``-bar returns (neighbouring observations then share ``horizon - 1``
+    bars, so the autocovariance is non-zero out to at least that lag). Worked example:
+    n = 1000, horizon 1 -> floor(4 * 10 ** (2/9)) = 6; horizon 10 -> 10."""
+    if n < 1:
+        raise ValueError("n must be >= 1")
+    auto = int(math.floor(4.0 * (n / 100.0) ** (2.0 / 9.0)))
+    return max(auto, int(horizon), 0) if n > 1 else 0
+
+
+@dataclass(frozen=True)
+class NeweyWest:
+    mean: float
+    se: float        # HAC standard error of the mean
+    t: float         # mean / se
+    lag: int         # Bartlett truncation lag used
+    n: int           # finite observations
+    n_eff: float     # n * gamma0 / long-run variance (<= n under positive autocorrelation)
+
+    @property
+    def p_value(self) -> float:
+        """Two-sided normal p-value of ``t`` (HAC t is asymptotically normal)."""
+        return 2.0 * (1.0 - _N.cdf(abs(self.t))) if math.isfinite(self.t) else float("nan")
+
+
+def newey_west_t(x, lag: int | None = None, horizon: int = 1) -> NeweyWest:
+    """t-statistic of the mean of ``x`` with a Newey-West (1987) HAC standard error.
+
+    Plain idea: autocorrelated observations carry less information than their count, so the
+    standard error of the mean must include the autocovariances. Formal: with
+    ``g_j = (1/n) sum_{t>j} (x_t - m)(x_{t-j} - m)`` the long-run variance is
+    ``S = g_0 + 2 sum_{j=1..L} (1 - j / (L + 1)) g_j`` and ``se = sqrt(S / n)``. ``L`` is
+    ``newey_west_lag(n, horizon)`` unless given. NaNs are dropped (the series is read in
+    order; gaps are closed, which slightly overstates dependence across them). Fewer than
+    three finite values, or ``S <= 0``, gives NaN ``t``.
+    """
+    v = np.asarray(x, dtype=float)
+    v = v[np.isfinite(v)]
+    n = int(v.size)
+    if n < 3:
+        return NeweyWest(float(v.mean()) if n else float("nan"), float("nan"), float("nan"), 0, n, float("nan"))
+    L = newey_west_lag(n, horizon) if lag is None else int(lag)
+    L = min(max(L, 0), n - 1)
+    m = float(v.mean())
+    d = v - m
+    g0 = float(d @ d) / n
+    s = g0
+    for j in range(1, L + 1):
+        s += 2.0 * (1.0 - j / (L + 1.0)) * float(d[j:] @ d[:-j]) / n
+    if s <= 0 or g0 <= 0:
+        return NeweyWest(m, float("nan"), float("nan"), L, n, float("nan"))
+    se = math.sqrt(s / n)
+    return NeweyWest(m, se, m / se, L, n, min(float(n), n * g0 / s))
+
+
+def _ranks(a: np.ndarray) -> np.ndarray:
+    order = np.argsort(a, kind="mergesort")
+    r = np.empty(a.size, dtype=float)
+    r[order] = np.arange(a.size, dtype=float)
+    # average ties
+    sa = a[order]
+    i = 0
+    while i < sa.size:
+        j = i
+        while j + 1 < sa.size and sa[j + 1] == sa[i]:
+            j += 1
+        if j > i:
+            r[order[i:j + 1]] = (i + j) / 2.0
+        i = j + 1
+    return r
+
+
+def rank_ic_newey_west(signal, fwd_returns, horizon: int = 1, lag: int | None = None) -> NeweyWest:
+    """HAC t for a time-series rank IC. Both series are ranked (ties averaged) and
+    standardised over the finite pairs; the mean of the products ``z_s * z_f`` is the
+    Spearman IC (up to the ``n / (n - 1)`` factor), so ``newey_west_t`` on the product series
+    is a HAC test of IC = 0 that uses every pair while allowing for overlap."""
+    s, f = np.asarray(signal, float), np.asarray(fwd_returns, float)
+    ok = np.isfinite(s) & np.isfinite(f)
+    s, f = s[ok], f[ok]
+    if s.size < 3:
+        return newey_west_t(np.array([]), lag, horizon)
+    rs, rf = _ranks(s), _ranks(f)
+    if rs.std() == 0 or rf.std() == 0:
+        return NeweyWest(float("nan"), float("nan"), float("nan"), 0, int(s.size), float("nan"))
+    zs = (rs - rs.mean()) / rs.std()
+    zf = (rf - rf.mean()) / rf.std()
+    return newey_west_t(zs * zf, lag, horizon)
+
+
+def min_detectable_ic(n: float, alpha: float = 0.05, power: float = 0.8, se: float | None = None) -> float:
+    """Smallest |IC| a two-sided test at ``alpha`` detects with probability ``power``.
+
+    With a standard error (``se``, e.g. ``NeweyWest.se``) it is ``(z_{1-alpha/2} + z_power) * se``.
+    Without one it assumes independent pairs and uses Fisher's z:
+    ``tanh((z_{1-alpha/2} + z_power) / sqrt(n - 3))``. Worked example: n = 1000 independent
+    pairs, 5%, 80% power -> tanh(2.8016 / 31.56) = 0.0886. A null result in a table with this
+    line reads "cannot detect |IC| below x", not "no edge"."""
+    if not (0 < alpha < 1 and 0 < power < 1):
+        raise ValueError("alpha and power must lie in (0, 1)")
+    k = _N.inv_cdf(1 - alpha / 2) + _N.inv_cdf(power)
+    if se is not None:
+        return k * se if math.isfinite(se) else float("nan")
+    if not math.isfinite(n) or n <= 3:
+        return float("nan")
+    return math.tanh(k / math.sqrt(n - 3))
+
+
+# ------------------------------------------- effective number of trials (v0.17 N8)
+def effective_trials(trial_returns) -> tuple[float, float]:
+    """Effective number of independent trials from a (periods x trials) return matrix.
+
+    Method: eigenvalues ``l_i`` of the trials' correlation matrix; ``N_eff`` is the
+    participation ratio ``(sum l_i)^2 / sum l_i^2`` (N for uncorrelated trials, 1 when all
+    are the same series). Also returned: the mean off-diagonal correlation ``rho``. One-rule
+    ablations are highly correlated, so the dispersion of their Sharpe ratios understates the
+    dispersion of independent strategies by about a factor ``1 - rho``;
+    ``deflated_sharpe_effective`` therefore uses ``N_eff`` trials with the trial-Sharpe
+    variance divided by ``1 - rho``. Rows with any NaN and constant columns are dropped."""
+    x = np.asarray(trial_returns, dtype=float)
+    if x.ndim != 2:
+        raise ValueError("trial_returns must be 2-D (periods x trials)")
+    x = x[np.all(np.isfinite(x), axis=1)]
+    if x.shape[0] >= 2:
+        x = x[:, x.std(axis=0) > 0]
+    k = x.shape[1]
+    if k < 2 or x.shape[0] < 3:
+        return float(k), 0.0
+    c = np.corrcoef(x, rowvar=False)
+    ev = np.clip(np.linalg.eigvalsh(c), 0.0, None)
+    n_eff = float(ev.sum() ** 2 / (ev ** 2).sum())
+    rho = float((c.sum() - k) / (k * (k - 1)))
+    return n_eff, rho
+
+
+def deflated_sharpe_effective(sr: float, n: int, trial_returns, var_trials_sr: float,
+                              skew: float = 0.0, kurt: float = 3.0) -> dict:
+    """DSR at the effective number of trials with the correlation-corrected trial-Sharpe
+    variance (``effective_trials``). Sharpe ratios per period. Returns ``n_eff``,
+    ``mean_corr``, ``var_trials_corrected`` and ``deflated_sharpe_prob``."""
+    n_eff, rho = effective_trials(trial_returns)
+    var_c = var_trials_sr / max(1.0 - rho, 1e-6) if rho > 0 else var_trials_sr
+    m = max(1, int(round(n_eff)))
+    return {"n_eff": n_eff, "mean_corr": rho, "var_trials_corrected": var_c,
+            "deflated_sharpe_prob": deflated_sharpe(sr, n, m, var_c, skew, kurt)}

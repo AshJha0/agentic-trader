@@ -57,7 +57,9 @@ def split_markdown(doc_id: str, text: str) -> list[Chunk]:
     """One chunk per heading section (the title line is kept with the intro)."""
     lines = text.splitlines()
     title = next((l.lstrip("# ").strip() for l in lines if l.startswith("# ")), doc_id)
-    chunks, heading, buf = [], "Introduction", []
+    chunks: list[Chunk] = []
+    buf: list[str] = []
+    heading = "Introduction"
 
     def flush():
         body = "\n".join(buf).strip()

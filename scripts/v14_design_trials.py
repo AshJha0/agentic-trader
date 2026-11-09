@@ -44,11 +44,15 @@ from agentic_trader.backtest import AGENT  # noqa: E402
 from agentic_trader.combine import desk_forecast  # noqa: E402
 from agentic_trader.config import make_config  # noqa: E402
 from agentic_trader.data import get_provider  # noqa: E402
-from agentic_trader.evaluation import PERIODS, TRIALS, UNIVERSES, evaluate, trial_slug  # noqa: E402
+from agentic_trader.evaluation import (CONFORMAL_V17_TRIAL, PERIODS, TRIALS, UNIVERSES,  # noqa: E402
+                                      evaluate, trial_slug)
 from agentic_trader.instruments import Instrument  # noqa: E402
 
 CONTROL = "B&H vol-target"
 V14 = [t for t in TRIALS if t.version == "v0.14"]
+# v0.17 (review N7): the conformal trial re-run with the v17 calibration design, registered
+# separately. Run into a fresh --out directory (outputs that exist are skipped).
+V14 += [t for t in TRIALS if t.name == CONFORMAL_V17_TRIAL]
 
 
 def _jsonable(x):

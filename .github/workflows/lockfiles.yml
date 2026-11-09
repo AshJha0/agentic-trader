@@ -1,0 +1,33 @@
+name: Lockfiles
+
+# Generates requirements/lock-py3.XX.txt (hashed, one per supported Python) with
+# scripts/gen_lockfiles.sh and uploads them as an artifact for the maintainer to review and
+# commit. Manual only: a lock changes when someone decides it should, never on a schedule.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      # uv pinned by version; its own install is the one unhashed step, isolated in this
+      # read-only job that only produces an artifact for human review.
+      - name: Install uv
+        run: python -m pip install uv==0.13.6
+      - name: Compile hashed locks
+        run: sh scripts/gen_lockfiles.sh 3.10 3.11 3.12 3.13 3.14
+      - name: Each lock installs with --require-hashes (dry run)
+        run: python -m pip install --dry-run --require-hashes --no-deps -r requirements/lock-py3.12.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: hashed-locks
+          path: requirements/
+          retention-days: 30

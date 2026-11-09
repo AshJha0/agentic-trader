@@ -58,9 +58,10 @@ def test_injected_headline_is_fenced_and_bounded():
     inside = news_prompt.split("<untrusted_data")[1].split("</untrusted_data>")[0]
     assert "SYSTEM OVERRIDE" in inside and news_prompt.count("</untrusted_data>") == 1
     assert run.state is TaskState.COMPLETED
-    # The model asked for 5.0: clipped to the valid range, then bounded by the VaR cap.
+    # The model asked for 5.0: out of the schema range, so the reply is rejected (v0.17 R0.4,
+    # no longer clipped) and the PM falls back to its rules; the VaR cap still bounds the result.
     assert abs(run.decision.target_weight) <= CFG["risk"]["max_position"]
-    assert run.decision.target_weight < 5.0 and run.decision.source == "llm"
+    assert run.decision.target_weight < 5.0 and run.decision.source == "rules"
     # the critic sees the model's news view diverge from the lexicon's and lowers confidence
     assert not next(c for c in run.critic.checks if c.name == "model_rule_divergence").passed
     assert run.critic.multiplier < 1.0

@@ -84,7 +84,7 @@ def test_request_shape_puts_the_schema_in_format(server: str) -> None:
     assert body["model"] == MODEL and body["stream"] is False
     assert body["format"] == contracts.ANALYST
     assert body["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "prompt"}]
-    assert body["options"] == {"temperature": 0.0, "num_predict": 512, "seed": 3}
+    assert body["options"] == {"temperature": 0.0, "num_predict": 512, "seed": 3, "num_ctx": 8192}
     llm.complete("sys", "plain", deep=False)
     assert "format" not in FakeOllama.requests[-1]["body"]
 
@@ -94,7 +94,10 @@ def test_evidence_and_usage(server: str) -> None:
     FakeOllama.replies = [_reply("  hello  ", model=MODEL, done_reason="length")]
     assert llm.complete("s", "p", deep=True) == "hello"
     assert llm.last_call == {"model_configured": MODEL, "model_served": MODEL, "stop_reason": "length",
-                             "refusal_category": None, "fallbacks": [], "model_drift": False}
+                             "refusal_category": None, "fallbacks": [], "model_drift": False,
+                             "prompt_eval_count": 120, "eval_count": 30, "prompt_tok_est": 0,
+                             "num_ctx": 8192, "truncated": True,
+                             "llm_host": "127.0.0.1", "remote_llm_allowed": False}
     s = llm_usage(llm)
     assert s["calls"] == 1 and s["errors"] == 0 and s["cost_usd"] == 0.0 and s["unpriced_models"] == []
     assert s["by_model"][MODEL]["input_tokens"] == 120 and s["by_model"][MODEL]["output_tokens"] == 30
@@ -190,7 +193,7 @@ def test_dry_run_table_is_deterministic() -> None:
     assert a == b
     per = {r["cell"]: r["calls_per_decision"] for r in a}
     assert per == {"rules": 0, "local_all": 14, "local_text": 4, "local_pm": 1, "local_analysts": 4, "no_debate": 9,
-                   "debate_1": 12, "neutral_risk": 12}
+                   "debate_1": 12, "neutral_risk": 12, "critic_on": 14}
     for r in a:
         assert r["decisions"] == 12 and r["calls"] == r["calls_per_decision"] * 12
         assert (r["est_usd"] > 0) == (r["calls"] > 0) and r["ceiling_usd"] >= r["est_usd"]
@@ -200,7 +203,7 @@ def test_dry_run_table_is_deterministic() -> None:
 def test_cells_are_described_and_live_refuses_without_server(capsys: pytest.CaptureFixture[str]) -> None:
     study = _study()
     names = [c.name for c in study.CELLS]
-    assert len(names) == len(set(names)) == 8
+    assert len(names) == len(set(names)) == 9
     assert all(c["trial_name"].startswith("P2 ") for c in (cell.describe() for cell in study.CELLS))
     assert study.design_dates(40)[0].isoformat() == "2016-01-01" and len(study.design_dates(40)) == 40
     assert study.main(["--live", "--model", MODEL, "--url", "http://127.0.0.1:9"]) == 2

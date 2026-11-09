@@ -29,6 +29,7 @@ factory (so the optional dependency is imported lazily).
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -295,8 +296,10 @@ def serve_options(host: str, config: dict, ssl_certfile: str | None = None, ssl_
     """Validate the deployment posture and return uvicorn keyword arguments.
 
     * TLS needs both a certificate and a key (``ssl_certfile`` / ``ssl_keyfile``).
-    * Binding a non-loopback interface with the shipped development API keys is
-      refused unless ``allow_dev_keys`` is set explicitly.
+    * The shipped development API keys are refused on every interface, loopback
+      included, unless ``allow_dev_keys`` is set explicitly (review N11: on a shared
+      machine any local process could otherwise act as analyst or approver). Tests build
+      the app with ``create_app`` and never pass through here.
     * Binding a non-loopback interface without TLS logs a warning: put a TLS
       terminator in front of it or pass a certificate.
     """
@@ -307,10 +310,12 @@ def serve_options(host: str, config: dict, ssl_certfile: str | None = None, ssl_
             raise ValueError(f"TLS file not found: {f}")
     loopback = host in LOOPBACK_HOSTS
     keys = config.get("agentic", {}).get("api_keys", {})
-    if not loopback and uses_dev_keys(keys) and not allow_dev_keys:
+    if uses_dev_keys(keys) and not allow_dev_keys:
         raise ValueError(f"refusing to bind {host} with the shipped development API keys; set "
-                         "config['agentic']['api_keys'] to real keys (or pass allow_dev_keys=True "
-                         "for a throwaway test)")
+                         "config['agentic']['api_keys'] to real keys (or pass allow_dev_keys=True / "
+                         "--allow-dev-keys for a throwaway test)")
+    if uses_dev_keys(keys):
+        log.warning("serving with the shipped development API keys (allow_dev_keys is set)")
     if not loopback and ssl_certfile is None:
         log.warning("serving plain HTTP on %s: API keys travel in clear text. Put a TLS terminator "
                     "in front of it or pass ssl_certfile / ssl_keyfile", host)
@@ -321,6 +326,42 @@ def serve_options(host: str, config: dict, ssl_certfile: str | None = None, ssl_
 
 
 CONFIG_ENV = "AGENTIC_TRADER_APP_CONFIG"
+SECRETS_ENV = "AGENTIC_TRADER_APP_SECRETS"
+REDACTED = "<redacted>"
+# Config keys whose values are secrets. ``api_keys`` maps secret -> role, so the whole
+# mapping is a secret; the others hold the secret as the value.
+_SECRET_KEY_RE = re.compile(r"(^|_)(api_keys?|secret|token|password|passphrase)$", re.I)
+
+
+def split_secrets(config: Any) -> "tuple[Any, dict[str, Any]]":
+    """``(redacted copy, secrets)``: every value under a secret-looking key (``api_keys``,
+    ``*_secret``, ``*_token``, ``*password``) is replaced by ``REDACTED`` in the copy and
+    kept in ``secrets`` under its dotted path. ``merge_secrets`` reverses it."""
+    secrets: dict[str, Any] = {}
+
+    def walk(node: Any, path: str) -> Any:
+        if isinstance(node, dict):
+            out = {}
+            for k, v in node.items():
+                p = f"{path}.{k}" if path else str(k)
+                if isinstance(k, str) and _SECRET_KEY_RE.search(k) and v not in (None, "", {}):
+                    secrets[p] = v
+                    out[k] = REDACTED
+                else:
+                    out[k] = walk(v, p)
+            return out
+        return node
+    return walk(config, ""), secrets
+
+
+def merge_secrets(config: dict, secrets: dict[str, Any]) -> dict:
+    for path, v in secrets.items():
+        node = config
+        *parents, leaf = path.split(".")
+        for k in parents:
+            node = node.setdefault(k, {})
+        node[leaf] = v
+    return config
 
 
 def validate_app_config(config: dict, workers: "int | None" = None, queue_limit: "int | None" = None) -> None:
@@ -364,11 +405,16 @@ def multiprocess_options(processes: int, config: dict) -> dict[str, Any]:
 
 
 def app_factory():
-    """uvicorn entry point for multi-process serving: the config travels as a JSON file."""
+    """uvicorn entry point for multi-process serving: the config travels as a JSON file with
+    its secrets redacted, and the secrets travel in the process environment (inherited by
+    the worker processes, never written to disk)."""
     from ..config import make_config
     from pathlib import Path
     path = os.environ.get(CONFIG_ENV)
-    cfg = make_config(json.loads(Path(path).read_text(encoding="utf-8")) if path else None)
+    raw = json.loads(Path(path).read_text(encoding="utf-8")) if path else None
+    if raw is not None and os.environ.get(SECRETS_ENV):
+        raw = merge_secrets(raw, json.loads(os.environ[SECRETS_ENV]))
+    cfg = make_config(raw)
     return create_app(config=cfg)
 
 
@@ -395,14 +441,17 @@ def serve(host: str = "127.0.0.1", port: int = 8000, config: dict | None = None,
     if swept:
         log.warning("%d task(s) were in flight when the previous service stopped; marked FAILED", swept)
     cfg = make_config(cfg, agentic={"sweep_interrupted": False})
+    redacted, secrets = split_secrets(cfg)
     fd, path = tempfile.mkstemp(prefix="agentic-trader-", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, default=str)
+        json.dump(redacted, f, default=str)   # no API key or other secret reaches the disk
     os.environ[CONFIG_ENV] = path
+    os.environ[SECRETS_ENV] = json.dumps(secrets, default=str)
     try:
         uvicorn.run("agentic_trader.agentic.api:app_factory", factory=True, host=host, port=port, **opts)
     finally:
         os.environ.pop(CONFIG_ENV, None)
+        os.environ.pop(SECRETS_ENV, None)
         try:
             os.unlink(path)
         except OSError:

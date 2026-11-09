@@ -471,7 +471,7 @@ cap of 0, which freezes ticketing) and `execution.allow_external_plans` (`False`
 rolling restart, since the sweep is lease-only), `agentic.lease_s` (90; must be `>= 1`,
 refused by the harness and by `validate_app_config` otherwise). Keys added in v0.14:
 `risk.max_book_var_95` (now `0.05` by default, was `None`; a loose, untuned budget; `None` turns it off; only `scan` builds a book),
-`risk.book_var_method` (`ewma` default | `fhs` | `historical`)\| `ewma` \| `historical`) and `risk.max_short_notional` (`None`). `static_macro_max_age_days`
+`risk.book_var_method` (`ewma` default, `config.DEFAULT_VAR_METHOD`, also the default of `risk_model.var_forecast` and `var_next`; or `fhs` or `historical`) and `risk.max_short_notional` (`None`). `static_macro_max_age_days`
 no longer exists: the static table is never a fallback.
 
 `Instrument(symbol, asset_class, base=None, quote=None)`: `is_fx`, `pip_size`,

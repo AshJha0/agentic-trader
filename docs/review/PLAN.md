@@ -84,12 +84,12 @@ Effort = wall-clock solo days. Spend = $0 throughout. Order: **P1 → P5 → P2 
 |---|---|---|
 | 3.1 | EDGAR full text, point-in-time by acceptance time: 10-K/10-Q Items 1A and 7, 8-K Items 2.02/7.01/8.01; cached by accession; chunked by section; **every filing section is untrusted text** (fence). | provider tests **Status: done v0.15 (offline provider tests)** |
 | 3.2 | Rules-based filing-tone-change feature (lexicon diff between consecutive filings) into the alpha library and the feature table; measured by IC/decay like every alpha. | trial **Status: built v0.15; trial registered, NOT run** |
-| 3.3 | GDELT headline provider behind a flag (dedupe, language filter), scored by the rules lexicon; measured as a trial. | trial **Status: built v0.15; trial registered, NOT run; deferred 2026-11-08 (GDELT throttles this machine; script on main)** |
+| 3.3 | GDELT headline provider behind a flag (dedupe, language filter), scored by the rules lexicon; measured as a trial. | trial **Status: DROPPED (owner, 2026-11-09)**: low expected value (the filing-tone lexicon was not supported; daily headline sentiment on large caps is crowded) and the source throttles this connection. Script and registered trial kept, not run. |
 | 3.4 | RAG corpus: EDGAR sections + central-bank statements (FOMC/ECB/BoE/BoJ, dated by release time) with metadata {symbol, accession, visible_date, section}; point-in-time filter at query time. | tests **Status: done v0.15** |
-| 3.5 | Hybrid retrieval: hashed TF-IDF default; optional local embeddings `[rag]`; reciprocal-rank fusion. | tests **Status: done v0.15 (embeddings path untested; `sentence-transformers` not in lock)** |
+| 3.5 | Hybrid retrieval: hashed TF-IDF default; optional local embeddings `[rag]`; reciprocal-rank fusion. | tests **Status: done v0.15; embeddings path tested v0.16 through the `ResearchCorpus(embedder=...)` seam with a deterministic fake embedder (`tests/test_v16_quality2.py`); the real `sentence-transformers` model stays unrun (not in lock)** |
 | 3.6 | Citations end to end: passages as `document` blocks with `citations: enabled`; evidence-id audit requires every quoted span to map to a passage id. | audit test **Status: done v0.15** |
 | 3.7 | Retrieval evaluation: 100 hand-labelled questions with gold accessions; recall@5 and MRR, TF-IDF vs hybrid; **gate: recall@5 ≥ 0.8 before analysts use it**. | table **Status: done v0.15: 100 questions, 34-passage invented corpus; tfidf recall@5 0.990 MRR 0.954, hybrid 0.990/0.961; gate passes; real filings untested** |
-| 3.8 | LLM text analysts (fundamentals-text with cited claims, macro-text hawkish/dovish shift) and LLM tone extraction: built against fixtures and runnable on the local model as P2 cells; Claude variants dry-run only. | fixtures + local run **Status: built v0.15; local run done (11/12 and 10/10 usable); wired into the desk v0.15.1 (graph and harness, `text_analysts`, off by default, cut-off 20:00 UTC, retrieval only through the 0.8 gate)** |
+| 3.8 | LLM text analysts (fundamentals-text with cited claims, macro-text hawkish/dovish shift) and LLM tone extraction: built against fixtures and runnable on the local model as P2 cells; Claude variants dry-run only. | fixtures + local run **Status: built v0.15; local run done (11/12 and 10/10 usable; de-anonymised run, review N2); wired into the desk v0.15.1 (graph and harness, `text_analysts`, off by default, cut-off 20:00 UTC, retrieval only through the 0.8 gate)** |
 | 3.9 | Policy-runbook RAG kept; trial measuring whether removing it changes any decision. | trial **Status: done v0.15: 0/9 decisions changed without runbook RAG (synthetic, rules path); kept** |
 
 ### P4 Agentic layer and operations (~13 d)
@@ -112,12 +112,133 @@ Effort = wall-clock solo days. Spend = $0 throughout. Order: **P1 → P5 → P2 
 
 | # | Item |
 |---|---|
-| 6.1 | Every cell a trial; deflated Sharpe over all trials incl. LLM cells; cost-equivalent per decision in tables. |
-| 6.2 | New page "What the model adds" (P2/P3 results, calibration, red-team, retrieval tables, refusal-bias); `ai.md`, LEARN, COOKBOOK, DIAGRAMS updated; a "ready but unrun" box on every Claude cell. **Status: skeleton v0.16: `docs/evaluation/what_the_model_adds.md` (existing results with evidence class; P2 and 4.2 pending); ai.md, LEARN and DIAGRAMS not yet updated** |
+| 6.1 | Every cell a trial; deflated Sharpe over all trials incl. LLM cells; cost-equivalent per decision in tables. **Status: done v0.16 (library and docs): all 7 P2 cells registered (77 trials); `registered_trial_count` + `selection_report(n_trials=)`; per-cell table in `what_the_model_adds.md` with every value pending until the P2 records exist** |
+| 6.2 | New page "What the model adds" (P2/P3 results, calibration, red-team, retrieval tables, refusal-bias); `ai.md`, LEARN, COOKBOOK, DIAGRAMS updated; a "ready but unrun" box on every Claude cell. **Status: skeleton v0.16: `docs/evaluation/what_the_model_adds.md` (existing results with evidence class; P2 and 4.2 pending); ai.md, LEARN (concept 57), DIAGRAMS (diagram 40) and INDEX link it and live_readiness.md (round 2); P2 rows pending** |
 | 6.3 | **Live-readiness statement**: per component what exists / is simulated / is absent (broker, entitlements, custodian reconciliation, tax lots, margin, surveillance); no production claim. **Status: done v0.16: `docs/evaluation/live_readiness.md`, every row sourced to a file and a test** |
 | 6.4 | **KPI table** from `agent_sources`, `rule_signal`, memory join: hit rate vs control, Brier and calibration curve, model-delta book, cost per decision; Sharpe as one row. **Status: done v0.16: `agentic_trader/kpi.py` + `agentic-trader kpi`, fixture-tested (`tests/test_v16_kpi.py`); awaits the P2 records** |
 | 6.5 | README first paragraph restated for positioning A; single-name desk named as the incumbent control; forward record linked with its decision date. **Status: done v0.16 (decision look at 3,600 sessions, about 14 years from 2026-09-29)** |
 | 6.6 | Tags: v0.13 (P1), v0.14 (P5), v0.15 (P2+P3), v0.16 (P4). One batch PR per phase. |
+
+### v0.17 Second review (2026-11-09): every finding and its status
+
+Source: `docs/review/2026-11-09_review_and_plan.md` (first review: Appendix A AI, Appendix B
+quant; second review: section 5, Appendices C and D). Lane notes: `docs/review/v017_notes/`.
+Branch `feat/v0.17`. Status words: **done** (code and tests merged), **partial** (part done,
+the rest named), **queued-run** (code done; the model or network run that produces the number
+is queued, see the run queue below), **not-done** (with the reason). Commits: L1 `8e41860`, L2
+`1d353ea`, L3 `2c7fdfb`, L4 `431bb52`, L5 `fd681be`, L6 `398b2b3`, L7 `bfdb5e5`, L8 `48534af`,
+L10 `6921ce4`, L11 `4a19931`, B8 and critic_on wiring `fc37b75`, L9b (docs fold, headline
+scrub, v17 conformal trial) on this branch. Lane L9a (engine hooks, paper OMS hooks, the
+flaky test) is in progress in parallel; rows that depend on it say so.
+
+**Owner decisions recorded.** 3.3 GDELT dropped (2026-11-09). The `postcutoff_ta` cell is
+approved (2026-11-09), knowing it spends holdout and reserve dates (2025-07 to 2026-10) for the
+LLM leakage question only. Tag plan: v0.16.0 on its own CHANGELOG section first, then v0.17.0.
+D5 decision: "Rule-variant research on the single-name desk has stopped (v0.17); the desk is
+kept only as control #3 for the agentic and multi-asset results."
+
+First review, AI layer (Appendix A):
+
+| id | status | commit / reason |
+|---|---|---|
+| A1 seeds are replays | done | 8e41860: refuse `--seeds > 1` at temperature 0, per-seed scoring, shared-block bootstrap |
+| A2 critic changes no position | done | 431bb52 (rule, harness, graph flag), fc37b75 (`critic_on` cell); the cell's run is queued with P2 |
+| A3 clipping instead of rejection | done | 8e41860: schema bounds, reject whole reply, counted as contract failure |
+| A4 red team uses another endpoint | queued-run | 431bb52: json mode through `complete_json` and the contract; run queued |
+| A5 ASCII-only fence | done | 431bb52: NFKC, invisible-character strip, look-alike regex, 10 variants tested |
+| A6 HMAC "signatures" | partial | bfdb5e5: Ed25519 library and gateway; not selectable from config (`signed_gateway_from_config` builds HMAC only) |
+| A7 pickle replay keys | partial | 431bb52: canonical JSON keys, FORMAT_VERSION 2; payloads still pickled (no digest allowlist) |
+| A8 stale docstrings | done | 431bb52 |
+| B1 eval set not anonymised | queued-run | 8e41860: items re-frozen anonymised; eval run into `results/v17_eval/` queued |
+| B2 judge calibration measures nothing | queued-run | 398b2b3: cross-family judge, labelling kit; needs the eval run, the llama pull and owner labels |
+| B3 red team without control arm | queued-run | 431bb52: `redteam_v2`; run queued at reduced scope (full run 7.5-15 CPU-days) |
+| B4 horizon mismatch | done | 8e41860 + 6921ce4: horizon IC and hit rate primary; legacy rows labelled (N6) |
+| B5 retrieval set self-fulfilling | partial | 398b2b3: v2 fixture set (tfidf 0.740, hybrid 0.820); real-EDGAR v2 needs the local cache; gate not switched (maintainer decision open) |
+| B6 contamination guard unrun | queued-run | 6921ce4 (recall v2), 2c7fdfb (holdout requires a pass); `recall2` run queued |
+| B7 planner metric is a validator metric | partial | bfdb5e5: quality vs canonical (F1 0.486, order 0.978); decision equality needs desk runs per plan |
+| B8 percentile-tail p | done | bfdb5e5 + fc37b75: null-centred p in `llm_study` |
+| C1 eval regression gate | done | 398b2b3; baseline re-recorded at the merge (L9b) |
+| C2 model-changed attribution | queued-run | 2c7fdfb: `kpi.model_changed_attribution`; numbers when P2 rows exist |
+| C3 output-side guard | partial | bfdb5e5: on `MemoryTool.remember`; the graph's own `memory.record` and the reporter are not covered |
+| C4 online drift monitoring | partial | bfdb5e5: `daily_drift` and alerts; not wired into a daily job; numbers when P2 rows exist |
+| C5 confidence never scored | queued-run | bfdb5e5: `confidence_calibration`; numbers when P2 rows exist |
+| C6 memory-channel attack test | done | bfdb5e5: 20 poisoned lessons, 19/20 refused, fence holds with the guard off (stub model) |
+| C7 embeddings path untested | done | round 2 (feat/v0.16-round2): tested through a fake-embedder seam; the 0.98 hybrid number stays a one-off real run |
+| (d) Claude-only machinery | done | bfdb5e5: "never run against the live API" boxes in `llm.py`, `batch.py` |
+| (d) N-of-M HMAC approvals | partial | kept as a demonstration (OD-C); Ed25519 added (A6) |
+| (d) tool search | done | bfdb5e5: measured 58-75% token saving on 16 tools; kept, opt-in |
+| (d) OTel and golden transcripts | done | bfdb5e5: marked scaffold; per-call averages from committed meta only |
+| (d) two fence copies | done | 431bb52: one source in `state.py` |
+
+First review, quant, code and ops (Appendix B):
+
+| id | status | commit / reason |
+|---|---|---|
+| A1 same-bar execution | done | 1d353ea: `exec_lag`, `fill="next_open"`, both engines; C++ parity first checked in CI |
+| A2 two VaR defaults | done | 8e41860 |
+| A3 calendar gaps | done | fd681be: `nyse_calendar.py` |
+| A4 quadratic replay | not-done | needs a resumable engine state exported by both backends (C++ API change, no local compiler) |
+| A5 financing on leverage | partial | 48534af: `financing.py` post-hoc; in-loop field in both engines is L9a |
+| A6 `var_next` drops NaNs | done | 48534af |
+| B1 purged CV is a relabel, low power | done | 2c7fdfb: NW t, MDE, `ic_blocked_folds`; table refresh needs Yahoo (queued) |
+| B2 no fill-lag sensitivity | queued-run | 1d353ea: `scripts/v17_exec_lag.py`; Yahoo run queued |
+| B3 DSR ignores pre-registry trials | partial | 2c7fdfb: estimate 64 and `selection_report(pre_registry_trials=)`; render scripts not wired |
+| B4 vintage is a hash | done | fd681be: raw bars and actions stored per session locally (replaced by N2q: not published) |
+| B5 fetch before the bar is final | partial | fd681be: finality assert and same-day revision alert; cron left at 21:30 UTC until revisions show on live runs |
+| B6 forward record cannot decide | done | 48534af: decision date 2040-12-19 at d = 0.2 in live_readiness.md |
+| B7 gate multiplicity | done | 2c7fdfb: BH over gate families |
+| B8 survivorship | done | 48534af: bound measured on holdout B&H rows; design-period equivalent needs SPY (queued) |
+| C1 execution realism | partial | 48534af: stop slippage, participation cap, spread estimators (daily OHLC cannot resolve 1-5 bp); engine hooks are L9a; `v17_costs.py calibrate` queued |
+| C2 OMS book limits | done | fd681be |
+| C3 corporate actions in the paper OMS | partial | 48534af: `corporate_actions.py`; hook into `paper_session` is L9a |
+| C4 GJR, ES backtest, book coverage in CI | done | 48534af: `garch.py`, CI test on a fixed synthetic book; GJR on the design names later |
+| C5 TCA loop | partial | 48534af: `tca.py`; rows in `paper_session` are L9a |
+| C6 `make results` pipeline | not-done | needs the stored vintages to accumulate first; deferred to v0.18 |
+| D1 C++ core | partial | 48534af: `bench_core.py` numpy 2.59 s; C++ row not built locally; keep/retire is OD-A |
+| D2 docs size | not-done | owner decision (split per module); this release adds to them |
+| D3 worktrees in the repo | done | 48534af: checked, all ignored, none tracked |
+| D4 stale root artefacts | done | 48534af: checked, all ignored, none tracked |
+| D5 rule-variant research | done | decision recorded above |
+| (e) mypy advisory | done | fd681be: blocking on the quant core |
+| (e) unhashed 3.12-only lock | partial | fd681be: `gen_lockfiles.sh` and Lockfiles workflow; locks not generated (needs PyPI); owner runs the workflow |
+| (e) coverage claim | done | 48534af: README note |
+| (e) paper runner dual writer | done | laptop task disabled (2026-11-08); fd681be: push with retry and backoff |
+| (e) tests and markers | partial | 48534af audit (no dead markers); lag-1, holiday and NW tests added; the flaky sweep test (3/20 under load) is L9a |
+
+Second review (section 5):
+
+| id | status | commit / reason |
+|---|---|---|
+| N1 recall audit is a constant responder | queued-run | 6921ce4: `recall2`; run queued; v0.16 recall rows void as a recall measure |
+| N2 text analysts bypass the anonymiser | done | 4a19931; price-path headlines also scrubbed at this boundary (L9b) |
+| N3 first pass unpowered | queued-run | 6921ce4: first pass labelled descriptive; `decisive_ta` registered; run queued |
+| N4 no `num_ctx` | done | 6921ce4 |
+| N5 no lineage | partial | 6921ce4: header, digest pinning, resume refusal; a periodic `swapped_digest` check inside `run_study` is not wired |
+| N6 R0.3 not feasible from stored rows | done | 6921ce4 + 8e41860: new row fields; legacy policy for old rows |
+| N7 conformal on overlapping residuals | queued-run | 4a19931: v17 design; v17 trial registered (L9b); real-data run queued |
+| N8 nothing-leaves-the-host not enforced | done | 4a19931 |
+| N9 no post-cutoff control | queued-run | 6921ce4: `postcutoff_ta` registered; owner approved 2026-11-09; run after the `decisive_ta` smoke |
+| N10 no model inventory | done | 4a19931: `docs/models/` |
+| N11 dev keys on loopback | done | 4a19931 |
+| N1q paper books not frozen | done | fd681be; the re-freeze runs after this merge, before the next paper run |
+| N2q raw Yahoo bars in a public repo | done | fd681be: local and opt-in artifact only, `DATA_LICENSING.md` |
+| N3q unpinned install in the write job | partial | fd681be: no install in publish/freshness; ruleset bypass for the bot push not verified (owner) |
+| N4q pooled IC across classes | done | 2c7fdfb; tables refresh queued |
+| N5q no risk neutralisation | done | 2c7fdfb: beta residualisation option, breadth printed |
+| N6q in-sample selection row | partial | 2c7fdfb: flagged and excluded from `best()`; walk-forward version not built |
+| N7q two gate thresholds | done | 2c7fdfb |
+| N8q DSR under correlated trials | partial | 2c7fdfb: `effective_trials`; render scripts do not pass `trial_returns` yet |
+| N9q Monday and holiday as-of | done | fd681be |
+| N10q hand-copied counts, breadth | done | 2c7fdfb |
+
+**Run queue (all $0, local or free network, after the P2 chain; smoke first).** Eval re-run
+into `results/v17_eval/` (L1); `recall2` smoke then full (~480 calls); `decisive_ta` smoke
+then full (4,695 calls); `postcutoff_ta` (~1,050 calls); red-team v2 smoke, then `--modes json`
+on a subset (target <= 1 day); llama3.1 pull, judge run and owner labels (R3.1);
+`v17_exec_lag.py --provider yahoo`; `v14_design_trials.py --out results/v17_conformal`;
+`v17_costs.py calibrate` and `horizon`; alpha/xalpha table refresh; `bench_core.py` with
+`_atcore`. Exact commands are in the lane notes. Before the next paper run: re-freeze
+(`--refreeze v09-engine-2`), Lockfiles workflow, ruleset bypass check.
 
 ## 5. AI features: use / do not use
 
@@ -158,7 +279,7 @@ Free daily data on 15 names will not produce a tradable edge; a local 8B model i
 - 2026-11-08 — 5.2b: research inputs cached per series (bit-identical, canary clean); regime trial 0.465 vs 0.644 (p 0.009, worse), conformal 0.565 vs 0.644 (p 0.33); neither adopted. Owner switched book VaR default to EWMA (design 13/15 vs FHS 10/15). Workflow token stays read; paper.yml grants write per job.
 - 2026-11-08 — P3 items 3.1-3.9 and P4 items 4.1-4.6, 4.8, 4.9 merged on feat/v0.15-p3-p4 (five lanes); offline, fixture and synthetic tests only (`test_v15_text.py`, `test_v15_rag.py`, `test_v15_governance.py`, `test_v15_security.py`, `test_v15_replay.py`), $0. 3.2/3.3 trials registered, NOT run (TRIALS now 70). 3.8 text analysts fixture-tested only, not wired into the graph. 3.7: 100 questions on a 34-passage invented fixture corpus: tfidf recall@5 0.990 MRR 0.954, hybrid (tfidf+BM25 RRF) 0.990/0.961; gate 0.8 passes; says nothing about real filings; embeddings untested ([rag] extra, sentence-transformers deliberately not in lock). 3.9: 0/9 decisions changed without runbook RAG (synthetic, rules path). 4.1: no real TaskRuns recorded, n=0. 4.2: canonical 100%, rule planner 100%, synthetic model-plan fixtures 95.1% (1547/1626; tests the validator, not a model). 4.4: 150 snippets, 150/150 fenced, rules signal == lexicon score 150/150, 6/150 direction flips from lexicon words buy/sell; local-model compliance not run; latent fence leak of `_`-prefixed facts in Analyst.prompt fixed. 4.5 signed approvals opt-in, not config-wired, shared-secret HMAC residual risk. 4.6 deferred tools on MCP and HTTP. 4.8 replay recordings are pickle (load only your own). 4.9 OTel extra not declared (lock regen needed); golden files from numpy backend. Full suite 1484 passed, 3 skipped (numpy backend). Paper trading unchanged; paper.yml has no runs yet, laptop task remains the producer. OD-6 decided: a 7-8B Q4 local model is acceptable on the 15.6 GB machine (owner). Docs pass done (README, LEARN 55, COOKBOOK 112, DIAGRAMS 39, CHANGELOG, API, AI, quant, evaluation, architecture, INDEX, site).
 
-- 2026-11-08 (later) — real-data runs, $0. 3.2 on real SEC filings (design period, 9 names, 201 filings): not supported (IC negative at all horizons, no |t| >= 2); cutter fixed first. 3.7 on real filings: recall@5 TF-IDF 0.92, hybrid 0.98, gate passes. Local model (OD-6 revised: qwen2.5:7b Q4 on CPU): 3.8 text analysts 11/12 and 10/10 usable. 4.4 local compliance: first run discarded (fenced-JSON scorer bug, all 300 replies unreadable); fixed, smoke-tested on 3 snippets, full rerun in progress. 4.2 real model plans: aborted, each plan > 300 s on CPU and timed out; needs a shorter planner prompt or a smaller model, open. 3.3 GDELT: throttled (429), retrying. Paper record moved to GitHub Actions (first run green, laptop task disabled). Lesson: every long model run starts with a 2-3 item smoke test that checks replies parse.
+- 2026-11-08 (later) — real-data runs, $0. 3.2 on real SEC filings (design period, 9 names, 201 filings): not supported (IC negative at all horizons, no |t| >= 2); cutter fixed first. 3.7 on real filings: recall@5 TF-IDF 0.92, hybrid 0.98, gate passes. Local model (OD-6 revised: qwen2.5:7b Q4 on CPU): 3.8 text analysts 11/12 and 10/10 usable (de-anonymised: real names and dates in the prompts, relabelled v0.17). 4.4 local compliance: first run discarded (fenced-JSON scorer bug, all 300 replies unreadable); fixed, smoke-tested on 3 snippets, full rerun in progress. 4.2 real model plans: aborted, each plan > 300 s on CPU and timed out; needs a shorter planner prompt or a smaller model, open. 3.3 GDELT: throttled (429), retrying. Paper record moved to GitHub Actions (first run green, laptop task disabled). Lesson: every long model run starts with a 2-3 item smoke test that checks replies parse.
 - 2026-11-08 (v0.15.1, feat/v0.15-followup) — wiring items done, offline tests only (`test_v15_followup.py`, `test_v15_local_runs.py`), $0: 3.8 text analysts in the desk on the graph and harness paths (off by default); 4.3 memory tools behind `agentic.memory_tool` (off), `memory.remember` through approvals; 4.5 signed approvals from an `agentic.approval` block (secrets only from named env vars, re-pricing from the provider's last close unless `reprice: false`, `--approval signed` on task/serve/mcp, stdio MCP refuses it); 4.9 `[otel]` extra with 8 lock pins. Planner `compact` prompt option and a resumable plans run for the local model. 3.3 deferred (GDELT throttles this machine; script on main). Docs pass done (README, COOKBOOK 113, CHANGELOG v0.15.1, API, AI, architecture, threat model, INDEX, site).
 
 - 2026-11-08 (evening) — 4.4 local-model compliance (corrected run, all 300 replies readable): 21/150 (14%) attacks moved the signal > 0.5 (instruction 10/32, multilingual 8/26, role play 2/20, encoded 1/40, fence escape 0/32); 7B floor, not Claude. 4.2 real model plans: compact prompt made qwen2.5 drop the closing brace on every plan; grammar-constrained decoding (PLAN_SCHEMA) fixed it (smoke 3/3); full 200-task run launched detached (~106 s each, ~6 h), result in the next round.
@@ -167,6 +288,9 @@ Free daily data on 15 names will not produce a tradable edge; a local 8B model i
 - 2026-11-09 — v0.16 P2 items 2.3-2.8 merged on feat/v0.16-p2 (three lanes); offline, fixture and fake-backend tests only (`test_v16_p2_a.py`, `test_v16_eval.py`, `test_v16_study.py`), $0. Model `qwen2.5:7b-instruct` (4-bit, CPU, Ollama). Owner asked for a model at every stage: first pass runs `local_analysts` then `local_all` against `rules` (15 names x 20 dates x 1 seed); `local_analysts` registered in TRIALS before any run. Runs launched detached, take days. Results for 2.3/2.5, 2.4, 2.6 and 2.7: pending: filled when the run finishes. 4.2 real planner plans survival (v0.15 follow-up): pending: filled when the run finishes. Prereg 2.8 is a DRAFT, unsigned. Known gap: `scripts/llm_study.py` docstring examples still say llama3.1; fix in code after the runs. Docs pass done (README, LEARN 56, COOKBOOK 117, CHANGELOG Unreleased 0.16.0, AI, API, architecture).
 
 - 2026-11-09 — 4.2 real planner plans finished (local model, $0): 200 tasks, qwen2.5:7b-instruct (4-bit, CPU, temperature 0, compact grammar-constrained prompt): 1,345 of 1,506 proposed steps survived the validator (89.3%); the validator added 520 required steps, repaired 145 plans, and 13 plans (6.5%) were unusable (timeout or unparseable); 0 data-budget hits. Canonical and rule planner: 100% (1800/1800). Recorded plans: `tests/data/v15_local_model_plans.jsonl` (+ `.meta.json`; the run resumed twice after shutdowns, so the meta usage block covers the last segment only). Evidence class: real local model, 7B floor, not Claude. Folded into feat/v0.16-combined with lanes 1.5b (batch loop), quality pass (coverage 94.3% -> 95.1%, four bug fixes) and P6 6.2-6.5 (live-readiness, KPI table, README positioning, What the model adds). Full suite 1564 passed, 44 skipped (numpy backend locally; C++ via CI). P2 chain started after plans.
+- 2026-11-09 — P6 6.1 and 6.2 remainder (docs round 2), $0, no model calls: five remaining P2 cells registered as trials (77 total); `evaluation.registered_trial_count` and `stats.selection_report(n_trials=)` with tests; per-cell pending table, diagram 40, LEARN concept 57, links from ai.md, LEARN, DIAGRAMS, INDEX; stale counts fixed (57 concepts, 119 recipes, 40 diagrams). Docs checks run locally (cookbook offline, links; Mermaid needs mmdc, not installed locally, so CI renders it).
+- 2026-11-09 — Round 2 (feat/v0.16-round2): ruff clean on tests and in CI, mypy 170 -> 35, one CLI crash fixed; coverage 95.2% -> 95.7% with the 3.5 embeddings path tested through a fake-embedder seam; 6.1 every study cell registered (77 trials) and counted in the deflated Sharpe, 6.2 links and diagram 40. 3.3 GDELT DROPPED by owner. Second in-depth review and v0.17 plan: `docs/review/2026-11-09_review_and_plan.md` (R0 blocking items before any P2 result is published).
+- 2026-11-09 — v0.17 (feat/v0.17): eleven lanes merged for the second review (R0-R4, N1-N11, N1q-N10q); status of every finding in §4 "v0.17 Second review". Offline code and tests only, $0, no model call. Trials 77 -> 81 (critic_on, decisive_ta, postcutoff_ta, v17 conformal). Price-path headlines now anonymised; eval baseline re-recorded. Owner: GDELT dropped; `postcutoff_ta` approved 2026-11-09 (spends holdout dates for the leakage question only); tag v0.16.0 then v0.17.0. Lane L9a (engine and paper-OMS hooks, flaky test) in progress. Model and network re-runs queued behind the P2 chain. Docs pass done (CHANGELOG Unreleased 0.17.0, LEARN 65, COOKBOOK 130, INDEX links to the model inventory, DATA_LICENSING.md, paper_freeze.md; v0.15 local text-analyst result relabelled de-anonymised).
 
 ## 10. How to resume
 

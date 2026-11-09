@@ -84,7 +84,7 @@ class MarketDataProvider(ABC):
         self.macro_sources[src] = self.macro_sources.get(src, 0) + 1
         return out
 
-    def carry_series(self, instrument: Instrument, dates: pd.DatetimeIndex) -> np.ndarray:
+    def carry_series(self, instrument: Instrument, dates: pd.Index) -> np.ndarray:
         """Annual carry (base rate - quote rate, decimal) known at each date; NaN if unknown.
 
         Resolved by the same function as ``macro()`` (``fx_rates``), so on every bar the
@@ -101,7 +101,7 @@ class MarketDataProvider(ABC):
         in), for the impact model's dollar ADV; ``None`` when the provider has no such series."""
         return None
 
-    def risk_free_series(self, dates: pd.DatetimeIndex) -> np.ndarray:
+    def risk_free_series(self, dates: pd.Index) -> np.ndarray:
         """Annual risk-free rate (fraction, 0.04 = 4%) known at each date; NaN where unknown.
 
         ``config["cash_leg"]``:

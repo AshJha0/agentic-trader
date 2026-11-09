@@ -1,5 +1,8 @@
 #include "at/backtest.hpp"
 
+#include <cstddef>
+#include <initializer_list>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -126,17 +129,22 @@ void check_len(const Series& s, std::size_t T, const char* name) {
 // Fill price if a protective level trades inside the next bar, else NaN. The open is
 // resolved first against both levels (a gap through either fills at the open); only
 // then is the intrabar range consulted, stop before target.
-double exit_fill(double w, double stop, double take, double o, double h, double l) {
+// hs / rf slip a stop fill (v0.17, review C1; mirrors pycore._exit_fill and
+// execution_realism.stop_fill_with_slippage); 0, 0 is the historical fill.
+double exit_fill(double w, double stop, double take, double o, double h, double l,
+                 double hs = 0.0, double rf = 0.0) {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     if (w > 0.0) {
-        if (!std::isnan(stop) && o <= stop) return o;
+        if (!std::isnan(stop) && o <= stop) return hs != 0.0 ? std::max(l, o * (1.0 - hs)) : o;
         if (!std::isnan(take) && o >= take) return o;
-        if (!std::isnan(stop) && l <= stop) return stop;
+        if (!std::isnan(stop) && l <= stop)
+            return (hs != 0.0 || rf != 0.0) ? std::max(l, stop * (1.0 - hs) - rf * (stop - l)) : stop;
         if (!std::isnan(take) && h >= take) return take;
     } else if (w < 0.0) {
-        if (!std::isnan(stop) && o >= stop) return o;
+        if (!std::isnan(stop) && o >= stop) return hs != 0.0 ? std::min(h, o * (1.0 + hs)) : o;
         if (!std::isnan(take) && o <= take) return o;
-        if (!std::isnan(stop) && h >= stop) return stop;
+        if (!std::isnan(stop) && h >= stop)
+            return (hs != 0.0 || rf != 0.0) ? std::min(h, stop * (1.0 + hs) + rf * (h - stop)) : stop;
         if (!std::isnan(take) && l <= take) return take;
     }
     return nan;
@@ -170,6 +178,16 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
     const bool has_ohlc = !in.open.empty() && !in.high.empty() && !in.low.empty();
     if (has_levels && !has_ohlc)
         throw std::invalid_argument("run_backtest: stop/take levels need open, high and low");
+    for (double v : {cfg.funding_spread, cfg.cash_spread, cfg.stop_half_spread})
+        if (!(v >= 0.0) || std::isinf(v))
+            throw std::invalid_argument("financing spreads and stop_half_spread must be finite and >= 0");
+    if (!(cfg.stop_range_frac >= 0.0 && cfg.stop_range_frac <= 1.0))
+        throw std::invalid_argument("stop_range_frac must be in [0, 1]");
+    if (cfg.exec_lag < 0) throw std::invalid_argument("exec_lag must be a non-negative integer");
+    if (cfg.fill_next_open && in.open.empty())
+        throw std::invalid_argument("run_backtest: fill_next_open needs open prices");
+    if (cfg.fill_next_open && has_levels)
+        throw std::invalid_argument("run_backtest: fill_next_open cannot be combined with stop/take levels");
     for (double p : prices)
         if (!(p > 0.0) || std::isinf(p))
             throw std::invalid_argument("run_backtest: prices must be positive and finite");
@@ -195,29 +213,51 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
     double prev = 0.0;         // weight held coming into bar t (drifted since the last trade)
     double prev_target = nan;  // last target seen (a change is a decision)
     bool stopped = false, ruined = false;
+    const std::ptrdiff_t lag = cfg.exec_lag;
+    const bool next_open = cfg.fill_next_open;
     for (std::size_t t = 0; t + 1 < T; ++t) {
-        double raw = target_weights[t];
+        // Decision bar whose target is executed now (j < 0: nothing decided yet).
+        const std::ptrdiff_t j = static_cast<std::ptrdiff_t>(t) - lag;
+        const bool have = j >= 0;
+        const std::size_t jj = have ? static_cast<std::size_t>(j) : 0;
+        double raw = have ? target_weights[jj] : 0.0;
         if (std::isnan(raw)) raw = 0.0;
         const double clamped = std::clamp(raw, lo, hi);
         const double target = raw == prev ? raw : clamped;  // a keep is not trimmed to the cap
 
-        const bool rearm = in.rebalance.empty() ? clamped != prev_target : in.rebalance[t] != 0.0;
+        const bool rearm = in.rebalance.empty() ? clamped != prev_target
+                                                 : (have && in.rebalance[jj] != 0.0);
         const bool decide = rearm || clamped != prev_target;
         if (rearm) stopped = false;
         prev_target = clamped;
-        const double w = (ruined || stopped) ? 0.0 : (decide ? target : prev);
+        double w = (ruined || stopped) ? 0.0 : (decide ? target : prev);
 
-        const double trade = w - prev;
+        double f_on = 1.0;
+        double trade;
+        if (next_open) {
+            // The held position carries the overnight move close[t] -> open[t+1]; the new target
+            // fills at the open. A keep (w == prev) holds the units: no trade at the open.
+            const double on = in.open[t + 1] / prices[t];
+            f_on = 1.0 + prev * (on - 1.0);
+            const double held_on = (prev == 0.0 || f_on <= 0.0) ? 0.0 : prev * on / f_on;
+            if (w == prev) w = held_on;
+            trade = w - held_on;
+        } else {
+            trade = w - prev;
+        }
+        const std::size_t fill_t = next_open ? t + 1 : t;
         if (trade != 0.0) {
-            res.trades.push_back({static_cast<int>(t), prev, w, prices[t]});
-            res.traded[t] += std::fabs(trade);
+            res.trades.push_back({static_cast<int>(fill_t), w - trade, w,
+                                  next_open ? in.open[t + 1] : prices[t]});
+            res.traded[fill_t] += std::fabs(trade);
         }
 
         double exit_px = nan;
         if (w != 0.0 && has_levels) {
-            const double s = in.stop.empty() ? nan : in.stop[t];
-            const double k = in.take.empty() ? nan : in.take[t];
-            exit_px = exit_fill(w, s, k, in.open[t + 1], in.high[t + 1], in.low[t + 1]);
+            const double s = (in.stop.empty() || !have) ? nan : in.stop[jj];
+            const double k = (in.take.empty() || !have) ? nan : in.take[jj];
+            exit_px = exit_fill(w, s, k, in.open[t + 1], in.high[t + 1], in.low[t + 1],
+                                cfg.stop_half_spread, cfg.stop_range_frac);
         }
         const bool exited = !std::isnan(exit_px);
         const double px_end = exited ? exit_px : prices[t + 1];
@@ -230,10 +270,13 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         // Costs come out of equity before the position is put on, so w is a fraction of
         // post-cost equity: E_{t+1} = E_t (1 - k_in) (1 + g) (1 - k_out), with g the gross return
         // of the book and k the fee + impact fractions. A 100% book therefore stays at 100%.
-        const double gross = px_end / prices[t];  // kept as a ratio: 1 + (gross - 1) loses digits on a huge move
+        const double gross = px_end / (next_open ? in.open[t + 1] : prices[t]);  // kept as a ratio: 1 + (gross - 1) loses digits on a huge move
         const double price_ret = gross - 1.0;
         const double carry = w * carry_rate / ppy;
-        const double cash = (cfg.funded ? 1.0 - std::fabs(w) : 1.0) * cash_rate / ppy;
+        double cash = (cfg.funded ? 1.0 - std::fabs(w) : 1.0) * cash_rate / ppy;
+        // Financing spreads (v0.17, review A5; agentic_trader/financing.py), 0 by default.
+        cash -= (std::max(std::fabs(w) - 1.0, 0.0) * cfg.funding_spread +
+                 std::max(1.0 - std::fabs(w), 0.0) * cfg.cash_spread) / ppy;
         const double borrow = w < 0.0 ? -w * cfg.borrow_annual / ppy : 0.0;
         const double scale = std::sqrt(res.equity[t] / cfg.initial_capital);
         const double impact_in = trade != 0.0 ? std::pow(std::fabs(trade), 1.5) * impact_k(t) * scale : 0.0;
@@ -243,6 +286,7 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         const double f_g = 1.0 + g;
         double f_out = 1.0;
         double growth = f_in * f_g;
+        if (next_open) growth = f_on * growth;
         res.impact_paid += impact_in;
         if (exited) {
             const double impact_out = std::pow(std::fabs(w), 1.5) * impact_k(t + 1) * scale;
@@ -263,7 +307,7 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         if (ruined) {
             ret = 0.0;
             next = res.equity[t];
-        } else if (f_in <= 0.0 || f_g <= 0.0 || f_out <= 0.0 || next <= 0.0) {
+        } else if (f_on <= 0.0 || f_in <= 0.0 || f_g <= 0.0 || f_out <= 0.0 || next <= 0.0) {
             ret = -1.0;
             next = 0.0;
             ruined = true;

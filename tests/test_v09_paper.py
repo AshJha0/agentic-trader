@@ -44,7 +44,8 @@ def test_paper_record_is_recomputed_appended_and_revisions_are_logged(tmp_path):
     # each run states the vintage of the prices it read; a longer window reads different frames
     assert all(len(r["price_vintage"]) == 64 for r in runs) and runs[0]["price_vintage"] != runs[1]["price_vintage"]
     # a revised return is reported (column, date, cells) and a dropped session is named
-    tampered = second.copy(); tampered.iloc[3, 0] += 0.01
+    tampered = second.copy()
+    tampered.iloc[3, 0] += 0.01
     rev = mod.revisions(tampered, second)
     col = second.columns[0]
     assert list(rev["changed"]) == [col] and abs(rev["changed"][col]["max_abs"] - 0.01) < 1e-9

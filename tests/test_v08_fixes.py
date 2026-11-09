@@ -4,11 +4,14 @@ verifiers measured and passes now; engine tests run on both backends and, when t
 built, assert the two agree."""
 from __future__ import annotations
 
+import inspect
 import logging
+import os
 import subprocess
 import sys
 import time
 import types
+import warnings
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -21,10 +24,14 @@ import pytest
 from agentic_trader import Instrument, TradingGraph, make_config, quant
 from agentic_trader.agents.risk import RiskAnalyst, risk_facts
 from agentic_trader.algo import algo_cost_ratio, plan_execution
-from agentic_trader.backtest import impact_coefficients, run_portfolio_backtest
+from agentic_trader.backtest import AGENT, impact_coefficients, run_agent_backtest, run_portfolio_backtest
+from agentic_trader.cli import common as cli_common
+from agentic_trader.cli import evaluate as cli_evaluate
+from agentic_trader.cli import main as cli_main
 from agentic_trader.data import CSVProvider, SyntheticProvider
 from agentic_trader.data import yahoo as yahoo_mod
 from agentic_trader.data.base import clean_ohlcv
+from agentic_trader.data.csv_provider import SPLIT_JUMP, one_basis, split_factor
 from agentic_trader.data.fred import FredClient
 from agentic_trader.data.yahoo import YahooProvider
 from agentic_trader.memory import DecisionMemory
@@ -32,6 +39,7 @@ from agentic_trader.portfolio import METHODS, construct
 from agentic_trader.quant import pycore
 from agentic_trader.sentiment import score_fx_headline
 from agentic_trader.state import Action, FinalDecision, TradeProposal
+from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_ci_bootstrap, sharpe_stats
 
 ROOT = Path(__file__).resolve().parents[1]
 NAN = float("nan")
@@ -574,15 +582,6 @@ def test_24_risk_facts_carry_the_short_side_cvar_and_the_analyst_text_uses_it():
 # =========================================================================================
 # v0.8 regression review (engine-2 cluster): items (a)-(k). Each test fails without its fix.
 # =========================================================================================
-import inspect
-import os
-import warnings
-
-from agentic_trader.backtest import AGENT, run_agent_backtest
-
-from agentic_trader.cli import common as cli_common
-from agentic_trader.cli import evaluate as cli_evaluate
-from agentic_trader.data.csv_provider import one_basis
 
 METRICS = pytest.mark.parametrize("metrics", [quant.compute_metrics, pycore.compute_metrics], ids=["active", "numpy"])
 
@@ -824,9 +823,6 @@ def test_k_the_environment_is_restored_between_tests_part_2():
 
 
 # ======================================================= final code review (engine-3 cluster)
-from agentic_trader.cli import main as cli_main
-from agentic_trader.data.csv_provider import SPLIT_JUMP, split_factor
-from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_ci_bootstrap, sharpe_stats
 
 
 def _winning_bars_under_a_cash_leg(T: int = 30):

@@ -12,7 +12,7 @@ import pytest
 from agentic_trader import Instrument, TradingGraph, make_config
 from agentic_trader.agentic import AgentHarness, QueuedApprovalGateway, Role, Task
 from agentic_trader.agentic.store import TaskStore, record_of
-from agentic_trader.backtest import AGENT, run_portfolio_backtest
+from agentic_trader.backtest import run_portfolio_backtest
 from agentic_trader.cli import main
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.data import fred as fred_mod
@@ -110,7 +110,9 @@ def test_significance_gated_scores_excludes_non_significant_alphas(universe):
     frames, instruments, carry = universe
     scores = {"a": pd.DataFrame({"AAPL": [1.0, 0.5], "MSFT": [0.5, 1.0]}),
              "b": pd.DataFrame({"AAPL": [-1.0, -0.5], "MSFT": [-0.5, -1.0]})}
-    ic = {"a": {"IC": 0.3, "t(IC)": 3.0, "n": 100}, "b": {"IC": 0.1, "t(IC)": 0.5, "n": 100}}
+    # v0.17 N7: entries carry their own t_crit/df and a Newey-West t (BH runs on it).
+    ic = {"a": {"IC": 0.3, "t(IC)": 3.0, "n": 100, "t_crit": 2.776, "df": 4, "t_NW": 4.0},
+          "b": {"IC": 0.1, "t(IC)": 0.5, "n": 100, "t_crit": 2.776, "df": 4, "t_NW": 0.5}}
     got = significance_gated_scores(scores, ic)
     only_a = scores["a"]   # only "a" clears the bar, so this must equal "a" exactly (weight 1, den = |0.3|)
     pd.testing.assert_frame_equal(got, only_a.clip(-1.0, 1.0), check_dtype=False)
@@ -319,7 +321,7 @@ def test_task_store_persists_and_archives(tmp_path):
 
 
 def test_api_serves_archived_tasks(tmp_path):
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from agentic_trader.agentic.api import create_app
     db = tmp_path / "api.sqlite"
@@ -346,11 +348,13 @@ def test_api_serves_archived_tasks(tmp_path):
 
 # --------------------------------------------------------------- TLS and posture
 def test_serve_options_guard_deployment(tmp_path, caplog):
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     from agentic_trader.agentic.api import serve_options, uses_dev_keys
     cfg = make_config()
     assert uses_dev_keys(cfg["agentic"]["api_keys"]) and not uses_dev_keys({"k9f2...": "trader"})
-    assert serve_options("127.0.0.1", cfg) == {}
+    with pytest.raises(ValueError, match="development API keys"):   # v0.17 N11: loopback too
+        serve_options("127.0.0.1", cfg)
+    assert serve_options("127.0.0.1", cfg, allow_dev_keys=True) == {}
     with pytest.raises(ValueError, match="development API keys"):
         serve_options("0.0.0.0", cfg)
     with caplog.at_level(logging.WARNING):
@@ -367,14 +371,14 @@ def test_serve_options_guard_deployment(tmp_path, caplog):
 
 
 def test_serve_cli_plumbs_tls_and_store(monkeypatch, tmp_path, capsys):
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     import uvicorn
     seen = {}
     monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(kw))
     cert, key = tmp_path / "c.pem", tmp_path / "k.pem"
     cert.write_text("x"), key.write_text("y")
     assert main(["serve", "--host", "127.0.0.1", "--port", "9", "--ssl-cert", str(cert), "--ssl-key", str(key),
-                 "--task-db", str(tmp_path / "t.sqlite")]) == 0
+                 "--task-db", str(tmp_path / "t.sqlite"), "--allow-dev-keys"]) == 0
     assert seen["ssl_certfile"] == str(cert) and seen["port"] == 9
     assert "https://127.0.0.1:9" in capsys.readouterr().out
     assert main(["serve", "--host", "0.0.0.0", "--port", "9"]) == 2   # dev keys on a public interface

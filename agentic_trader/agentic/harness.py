@@ -50,7 +50,7 @@ from ..agents.risk import risk_facts
 from ..graph import TradingGraph
 from ..instruments import Instrument
 from ..state import TradingState
-from .critic import Critic, CriticReport, decision_untrusted
+from .critic import Critic, CriticReport, apply_weight_rule, decision_untrusted
 from .domain import (EvidenceType, Finding, Plan, PlanStep, PolicyOutcome, StepType, Task, TaskState,
                      TERMINAL_STATES, TRANSITIONS, ToolRequest, new_id, utc_now)
 from .evidence import EvidenceStore
@@ -147,12 +147,18 @@ def approval_mode(approval: Any) -> str:
 def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
                                price_fn: Any = None) -> SignedApprovalGateway:
     """A ``SignedApprovalGateway`` from the ``approval`` block. ``approvers`` maps an approver
-    id to the NAME of the environment variable holding its secret: secrets never sit in the
-    configuration, and a missing or empty variable is an error, not a silent drop."""
+    id to the NAME of the environment variable holding its HMAC secret (legacy mode): secrets
+    never sit in the configuration, and a missing or empty variable is an error, not a silent
+    drop. ``public_keys`` (v0.17, review A6) maps an approver id to its raw 32-byte Ed25519
+    public key as 64 hex characters: public material may sit in the configuration, the
+    approver signs on their own machine with ``sign_approval_ed25519``. Either map may be
+    empty but not both; an approver may not appear in both."""
     env = os.environ if environ is None else environ
     approvers = block.get("approvers") or {}
-    if not isinstance(approvers, dict) or not approvers:
-        raise ValueError("signed approval needs approvers: {approver_id: SECRET_ENV_VAR_NAME}")
+    public = block.get("public_keys") or {}
+    if not isinstance(approvers, dict) or not isinstance(public, dict) or not (approvers or public):
+        raise ValueError("signed approval needs approvers: {approver_id: SECRET_ENV_VAR_NAME} "
+                         "and/or public_keys: {approver_id: ED25519_PUBLIC_KEY_HEX}")
     keys = {}
     for who, var in approvers.items():
         if not isinstance(var, str) or not var.replace("_", "").isalnum():
@@ -161,6 +167,15 @@ def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
         if not secret:
             raise ValueError(f"approver {who!r}: environment variable {var} is not set")
         keys[str(who)] = secret.encode("utf-8")
+    pubs = {}
+    for who, hexkey in public.items():
+        try:
+            raw = bytes.fromhex(str(hexkey).strip())
+        except ValueError:
+            raw = b""
+        if len(raw) != 32:
+            raise ValueError(f"approver {who!r}: public key must be 64 hex characters (32 raw Ed25519 bytes)")
+        pubs[str(who)] = raw
     quorum = {"execution.submit_order": int(block.get("submit_order_quorum", 2))}
     for tool, n in (block.get("tool_quorum") or {}).items():
         quorum[str(tool)] = int(n)
@@ -169,7 +184,8 @@ def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
     return SignedApprovalGateway(keys, quorum, default_quorum=int(block.get("quorum", 1)),
                                  ttl_s=None if ttl is None else float(ttl), price_fn=price_fn,
                                  price_tolerance=float(block.get("price_tolerance", 0.01)),
-                                 store=AppendOnlyApprovalLog(log_path) if log_path else None)
+                                 store=AppendOnlyApprovalLog(log_path) if log_path else None,
+                                 public_keys=pubs)
 
 
 def last_close_price_fn(provider: Any) -> Any:
@@ -256,9 +272,12 @@ class AgentHarness:
             for rec in store.load_all():
                 if rec.get("state") in _TERMINAL_VALUES:
                     self._archive_put(rec["task_id"], rec)
-            self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="harness-heartbeat",
-                                                      daemon=True)
-            self._heartbeat_thread.start()
+            # agentic.heartbeat_thread False: no background thread; the owner (a test with an
+            # injected store clock, or an external scheduler) calls heartbeat_once() itself.
+            if acfg.get("heartbeat_thread", True):
+                self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="harness-heartbeat",
+                                                          daemon=True)
+                self._heartbeat_thread.start()
 
     # -------------------------------------------------------------- records
     def _archive_put(self, task_id: str, rec: dict[str, Any]) -> None:
@@ -299,18 +318,28 @@ class AgentHarness:
             except Exception as e:  # persistence must never take a decision down with it
                 log.exception("could not persist task %s: %s", run.id, e)
 
+    def heartbeat_once(self) -> int:
+        """One heartbeat tick: refresh the lease on this instance's live runs, then sweep the
+        records whose owner stopped heartbeating. Returns the number swept."""
+        store = self.store
+        if store is None:
+            return 0
+        with self._lock:
+            live = [r.id for r in self.runs.values() if not r.done]
+        store.heartbeat(self.owner, live)
+        # Periodic sweep of records whose owner stopped heartbeating (a crashed
+        # sibling, or a predecessor that died within the lease before we started).
+        swept = store.mark_interrupted(lease_s=self.lease_s)
+        if swept:
+            log.warning("%d task(s) lost their owner's heartbeat; marked FAILED", swept)
+        return swept
+
     def _heartbeat_loop(self) -> None:
         interval = max(self.lease_s / 3.0, 0.02)
+        assert self.store is not None  # the heartbeat thread is only started with a store
         while not self._stop.wait(interval):
             try:
-                with self._lock:
-                    live = [r.id for r in self.runs.values() if not r.done]
-                self.store.heartbeat(self.owner, live)
-                # Periodic sweep of records whose owner stopped heartbeating (a crashed
-                # sibling, or a predecessor that died within the lease before we started).
-                swept = self.store.mark_interrupted(lease_s=self.lease_s)
-                if swept:
-                    log.warning("%d task(s) lost their owner's heartbeat; marked FAILED", swept)
+                self.heartbeat_once()
             except Exception as e:  # noqa: BLE001 - a closed store ends the loop, anything else is logged
                 if getattr(self.store, "closed", False):
                     return
@@ -522,6 +551,7 @@ class AgentHarness:
                 held = run.positions.get(Instrument.parse(run.task.symbol).symbol, run.task.current_weight)
                 run.trading_state = self.graph.prepare(run.task.symbol, run.task.as_of, current_weight=held,
                                                        provider=run._provider)
+        assert run.plan is not None  # planning precedes execution
         steps = [s for s in run.plan.steps if s.type in (StepType.TOOL, StepType.AGENT)]
         i = 0
         while i < len(steps):
@@ -562,20 +592,23 @@ class AgentHarness:
         else:
             with ThreadPoolExecutor(max_workers=min(4, len(batch))) as pool:
                 results = list(pool.map(one, batch))
+        st = run.trading_state
+        assert st is not None  # set by _execute before any step runs
         for step, res in results:
             if not res.ok and "awaiting approval" in (res.error or ""):
                 continue  # not completed: the run pauses and retries this step on resume
             run.step_results[step.id] = res.payload if res.ok else {"error": res.error}
             run.completed_steps.add(step.id)
             if res.ok and step.name == "knowledge.search" and isinstance(res.payload, list):
-                run.trading_state.knowledge = res.payload
+                st.knowledge = res.payload
             if res.ok and step.name == "quant.alpha" and isinstance(res.payload, dict):
-                run.trading_state.alpha = res.payload
+                st.alpha = res.payload
             if not res.ok:
                 run.errors.append(f"{step.name}: {res.error}")
 
     def _run_agent_step(self, run: TaskRun, step: PlanStep) -> None:
         st, ev = run.trading_state, run.evidence
+        assert st is not None  # set by _execute before any step runs
         before = len(ev)
         if step.name.startswith(ANALYST_PREFIX):
             name = step.name[len(ANALYST_PREFIX):]
@@ -623,30 +656,40 @@ class AgentHarness:
             facts = risk_facts(st, self.config)
             fev = ev.record(EvidenceType.CALCULATION, "quant.risk", "risk facts for the proposal", facts,
                             run.correlation_id)
-            d = self.graph.run_risk(st)
+            fd = self.graph.run_risk(st)
             for v in st.risk_views:
                 vev = ev.record(EvidenceType.DECISION, f"risk.{v.stance}", v.argument,
                                 {"weight": v.recommended_weight, "round": v.round}, run.correlation_id)
                 v.evidence_ids = (fev.id, vev.id)
-            dev = ev.record(EvidenceType.DECISION, "portfolio_manager", d.rationale, d.to_dict(),
+            dev = ev.record(EvidenceType.DECISION, "portfolio_manager", fd.rationale, fd.to_dict(),
                             run.correlation_id)
-            d.evidence_ids = tuple(dict.fromkeys(
+            fd.evidence_ids = tuple(dict.fromkeys(
                 (st.proposal.evidence_ids if st.proposal else ()) + (fev.id,)
                 + tuple(i for v in st.risk_views for i in v.evidence_ids) + (dev.id,)))
-            run.findings.append(Finding.make("portfolio_manager", d.rationale, d.confidence, d.evidence_ids,
-                                             {"target_weight": d.target_weight}, ("decision", d.source),
+            run.findings.append(Finding.make("portfolio_manager", fd.rationale, fd.confidence, fd.evidence_ids,
+                                             {"target_weight": fd.target_weight}, ("decision", fd.source),
                                              untrusted=decision_untrusted(st)))
             run.step_results["risk_facts"] = facts
         else:
             raise ValueError(f"unknown agent stage {step.name}")
 
     def _critique(self, run: TaskRun) -> None:
+        assert run.trading_state is not None  # set by _execute
         with run.tracer.span("critic"):
-            run.critic = self.critic.review(run.trading_state, run.findings, run.evidence,
-                                            run.step_results.get("risk_facts"))
+            critic = self.critic.review(run.trading_state, run.findings, run.evidence,
+                                        run.step_results.get("risk_facts"))
+            run.critic = critic
+            # v0.17 R2.1: a flagged divergence acts on the weight that sizing reads, not only
+            # on confidence; the action is recorded as evidence beside the decision.
+            act = apply_weight_rule(run.trading_state, critic, self.config)
+            if act is not None:
+                wev = run.evidence.record(EvidenceType.DECISION, "critic.weight_rule",
+                                          f"critic {act['rule']}: weight {act['from']:+.2f} -> {act['to']:+.2f}",
+                                          dict(act), run.correlation_id)
+                act["evidence_id"] = wev.id
         run.completed_steps.add("STEP-critic")
         self._transition(run, TaskState.VALIDATING_EVIDENCE,
-                         "critic passed" if run.critic.passed else "critic flagged errors")
+                         "critic passed" if critic.passed else "critic flagged errors")
 
     def _validate(self, run: TaskRun) -> None:
         with run.tracer.span("validate_evidence"):
@@ -665,11 +708,12 @@ class AgentHarness:
         with run.tracer.span("finalise"):
             acfg = self.config.get("agentic", {})
             llm = self.graph.llm if acfg.get("llm_reporter", True) else None
-            run.report = build_report(run.task, run.trading_state, run.findings, run.critic, run.evidence, llm)
-            if run.critic is not None and run.trading_state.decision is not None:
-                run.trading_state.decision.confidence = round(
-                    run.trading_state.decision.confidence * run.critic.multiplier, 4)
-            self.graph.record(run.trading_state)
+            st = run.trading_state
+            assert st is not None and run.critic is not None  # set by _execute and _critique
+            run.report = build_report(run.task, st, run.findings, run.critic, run.evidence, llm)
+            if run.critic is not None and st.decision is not None:
+                st.decision.confidence = round(st.decision.confidence * run.critic.multiplier, 4)
+            self.graph.record(st)
         run.completed_steps.add("STEP-finalise")
         self._transition(run, TaskState.COMPLETED)
 

@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from agentic_trader import Instrument, TradingGraph, make_config
-from agentic_trader.algo import algo_cost_ratio, volume_profile
+from agentic_trader.algo import algo_cost_ratio
 from agentic_trader.backtest import run_agent_backtest
 from agentic_trader.memory import DecisionMemory
 from agentic_trader.portfolio import (

@@ -137,7 +137,7 @@ class CSVProvider(MarketDataProvider):
     def history(self, instrument: Instrument, start: date, end: date) -> pd.DataFrame:
         return clip_history(self._load(instrument), start, end)
 
-    def risk_free_series(self, dates: pd.DatetimeIndex) -> np.ndarray:
+    def risk_free_series(self, dates: pd.Index) -> np.ndarray:
         """Local files carry no rate data: ``config["risk_free_annual"]`` at every date
         (``cash_leg`` "off" -> NaN; "fred" -> DTB3 as on any provider)."""
         mode = self.config.get("cash_leg", "auto")

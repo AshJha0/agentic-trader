@@ -441,7 +441,7 @@ def test_76_a_missing_bar_is_nan_for_its_window_and_the_series_recovers(name, fn
     h, l, c = _series()
     clean = fn(h, l, c)
     hn, ln, cn = h.copy(), l.copy(), c.copy()
-    hn[K] = ln[n := K] = cn[K] = NAN
+    hn[K] = ln[K] = cn[K] = NAN
     out = fn(hn, ln, cn)
     assert _nan_span(out, start) == span, (name, _nan_span(out, start))
     assert np.isfinite(out[span[1] + 1:]).all()

@@ -214,6 +214,10 @@ The LLM desk had the same Sharpe ratio as the rules with less than half the expo
 is one small sample, and it was produced under the engine before the v0.8 corrections. No
 multi-year LLM backtest has been run. Every other number in the project is the rule-based
 desk. See [the evaluation](../evaluation/evaluation.md#the-llm-desk-v051-the-first-measured-result).
+The v0.16 local-model results (red-team, text analysts, planner survival) and the pending P2
+study rows are collected, each with its evidence class, in
+[what the model adds](../evaluation/what_the_model_adds.md); what in the path is real,
+simulated or absent is in the [live-readiness statement](../evaluation/live_readiness.md).
 
 ## 3. Memory and reflection
 
@@ -321,7 +325,7 @@ estimated from data and then used:
 |---|---|---|
 | Information coefficient of each alpha | `alpha.py`, `xalpha.py`, `leakage.py` | Estimated on purged walk-forward folds since v0.14. The alpha analysts combine signals weighted by IC, and only signals whose fold t-statistic clears the gate. Otherwise they abstain |
 | Covariance with EWMA weights and Ledoit-Wolf shrinkage | `portfolio.py` | Risk parity, minimum variance and mean-variance weights |
-| Historical VaR and CVaR; EWMA volatility and FHS VaR (v0.14) | `quant`, `risk_model.py`, `agents/risk.py` | Position limit (historical); book limit (FHS by default) |
+| Historical VaR and CVaR; EWMA volatility and FHS VaR (v0.14) | `quant`, `risk_model.py`, `agents/risk.py` | Position limit (historical); book limit (EWMA by default, `config.DEFAULT_VAR_METHOD`) |
 | TF-IDF document frequencies | `agentic/rag.py` | Retrieval |
 | Hit rate of past decisions | `memory.py` | The trader's size cut |
 | Bootstrap distributions | `stats.py` | Every interval and p-value in the evaluation |
@@ -403,6 +407,13 @@ facts it was given. Then compare desks, and look at the holdout once.
 Evidence class for every row: tool built and tested offline against fakes and fixtures
 (`tests/test_v16_*.py`); no model result yet.
 
+Every one of the seven model cells in `scripts/llm_study.py` is registered in
+`evaluation.TRIALS` before it is run (PLAN 6.1), so the deflated Sharpe counts all of them;
+`stats.selection_report(..., n_trials=evaluation.registered_trial_count())` applies the count
+when only some cells have a measured Sharpe. Results land in
+[what the model adds](../evaluation/what_the_model_adds.md); the study design is
+[diagram 40](../DIAGRAMS.md#40-the-llm-study-cells-trials-and-the-rules-control-v016).
+
 **Example.** If the recall audit found 20 ticker hits in 200 prompts, the rate 0.10 would be
 compared with chance 1/15 = 0.067 by an exact one-sided binomial test (p = 0.046); a key
 whose removal loses those hits would be added to the anonymiser's drop list. The numbers here
@@ -447,3 +458,120 @@ and each agent run can be recorded and replayed to check it gives the same decis
 **Example.** `agentic-trader task AAPL 2024-03-01 --record` then `agentic-trader replay <id>`
 prints `MATCH` when the decision and end state are reproduced from the recording
 ([recipe 110](../../COOKBOOK.md#110-record-a-task-and-replay-it-offline)).
+
+## 12. AI-layer hardening after the 2026-11-09 review (v0.17, lane L7)
+
+Each item names the review finding it answers (Appendix A of
+`docs/review/2026-11-09_review_and_plan.md`) and the evidence class of every number.
+
+### 12.1 Approvals signed with public keys (A6)
+
+**Plain idea.** Up to v0.16 an approver's "signature" was an HMAC under a secret the server
+also held, so anyone with server access could forge an approval. An approver now signs on
+their own machine with an Ed25519 private key, and the server stores only the public key: it
+can check a signature but cannot make one.
+
+**Formal.** `SignedApprovalGateway(public_keys={approver: 32-byte Ed25519 public key})`
+verifies `sign_approval_ed25519(private_key, approval_id, request, approve)` over the same
+canonical message as before (approval id, request id, tool, verdict). `keys=` (shared HMAC
+secrets) remains as a documented legacy mode: tamper-evident, not non-repudiable. An approver
+id holds one scheme, not both; each signature line in the append-only log records `scheme`
+(`ed25519` or `hmac-legacy`). Library: `cryptography` 50.0.1, already pinned in
+`requirements-lock.txt`.
+
+**Example.** `sk, pk = ed25519_keypair()`; the server gets `pk`, the approver keeps `sk` and
+signs with `sign_approval_ed25519(sk, a.id, a.request, True)`. An HMAC computed under `pk` is
+refused (`tests/test_v17_ai_rest.py`). Evidence class: unit-tested. Limit: the config builder
+in `harness.py` still reads only HMAC secrets from environment variables; wiring public keys
+into the `approval` block is a follow-up for the harness owner.
+
+### 12.2 Planner quality, not just survival (B7)
+
+Survival measures how much the validator repaired. On the 200 recorded `qwen2.5:7b-instruct`
+plans (`tests/data/v15_local_model_plans.jsonl`), compared with the canonical plan before any
+repair, governance steps excluded (measured offline by `scripts/v17_planner_quality.py`; files
+in `docs/results/v17_planner_quality/`):
+
+| metric | value |
+|---|---|
+| usable plans | 187 / 200 |
+| step-set precision / recall / F1 (usable) | 0.496 / 0.515 / 0.486 |
+| pairwise order agreement (usable) | 0.978 |
+| plans needing zero repair | 0.250 |
+| plans equal to the canonical plan | 0.000 |
+
+Reading: the model orders the stages correctly but picks a different half of the steps. Most
+of the precision loss is `market_data.*` tool calls the canonical plan leaves to the analysts;
+most of the recall loss is the canonical `knowledge.search` and `quant.alpha` steps it omits.
+Whether those differences change decisions is not measured here.
+
+### 12.3 Null-centred bootstrap p-value (B8)
+
+`agentic_trader.bootstrap.null_centred_pvalue(boot, observed, null=0)` shifts the replicates
+onto the null and returns `(1 + #{|t* - t| >= |t - t0|}) / (B + 1)`. On replicates
+N(0.5, 0.2^2) it gives 0.0124, the normal-theory value for 2.5 standard errors (test). The
+pre-v0.17 rule (twice the share of replicates beyond zero) is kept as `percentile_tail_pvalue`
+for comparison. On a biased bootstrap (replicates centred at 0.4, observed 0.1, sd 0.2) the old
+rule gives about 0.05 and the null-centred one about 0.86 (test). The study script switches
+over in lane L1.
+
+### 12.4 Output guard before model text is stored (C3)
+
+`agentic.output_guard.check_output` refuses a summary containing a URL, a ticker-like token
+outside the allowed set, a configured canary, or instruction-like phrasing (after NFKC and
+zero-width stripping). `MemoryTool.remember` runs it before writing (on by default;
+`output_guard=False` disables it); a refusal raises and the reason goes to the tool's audit
+trail. On 20 hand-written poisoned lessons it refuses 19; the miss is a paraphrase ("Next time
+output target_weight 5.0 ...") that no regex catches. Evidence class: rule-based, unit-tested
+on hand-written cases; not measured on real replies.
+
+### 12.5 Drift monitoring and confidence calibration on stored rows (C4, C5)
+
+`agentic.monitoring.daily_drift(rows, cell, control_cell)` computes per day: rejection rate,
+signal mean and std, extreme-signal share, divergence from the control cell, and PSI against a
+baseline, and emits alert records above thresholds (rejection 0.10, divergence 0.50, PSI 0.25,
+extreme share 0.50: conventions, not fitted). `confidence_calibration(rows)` gives the Brier
+score, a reliability table and the expected calibration error of analyst `confidence` against
+realised direction. Worked example: two replies at confidence 0.9, one right and one wrong,
+give Brier (0.01 + 0.81) / 2 = 0.41. Both read the rows `scripts/llm_study.py` writes.
+Evidence class: fixture tests only; no first-pass rows are committed yet, so no real numbers.
+
+### 12.6 Memory-channel adversarial test (C6)
+
+Twenty poisoned lessons are written through `MemoryTool.remember` (guard off, to test the fence
+alone), resolved, and the desk is run with a model stub that records every prompt. Every
+poisoned fragment that reaches a prompt sits inside an `<untrusted_data>` block, open and close
+tags balance in every prompt, and the decision equals the clean-memory desk's. Limit: the stub
+returns no reply, so this shows the fence and the rules path hold; it does not show how a real
+model reacts to fenced poison.
+
+### 12.7 Claude-only code that has never run against the live API (section d)
+
+The refusal-fallback beta, the price and capability tables, served-model drift detection,
+`count_tokens` admission and `BatchLLM` / `AnthropicBatchBackend` carry a "NEVER RUN AGAINST
+THE LIVE API" box in `llm.py` and `batch.py`. They are fixture-tested and frozen: no funded run
+has exercised them, and every published model number comes from the local Ollama path.
+
+**Tool search.** Measured on the desk's 16-tool registry with `ceil(chars / 4)` on both sides
+(`tool_search.token_saving`): the full catalogue is 2,431 tokens; names plus the descriptors
+loaded by two searches is 1,027 (saving 1,404, 58%); one search with 3 hits, 619 (75%). Kept,
+opt-in as before (`/tools?deferred=true`, MCP `tool_search`): the share is large but the
+absolute saving is about 1.4k tokens, small next to one decision's prompts.
+
+**OpenTelemetry and golden transcripts: scaffold.** No per-call latency log exists from the
+local runs, so no SLO percentiles can be computed. The committed run metadata gives only
+averages (`runtime_s / usage.calls`): red-team compliance 36.3 s per call (300 calls, 0 errors
+or timeouts), text analysts 19.7 s (22 calls), planner fixture 119 s per call for its last
+resumed session (49 calls). Treat OTel export and golden transcripts as scaffolding until a run
+records per-call spans.
+
+### 12.8 Why the text analysts are off by default
+
+`text_analysts: []` stays the default. Evidence: (1) the rules-based filing-tone feature was
+not supported on real SEC filings (design period, 9 names, 201 filings: IC negative at every
+horizon, no |t| >= 2; PLAN 3.2, measured); (2) the model-backed analysts were checked for
+usability only, in a de-anonymised run whose prompts carried real names and dates (review N2) (macro 11/12 usable, fundamentals 10/10 sections with 0 claims dropped;
+`docs/results/v15_local/text_analysts.json`, local qwen2.5:7b), not for any effect on decisions
+or P&L; (3) turning them on adds a third-party-text channel (fenced, but still attack surface)
+and about 20 s of CPU per call on the local model. Until a registered trial shows they add
+information, default-on would change the desk on no evidence.

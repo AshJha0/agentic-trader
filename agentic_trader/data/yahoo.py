@@ -118,12 +118,25 @@ class YahooProvider(MarketDataProvider):
                     raise ValueError(f"no Yahoo corporate-action history for {sym}")
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
+                def action(col: str) -> pd.Series:
+                    # A column Yahoo leaves out (no splits or dividends ever) is all zeros.
+                    if col not in df.columns:
+                        return pd.Series(0.0, index=df.index)
+                    return pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
                 out = pd.DataFrame({"RawClose": pd.to_numeric(df["Close"], errors="coerce"),
-                                    "Split": pd.to_numeric(df.get("Stock Splits", 0.0), errors="coerce").fillna(0.0)})
+                                    "Split": action("Stock Splits"), "Dividend": action("Dividends")})
                 out.index = pd.to_datetime(out.index).tz_localize(None) if getattr(out.index, "tz", None) else pd.to_datetime(out.index)
                 self._actions[sym] = _complete_bars(out.sort_index(), today)
                 self._actions_day[sym] = today
             return self._actions[sym]
+
+    def corporate_actions(self, instrument: Instrument) -> pd.DataFrame | None:
+        """The raw-close and action table (``RawClose``, ``Split``, ``Dividend``) the paper
+        record stores beside each session's bars; ``None`` for FX, which has no actions."""
+        if instrument.is_fx:
+            return None
+        return self._corporate_actions(instrument.yahoo_symbol).copy()
 
     def splits(self, instrument: Instrument) -> dict[date, float]:
         """Split ex-date -> ratio (4.0 for a 4-for-1) from Yahoo's action history."""

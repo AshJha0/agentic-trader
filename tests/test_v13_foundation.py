@@ -141,7 +141,7 @@ def test_complete_json_sends_output_config_format_alongside_effort(monkeypatch):
     llm = AnthropicLLM(cfg(use_refusal_fallback=False))
     assert llm.complete_json("sys", "p", deep=False, schema=contracts.ANALYST) == '{"signal": 0.4}'
     oc = sent["create"][0]["output_config"]
-    assert oc["effort"] == "low" and oc["format"] == {"type": "json_schema", "schema": contracts.ANALYST}
+    assert oc["effort"] == "low" and oc["format"] == {"type": "json_schema", "schema": contracts.api_schema(contracts.ANALYST)}
     assert "tool_choice" not in sent["create"][0]          # never forced (400 on 5.5 models)
 
 

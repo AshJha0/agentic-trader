@@ -82,12 +82,15 @@ def test_anonymized_prompts_leak_no_name_date_or_price(symbol):
         assert st.proposal.rationale == "AAPL looks strong"      # name restored for the audit trail
 
 
-def test_anonymization_is_off_without_an_llm_and_by_default():
+def test_anonymization_is_off_without_an_llm_and_forced_with_one():
     st, _ = TradingGraph(make_config(CFG, llm_anonymize=True), **QUIET).propagate("AAPL", "2024-03-01")
     assert st.anon is None                                       # rules have no memory to leak from
-    rec = Recorder()
+    rec = Recorder()                                             # v0.17 (N8): forced on with a model
     TradingGraph(CFG, llm=rec, **QUIET).propagate("AAPL", "2024-03-01")
-    assert any("AAPL" in p for p in rec.prompts)
+    assert rec.prompts and not any("AAPL" in p for p in rec.prompts)
+    ctl = Recorder()                                             # deliberate de-anonymised control
+    TradingGraph(make_config(CFG, allow_deanonymized_llm=True), llm=ctl, **QUIET).propagate("AAPL", "2024-03-01")
+    assert any("AAPL" in p for p in ctl.prompts)
 
 
 # -------------------------------------------------------- cost tracking

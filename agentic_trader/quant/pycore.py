@@ -148,7 +148,7 @@ def atr(high, low, close, n: int = 14) -> np.ndarray:
     tr = h - l
     if len(c) > 1:
         pc = c[:-1]
-        tr[1:] = np.maximum.reduce([h[1:] - l[1:], np.abs(h[1:] - pc), np.abs(l[1:] - pc)])
+        tr[1:] = np.maximum(np.maximum(h[1:] - l[1:], np.abs(h[1:] - pc)), np.abs(l[1:] - pc))
     return _wilder(tr, n, 0)
 
 
@@ -397,6 +397,23 @@ class BacktestConfig:
     allow_short: bool = True
     risk_free_annual: float = 0.0  # constant rf for the metrics when no cash_rate series is given
     funded: bool = True  # idle cash 1-|w| earns cash_rate; False (FX forwards): the whole account
+    # Execution timing (v0.17, review Q1). exec_lag k: the target decided at bar t is executed at
+    # bar t+k (0 = same-close fill, the historical behaviour, bit-identical). fill_next_open: the
+    # executed target fills at open[t+1] instead of close[t]; the old position carries the
+    # overnight move close[t] -> open[t+1]. Needs ``open``; not combinable with stop/take levels.
+    exec_lag: int = 0
+    fill_next_open: bool = False
+    # Financing spreads (v0.17, review A5; agentic_trader.financing): annual fractions charged
+    # each bar as max(|w|-1,0)*funding_spread + max(1-|w|,0)*cash_spread, next to the cash leg.
+    # 0 (default) leaves every published number unchanged.
+    funding_spread: float = 0.0
+    cash_spread: float = 0.0
+    # Stop slippage (v0.17, review C1; execution_realism.stop_fill_with_slippage): a triggered
+    # stop fills half_spread (price fraction) worse plus range_frac of the stop-to-extreme
+    # distance, floored at the bar's extreme; a gap fills at the open less the half spread.
+    # Both 0 (default) is the historical fill. Take-profit fills are unchanged.
+    stop_half_spread: float = 0.0
+    stop_range_frac: float = 0.0
 
 
 @dataclass
@@ -550,24 +567,30 @@ def compute_metrics(equity, positions, periods_per_year: float,
     return m
 
 
-def _exit_fill(w, stop, take, o, h, l):
+def _exit_fill(w, stop, take, o, h, l, half_spread=0.0, range_frac=0.0):
     """Fill price if a protective level trades inside the bar, else NaN (see backtest.hpp):
-    the open is resolved first against both levels, then the range, stop before target."""
+    the open is resolved first against both levels, then the range, stop before target.
+    ``half_spread``/``range_frac`` slip the stop fill exactly as
+    ``execution_realism.stop_fill_with_slippage`` (0, 0 = the historical fill)."""
     if w > 0:
         if not np.isnan(stop) and o <= stop:
-            return o
+            return max(l, o * (1.0 - half_spread)) if half_spread else o
         if not np.isnan(take) and o >= take:
             return o
         if not np.isnan(stop) and l <= stop:
+            if half_spread or range_frac:
+                return max(l, stop * (1.0 - half_spread) - range_frac * (stop - l))
             return stop
         if not np.isnan(take) and h >= take:
             return take
     elif w < 0:
         if not np.isnan(stop) and o >= stop:
-            return o
+            return min(h, o * (1.0 + half_spread)) if half_spread else o
         if not np.isnan(take) and o <= take:
             return o
         if not np.isnan(stop) and h >= stop:
+            if half_spread or range_frac:
+                return min(h, stop * (1.0 + half_spread) + range_frac * (h - stop))
             return stop
         if not np.isnan(take) and l <= take:
             return take
@@ -597,7 +620,8 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
         raise ValueError("periods_per_year must be > 0")
     if not (config.initial_capital > 0) or np.isinf(config.initial_capital):
         raise ValueError("initial_capital must be positive and finite")
-    for name in ("cost_bps", "slippage_bps", "borrow_annual"):
+    for name in ("cost_bps", "slippage_bps", "borrow_annual", "funding_spread", "cash_spread",
+                 "stop_half_spread"):
         v = float(getattr(config, name))
         if not np.isfinite(v) or v < 0:
             raise ValueError(f"{name} must be a finite non-negative number, got {v}")
@@ -607,16 +631,11 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
         raise ValueError(f"carry_annual must be finite, got {config.carry_annual}")
     if np.isinf(config.risk_free_annual):
         raise ValueError("risk_free_annual must be finite or NaN (unknown = 0)")
-    for name in ("cost_bps", "slippage_bps", "borrow_annual"):
-        v = float(getattr(config, name))
-        if not np.isfinite(v) or v < 0:
-            raise ValueError(f"{name} must be a finite non-negative number, got {v}")
-    if not np.isfinite(config.max_leverage) or config.max_leverage < 0:
-        raise ValueError(f"max_leverage must be finite and >= 0, got {config.max_leverage}")
-    if not np.isfinite(config.carry_annual):
-        raise ValueError(f"carry_annual must be finite, got {config.carry_annual}")
-    if np.isinf(config.risk_free_annual):
-        raise ValueError("risk_free_annual must be finite or NaN (unknown = 0)")
+    if not 0.0 <= float(config.stop_range_frac) <= 1.0:
+        raise ValueError(f"stop_range_frac must be in [0, 1], got {config.stop_range_frac}")
+    lag = config.exec_lag
+    if isinstance(lag, bool) or int(lag) != lag or lag < 0:
+        raise ValueError(f"exec_lag must be a non-negative integer, got {lag}")
     unknown = set(extras) - set(_EXTRA_RULES)
     if unknown:
         raise TypeError(f"run_backtest: unknown inputs {sorted(unknown)}")
@@ -647,6 +666,11 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
     has_levels = out["stop"] is not None or out["take"] is not None
     if has_levels and not all(out[k] is not None for k in ("open", "high", "low")):
         raise ValueError("run_backtest: stop/take levels need open, high and low")
+    if config.fill_next_open:
+        if out["open"] is None:
+            raise ValueError("run_backtest: fill_next_open needs open prices")
+        if has_levels:
+            raise ValueError("run_backtest: fill_next_open cannot be combined with stop/take levels")
     return p, w_in, out
 
 
@@ -685,28 +709,44 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
 
     prev, prev_target, stopped, ruined = 0.0, NaN, False, False
     exits, impact_paid, ruined_at = 0, 0.0, -1
+    lag = int(config.exec_lag)
+    next_open = bool(config.fill_next_open)
+    opens = extras["open"]
     for t in range(T - 1):
-        raw = 0.0 if np.isnan(w_in[t]) else float(w_in[t])
+        j = t - lag  # decision bar whose target is executed now (j < 0: nothing decided yet)
+        raw = 0.0 if (j < 0 or np.isnan(w_in[j])) else float(w_in[j])
         clamped = float(min(max(raw, lo), hi))
         target = raw if raw == prev else clamped
-        rearm = (clamped != prev_target) if reb is None else (reb[t] != 0.0)
+        rearm = (clamped != prev_target) if reb is None else (j >= 0 and reb[j] != 0.0)
         decide = rearm or clamped != prev_target
         if rearm:
             stopped = False
         prev_target = clamped
         w = 0.0 if (ruined or stopped) else (target if decide else prev)
 
-        trade = w - prev
+        f_on = 1.0
+        if next_open:
+            # The held position carries the overnight move close[t] -> open[t+1]; the new target
+            # fills at the open. A keep (w == prev) holds the units: no trade at the open.
+            on = opens[t + 1] / p[t]
+            f_on = 1.0 + prev * (on - 1.0)
+            held_on = 0.0 if (prev == 0.0 or f_on <= 0.0) else prev * on / f_on
+            if w == prev:
+                w = held_on
+            trade = w - held_on
+        else:
+            trade = w - prev
+        fill_t = t + 1 if next_open else t
         if trade != 0.0:
-            trades.append(Trade(t, prev, w, float(p[t])))
-            traded[t] += abs(trade)
+            trades.append(Trade(fill_t, w - trade, w, float(opens[t + 1] if next_open else p[t])))
+            traded[fill_t] += abs(trade)
 
         exit_px = NaN
         if w != 0.0 and has_levels:
-            s = NaN if stop_a is None else stop_a[t]
-            k = NaN if take_a is None else take_a[t]
+            s = NaN if (stop_a is None or j < 0) else stop_a[j]
+            k = NaN if (take_a is None or j < 0) else take_a[j]
             exit_px = _exit_fill(w, s, k, extras["open"][t + 1], extras["high"][t + 1],
-                                 extras["low"][t + 1])
+                                 extras["low"][t + 1], config.stop_half_spread, config.stop_range_frac)
         exited = not np.isnan(exit_px)
         px_end = exit_px if exited else p[t + 1]
 
@@ -719,10 +759,12 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
 
         # Costs come out of equity before the position is put on (w is a fraction of post-cost
         # equity): E_{t+1} = E_t (1 - k_in) (1 + g) (1 - k_out). Mirrors C++ operation for operation.
-        gross = px_end / p[t]  # kept as a ratio: 1 + (gross - 1) loses digits on a huge move
+        gross = px_end / (opens[t + 1] if next_open else p[t])  # a ratio: 1 + (gross - 1) loses digits on a huge move
         price_ret = gross - 1.0
         carry = w * rate / ppy
         cash = (1.0 - abs(w) if config.funded else 1.0) * cash_rate_t / ppy
+        aw = abs(w)
+        cash -= (max(aw - 1.0, 0.0) * config.funding_spread + max(1.0 - aw, 0.0) * config.cash_spread) / ppy
         borrow = -w * config.borrow_annual / ppy if w < 0 else 0.0
         scale = np.sqrt(equity[t] / E0)
         impact_in = abs(trade) ** 1.5 * impact_k(t) * scale if trade != 0.0 else 0.0
@@ -730,6 +772,8 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         g = w * price_ret + carry + cash - borrow
         f_in, f_g, f_out = 1.0 - k_in, 1.0 + g, 1.0
         growth = f_in * f_g
+        if next_open:
+            growth = f_on * growth
         impact_paid += impact_in
         if exited:
             impact_out = abs(w) ** 1.5 * impact_k(t + 1) * scale
@@ -748,7 +792,7 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         nxt = equity[t] * (1.0 + ret)
         if ruined:
             ret, nxt = 0.0, equity[t]
-        elif f_in <= 0.0 or f_g <= 0.0 or f_out <= 0.0 or nxt <= 0.0:
+        elif f_on <= 0.0 or f_in <= 0.0 or f_g <= 0.0 or f_out <= 0.0 or nxt <= 0.0:
             ret, nxt = -1.0, 0.0
             ruined, ruined_at = True, t + 1
         positions[t] = w

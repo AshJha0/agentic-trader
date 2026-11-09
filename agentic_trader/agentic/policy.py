@@ -157,10 +157,10 @@ def argument_guard_rule(ctx: PolicyContext) -> PolicyDecision | None:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "notional is not a number")
         if not math.isfinite(nv) or nv <= 0:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "notional must be a positive finite number")
-        cap = ctx.config.get("max_order_notional")
-        if cap is not None and nv > float(cap):
+        ncap = ctx.config.get("max_order_notional")
+        if ncap is not None and nv > float(ncap):
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard",
-                                  f"notional {nv:,.0f} exceeds the per-order cap {float(cap):,.0f}")
+                                  f"notional {nv:,.0f} exceeds the per-order cap {float(ncap):,.0f}")
     return None
 
 
@@ -323,8 +323,44 @@ def approval_message(approval_id: str, request: ToolRequest, approve: bool) -> b
 
 
 def sign_approval(secret: bytes, approval_id: str, request: ToolRequest, approve: bool) -> str:
-    """HMAC-SHA256 (stdlib only) of ``approval_message`` under the approver's key."""
+    """LEGACY mode: HMAC-SHA256 (stdlib only) of ``approval_message`` under a shared secret.
+
+    Tamper-evident, not non-repudiable: the server holds the same secret as the approver,
+    so anyone with server access can mint a valid signature. Prefer ``sign_approval_ed25519``."""
     return hmac.new(secret, approval_message(approval_id, request, approve), hashlib.sha256).hexdigest()
+
+
+def ed25519_keypair() -> tuple[bytes, bytes]:
+    """A new Ed25519 key pair as raw bytes ``(private32, public32)``. The private half
+    belongs to the approver (their machine, a hardware token); the server only ever needs
+    the public half. Uses the ``cryptography`` package (pinned in requirements-lock.txt)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    sk = Ed25519PrivateKey.generate()
+    raw = serialization.Encoding.Raw
+    priv = sk.private_bytes(raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    return priv, sk.public_key().public_bytes(raw, serialization.PublicFormat.Raw)
+
+
+def sign_approval_ed25519(private_key: bytes, approval_id: str, request: ToolRequest, approve: bool) -> str:
+    """Ed25519 signature (hex) of ``approval_message``. Run by the approver, never by the
+    server: the server cannot produce this without the approver's private key."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    sk = Ed25519PrivateKey.from_private_bytes(bytes(private_key))
+    return sk.sign(approval_message(approval_id, request, approve)).hex()
+
+
+def verify_approval_ed25519(public_key: bytes, signature: str, approval_id: str, request: ToolRequest,
+                            approve: bool) -> bool:
+    """True when ``signature`` (hex) is a valid Ed25519 signature of the approval message."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes(public_key)).verify(
+            bytes.fromhex(str(signature)), approval_message(approval_id, request, approve))
+        return True
+    except (InvalidSignature, ValueError):
+        return False
 
 
 class AppendOnlyApprovalLog:
@@ -371,8 +407,12 @@ class AppendOnlyApprovalLog:
 class SignedApprovalGateway(QueuedApprovalGateway):
     """A queued gateway whose decisions are signed by named approvers (opt-in).
 
-    * **identity + signature** -- every decision names an approver from ``keys``
-      (approver id -> shared secret) and carries ``sign_approval`` under that key; an unknown
+    * **identity + signature** -- every decision names an approver from ``public_keys``
+      (approver id -> raw 32-byte Ed25519 public key; the approver signs with
+      ``sign_approval_ed25519`` on their own machine, the server holds public material only,
+      which gives non-repudiation) or, in LEGACY mode, from ``keys`` (approver id -> shared
+      HMAC secret held by the server too: tamper-evident only); an approver id may appear in
+      one map, not both; an unknown
       approver, a missing or bad signature, or a second signature by the same approver is
       refused and nothing is recorded;
     * **N-of-M** -- ``quorum`` maps a tool to the number of distinct approvers it needs
@@ -389,19 +429,28 @@ class SignedApprovalGateway(QueuedApprovalGateway):
 
     name = "signed"
 
-    def __init__(self, keys: dict[str, bytes], quorum: dict[str, int] | None = None, default_quorum: int = 1,
+    def __init__(self, keys: dict[str, bytes] | None = None, quorum: dict[str, int] | None = None, default_quorum: int = 1,
                  ttl_s: float | None = None, price_fn: Callable[[ToolRequest], float | None] | None = None,
                  price_tolerance: float = 0.01, store: AppendOnlyApprovalLog | None = None,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time,
+                 public_keys: dict[str, bytes] | None = None) -> None:
         super().__init__()
-        if not keys:
+        self.keys = {k: bytes(v) for k, v in (keys or {}).items()}
+        self.public_keys = {k: bytes(v) for k, v in (public_keys or {}).items()}
+        if not self.keys and not self.public_keys:
             raise ValueError("a signed gateway needs at least one approver key")
-        self.keys = {k: bytes(v) for k, v in keys.items()}
+        both = set(self.keys) & set(self.public_keys)
+        if both:
+            raise ValueError(f"approver(s) {sorted(both)} have both an HMAC secret and a public key")
+        for k, v in self.public_keys.items():
+            if len(v) != 32:
+                raise ValueError(f"public key for {k!r} must be 32 raw Ed25519 bytes")
+        n_approvers = len(self.keys) + len(self.public_keys)
         self.quorum = {"execution.submit_order": 2} if quorum is None else dict(quorum)
         self.default_quorum = int(default_quorum)
         for tool, n in {**self.quorum, "*": self.default_quorum}.items():
-            if not 1 <= n <= len(self.keys):
-                raise ValueError(f"quorum {n} for {tool} must be between 1 and {len(self.keys)} approvers")
+            if not 1 <= n <= n_approvers:
+                raise ValueError(f"quorum {n} for {tool} must be between 1 and {n_approvers} approvers")
         self.ttl_s, self.price_fn, self.price_tolerance = ttl_s, price_fn, float(price_tolerance)
         self.store, self.clock = store, clock
         self._sigs: dict[str, dict[str, str]] = {}          # approval id -> approver -> signature
@@ -423,8 +472,8 @@ class SignedApprovalGateway(QueuedApprovalGateway):
                 signature: str | None = None) -> ApprovalRequest:
         """Add one approver's signed decision; ``decided_by`` is the approver id. The request
         stays pending until the quorum is reached (or one approver rejects)."""
-        secret = self.keys.get(decided_by)
-        if secret is None:
+        secret, public = self.keys.get(decided_by), self.public_keys.get(decided_by)
+        if secret is None and public is None:
             raise ValueError(f"unknown approver {decided_by!r}")
         if not signature:
             raise ValueError("a signed gateway needs the approver's signature")
@@ -434,8 +483,12 @@ class SignedApprovalGateway(QueuedApprovalGateway):
                 raise KeyError(f"unknown approval {approval_id}")
             if a.decided:
                 raise ValueError(f"approval {approval_id} already decided")
-            expected = sign_approval(secret, approval_id, a.request, approve)
-            if not hmac.compare_digest(expected, str(signature)):
+            if public is not None:
+                ok = verify_approval_ed25519(public, str(signature), approval_id, a.request, approve)
+            else:
+                assert secret is not None
+                ok = hmac.compare_digest(sign_approval(secret, approval_id, a.request, approve), str(signature))
+            if not ok:
                 raise ValueError(f"bad signature from {decided_by!r} on approval {approval_id}")
             sigs = self._sigs.setdefault(approval_id, {})
             if decided_by in sigs:
@@ -451,7 +504,8 @@ class SignedApprovalGateway(QueuedApprovalGateway):
             else:
                 a.note = f"{len(sigs)} of {need} signatures"
         self._log(kind="signature", approval=approval_id, approver=decided_by, approve=bool(approve),
-                  request=a.request.request_id, tool=a.request.tool, signature=str(signature))
+                  request=a.request.request_id, tool=a.request.tool, signature=str(signature),
+                  scheme="ed25519" if public is not None else "hmac-legacy")
         if a.decided:
             self._log(kind="decision", approval=approval_id, approved=a.approved, by=a.decided_by,
                       price=self._price_at.get(approval_id))

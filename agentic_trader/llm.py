@@ -10,6 +10,16 @@ reasoning, so a pipeline run never dies because of the LLM.
 
 Every class here is safe to share between threads: a parallel evaluation runs
 one backtest per instrument against a single client and a single call budget.
+
++--------------------------------------------------------------------------------------+
+| NEVER RUN AGAINST THE LIVE API (review 2026-11-09, section d). The Claude-only paths |
+| below are fixture-tested only; no funded run has exercised them: the refusal-fallback|
+| beta (``REFUSAL_FALLBACK_FAMILIES`` / ``_FALLBACK_BETA``), the price and capability  |
+| tables (``PRICES_PER_MTOK``, ``MODEL_CAPABILITIES``), served-model drift detection,  |
+| ``count_tokens`` admission, and ``batch.BatchLLM`` / ``AnthropicBatchBackend``.      |
+| Frozen: do not extend them before a funded run verifies them. Every number the       |
+| project publishes comes from the local Ollama path (``local_llm.py``).               |
++--------------------------------------------------------------------------------------+
 """
 from __future__ import annotations
 
@@ -24,9 +34,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .contracts import api_schema
+
 log = logging.getLogger(__name__)
 
-# Server-side refusal fallback, ``fallbacks: "default"`` form (beta header below): the API
+# NEVER RUN AGAINST THE LIVE API (see the module box). Server-side refusal fallback, ``fallbacks: "default"`` form (beta header below): the API
 # re-runs a declined request on a model it picks by refusal category. Families that accept it
 # on the Claude API; matched by family like the tables below. Claude Haiku 5.5 has none.
 REFUSAL_FALLBACK_FAMILIES = frozenset({"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5",
@@ -37,7 +49,7 @@ _FALLBACK_BETA = "server-side-fallback-2026-07-01"
 NO_FORCED_TOOL_CHOICE = frozenset({"claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5",
                                    "claude-sonnet-5-5"})
 
-# USD per million tokens (input, output), first-party API list prices. Cache reads
+# NEVER RUN AGAINST THE LIVE API (see the module box). USD per million tokens (input, output), first-party API list prices. Cache reads
 # are billed at 0.1x input and cache writes at 1.25x input. Update when prices change.
 PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-fable-5-1": (10.0, 50.0),
@@ -189,7 +201,9 @@ def model_matches(configured: str, served: str | None) -> bool:
     """True when the id the API reports serving is the configured one (an exact match, or the
     configured id followed by a ``-YYYYMMDD`` snapshot suffix; ``claude-haiku-5`` does not
     match ``claude-haiku-5-5``)."""
-    return bool(served) and (served == configured or re.fullmatch(re.escape(configured) + r"-\d{8}", served) is not None)
+    if not served:
+        return False
+    return served == configured or re.fullmatch(re.escape(configured) + r"-\d{8}", served) is not None
 
 
 def estimate_call_cost(model: str, output_tokens: int, input_tokens: int) -> float:
@@ -343,7 +357,7 @@ class UsageTracker:
                 "cache_write_tokens": sum(u.cache_write_tokens for u in self.by_model.values()),
                 "cost_usd": round(self._cost_usd(), 4),
                 "unpriced_models": self._unpriced_models(),
-                "by_model": {m: {**u.__dict__, "cost_usd": None if u.cost(m) is None else round(u.cost(m), 4)}
+                "by_model": {m: {**u.__dict__, "cost_usd": None if (c := u.cost(m)) is None else round(c, 4)}
                              for m, u in self.by_model.items()},
             }
 
@@ -392,7 +406,7 @@ class AnthropicLLM:
                              self.config["max_tokens"])
 
     def count_input_tokens(self, deep: bool, system: str, prompt: str) -> int:
-        """Input tokens of one request: the ``count_tokens`` endpoint (free, no spend) when
+        """NEVER RUN AGAINST THE LIVE API. Input tokens of one request: the ``count_tokens`` endpoint (free, no spend) when
         ``llm_count_tokens`` allows it, else the conservative local estimate. ``"auto"`` (the
         default) counts remotely only when ``ANTHROPIC_API_KEY`` is set; any failure of the
         endpoint falls back to the estimate."""
@@ -445,7 +459,7 @@ class AnthropicLLM:
 
     @property
     def last_call(self) -> dict[str, Any] | None:
-        """Evidence for the most recent call made on this thread: configured and served model,
+        """NEVER RUN AGAINST THE LIVE API (drift detection). Evidence for the most recent call: configured and served model,
         stop reason, refusal category, fallback switches, whether the served model drifted."""
         return getattr(self._tls, "last", None)
 
@@ -465,7 +479,7 @@ class AnthropicLLM:
         kwargs.update(system=self._system_blocks(system), messages=[{"role": "user", "content": prompt}])
         if schema is not None:
             kwargs["output_config"] = {**kwargs.get("output_config", {}),
-                                       "format": {"type": "json_schema", "schema": schema}}
+                                       "format": {"type": "json_schema", "schema": api_schema(schema)}}
         return kwargs
 
     def read_response(self, resp: Any, configured: str) -> str | None:
@@ -669,8 +683,9 @@ class BudgetedLLM:
         if hasattr(self.inner, "admit_retry"):
             self.inner.admit_retry = self._admit_retry
         try:
-            if schema is not None and callable(getattr(self.inner, "complete_json", None)):
-                return self.inner.complete_json(system, prompt, deep=deep, schema=schema)
+            cj = getattr(self.inner, "complete_json", None)
+            if schema is not None and callable(cj):
+                return cj(system, prompt, deep=deep, schema=schema)
             return self.inner.complete(system, prompt, deep=deep)
         finally:
             with self._lock:

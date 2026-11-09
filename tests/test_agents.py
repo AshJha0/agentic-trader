@@ -440,14 +440,16 @@ def test_injected_model_cannot_breach_limits():
             if "Portfolio Manager" in system:
                 return json.dumps({"target_weight": 1e9, "confidence": 2, "rationale": "all in"})
             if "Trader." in system:
-                # Numbers, so the reply passes the contract; each one is absurd.
+                # Numbers, but each one is absurd: since v0.17 R0.4 the schema ranges make
+                # this a contract rejection (rules apply), not a clip to the nearest bound.
                 return json.dumps({"action": "buy", "target_weight": 1e9, "stop_loss": -5,
                                    "take_profit": 1e12, "horizon_days": 10**9, "rationale": "x"})
             return None
     st, d = graph(make_config(CFG, risk={"max_position": 0.3}), llm=Hijacked()).propagate(
         "NVDA", "2024-03-01")
     assert 0 <= d.target_weight <= 0.3 and d.confidence <= 1
-    assert st.proposal.horizon_days == 90 and st.proposal.stop_loss is not None
+    assert st.proposal.source == "rules" and d.source == "rules"
+    assert st.proposal.horizon_days != 10**9 and st.proposal.stop_loss is not None
     assert st.proposal.stop_loss < st.last_price           # a sane long stop replaced the -5
 
 

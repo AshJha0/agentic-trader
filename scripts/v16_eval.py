@@ -7,6 +7,8 @@ Model calls go to a local Ollama model only ($0); ``check`` and ``agreement`` ca
     python scripts/v16_eval.py run       --model qwen2.5:7b-instruct --out results/v16_eval/run.jsonl
     python scripts/v16_eval.py check     --replies results/v16_eval/run.jsonl --out results/v16_eval/check.json
     python scripts/v16_eval.py judge     --replies results/v16_eval/run.jsonl --out results/v16_eval/judge.jsonl
+        (v0.17: the judge is --judge-model, default llama3.1:8b-instruct-q4_K_M; a judge from the
+        --judged-model family is refused unless --allow-same-family)
     python scripts/v16_eval.py judge     --calibration --out results/v16_eval/judge_calibration.jsonl
     python scripts/v16_eval.py agreement --judged results/v16_eval/judge_calibration.jsonl --out results/v16_eval/agreement.json
     python scripts/v16_eval.py freeze    # regenerate the frozen items (deliberately, never to pass a test)
@@ -155,6 +157,11 @@ def _calibration_targets(a: argparse.Namespace) -> list[dict[str, Any]]:
 
 
 def cmd_judge(a: argparse.Namespace, llm=None) -> int:
+    from agentic_trader.agentic.judge_kit import JudgeConfigError, resolve_judge_model
+    try:   # v0.17 R3.1: judge from another model family than the judged one (self-preference)
+        a.model = resolve_judge_model(a.judge_model, a.judged_model, a.allow_same_family)
+    except JudgeConfigError as e:
+        raise SystemExit(str(e))
     llm = llm or make_llm(a)
     pairs = _calibration_targets(a)
     out = Path(a.out)
@@ -169,7 +176,8 @@ def cmd_judge(a: argparse.Namespace, llm=None) -> int:
         return {"id": p["id"], "item_id": p["item"]["id"], "raw": raw, "verdict": ev.parse_judge(raw), "error": err}
 
     done = _checkpointed(out, pairs, answer, "judge")
-    _write_meta(out, llm, {"subcommand": "judge", "n": len(pairs), "calibration": bool(a.calibration)})
+    _write_meta(out, llm, {"subcommand": "judge", "n": len(pairs), "calibration": bool(a.calibration),
+                           "judge_model": a.model, "judged_model": a.judged_model})
     bad = [p["id"] for p in pairs if done[p["id"]]["verdict"] is None]
     print(json.dumps({"n": len(pairs), "unparseable": len(bad)}))
     return 1 if a.smoke and bad else 0
@@ -238,6 +246,11 @@ def main(argv: list[str] | None = None, llm=None) -> int:
         s.add_argument("--replies", default=None, help="check/judge: JSONL from run")
         s.add_argument("--calibration", action="store_true", help="judge: the human-labelled calibration rows")
         s.add_argument("--judged", default=None, help="agreement: JSONL from judge --calibration")
+        if name == "judge":
+            from agentic_trader.agentic.judge_kit import DEFAULT_JUDGE_MODEL, DEFAULT_JUDGED_MODEL
+            s.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL, help="judge model (other family)")
+            s.add_argument("--judged-model", default=DEFAULT_JUDGED_MODEL, help="model that wrote the replies")
+            s.add_argument("--allow-same-family", action="store_true", help="permit a same-family judge")
         s.set_defaults(fn=fn)
     a = p.parse_args(argv)
     if a.cmd in ("check",) and not a.replies:

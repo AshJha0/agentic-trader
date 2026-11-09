@@ -260,6 +260,17 @@ class EdgarProvider:
                 return f"{int(r['cik_str']):010d}"
         return None
 
+    def company_names(self, symbol: str) -> list[str]:
+        """``entityName`` and every ``formerNames[].name`` from the submissions JSON (the same
+        document ``filing_index`` reads, so cached), for the anonymiser's name map."""
+        cik = self.cik(symbol)
+        if cik is None:
+            return []
+        sub = self._json(SUBMISSIONS_URL.format(name=f"CIK{cik}.json"))
+        names = [sub.get("name") or sub.get("entityName")]
+        names += [f.get("name") for f in sub.get("formerNames") or [] if isinstance(f, dict)]
+        return [n for n in names if isinstance(n, str) and n.strip()]
+
     def filing_index(self, symbol: str) -> list[dict[str, Any]]:
         """Filings of the kept forms: accession, form, primary document, accepted (UTC)."""
         key = f"index:{symbol.upper()}"

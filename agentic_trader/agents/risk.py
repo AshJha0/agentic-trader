@@ -63,6 +63,7 @@ def position_cvar(f: dict[str, Any], w: float) -> float:
 
 def _book_var_now(state: TradingState, method: str) -> float | None:
     from ..portfolio import book_var_95
+    assert state.book is not None  # the caller only asks when a book is attached
     sym = state.instrument.symbol
     positions = {**state.book.positions, sym: state.current_weight or 0.0}
     return book_var_95(positions, state.book.returns, method=method)
@@ -127,7 +128,8 @@ class RiskAnalyst(Agent):
                 f"{position_var(f, f['proposed_weight']):.2%}, "
                 f"CVaR95 {position_cvar(f, f['proposed_weight']):.2%}, drawdown from 60d high "
                 f"{f['drawdown_from_60d_high']:.1%}.")
-        untrusted = state.untrusted_inputs or state.proposal.untrusted or any(v.untrusted for v in history)
+        untrusted = (state.untrusted_inputs or (state.proposal is not None and state.proposal.untrusted)
+                     or any(v.untrusted for v in history))
         view = RiskView(self.stance, w, text, rnd, untrusted=untrusted)
 
         prompt = (
@@ -190,6 +192,7 @@ class PortfolioManager(Agent):
 
     def run(self, state: TradingState, f: dict[str, Any]) -> FinalDecision:
         p, thr = state.proposal, self.config["decision_threshold"]
+        assert p is not None and state.debate is not None  # the trader and debate stages ran first
         latest: dict[str, RiskView] = {}
         for v in state.risk_views:
             latest[v.stance] = v

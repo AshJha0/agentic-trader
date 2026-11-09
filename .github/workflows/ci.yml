@@ -17,7 +17,7 @@ concurrency:
 # markers) to stay under ten minutes. nightly.yml runs the whole suite.
 jobs:
   lint:
-    name: Lint (ruff) and types (mypy, advisory)
+    name: Lint (ruff) and types (mypy, blocking on the quant core)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -29,10 +29,14 @@ jobs:
       - name: Install
         run: python -m pip install -e . ruff==0.17.2 mypy==2.4.1
       - name: ruff
-        run: ruff check agentic_trader scripts/paper_ops.py
-      # Advisory until the Optional-handling backlog is cleared: the log shows the count
-      # without blocking a PR. Make it blocking by removing continue-on-error.
-      - name: mypy
+        run: ruff check agentic_trader scripts/paper_ops.py tests
+      # Blocking on the quant core (the modules every published number goes through): a type
+      # error there fails the PR.
+      - name: mypy (quant core, blocking)
+        run: mypy agentic_trader/quant agentic_trader/risk_model.py agentic_trader/stats.py agentic_trader/oms.py agentic_trader/nyse_calendar.py
+      # The rest stays advisory until its Optional-handling backlog is cleared: the log shows
+      # the count without blocking a PR.
+      - name: mypy (whole package, advisory)
         continue-on-error: true
         run: mypy
 
@@ -52,8 +56,17 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: pyproject.toml
+      # Hashed lock for this Python when one is committed (scripts/gen_lockfiles.sh), installed
+      # with --require-hashes; otherwise a fresh resolve from pyproject's lower bounds.
       - name: Install
-        run: python -m pip install -e ".[dev]"
+        run: |
+          lock="requirements/lock-py${{ matrix.python-version }}.txt"
+          if [ -f "$lock" ]; then
+            python -m pip install --require-hashes -r "$lock"
+            python -m pip install -e . --no-deps
+          else
+            python -m pip install -e ".[dev]"
+          fi
       - name: Check quant backend
         run: python -c "import agentic_trader.quant as q; assert q.BACKEND == 'python', q.BACKEND"
       - name: Run tests

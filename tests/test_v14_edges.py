@@ -15,7 +15,6 @@ from agentic_trader.alpha import EQUITY_ALPHAS, compute_alphas
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.instruments import Instrument
 from agentic_trader.memory import DecisionMemory
-from agentic_trader.quant import pycore
 from agentic_trader.stats import sharpe_stats
 from agentic_trader.validate import (BarValidationError, bar_problems, cap_short_notional, common_sessions,
                                      ledgers_match, read_ledger_csv, require_valid_bars, session_close_utc,

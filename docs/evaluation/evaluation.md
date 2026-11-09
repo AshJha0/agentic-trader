@@ -2685,8 +2685,11 @@ Design period 2016-01-04 to 2021-12-31, the 15 core names, Yahoo data, produced 
 `scripts/v14_design_trials.py` and `scripts/v14_var_design.py` into `results/v14/` (result
 files are git-ignored; the numbers below are copied from them). The holdout was not read.
 
-**Registered trials** (`evaluation.TRIALS`, 62 to 65): IC-weighted combination (window 504);
+**Registered trials** (`evaluation.TRIALS`, the three v0.14 entries; the current total is `len(evaluation.TRIALS)`, read from the code rather than copied here): IC-weighted combination (window 504);
 IC combination + HMM regime conditioning; IC combination + conformal interval sizing.
+Breadth: 15 names, 10 equities and 5 FX pairs. Every number here is per-name time series; where a
+cross-sectional table appears (`xalpha`), names are ranked within their asset class (since v0.17), so a
+20% quantile is 2 equities or 1 FX pair a side and each table prints its breadth.
 
 | Trial | Mean Sharpe | Control | Difference | 95% CI | p | Beats control |
 |---|---|---|---|---|---|---|

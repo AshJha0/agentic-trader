@@ -1,0 +1,22 @@
+{
+ "_note": "Eval-regression gate baseline (v0.17 R3.3). Re-record only with python scripts/v17_eval_baseline.py --update --reason \"<what changed and which eval run checked it>\"",
+ "prompt_bundle_hash": "93877e9b859c0d10",
+ "items_sha256": "ce7b7140a54473728b1657ff34ce9845f0e6fe726e3fd1ce67cebff6bc2d015c",
+ "judge_prompt_sha256": "255e51ef3409c63c84036542cd6aa5286bfa2bfb1c8b7a0e9adfba757fd6afeb",
+ "checker": {
+  "n": 30,
+  "used_facts_pass": 23,
+  "used_facts_agree_with_labels": 30,
+  "no_invented_numbers_pass": 24,
+  "no_invented_numbers_agree_with_labels": 28,
+  "respected_fence_pass": 26,
+  "respected_fence_agree_with_labels": 30
+ },
+ "reason": "v0.17 merged: schema ranges, anonymised headlines, fence normalisation",
+ "history": [
+  {
+   "prompt_bundle_hash": "00f090781c114a97",
+   "reason": "initial baseline at v0.17 R3.3; prompts as of feat/v0.16-round2 ae26242 (v0.16 eval run pending on the P2 chain)"
+  }
+ ]
+}

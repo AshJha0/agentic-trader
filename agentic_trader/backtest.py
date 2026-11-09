@@ -111,7 +111,46 @@ def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
         cfg.borrow_annual = costs["equity_borrow_annual"]
         cfg.allow_short = risk["allow_short_equity"]
         cfg.funded = True
+    # Execution timing (review Q1): config["backtest"]["exec_lag"] (bars between the decision
+    # and the fill, default 0 = same-close fill) and ["fill"] ("close", default, or "next_open").
+    # Read with defaults so configs and their hashes from before v0.17 are unchanged.
+    timing = config.get("backtest", {}) or {}
+    cfg.exec_lag = int(timing.get("exec_lag", 0))
+    fill = timing.get("fill", "close")
+    if fill not in ("close", "next_open"):
+        raise ValueError(f"backtest.fill must be 'close' or 'next_open', got {fill!r}")
+    cfg.fill_next_open = fill == "next_open"
+    # Financing and stop slippage (v0.17, review A5/C1), opt-in, read with defaults of 0 so
+    # published numbers and config hashes do not move: costs.funding_spread_bps (over rf on
+    # borrowed notional), costs.cash_spread_bps (under rf on idle cash), costs.stop_half_spread_bps
+    # and costs.stop_range_frac (see execution_realism.stop_fill_with_slippage).
+    cfg.funding_spread = float(costs.get("funding_spread_bps", 0.0) or 0.0) / 1e4
+    cfg.cash_spread = float(costs.get("cash_spread_bps", 0.0) or 0.0) / 1e4
+    cfg.stop_half_spread = float(costs.get("stop_half_spread_bps", 0.0) or 0.0) / 1e4
+    cfg.stop_range_frac = float(costs.get("stop_range_frac", 0.0) or 0.0)
     return cfg
+
+
+def participation_capper(full: pd.DataFrame, mask, ins: Instrument, config: dict,
+                         capital: float) -> Callable[[np.ndarray], np.ndarray]:
+    """Weight-path transform for ``costs.backtest_participation_cap`` (v0.17, review C1).
+
+    None (default) returns the identity, so every published number is unchanged. A fraction
+    (0.1 = 10 % of ADV) limits each bar's weight change to ``cap * ADV20 * price / capital``
+    via ``execution_realism.cap_participation``; ADV is the trailing 20-bar mean volume known
+    at the bar (shares). FX (no exchange volume) and bars without volume are uncapped."""
+    cap = (config.get("costs", {}) or {}).get("backtest_participation_cap")
+    if cap is None or ins.is_fx or "Volume" not in full:
+        return lambda w: w
+    from .execution_realism import cap_participation
+    m = np.asarray(mask, dtype=bool)
+    adv = pd.Series(full["Volume"].to_numpy(dtype=float)).rolling(20).mean().to_numpy()[m]
+    px = full["Close"].to_numpy(dtype=float)[m]
+
+    def apply(w: np.ndarray) -> np.ndarray:
+        n = len(w)
+        return cap_participation(w, px[:n], adv[:n], capital, float(cap))
+    return apply
 
 
 def risk_free_series(provider: MarketDataProvider, dates: pd.DatetimeIndex, config: dict) -> np.ndarray:
@@ -322,6 +361,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
 
     results: dict[str, quant.BacktestResult] = {}
     decisions: list[FinalDecision] = []
+    capw = participation_capper(full, mask, ins, cfg, float(cfg["initial_capital"]))
     if include_agent:
         graph = TradingGraph(cfg, provider=provider,
                              llm=llm if llm is not None else get_llm(cfg),
@@ -333,6 +373,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
         extras = dict(carry=carry, rebalance=reb, impact=impact, cash_rate=cash)
         if cfg.get("backtest", {}).get("use_stops"):
             extras.update(ohlc, stop=stop, take=take)
+        elif bt.fill_next_open:
+            extras.update(open=ohlc["open"])
         sources: dict[str, int] = {}
         held = 0.0
         for i in range(rebalance_offset, n - 1, max(1, rebalance_every)):
@@ -341,7 +383,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                 # bars so far (its last position is the previous decision's units drifted with
                 # the market, or 0 after a stop / take exit or ruin).
                 held = float(quant.run_backtest(
-                    prices[:i + 1], w[:i + 1], bt,
+                    prices[:i + 1], capw(w[:i + 1]), bt,
                     **{k: (None if v is None else v[:i + 1]) for k, v in extras.items()}).positions[i])
             st, dec = graph.propagate(ins, window.index[i].date(), current_weight=held)
             if stop_check is not None and stop_check():
@@ -361,7 +403,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
             decisions.append(dec)
             if on_decision:
                 on_decision(dec)
-        results[AGENT] = quant.run_backtest(prices, w, bt, **extras)
+        results[AGENT] = quant.run_backtest(prices, capw(w), bt, **extras)
 
     for name, weights in baseline_weights(full, bt.allow_short, cfg["risk"]["target_vol"],
                                           cfg["risk"]["max_position"], ins.periods_per_year,
@@ -369,8 +411,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                                           carry_scale=float(cfg["risk"].get("fx_carry_neutral_scale", 2.0)),
                                           carry_cap=float(cfg["risk"].get("fx_carry_neutral_cap", 0.5))).items():
         bt_name = dc_replace(bt, allow_short=True) if name in LONG_SHORT_STREAMS else bt
-        results[name] = quant.run_backtest(prices, weights[mask], bt_name, carry=carry, impact=impact,
-                                           cash_rate=cash)
+        results[name] = quant.run_backtest(prices, capw(weights[mask]), bt_name, carry=carry, impact=impact,
+                                           cash_rate=cash, open=ohlc["open"] if bt.fill_next_open else None)
     return ComparisonReport(ins, window.index, results, decisions, bt, carry,
                             sources if include_agent else {}, prices, rf)
 

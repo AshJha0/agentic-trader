@@ -18,12 +18,13 @@ from agentic_trader.backtest import AGENT
 from agentic_trader.calibration import CalibrationReport, calibrate
 from agentic_trader.cli import main
 from agentic_trader.data import SyntheticProvider
-from agentic_trader.evaluation import UNIVERSES, EvaluationResult, evaluate
+from agentic_trader.evaluation import UNIVERSES, evaluate
 
-UNIVERSES_ALL = UNIVERSES["all"]
 from agentic_trader.memory import DecisionMemory
 from agentic_trader.prompts import prompt_bundle_hash, prompt_registry
 from agentic_trader.stats import paired_bootstrap
+
+UNIVERSES_ALL = UNIVERSES["all"]
 
 CFG = make_config(memory_path=None)
 QUIET = dict(memory=DecisionMemory(None), on_event=lambda *_: None)
@@ -181,7 +182,7 @@ def test_xalpha_analyst_ranks_within_its_universe():
 
 # --------------------------------------------------- bounded task pool / processes
 def test_api_task_pool_is_bounded():
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from agentic_trader.agentic.api import create_app
     h = AgentHarness(TradingGraph(CFG, **QUIET), gateway=QueuedApprovalGateway())
@@ -219,7 +220,7 @@ def test_multiprocess_serving_needs_a_store_and_plumbs_the_config(monkeypatch, t
     def fake_run(app, **kw):
         seen.update(kw, app=app, env=dict(__import__("os").environ))
     monkeypatch.setattr(uvicorn, "run", fake_run)
-    serve("127.0.0.1", 9, cfg, processes=2)
+    serve("127.0.0.1", 9, cfg, processes=2, allow_dev_keys=True)
     assert seen["workers"] == 2 and seen["app"] == "agentic_trader.agentic.api:app_factory" and seen["factory"]
     assert CONFIG_ENV in seen["env"] and not Path(seen["env"][CONFIG_ENV]).exists()   # temp config cleaned up
     # the factory builds the app from the JSON the parent wrote
@@ -229,7 +230,7 @@ def test_multiprocess_serving_needs_a_store_and_plumbs_the_config(monkeypatch, t
     app = app_factory()
     assert app.state.harness.store is not None
     assert main(["serve", "--port", "9", "--processes", "2", "--task-db", str(tmp_path / "s.sqlite"),
-                 "--workers", "3"]) == 0
+                 "--workers", "3", "--allow-dev-keys"]) == 0
     assert "2 process(es) x 3 task threads" in capsys.readouterr().out
     assert main(["serve", "--port", "9", "--processes", "2"]) == 2
 

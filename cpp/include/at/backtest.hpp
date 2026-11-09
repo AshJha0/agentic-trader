@@ -67,6 +67,21 @@ struct BacktestConfig {
     double risk_free_annual = 0.0;  // constant rf for the metrics when no cash_rate series is given
     bool funded = true;           // positions are funded from the account (cash fraction 1 - |w|);
                                   // false for FX forwards (the whole account earns cash_rate)
+    // Execution timing (v0.17, review Q1). exec_lag k: the target (and its rebalance flag and
+    // stop/take levels) decided at bar t is executed at bar t+k; 0 = same-close fill, the
+    // historical behaviour. fill_next_open: the executed target fills at open[t+1] instead of
+    // close[t] and the held position carries the overnight move close[t] -> open[t+1]
+    // (needs open; not combinable with stop/take levels). Mirrors pycore.run_backtest_ex.
+    int exec_lag = 0;
+    bool fill_next_open = false;
+    // Financing spreads (v0.17, review A5): annual fractions, charged per bar next to the cash
+    // leg as max(|w|-1,0)*funding_spread + max(1-|w|,0)*cash_spread. 0 = unchanged results.
+    double funding_spread = 0.0;
+    double cash_spread = 0.0;
+    // Stop slippage (v0.17, review C1): price-fraction half spread and share of the
+    // stop-to-extreme distance lost on a triggered stop. 0, 0 = the historical fill.
+    double stop_half_spread = 0.0;
+    double stop_range_frac = 0.0;
 };
 
 struct Trade {

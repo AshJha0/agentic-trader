@@ -1516,7 +1516,7 @@ archived and live tasks and `GET /health` reports both counts.
 
 ### 63. Serve with TLS and real API keys
 
-`serve` refuses to bind a non-loopback interface with the shipped development keys, and
+`serve` refuses the shipped development keys on every host unless `allow_dev_keys` is set (since v0.17; loopback included), and
 warns about plain HTTP off loopback. Pass a certificate and key for TLS, and real keys in
 the config (`api_keys` is replaced, not merged, so no dev key survives).
 
@@ -1528,7 +1528,7 @@ dev = make_config()
 print(uses_dev_keys(dev["agentic"]["api_keys"]))                        # True
 real = make_config(agentic={"api_keys": {"k1-long-random-value": "trader", "k2-long-random-value": "risk"}})
 print(uses_dev_keys(real["agentic"]["api_keys"]))                       # False: dev keys are gone
-print(serve_options("127.0.0.1", dev))                                  # {} : loopback is fine
+print(serve_options("127.0.0.1", dev, allow_dev_keys=True))             # {}: loopback with an explicit opt-in (v0.17)
 try:
     serve_options("0.0.0.0", dev)
 except ValueError as e:
@@ -2691,3 +2691,150 @@ agentic-trader kpi tests/fixtures/kpi_records.jsonl --json   # every field, incl
 A flat view (signal 0) is left out of the hit rate rather than counted as a miss; records
 without `prob_up` are left out of the Brier score, and the table prints `n` for each row so the
 reader can see how many records each number rests on.
+
+## v0.17: the second review's fixes
+
+Recipes 120 to 130 come from the v0.17 lanes (`docs/review/v017_notes/`). The model and network
+runs they name are queued, not run. Every number quoted here comes from offline code and tests,
+a synthetic fixture or plain arithmetic, and the text says which.
+
+### 120. Score a P2 run without re-running the models
+
+```bash
+python scripts/llm_study.py --report --out results/p2/first_pass.jsonl --data yahoo
+python scripts/llm_study.py --report --out results/p2/first_pass.jsonl --data yahoo --horizon 10
+```
+
+The first table is the primary read: per-date cross-sectional rank IC of `target_weight`
+against the 20-bar forward return, the hit rate, and IC minus the `rules` cell, each with a 95%
+date bootstrap. The Sharpe table below it is secondary. `--data` must be the provider the run
+used: each stored `close` is checked against the provider close on `as_of`, and a decision that
+disagrees is left out and listed. `--horizon 10` scores at the trader's default horizon.
+`--seeds 2` is refused unless `--temperature` is above 0, because two greedy runs are one run.
+
+### 121. Is a result sensitive to fill timing?
+
+`make_config(backtest={"exec_lag": 1})` executes the target decided at bar t at bar t+1;
+`make_config(backtest={"fill": "next_open"})` fills at the next open, and the position held into
+the bar earns the overnight move (not yet combined with stop/take levels, which raise an error).
+Re-run the same evaluation with each and compare the Sharpe. A result that survives only at lag
+0 is a same-close artefact. The registered trials at lag 0 and lag 1 (network, queued):
+
+```bash
+python scripts/v17_exec_lag.py --provider yahoo --out docs/results/v17_exec_lag
+```
+
+### 122. Is a null IC a real null?
+
+```python
+import numpy as np
+import pandas as pd
+
+from agentic_trader import leakage
+from agentic_trader.stats import min_detectable_ic, newey_west_t
+
+rng = np.random.default_rng(0)
+idx = pd.bdate_range("2016-01-01", periods=1500)
+signal = pd.Series(rng.standard_normal(1500), index=idx)
+fwd = pd.Series(rng.standard_normal(1500) * 0.01, index=idx)     # pure noise: no edge to find
+r = leakage.ic_blocked_folds(signal, fwd, horizon=10)
+print(f"fold t {r.t:.2f} (bar {r.t_crit:.2f}), NW t {r.t_nw:.2f}, cannot detect |IC| below {r.mde_ic:.3f}")
+print(round(min_detectable_ic(1000), 3))                        # Fisher form, no se: 0.088
+print(round(newey_west_t([1, 2, 3, 4, 5], lag=1).t, 4))          # hand-checked known answer: 4.0089
+```
+
+Read the fold t against its bar, then the Newey-West t and the minimum detectable IC. A null
+then reads "cannot detect |IC| below r.mde_ic", not "no edge". For a family of gates,
+`leakage.format_gate_family({(name, sym, h): r.as_gate(), ...})` prints the nominal verdict and
+the Benjamini-Hochberg verdict over the whole family on Newey-West p.
+
+### 123. Run the desk with the critic governing position size
+
+`make_config(agentic={"critic_in_graph": True, "critic_weight_rule": "veto"})`, then
+`TradingGraph(cfg).propagate("AAPL", "2024-03-01")`. If a model analyst diverged from its rules
+signal by more than `critic_divergence`, `state.critic_report["weight_action"]` shows `from`
+and `to`, and `dec.adjustments` holds the line `critic veto: ...`. The default rule is
+`"scale"` with `critic_weight_scale` 0.5, which halves the tilt from the neutral weight instead
+of removing it; `"off"` is the v0.16 behaviour (confidence only). `critic_in_graph` is off by
+default so earlier results do not change; the harness path always applies the rule.
+
+### 124. Change a prompt without tripping the eval gate
+
+```bash
+python scripts/v16_eval.py freeze                      # only if the analysts' prompts changed
+python scripts/v16_eval.py run --model qwen2.5:7b-instruct --out results/v17_eval/run.jsonl
+python scripts/v16_eval.py check --replies results/v17_eval/run.jsonl --out results/v17_eval/check.json
+python scripts/v17_eval_baseline.py                    # drift check, exit 1 on drift
+python scripts/v17_eval_baseline.py --update --reason "trader prompt v3; checked by results/v17_eval/run.jsonl"
+```
+
+The gate (`tests/test_v17_eval_credibility.py::test_eval_regression_gate`) ties the prompt
+bundle hash, the frozen items and the checker's verdicts on the 30 calibration replies to a
+recorded baseline. CI has no model, so it cannot check that the score did not fall; the
+`reason` is where a person records that check.
+
+### 125. Sign an approval with an Ed25519 key
+
+The approver runs `sk, pk = ed25519_keypair()` once and gives the server `pk.hex()`. The server
+builds `SignedApprovalGateway(public_keys={"alice": bytes.fromhex(pk_hex)})`. For each pending
+approval `a`, the approver runs `sign_approval_ed25519(sk, a.id, a.request, True)` and submits
+the hex string as `signature` with `decided_by="alice"`. The server can verify the signature
+but cannot create it, which the HMAC mode (`keys=`) cannot claim. All three functions are in
+`agentic_trader.agentic.policy`; the configuration path still builds HMAC keys only.
+
+### 126. Check model-output drift on study rows
+
+`from agentic_trader.agentic.monitoring import daily_drift, append_alerts, confidence_calibration`.
+`rep = daily_drift(rows, "local_analysts", control_cell="rules")` gives, per day, the contract
+rejection rate, the signal mean, spread and extreme share, the divergence from the control cell
+and a PSI against the baseline; `append_alerts("alerts.jsonl", rep["alerts"])` keeps the
+records over threshold. `confidence_calibration(rows, "local_analysts")` scores the analysts'
+`confidence` with Brier, reliability bins and ECE. Both read stored rows and call no model.
+
+### 127. Finance a levered backtest
+
+```python
+from agentic_trader.financing import financing_drag
+
+# a 1.5x book borrows half its capital at a 50 bp spread over the risk-free rate
+print(round(float(financing_drag(1.5, 0.0050, 0.0)), 6))       # 0.0025 a year on the account
+```
+
+`run_backtest_financed(prices, weights, cfg, funding_spread_bps=50)` takes the drag out of each
+bar's return after the run (exact at zero costs, first order otherwise). The 50 bp default is a
+convention, not a measurement; the cash spread defaults to 0 so unlevered results do not move.
+
+### 128. Is my stop realistic?
+
+```python
+from agentic_trader.execution_realism import stop_fill_with_slippage
+
+print(stop_fill_with_slippage(w=1, stop=95, o=100, h=101, low=94))              # 95.0: the engine's fill
+print(round(stop_fill_with_slippage(w=1, stop=95, o=100, h=101, low=94,
+                                    half_spread=5e-4, range_frac=0.5), 4))       # 94.4525
+```
+
+The second fill pays half the spread and half the distance from the stop to the low. With both
+set to 0 it reproduces the engine's `_exit_fill`. The engines do not call it yet.
+
+### 129. Audit whether a local model recognises anonymised series
+
+```bash
+python scripts/v16_local_study.py recall2 --data yahoo --smoke --out results/v17_local/recall2.json
+python scripts/v16_local_study.py recall2 --data yahoo --out results/v17_local/recall2.json
+```
+
+The model is asked which instrument (and month) a disguised chart is, with the options shuffled
+per item. Its ranked answer is scored against a label-permutation null and against fake charts
+nobody could know (the placebo arm). Read `recall_flagged`, `real.mrr` against
+`real.null_mean`, `real_vs_placebo.diff` and `position_bias.first_share`. A `first_share` near 1
+with `recall_flagged: false` is a model that always picks the first option: biased, not
+remembering. The old `recall` subcommand stays only to reproduce the void v0.16 rows.
+
+### 130. Run a de-anonymised control
+
+Since v0.17 any run with a model is anonymised automatically (`llm_anonymize` is forced on and
+`llm_anonymize_forced` is recorded). To measure how much the model relies on recognising the
+company, run the same cell twice: once as is, and once with
+`{"allow_deanonymized_llm": true, "llm_anonymize": false}`. A gap between the two is memory, not
+reasoning. Check that the run evidence shows `anonymized: false` only on the control.

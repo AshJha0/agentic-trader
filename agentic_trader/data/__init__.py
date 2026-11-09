@@ -1,9 +1,12 @@
+from typing import Callable
+
 from .base import MarketDataProvider, NewsItem, clean_ohlcv
 from .csv_provider import CSVProvider
 from .synthetic import SyntheticProvider
 from .yahoo import YahooProvider
 
-PROVIDERS = {"synthetic": SyntheticProvider, "yahoo": YahooProvider, "csv": CSVProvider}
+PROVIDERS: dict[str, Callable[[dict], MarketDataProvider]] = {
+    "synthetic": SyntheticProvider, "yahoo": YahooProvider, "csv": CSVProvider}
 
 
 def get_provider(config: dict) -> MarketDataProvider:

@@ -22,7 +22,7 @@ import pandas as pd
 
 from .agents import (ANALYSTS, BearResearcher, BullResearcher, DebateFacilitator,
                      PortfolioManager, RiskAnalyst, Trader, run_debate, run_risk_team)
-from .anonymize import Anonymizer
+from .anonymize import Anonymizer, enforce_llm_anonymize
 from .config import make_config
 from .data import MarketDataProvider, get_provider
 from .validate import MAX_GAP_DAYS, require_valid_bars
@@ -34,6 +34,7 @@ from .state import AnalystReport, Book, DebateOutcome, FinalDecision, TradePropo
 if TYPE_CHECKING:
     from .combine import SignalInputs
     from .regime import RegimeSeries
+    from .text_analysts import TextInputs
 
 
 @dataclass
@@ -66,11 +67,12 @@ class TradingGraph:
         self.llm = llm if llm is not None else get_llm(self.config)
         if self.llm is not None:
             self.llm = budget_llm(self.llm, self.config)
+            enforce_llm_anonymize(self.config)   # N8: a model run is anonymised unless opted out
         self.memory = memory if memory is not None else DecisionMemory(
             self.config.get("memory_path"), max_staleness_days=self.max_staleness_days)
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
         self._research: dict[tuple[int, str, date], _ResearchSeries] = {}
-        self.text_inputs = None   # text_analysts.TextInputs; built from the config on first use
+        self.text_inputs: TextInputs | None = None   # built from the config on first use
         self.text_llm = None      # backend for the text analysts (None = self.llm)
 
         c, m = self.config, self.llm
@@ -261,7 +263,7 @@ class TradingGraph:
         if self.text_inputs is None:
             self.text_inputs = TextInputs.from_config(self.config)
         llm = self.text_llm if self.text_llm is not None else self.llm
-        reports = text_reports(names, llm, self.text_inputs, state.instrument, state.as_of)
+        reports = text_reports(names, llm, self.text_inputs, state.instrument, state.as_of, anon=state.anon)
         for r in reports:
             state.reports[r.analyst] = r
             self.on_event("analyst", f"{r.analyst:<12} signal {r.signal:+.2f} conf {r.confidence:.2f} "
@@ -296,13 +298,37 @@ class TradingGraph:
         dec = state.decision
         if dec is None:
             raise ValueError("no decision to record")
+        summary = self._guarded_summary(state, dec.rationale)
         self.memory.record(state.instrument.symbol, state.as_of, dec.action.value, dec.target_weight,
-                           state.last_price, dec.rationale,
+                           state.last_price, summary,
                            horizon_days=state.proposal.horizon_days if state.proposal else 10,
                            provider=state.provider_name, price_basis=state.price_basis)
         if self.config.get("save_reports"):
             path = self.save_report(state)
             self.on_event("report", f"saved {path}")
+
+    def _guarded_summary(self, state: TradingState, text: str) -> str:
+        """The desk's own decision summary through the output guard (v0.17, review C3) before it
+        becomes a memory lesson. A refusal stores a redacted line naming the reasons instead of
+        the text, so the decision is still recorded but a planted URL, foreign ticker, canary or
+        instruction never reaches later prompts. ``config["agentic"]["memory_output_guard"]``
+        False switches it off; ``["agentic"]["canaries"]`` adds canary strings."""
+        ag = self.config.get("agentic", {}) or {}
+        if not ag.get("memory_output_guard", True):
+            return text
+        from .agentic.output_guard import check_output
+        ins = state.instrument
+        allowed = {ins.symbol, getattr(ins, "display", ins.symbol)}
+        allowed.update(str(s) for s in (ag.get("symbol_universe") or ()))
+        allowed.update(str(s) for s in (self.config.get("xalpha_universe") or ()))
+        g = check_output(str(text)[:400], allowed, ag.get("canaries") or ())
+        if g.ok:
+            return text
+        log.warning("output guard redacted the %s %s decision summary: %s", ins.symbol, state.as_of, g.reason)
+        self.on_event("guard", f"memory summary redacted: {g.reason}")
+        # Only the reason categories are stored: the reasons quote the offending text.
+        kinds = sorted({r.split(":", 1)[0].split()[0] for r in g.reasons})
+        return f"[summary withheld by output guard: {', '.join(kinds)}]"
 
     # ---------------------------------------------------------- pipeline
     def propagate(self, symbol: str | Instrument, as_of: date | str,
@@ -323,8 +349,33 @@ class TradingGraph:
         self.run_debate(state)
         self.run_trader(state)
         dec = self.run_risk(state)
+        if self.config.get("agentic", {}).get("critic_in_graph", False):
+            self.run_critic(state)
         self.record(state)
         return state, dec
+
+    def run_critic(self, state: TradingState):
+        """v0.17 R2.1: the agentic critic on the plain graph path (the backtest and the P2
+        study use ``propagate``), switched on by ``agentic.critic_in_graph`` (default off, so
+        results produced before v0.17 are unchanged). The deterministic checks run on the
+        state alone (no findings, no evidence store, no risk facts); the model critique runs
+        only when ``agentic.critic_graph_llm`` is on. A flagged model/rules divergence acts
+        on ``target_weight`` through ``critic.apply_weight_rule``; the confidence takes the
+        critic's multiplier as in the harness. Returns the ``CriticReport``."""
+        from .agentic.critic import Critic, apply_weight_rule
+        from .agentic.evidence import EvidenceStore
+        acfg = self.config.get("agentic", {})
+        llm = self.llm if acfg.get("critic_graph_llm", False) else None
+        critic = Critic({**self.config, "agentic": {**acfg, "llm_critic": llm is not None}}, llm)
+        rep = critic.review(state, [], EvidenceStore())
+        act = apply_weight_rule(state, rep, self.config)
+        dec = state.decision
+        if dec is not None:
+            dec.confidence = round(dec.confidence * rep.multiplier, 4)
+        state.critic_report = rep.to_dict()
+        if act is not None:
+            self.on_event("critic", f"{act['rule']}: weight {act['from']:+.2f} -> {act['to']:+.2f}")
+        return rep
 
     def scan(self, symbols: list[str], as_of: date | str,
              positions: dict[str, float] | None = None,
@@ -393,6 +444,7 @@ class TradingGraph:
                 state, d = self.propagate(ins, as_of,
                                           current_weight=positions.get(ins.symbol), book=book)
                 votes = [r for r in state.reports.values() if not r.abstained]
+                assert state.debate is not None  # propagate always runs the debate
                 rows.append({
                     "symbol": ins.symbol, "asset_class": ins.asset_class,
                     "last": state.last_price, "action": d.action.value,

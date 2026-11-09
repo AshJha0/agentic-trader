@@ -71,8 +71,8 @@ class Analyst(Agent):
                 kp = data.get("key_points") or []
                 report = AnalystReport(
                     analyst=self.name,
-                    signal=clip(data["signal"], -1, 1),
-                    confidence=clip(data["confidence"], 0, 1, 0.5),
+                    signal=float(data["signal"]),          # range-checked by the contract (R0.4)
+                    confidence=float(data["confidence"]),
                     summary=str(data["summary"]),
                     key_points=[str(k) for k in kp][:5] if isinstance(kp, list) else [],
                     facts=facts,

@@ -607,34 +607,54 @@ def test_non_terminal_records_are_reread_from_the_store(tmp_path):
 
 
 # ------------------------------------------------- 53: owner + lease, not a blanket sweep
-# The lease is 3 s (heartbeat every 1 s): with the 1 s lease this test used, a heartbeat
-# thread starved for ~0.7 s on a loaded runner let a sibling's sweep fail a live run.
+# v0.17 (L9a): deterministic. Every store shares one manual clock and no heartbeat thread runs
+# (agentic.heartbeat_thread False); each harness ticks with heartbeat_once(). The old version
+# slept past a 3 s lease and relied on a background thread being scheduled in time, which
+# failed 3/20 under CPU load (a starved heartbeat let a sibling's sweep fail a live run).
+class _ManualClock:
+    def __init__(self, t0: float = 1_000_000.0):
+        self.t = t0
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, dt: float) -> None:
+        self.t += dt
+
+
 def test_interrupted_sweep_spares_a_live_siblings_runs(tmp_path):
     db = tmp_path / "shared.sqlite"
-    cfg = make_config(CFG, agentic={"task_db": str(db), "lease_s": 3.0})
-    a = AgentHarness(TradingGraph(cfg, **QUIET), gateway=QueuedApprovalGateway())
+    clk = _ManualClock()
+    cfg = make_config(CFG, agentic={"lease_s": 3.0, "heartbeat_thread": False})
+
+    def harness(conf):
+        return AgentHarness(TradingGraph(conf, **QUIET), gateway=QueuedApprovalGateway(),
+                            store=TaskStore(db, clock=clk))
+    a = harness(cfg)
+    assert a._heartbeat_thread is None
     queued = a.submit(Task("MSFT", AS_OF, Role.TRADER))
     parked = _parked_run(a, [_ticket(a, "AAPL", 0.1)])
-    store = TaskStore(db)
+    store = TaskStore(db, clock=clk)
     assert store.ownership(parked.id)[0] == a.owner
 
     def states():
         return store.load(queued.id)["state"], store.load(parked.id)["state"]
-    b = AgentHarness(TradingGraph(cfg, **QUIET), gateway=QueuedApprovalGateway())   # default sweep, same db
+    b = harness(cfg)                                            # default sweep, same db
     assert states() == ("CREATED", "AWAITING_APPROVAL")
     assert b.record(parked.id)["state"] == "AWAITING_APPROVAL"
-    time.sleep(3.5)                                            # longer than the lease: heartbeats keep them alive
-    c = AgentHarness(TradingGraph(cfg, **QUIET), gateway=QueuedApprovalGateway())
+    for _ in range(5):                                          # 5 s > the 3 s lease: a's heartbeats keep them alive
+        clk.advance(1.0)
+        a.heartbeat_once()
+        assert b.heartbeat_once() == 0
+    c = harness(cfg)
     assert states() == ("CREATED", "AWAITING_APPROVAL")
     # A record whose owner stopped heartbeating is failed by the next periodic sweep ...
     dead = dict(store.load(queued.id), task_id="TASK-dead", state="EXECUTING")
     store.save_record(dead, owner="host:999:dead")
     with store._lock:
-        store._conn.execute("UPDATE tasks SET heartbeat=? WHERE task_id=?", (time.time() - 100, "TASK-dead"))
+        store._conn.execute("UPDATE tasks SET heartbeat=? WHERE task_id=?", (clk() - 100, "TASK-dead"))
         store._conn.commit()
-    t0 = time.time()
-    while store.load("TASK-dead")["state"] != "FAILED" and time.time() - t0 < 5:
-        time.sleep(0.05)
+    assert c.heartbeat_once() == 1
     assert store.load("TASK-dead")["state"] == "FAILED" and "process restarted" in store.load("TASK-dead")["errors"]
     assert states() == ("CREATED", "AWAITING_APPROVAL")
     # ... and the owner finishes its work normally.
@@ -646,23 +666,34 @@ def test_interrupted_sweep_spares_a_live_siblings_runs(tmp_path):
     # restart of one slot) is spared too -- the owner never widens the sweep; only an
     # expired lease does, once the predecessor stops heartbeating.
     blue = make_config(cfg, agentic={"instance_id": "blue"})
-    first = AgentHarness(TradingGraph(blue, **QUIET), gateway=QueuedApprovalGateway())
+    first = harness(blue)
     mine = first.submit(Task("EURUSD", AS_OF, Role.TRADER))
     parked2 = _parked_run(first, [_ticket(first, "AAPL", 0.1)])
-    second = AgentHarness(TradingGraph(blue, **QUIET), gateway=QueuedApprovalGateway())
+    second = harness(blue)
     assert second.owner == first.owner == "blue"
     assert store.load(mine.id)["state"] == "CREATED" and store.load(parked2.id)["state"] == "AWAITING_APPROVAL"
     assert second.record(parked2.id)["state"] == "AWAITING_APPROVAL" and parked2.id not in second.archive
     first.decide_approval(first.pending_approvals(parked2.id)[0].id, True)
     assert parked2.state is TaskState.COMPLETED and second.record(parked2.id)["state"] == "COMPLETED"
     first.close()                                              # the old slot drains and stops heartbeating ...
-    t0 = time.time()
-    while store.load(mine.id)["state"] != "FAILED" and time.time() - t0 < 15:
-        time.sleep(0.05)
-    assert store.load(mine.id)["state"] == "FAILED"            # ... and its lease expiry fails what it left
+    clk.advance(2.0)
+    assert second.heartbeat_once() == 0                        # inside the lease: still spared
+    assert store.load(mine.id)["state"] == "CREATED"
+    clk.advance(1.5)
+    assert second.heartbeat_once() == 2                        # ... its lease expiry fails what it left (and a's queued run, a is closed)
+    assert store.load(mine.id)["state"] == "FAILED" and store.load(queued.id)["state"] == "FAILED"
     assert second.record(mine.id)["state"] == "FAILED"
     second.close()
     store.close()
+
+
+def test_heartbeat_thread_still_runs_by_default(tmp_path):
+    h = AgentHarness(TradingGraph(CFG, **QUIET), store=TaskStore(tmp_path / "t.sqlite"), sweep_interrupted=False)
+    try:
+        assert h._heartbeat_thread is not None and h._heartbeat_thread.is_alive()
+    finally:
+        h.close()
+        h.store.close()
 
 
 def test_sweep_and_lease_validation(tmp_path):
@@ -761,7 +792,7 @@ def test_metrics_histograms_are_bounded_and_counters_render_exactly():
     assert set(raw) == {"count", "sum", "min", "max", "buckets"} and not any(isinstance(v, list) and len(v) > 11
                                                                             for v in raw.values())
     text = m.render()
-    assert f'lat_bucket{{tool="t",le="+Inf"}} 5000\n' in text and f'lat_count{{tool="t"}} 5000\n' in text
+    assert 'lat_bucket{tool="t",le="+Inf"} 5000\n' in text and 'lat_count{tool="t"} 5000\n' in text
     n_le_100 = sum(1 for i in range(5000) if 0.5 + (i % 400) * 3.0 <= 100.0)
     assert f'lat_bucket{{tool="t",le="100.0"}} {n_le_100}\n' in text
     assert m.histogram("lat", tool="nope") is None
@@ -1333,23 +1364,24 @@ def test_stdio_session_serves_calls_concurrently_so_an_abandoned_call_does_not_b
     monkeypatch.setattr(ms, "_server_params",
                         lambda args=None: StdioServerParameters(command=sys.executable, args=[__file__, "--serve-slow"]))
     relax = {"read_only": True, "risk": "low", "required": ["read_market_data"]}
-    reg = ms.registry_from_stdio(overrides={"demo.slow": relax, "demo.fast": relax}, call_timeout_s=1.5)
+    # Session deadline 12 s, executor budget 10 s: the executor abandons a slow call first.
+    reg = ms.registry_from_stdio(overrides={"demo.slow": relax, "demo.fast": relax}, call_timeout_s=12.0)
     try:
         ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER, AutoApprovalGateway(),
-                          Tracer(), ExecutorConfig(timeout_s=1.0, max_attempts=1))
-        # Timeouts sized for a loaded runner: a 0.5 s budget timed the fast call itself out.
-        # A blocked session would hold the fast call for the slow call's full 6 s, so the
-        # bounds below still separate concurrent from head-of-line-blocked by a wide margin.
+                          Tracer(), ExecutorConfig(timeout_s=10.0, max_attempts=1))
+        # v0.17 (L9a): no wall-clock assertion. The slow call sleeps 600 s, so a session that
+        # served calls one at a time would hold every later fast call past its budget and the
+        # fast call would fail; that the fast call succeeds at all is the proof. The budget
+        # (10 s for a call that takes milliseconds) is generous for a loaded runner.
         assert ex.call("demo.fast").ok
-        t0 = time.perf_counter()
-        slow = ex.call("demo.slow", seconds=6.0)
+        slow = ex.call("demo.slow", seconds=600.0)
         assert not slow.ok and "timed out" in slow.error
         fast = ex.call("demo.fast")
-        assert fast.ok and fast.payload == 1 and time.perf_counter() - t0 < 3.0, (fast.error, time.perf_counter() - t0)
+        assert fast.ok and fast.payload == 1, fast.error
         for _ in range(3):                                   # several abandoned calls do not wedge the session
-            assert not ex.call("demo.slow", seconds=6.0).ok
-        t1 = time.perf_counter()
-        assert ex.call("demo.fast").ok and time.perf_counter() - t1 < 2.0
+            assert not ex.call("demo.slow", seconds=600.0).ok
+        last = ex.call("demo.fast")
+        assert last.ok, last.error
         assert ex.tracer.metrics.counter("tool_calls_abandoned_total", tool="demo.slow") == 4
     finally:
         reg.session.close()

@@ -87,7 +87,13 @@ PYBIND11_MODULE(_atcore, m) {
         .def_readwrite("max_leverage", &BacktestConfig::max_leverage)
         .def_readwrite("allow_short", &BacktestConfig::allow_short)
         .def_readwrite("risk_free_annual", &BacktestConfig::risk_free_annual)
-        .def_readwrite("funded", &BacktestConfig::funded);
+        .def_readwrite("funded", &BacktestConfig::funded)
+        .def_readwrite("exec_lag", &BacktestConfig::exec_lag)
+        .def_readwrite("fill_next_open", &BacktestConfig::fill_next_open)
+        .def_readwrite("funding_spread", &BacktestConfig::funding_spread)
+        .def_readwrite("cash_spread", &BacktestConfig::cash_spread)
+        .def_readwrite("stop_half_spread", &BacktestConfig::stop_half_spread)
+        .def_readwrite("stop_range_frac", &BacktestConfig::stop_range_frac);
 
     py::class_<Metrics>(m, "Metrics")
         .def_readonly("cumulative_return", &Metrics::cumulative_return)

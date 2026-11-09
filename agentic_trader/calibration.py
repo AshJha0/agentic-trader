@@ -48,8 +48,9 @@ class CalibrationReport:
     meta: dict[str, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------- measures
-    def dispersion(self, anchor: float | None = None) -> dict[str, float]:
-        """Across runs at one anchor: std / range of target weight, action agreement, mean confidence."""
+    def dispersion(self, anchor: float | None = None) -> dict[str, Any]:
+        """Across runs at one anchor: std / range of target weight, action agreement, mean confidence
+        (and the modal action, a string)."""
         s = self._at(anchor)
         if s.empty:
             return {"runs": 0, "std": float("nan"), "range": float("nan"), "agreement": float("nan"),
@@ -60,7 +61,7 @@ class CalibrationReport:
                 "agreement": float((s.action == modal).mean()), "modal_action": str(modal),
                 "mean_target": float(s.target_weight.mean()), "mean_confidence": float(s.confidence.mean())}
 
-    def anchoring(self) -> dict[str, float]:
+    def anchoring(self) -> dict[str, Any]:
         """Slope of the mean target weight on the numeric anchor (least squares over anchors)."""
         s = self.samples[self.samples.anchor.notna()]
         if s.anchor.nunique() < 2:

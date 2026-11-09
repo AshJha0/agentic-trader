@@ -48,7 +48,7 @@ import sys
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -57,10 +57,12 @@ import pandas as pd
 
 from agentic_trader.agents import RiskAnalyst
 from agentic_trader.config import make_config
-from agentic_trader.evaluation import CORE_UNIVERSE, TRIALS
+from agentic_trader.bootstrap import null_centred_pvalue
+from agentic_trader.evaluation import CORE_UNIVERSE, CRITIC_ON_OVERRIDES, CRITIC_ON_TRIAL, TRIALS
 from agentic_trader.graph import TradingGraph
 from agentic_trader.llm import LLM, estimate_tokens, price_for
 from agentic_trader.local_llm import reachable
+from agentic_trader.study_lineage import call_lineage, check_resume, market_lineage, stamp
 
 # Every desk role a cell can hand to the model.
 ROLES = ("analysts", "bull", "bear", "facilitator", "trader", "risk", "pm")
@@ -105,10 +107,21 @@ CELLS: tuple[Cell, ...] = (
     Cell("debate_1", "local model in every role, one debate round", ROLES, {"max_debate_rounds": 1}),
     Cell("neutral_risk", "local model in every role, a single neutral risk analyst", ROLES,
          neutral_risk_only=True),
+    # v0.17 R2.1: the governed desk, registered as evaluation.CRITIC_ON_TRIAL before any run.
+    Cell("critic_on", CRITIC_ON_TRIAL.split(": ", 1)[1], ROLES, CRITIC_ON_OVERRIDES),
 )
 
 
 TRIAL_NAMES = frozenset(t.name for t in TRIALS)
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    """Cell overrides merged into the config one level deep per nested dict, so an override
+    of ``agentic.critic_in_graph`` keeps the rest of the ``agentic`` block."""
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
 
 
 class StudyGraph(TradingGraph):
@@ -116,7 +129,7 @@ class StudyGraph(TradingGraph):
     rules. Sequential use only: ``run_analyst`` swaps ``self.llm`` for the call."""
 
     def __init__(self, cell: Cell, config: dict, llm: LLM | None):
-        super().__init__({**config, **cell.overrides}, llm=llm, on_event=lambda stage, msg: None)
+        super().__init__(_deep_merge(config, cell.overrides), llm=llm, on_event=lambda stage, msg: None)
         self.llm_roles = frozenset(cell.llm_roles)
         if cell.neutral_risk_only:
             self.risk_team = [RiskAnalyst(self.llm, self.config, "neutral")]
@@ -238,7 +251,7 @@ class StudyLLM:
     """Wraps the desk's backend for the study: every call keeps its raw reply, latency, the
     estimated prompt tokens and a status -- ``ok``, ``fallback`` (no reply: timeout, empty,
     refused, drift) or ``unparseable`` (a reply that is not a JSON object with the schema's
-    required keys). ``take()`` hands the calls of one decision to the checkpoint row."""
+    required keys, or with a value outside the schema's range or enum). ``take()`` hands the calls of one decision to the checkpoint row."""
 
     def __init__(self, inner: Any):
         self.inner = inner
@@ -253,20 +266,22 @@ class StudyLLM:
 
     def _book(self, system: str, prompt: str, deep: bool, schema: dict[str, Any] | None,
               reply: str | None, seconds: float) -> str | None:
+        from agentic_trader.contracts import violation
         from agentic_trader.llm import extract_json
         if reply is None or not str(reply).strip():
             status = "fallback"
         elif schema is not None:
             data = extract_json(reply)
-            status = "ok" if isinstance(data, dict) and all(k in data for k in _required(schema)) \
-                else "unparseable"
+            status = "ok" if (isinstance(data, dict) and all(k in data for k in _required(schema))
+                              and violation(data, schema) is None) else "unparseable"
         else:
             status = "ok"
         ev = self.last_call if isinstance(self.last_call, dict) else {}
         self.calls.append({"deep": deep, "schema": schema is not None, "status": status,
                            "seconds": round(seconds, 3), "in_tok_est": estimate_tokens(system, prompt),
                            "out_tok_est": estimate_tokens("", reply or ""), "reply": reply,
-                           "model_served": ev.get("model_served"), "stop_reason": ev.get("stop_reason")})
+                           "model_served": ev.get("model_served"), "stop_reason": ev.get("stop_reason"),
+                           **call_lineage(system, prompt, ev)})
         return reply
 
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
@@ -330,9 +345,21 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def check_seeds(seeds: int, temperature: float) -> None:
+    """Refuse pseudo-replicates (review A1, v0.17 R0.1). At temperature 0 the local model
+    decodes greedily and the seed changes nothing, so a second seed replays the first one
+    exactly. Counting those replays as more data shrinks every interval for free."""
+    if seeds < 1:
+        raise ValueError("seeds must be >= 1")
+    if seeds > 1 and not temperature > 0:
+        raise ValueError(f"--seeds {seeds} at temperature {temperature:g} gives identical replays, not "
+                         "replicates; use --seeds 1, or set --temperature > 0 to sample")
+
+
 def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[Cell], config: dict,
               out: Path, llm_factory: Callable[[dict], Any] | None = None,
-              echo: Callable[[str], None] = print) -> list[dict[str, Any]]:
+              echo: Callable[[str], None] = print, header: dict[str, Any] | None = None,
+              allow_version_change: bool = False) -> list[dict[str, Any]]:
     """Run ``cells`` on the design, one checkpointed JSON line per decision.
 
     Resume: decisions already in ``out`` are skipped, so a killed run restarts where it
@@ -341,12 +368,15 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
     the backend (default ``get_llm``); the study wraps it in ``StudyLLM``.
     """
     from agentic_trader.llm import get_llm
+    check_seeds(seeds, float(config.get("local_llm_temperature") or 0.0))
     factory = llm_factory or (lambda cfg: get_llm(make_config(cfg)))
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.exists():                       # drop a torn last line so the next row starts clean
         raw = out.read_bytes()
         if raw and not raw.endswith(b"\n"):
             out.write_bytes(raw[:raw.rfind(b"\n") + 1])
+    if header is not None:                 # N5: refuse to mix code / prompts / weights on resume
+        header = check_resume(out, header, allow_version_change=allow_version_change)
     done = {_key(r) for r in load_rows(out)}
     cells = list(cells)
     total = len(cells) * seeds * len(names) * len(dates)
@@ -369,7 +399,10 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
                         row = {"cell": cell.name, "seed": seed, "symbol": name, "as_of": d.isoformat(),
                                "action": dec.action.value, "target_weight": float(dec.target_weight),
                                "source": dec.source, "sources": _sources(state), **_market(state),
-                               "seconds": round(time.perf_counter() - t, 3), "calls": calls}
+                               "seconds": round(time.perf_counter() - t, 3), "calls": calls,
+                               **market_lineage(state.history, state.proposal)}
+                        if header is not None:
+                            stamp(row, header)
                         fh.write(json.dumps(row, default=str) + "\n")
                         fh.flush()
                         bad = sum(c["status"] != "ok" for c in calls)
@@ -401,7 +434,29 @@ def block_bootstrap_diff(a: np.ndarray, b: np.ndarray, ppy: float, block: int = 
         idx = (rng.integers(0, n, nb)[:, None] + np.arange(block)[None, :]).ravel()[:n] % n
         out[i] = _sr(a[idx], ppy) - _sr(b[idx], ppy)
     lo, hi = np.percentile(out, [2.5, 97.5])
-    p = float(min(1.0, 2 * min(np.mean(out <= 0), np.mean(out >= 0))))
+    p = null_centred_pvalue(out, diff)  # review B8: replicates shifted onto the null
+    return diff, float(lo), float(hi), p
+
+
+def block_bootstrap_diff_seeds(a: np.ndarray, b: np.ndarray, ppy: float, block: int = BLOCK,
+                               n_boot: int = N_BOOT, seed: int = 0) -> tuple[float, float, float, float]:
+    """Mean over seeds of Sharpe(a_s) - Sharpe(b_s), with ``a`` and ``b`` shaped (seeds, periods)
+    on the same dates. Each resample draws one set of circular blocks over the dates and applies
+    it to every seed, so seeds are never concatenated into a longer series and blocks never wrap
+    from one seed into the next. With identical seeds the result equals the one-seed bootstrap."""
+    a, b = np.atleast_2d(a), np.atleast_2d(b)
+    n = a.shape[1]
+    diff = float(np.mean([_sr(x, ppy) - _sr(y, ppy) for x, y in zip(a, b)]))
+    if n < 3:
+        return diff, float("nan"), float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    nb = int(np.ceil(n / block))
+    out = np.empty(n_boot)
+    for i in range(n_boot):
+        idx = (rng.integers(0, n, nb)[:, None] + np.arange(block)[None, :]).ravel()[:n] % n
+        out[i] = np.mean([_sr(x[idx], ppy) - _sr(y[idx], ppy) for x, y in zip(a, b)])
+    lo, hi = np.percentile(out, [2.5, 97.5])
+    p = null_centred_pvalue(out, diff)  # review B8: replicates shifted onto the null
     return diff, float(lo), float(hi), p
 
 
@@ -421,6 +476,11 @@ def cell_metrics(rows: list[dict[str, Any]], config: dict,
     agent sources, contract rejection and fallback rates, admissibility under ``cap``,
     dispersion across seeds and the Claude list-price cost equivalent per decision.
 
+    Seeds are scored one by one on the dates they share (``per_seed``); the headline difference
+    is their mean, with one bootstrap that resamples dates jointly for every seed. Seeds are
+    never concatenated into one longer series (review A1). ``seed_replays`` flags seeds whose
+    period returns are identical, which is what temperature 0 produces.
+
     The portfolio holds each decision's target weight (equal-weighted over names) from its
     date to the next design date; the control holds the vol-target weight over the same span.
     The last date has no forward span and drops out."""
@@ -432,11 +492,13 @@ def cell_metrics(rows: list[dict[str, Any]], config: dict,
     nxt = dict(zip(dates[:-1], dates[1:]))
     for cell in dict.fromkeys(r["cell"] for r in rows):
         cr = [r for r in rows if r["cell"] == cell]
-        port, ctrl = [], []
-        for seed in sorted({r["seed"] for r in cr}):
+        seeds = sorted({int(r["seed"]) for r in cr})
+        per: dict[int, dict[str, tuple[float, float]]] = {}
+        for seed in seeds:
+            per[seed] = {}
             for d in dates[:-1]:
                 ws, vs = [], []
-                for r in (x for x in cr if x["seed"] == seed and x["as_of"] == d):
+                for r in (x for x in cr if int(x["seed"]) == seed and x["as_of"] == d):
                     c1 = closes.get((r["symbol"], nxt[d]))
                     if c1 is None or not r["close"]:
                         continue
@@ -444,10 +506,18 @@ def cell_metrics(rows: list[dict[str, Any]], config: dict,
                     ws.append(r["target_weight"] * f)
                     vs.append(r["vt_weight"] * f)
                 if ws:
-                    port.append(float(np.mean(ws)))
-                    ctrl.append(float(np.mean(vs)))
-        a, b = np.asarray(port), np.asarray(ctrl)
-        diff, lo, hi, p = block_bootstrap_diff(a, b, ppy)
+                    per[seed][d] = (float(np.mean(ws)), float(np.mean(vs)))
+        # Seeds are scored separately on the dates they share, never pooled into one series.
+        common = sorted(set.intersection(*(set(v) for v in per.values()))) if per else []
+        A = np.array([[per[s][d][0] for d in common] for s in seeds]) if common else np.empty((1, 0))
+        B = np.array([[per[s][d][1] for d in common] for s in seeds]) if common else np.empty((1, 0))
+        diff, lo, hi, p = block_bootstrap_diff_seeds(A, B, ppy)
+        per_seed = []
+        for s, x, y in zip(seeds, A, B):
+            d1, l1, h1, p1 = block_bootstrap_diff(x, y, ppy)
+            per_seed.append({"seed": s, "sharpe": _sr(x, ppy), "sharpe_minus_control": d1,
+                             "ci_lo": l1, "ci_hi": h1, "p": p1})
+        replays = len(seeds) > 1 and all(np.array_equal(A[0], x) for x in A[1:])
         calls = [c for r in cr for c in r["calls"]]
         n_calls = len(calls)
         unparse = sum(c["status"] == "unparseable" for c in calls)
@@ -461,9 +531,10 @@ def cell_metrics(rows: list[dict[str, Any]], config: dict,
             by_ns.setdefault((r["symbol"], r["as_of"]), []).append(r["target_weight"])
         disp = [float(np.std(v, ddof=1)) for v in by_ns.values() if len(v) > 1]
         out.append({
-            "cell": cell, "decisions": len(cr), "periods": len(a), "sharpe": _sr(a, ppy),
-            "control_sharpe": _sr(b, ppy), "sharpe_minus_control": diff, "ci_lo": lo, "ci_hi": hi,
-            "p": p, "calls": n_calls, "calls_per_decision": n_calls / max(1, len(cr)),
+            "cell": cell, "decisions": len(cr), "periods": A.shape[1], "seeds": len(seeds),
+            "sharpe": float(np.mean([_sr(x, ppy) for x in A])),
+            "control_sharpe": float(np.mean([_sr(y, ppy) for y in B])), "sharpe_minus_control": diff,
+            "ci_lo": lo, "ci_hi": hi, "p": p, "per_seed": per_seed, "seed_replays": replays, "calls": n_calls, "calls_per_decision": n_calls / max(1, len(cr)),
             "contract_rejection_rate": unparse / n_calls if n_calls else 0.0,
             "fallback_rate": fallback / n_calls if n_calls else 0.0, "fallback_share": share,
             "admissible": share <= cap, "agent_sources": dict(sorted(sources.items())),
@@ -472,6 +543,161 @@ def cell_metrics(rows: list[dict[str, Any]], config: dict,
             "seconds_per_call": float(np.mean([c["seconds"] for c in calls])) if calls else 0.0,
         })
     return out
+
+
+# ---- per-decision scoring over the forecast horizon (review B4, v0.17 R0.3) -------------------
+
+# The analysts forecast "the next 1-4 weeks" (system prompt in the frozen eval items) and the
+# trader proposes horizon_days of about 10. The first-pass design dates sit ~3.6 months apart, so
+# holding each weight to the next design date scores a 1-4 week view over ~5x its horizon. The
+# primary metrics score each decision over its own horizon instead: 20 trading days, the top of
+# the stated range. The stored rows hold the decision close; the forward close comes from the
+# same data provider at report time, so no model is re-run.
+HORIZON_DAYS = 20
+PriceFn = Callable[[str, date, date], pd.Series]
+
+
+def provider_prices(config: dict) -> PriceFn:
+    """Closes from the configured data provider: ``fn(symbol, start, end)``."""
+    from agentic_trader.data import get_provider
+    from agentic_trader.instruments import Instrument
+    provider = get_provider(config)
+
+    def fn(symbol: str, start: date, end: date) -> pd.Series:
+        hist = provider.history(Instrument.parse(symbol), start, end)
+        return hist["Close"].astype(float)
+    return fn
+
+
+def horizon_returns(rows: list[dict[str, Any]], prices: PriceFn,
+                    horizon: int = HORIZON_DAYS) -> tuple[dict[tuple[str, str], float], list[str]]:
+    """Forward simple return over ``horizon`` trading bars from each decision's close.
+
+    Returns ({(symbol, as_of): return}, problems). A decision whose stored close disagrees with
+    the provider's close on that date (relative 1e-6) is left out and listed in ``problems``:
+    the report is then reading a different price source from the run, and says so."""
+    out: dict[tuple[str, str], float] = {}
+    problems: list[str] = []
+    stored = {(r["symbol"], r["as_of"]): r["close"] for r in rows}
+    for (sym, d), close in sorted(stored.items()):
+        d0 = date.fromisoformat(d)
+        px = prices(sym, d0, d0 + timedelta(days=int(horizon * 2 + 15)))
+        px = px[px.index >= pd.Timestamp(d0)].dropna()
+        if len(px) <= horizon or px.index[0] != pd.Timestamp(d0):
+            problems.append(f"{sym} {d}: fewer than {horizon} bars after the decision")
+            continue
+        if not close or abs(float(px.iloc[0]) / float(close) - 1.0) > 1e-6:
+            problems.append(f"{sym} {d}: provider close {float(px.iloc[0]):.6g} != stored close {close}")
+            continue
+        out[(sym, d)] = float(px.iloc[horizon] / px.iloc[0] - 1.0)
+    return out, problems
+
+
+def _spearman(x: np.ndarray, y: np.ndarray) -> float:
+    """Spearman rank correlation (average ranks for ties); NaN when either side is constant."""
+    if len(x) < 3:
+        return float("nan")
+    rx, ry = pd.Series(x).rank().to_numpy(), pd.Series(y).rank().to_numpy()
+    if np.std(rx) == 0 or np.std(ry) == 0:
+        return float("nan")
+    return float(np.corrcoef(rx, ry)[0, 1])
+
+
+def _date_scores(cr: list[dict[str, Any]], fwd: dict[tuple[str, str], float]) -> dict[str, dict[str, float]]:
+    """Per design date: cross-sectional IC (seed-averaged), hits, active decisions, mean P&L."""
+    out: dict[str, dict[str, float]] = {}
+    for d in sorted({r["as_of"] for r in cr}):
+        ics, pnl = [], []
+        hits = active = 0
+        for seed in sorted({int(r["seed"]) for r in cr}):
+            pts = [(r["target_weight"], fwd[(r["symbol"], d)]) for r in cr
+                   if r["as_of"] == d and int(r["seed"]) == seed and (r["symbol"], d) in fwd]
+            if not pts:
+                continue
+            w, f = np.array(pts, dtype=float).T
+            ics.append(_spearman(w, f))
+            on = (np.abs(w) > 1e-9) & (f != 0)
+            active += int(on.sum())
+            hits += int((np.sign(w[on]) == np.sign(f[on])).sum())
+            pnl.append(float(np.mean(w * f)))
+        if pnl:
+            good = [v for v in ics if math.isfinite(v)]
+            out[d] = {"ic": float(np.mean(good)) if good else float("nan"), "hits": float(hits),
+                      "active": float(active), "pnl": float(np.mean(pnl))}
+    return out
+
+
+def _boot_stats(ds: list[str], scores: dict[str, dict[str, float]], ref: dict[str, dict[str, float]] | None,
+                n_boot: int, seed: int) -> dict[str, Any]:
+    """Point values and 95% date-bootstrap intervals for mean IC, hit rate and (when ``ref``
+    is given) IC minus the reference cell on paired dates. The horizon is shorter than the gap
+    between design dates, so per-date scores do not overlap and dates resample i.i.d."""
+    def stats(idx: np.ndarray) -> tuple[float, float, float]:
+        sel = [ds[i] for i in idx]
+        ic = [scores[d]["ic"] for d in sel if math.isfinite(scores[d]["ic"])]
+        act = sum(scores[d]["active"] for d in sel)
+        hit = sum(scores[d]["hits"] for d in sel) / act if act else float("nan")
+        pair = [scores[d]["ic"] - ref[d]["ic"] for d in sel
+                if ref is not None and d in ref and math.isfinite(scores[d]["ic"]) and math.isfinite(ref[d]["ic"])]
+        return (float(np.mean(ic)) if ic else float("nan"), hit, float(np.mean(pair)) if pair else float("nan"))
+
+    n = len(ds)
+    point = stats(np.arange(n))
+    rng = np.random.default_rng(seed)
+    boots = np.array([stats(rng.integers(0, n, n)) for _ in range(n_boot)]) if n >= 3 else np.empty((0, 3))
+
+    def ci(j: int) -> tuple[float, float]:
+        col = boots[:, j] if len(boots) else np.empty(0)
+        col = col[np.isfinite(col)]
+        if not len(col):
+            return float("nan"), float("nan")
+        return float(np.percentile(col, 2.5)), float(np.percentile(col, 97.5))
+    return {"ic": point[0], "ic_ci": ci(0), "hit_rate": point[1], "hit_ci": ci(1),
+            "ic_minus_rules": point[2], "ic_minus_rules_ci": ci(2)}
+
+
+def horizon_metrics(rows: list[dict[str, Any]], fwd: dict[tuple[str, str], float], horizon: int = HORIZON_DAYS,
+                    n_boot: int = N_BOOT, seed: int = 0, reference: str = "rules") -> list[dict[str, Any]]:
+    """Primary P2 metrics per cell: mean cross-sectional Spearman IC of target weight against the
+    ``horizon``-bar forward return, hit rate (sign of weight = sign of return, over decisions with
+    a non-zero weight), each with a 95% bootstrap interval over dates, and IC minus the
+    ``reference`` cell on paired dates. Secondary: the Sharpe of the per-date mean P&L
+    (weight x forward return), annualised at 252/horizon periods per year."""
+    cells = list(dict.fromkeys(r["cell"] for r in rows))
+    by_cell = {c: _date_scores([r for r in rows if r["cell"] == c], fwd) for c in cells}
+    ref = by_cell.get(reference)
+    out = []
+    for i, (cell, scores) in enumerate(by_cell.items()):
+        ds = sorted(scores)
+        st = _boot_stats(ds, scores, ref if cell != reference else None, n_boot, seed + i)
+        pnl = np.array([scores[d]["pnl"] for d in ds])
+        scored = sum(1 for r in rows if r["cell"] == cell and (r["symbol"], r["as_of"]) in fwd)
+        out.append({"cell": cell, "horizon_days": horizon, "dates": len(ds), "decisions_scored": scored,
+                    "active": int(sum(scores[d]["active"] for d in ds)), **st,
+                    "horizon_sharpe": _sr(pnl, 252.0 / horizon)})
+    return out
+
+
+def render_horizon(hm: list[dict[str, Any]], problems: list[str], reference: str = "rules") -> str:
+    if not hm:
+        return "Horizon metrics: no rows."
+    h = hm[0]["horizon_days"]
+    head = (f"Primary (per decision, {h}-bar forward return): IC and hit rate with 95% date-bootstrap intervals\n\n"
+            f"| cell | dates | scored | active | IC [95% CI] | hit rate [95% CI] | IC - {reference} [95% CI] | "
+            f"Sharpe at {h}d (secondary) |\n|---|---:|---:|---:|---|---|---|---:|")
+
+    def f(v: float, lo_hi: tuple[float, float], pct: bool = False) -> str:
+        def fmt(x: float) -> str:
+            return f"{x:.1%}" if pct else f"{x:+.3f}"
+        if not math.isfinite(v):
+            return "n/a"
+        return f"{fmt(v)} [{fmt(lo_hi[0])}, {fmt(lo_hi[1])}]" if all(map(math.isfinite, lo_hi)) else fmt(v)
+    body = [f"| {m['cell']} | {m['dates']} | {m['decisions_scored']} | {m['active']} | {f(m['ic'], m['ic_ci'])} | "
+            f"{f(m['hit_rate'], m['hit_ci'], True)} | {f(m['ic_minus_rules'], m['ic_minus_rules_ci'])} | "
+            f"{m['horizon_sharpe']:+.2f} |" for m in hm]
+    tail = ([f"Left out ({len(problems)}): " + "; ".join(problems[:10]) + (" ..." if len(problems) > 10 else "")]
+            if problems else [])
+    return "\n".join([head, *body, "", *tail])
 
 
 def _chi2(table: np.ndarray) -> tuple[float, float]:
@@ -588,15 +814,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cells", help="comma-separated cell names (default: all, or the first pass)")
     ap.add_argument("--names", default=",".join(DEFAULT_NAMES))
     ap.add_argument("--dates", type=int, default=40, help="design dates, spread evenly")
-    ap.add_argument("--seeds", type=int, default=2)
+    ap.add_argument("--seeds", type=int, default=1,
+                    help="seeds per cell; more than 1 needs --temperature > 0 (else they are replays)")
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="local model decoding temperature (default 0, greedy)")
+    ap.add_argument("--horizon", type=int, default=HORIZON_DAYS,
+                    help="--report: forward-return horizon in trading bars for IC and hit rate")
     ap.add_argument("--data", default="synthetic", help="data provider (synthetic | yahoo | csv)")
     ap.add_argument("--model", help="Ollama model name (--live, --smoke)")
     ap.add_argument("--url", help="Ollama URL (default config local_llm_url)")
     ap.add_argument("--out", default="results/llm_study.jsonl")
+    ap.add_argument("--allow-version-change", action="store_true",
+                    help="resume although git SHA / prompt hash / Ollama / model digest changed (recorded)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING)
     names = [n.strip() for n in args.names.split(",") if n.strip()]
-    config = make_config(STUDY_BASE, data_provider=args.data)
+    config = make_config(STUDY_BASE, data_provider=args.data, local_llm_temperature=args.temperature)
     cells = CELLS
     if args.first_pass:
         args.dates, args.seeds, cells = FIRST_PASS["dates"], FIRST_PASS["seeds"], _first_pass_cells()
@@ -607,6 +840,9 @@ def main(argv: list[str] | None = None) -> int:
             ap.error(f"unknown cells {sorted(unknown)}")
         cells = tuple(c for c in CELLS if c.name in want)
 
+    if (args.live or args.dry_run) and args.seeds > 1 and not args.temperature > 0:
+        ap.error(f"--seeds {args.seeds} at --temperature {args.temperature:g} replays the same replies; "
+                 "use --seeds 1 or --temperature > 0")
     if args.describe:
         print(json.dumps([c.describe() for c in cells], indent=1))
         return 0
@@ -620,7 +856,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.report:
         rows = load_rows(Path(args.out))
+        fwd, problems = horizon_returns(rows, provider_prices(config), args.horizon)
+        print(render_horizon(horizon_metrics(rows, fwd, args.horizon), problems))
+        print("\nSecondary (each weight held to the next design date):\n")
         print(render_metrics(cell_metrics(rows, config), fallback_bias(rows)))
+        from agentic_trader.study_lineage import LEGACY_ROW_POLICY, row_vintage_status
+        legacy = sum(row_vintage_status(r) == "legacy" for r in rows)
+        print(f"\nRow vintage (N6): {legacy} of {len(rows)} rows legacy. {LEGACY_ROW_POLICY}")
         return 0
     if not args.model:
         ap.error("--live and --smoke need --model (an Ollama model name)")
@@ -637,7 +879,16 @@ def main(argv: list[str] | None = None) -> int:
     if unregistered:
         print(f"refusing --live: cells not registered in evaluation.TRIALS: {unregistered}", file=sys.stderr)
         return 2
-    run_study(names, design_dates(args.dates), args.seeds, cells, config, Path(args.out))
+    from agentic_trader.study_lineage import LineageMismatch, build_header
+    hdr = build_header(model=args.model, url=config["local_llm_url"], config=config,
+                       options={k: config.get(k) for k in ("max_tokens", "local_llm_num_ctx", "local_llm_timeout_s")},
+                       extra={"cells": [c.name for c in cells], "data": args.data})
+    try:
+        run_study(names, design_dates(args.dates), args.seeds, cells, config, Path(args.out), header=hdr,
+                  allow_version_change=args.allow_version_change)
+    except LineageMismatch as e:
+        print(str(e), file=sys.stderr)
+        return 2
     return 0
 
 
