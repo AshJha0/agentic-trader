@@ -46,14 +46,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from agentic_trader.backtest import AGENT, run_portfolio_backtest  # noqa: E402
-from agentic_trader.cli.common import default_as_of, load_dotenv  # noqa: E402
+from agentic_trader.cli.common import default_as_of, exchange_today, load_dotenv  # noqa: E402
 from agentic_trader.config import make_config  # noqa: E402
 from agentic_trader.data import get_provider  # noqa: E402
 from agentic_trader.evaluation import CORE_UNIVERSE, EXTENDED_UNIVERSE, UNIVERSES  # noqa: E402
 from agentic_trader.provenance import provenance  # noqa: E402
 from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_stats  # noqa: E402
 from agentic_trader.validate import read_ledger_csv, write_ledger_csv  # noqa: E402
-from scripts.paper_ops import VintageRecorder, vintage_hash  # noqa: E402
+from agentic_trader.nyse_calendar import last_session_on_or_before  # noqa: E402
+from scripts.paper_ops import VintageRecorder, engine_fingerprint, store_session_bars, vintage_hash  # noqa: E402
 
 FREEZE = date(2026, 9, 29)          # the first session of the forward record (v0.9 pre-registration)
 PPY = 260.0
@@ -143,6 +144,67 @@ def revisions(old: pd.DataFrame | None, new: pd.DataFrame) -> dict:
     return {"changed": changed, "cells": cells, "dropped": dropped}
 
 
+FREEZE_FILE = ROOT / "docs" / "evaluation" / "paper_freeze.json"
+
+
+def check_freeze(freeze_file: Path, cfg: dict) -> str:
+    """The vintage id of the frozen engine, after checking that the engine about to run is it.
+
+    ``freeze_file`` names the engine files (globs), the config blocks and a SHA-256 of both
+    plus ``BOOKS`` (``paper_ops.engine_fingerprint``). A different hash means the code or
+    config that computes the frozen books has changed since the freeze, and the run is
+    refused: recording it would mix two engines in one append-only ledger. A deliberate
+    change is a re-freeze (``--refreeze NEW_ID --reason ...``), which starts a new vintage
+    id carried by every row recorded after it (``ledger_vintage.csv``); it is never silent."""
+    spec = json.loads(freeze_file.read_text(encoding="utf-8"))
+    have = engine_fingerprint(ROOT, spec["engine_files"], cfg, spec["config_keys"], BOOKS)
+    if have != spec["engine_hash"]:
+        raise SystemExit(f"engine changed since freeze vintage {spec['vintage_id']} ({freeze_file.name}: "
+                         f"{spec['engine_hash'][:12]}, now {have[:12]}); refusing to record. A deliberate change "
+                         f"needs a re-freeze: --refreeze NEW_ID --reason TEXT (see docs/evaluation/paper_freeze.md)")
+    return str(spec["vintage_id"])
+
+
+def refreeze(freeze_file: Path, cfg: dict, vintage_id: str, reason: str, today: date) -> dict:
+    """Record the current engine as a new vintage in ``freeze_file``; the old one moves to
+    ``history``. Refuses an id already used and an empty reason."""
+    spec = json.loads(freeze_file.read_text(encoding="utf-8"))
+    used = {spec["vintage_id"], *(h["vintage_id"] for h in spec.get("history", []))}
+    if vintage_id in used or not reason.strip():
+        raise SystemExit(f"re-freeze needs a new vintage id (used: {sorted(used)}) and a reason")
+    old = {k: spec[k] for k in ("vintage_id", "engine_hash", "frozen_on", "reason") if k in spec}
+    spec.update(history=[*spec.get("history", []), old], vintage_id=vintage_id, frozen_on=today.isoformat(),
+                reason=reason,
+                engine_hash=engine_fingerprint(ROOT, spec["engine_files"], cfg, spec["config_keys"], BOOKS))
+    freeze_file.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return spec
+
+
+def resolve_as_of(ny_yesterday: date) -> date:
+    """The last NYSE session on or before New York's yesterday: a Monday run records Friday,
+    a run the day after a holiday records the session before it."""
+    return last_session_on_or_before(ny_yesterday)
+
+
+def assert_final(as_of: date, today: date) -> None:
+    """Refuse to record a session that may not be final: a daily bar dated D is complete only
+    once the New York date is after D, so ``as_of`` must be strictly before ``today`` (New
+    York's date at run time). A provisional close written into the append-only ledger could
+    never be corrected there."""
+    if as_of >= today:
+        raise SystemExit(f"as-of {as_of} is not before New York's date {today}: the session may not be final; "
+                         f"refusing to record it (the default as-of is New York's yesterday)")
+
+
+def same_day_revisions(old: pd.DataFrame | None, cells: list[dict]) -> list[dict]:
+    """Revised cells on the ledger's last session before this run: the session recorded by
+    the previous run moved one day later, the sign of a bar fetched before it was final."""
+    if old is None or old.empty:
+        return []
+    last = old.index[-1].date().isoformat()
+    return [c for c in cells if c["date"] == last]
+
+
 def merge_append_only(old: pd.DataFrame | None, new: pd.DataFrame) -> pd.DataFrame:
     """The ledger after a run: the old rows verbatim plus the recomputed rows after the old last date."""
     if old is None or old.empty:
@@ -191,18 +253,28 @@ def main(argv=None) -> int:
     ap.add_argument("--oms", action="store_true",
                     help="also run the paper OMS shadow record (separate label, under <out>/oms; off by default: "
                          "the frozen record is unchanged, and turning it on starts a new, separately labelled record)")
+    ap.add_argument("--freeze-file", default=str(FREEZE_FILE), help="engine freeze record (tests only)")
+    ap.add_argument("--refreeze", default=None, metavar="NEW_ID",
+                    help="record the current engine as a new vintage in the freeze file and exit (deliberate change)")
+    ap.add_argument("--reason", default="", help="why the engine was re-frozen (required with --refreeze)")
     a = ap.parse_args(argv)
     load_dotenv(str(ROOT / ".env"))
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    as_of = date.fromisoformat(a.as_of) if a.as_of else default_as_of()
+    as_of = date.fromisoformat(a.as_of) if a.as_of else resolve_as_of(default_as_of())
     freeze = date.fromisoformat(a.freeze)
+    assert_final(as_of, exchange_today())
     if as_of < freeze:
         log(f"as-of {as_of} is before the freeze date {freeze}: nothing to record yet")
         return 0
     cfg = make_config(data_provider=a.data, memory_path=None,
                       edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
                       fred_cache_dir=str(ROOT / "build" / "fred_cache"))
+    if a.refreeze:
+        spec = refreeze(Path(a.freeze_file), cfg, a.refreeze, a.reason, exchange_today())
+        log(f"re-frozen as vintage {spec['vintage_id']} ({spec['engine_hash'][:12]}): {a.reason}")
+        return 0
+    vintage_id = check_freeze(Path(a.freeze_file), cfg)
     provider = VintageRecorder(get_provider(cfg))
     t0 = time.time()
     # The freeze session is the first bar; a return needs a second. Until it is complete (the
@@ -225,6 +297,12 @@ def main(argv=None) -> int:
     merged = merge_append_only(old, frame)
     write_ledger_csv(frame, out / "ledger_recomputed.csv")
     write_ledger_csv(merged, ledger)
+    # ledger_vintage.csv: the engine vintage of every ledger row, appended with the rows
+    added = merged.index[len(old):] if old is not None else merged.index
+    if len(added):
+        vfile = out / "ledger_vintage.csv"
+        pd.DataFrame({"date": added.strftime("%Y-%m-%d"), "vintage_id": vintage_id}).to_csv(
+            vfile, mode="a", index=False, header=not vfile.exists())
     # exposure.csv: gross exposure, turnover and trading cost per book/stream per session,
     # kept append-only like the ledger (sessions already written are never rewritten)
     exp_file = out / "exposure.csv"
@@ -238,9 +316,18 @@ def main(argv=None) -> int:
                   "new": "missing"} for d in rev["dropped"]]
         pd.DataFrame(rows).to_csv(out / "revisions.csv", mode="a", index=False,
                                   header=not (out / "revisions.csv").exists())
-    (out / "summary.md").write_text(summary(merged, freeze), encoding="utf-8")
+    same_day = same_day_revisions(old, rev["cells"])
+    text = summary(merged, freeze)
+    if same_day:
+        text += (f"\n**Same-day revision:** {len(same_day)} cell(s) of {same_day[0]['date']}, the session the previous "
+                 f"run recorded, moved in this run (columns: {', '.join(sorted({c['column'] for c in same_day}))}). "
+                 f"The bar was probably not final when it was fetched; the ledger keeps the first value, see revisions.csv.\n")
+    (out / "summary.md").write_text(text, encoding="utf-8")
+    bars = store_session_bars(provider, out / "bars", as_of)
     with open(out / "runs.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps({"run_at": time.strftime("%Y-%m-%d %H:%M:%S"), "as_of": as_of.isoformat(),
+                            "fetched_at_utc": pd.Timestamp.now("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "same_day_revisions": len(same_day), "bars": bars, "vintage_id": vintage_id,
                             "freeze": freeze.isoformat(), "sessions": int(len(merged)),
                             "sessions_recomputed": int(len(frame)), "appended": int(len(merged) - (len(old) if old is not None else 0)),
                             "data": a.data, "seconds": round(time.time() - t0, 1),
@@ -251,6 +338,8 @@ def main(argv=None) -> int:
     if a.oms:   # plan item 4.7; never reads or writes the frozen ledger
         from agentic_trader.oms import paper_session
         log(f"OMS shadow record: {paper_session(as_of, cfg, provider, BOOKS, out / 'oms', freeze)}")
+    if same_day:
+        log(f"WARNING: same-day revision of {same_day[0]['date']} ({len(same_day)} cell(s)); see summary.md")
     if rev["changed"] or rev["dropped"]:
         log(f"WARNING: the recomputation differs from the ledger for {len(rev['cells'])} cell(s) and "
             f"{len(rev['dropped'])} dropped session(s); the ledger keeps its rows, see revisions.csv")
