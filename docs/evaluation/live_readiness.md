@@ -27,7 +27,7 @@ custodian statement.
 | Entitlements (who may see or do what) | **Simulated, partial** | Tool-level policy: every data access and action is a catalogued tool call checked by a policy and evidenced. There are no user accounts, roles, data-vendor licences or market-data entitlements. | `agentic_trader/agentic/policy.py`, `agentic_trader/agentic/tools.py` | `tests/test_agentic.py`, `tests/test_v15_security.py` |
 | Custodian reconciliation | **Absent** | End-of-day reconciliation exists only between the paper OMS and the paper ledger (quantity, cash and price breaks). No custodian or prime-broker statement is read. | `agentic_trader/oms.py` (internal reconciliation) | `tests/test_v14_oms.py::test_reconciliation_detects_qty_cash_and_price_breaks` (internal only) |
 | Tax lots | **Absent** | Positions are net weights; no lot tracking, no FIFO/HIFO, no wash-sale logic. | none | none |
-| Margin and financing | **Absent** | No margin model, no haircut, no financing charge beyond the FX carry in the backtester; shorts are capped by notional, not by margin. | none (carry: `agentic_trader/backtest.py`) | none |
+| Margin and financing | **Simulated, partial** | No margin model and no haircut; shorts are capped by notional, not by margin. A financing spread on borrowed notional (\|w\| > 1 pays rf + 50 bp by default, optional spread under rf on idle cash) is applied after a run by `financing.run_backtest_financed` (v0.17); the in-loop engine hook is pending. | `agentic_trader/financing.py` (carry: `agentic_trader/backtest.py`) | `tests/test_v17_l8.py::test_levered_run_pays_spread_exactly_without_costs` |
 | Trade surveillance | **Absent** | No market-abuse, wash-trade or spoofing surveillance. The governance report audits the agent's evidence trail, which is a different thing. | none | none |
 | Data vintages | **Exists** | Each paper session records a `price_vintage` hash of the bars it read in `results/paper/runs.jsonl`; recomputations that differ are logged to `revisions.csv`, never absorbed; FRED series read first-published values. | `scripts/paper_trade_v09.py`, `agentic_trader/data/` | `tests/test_v14_ops.py::test_vintage_hash_is_stable_and_moves_with_any_price`, `tests/test_v05.py::test_fred_vintages_read_first_published_values` |
 | Point-in-time data and leakage | **Exists** | Purged walk-forward IC, a future-leak canary, a point-in-time feature store. Blind spot: leaks inside a provider's own news or fundamentals (PLAN §9). | `agentic_trader/leakage.py` | `tests/test_v14_leakage.py` |
@@ -38,3 +38,28 @@ What would have to change before any of this touched money: a broker adapter beh
 reconciliation against an external statement, tax lots, margin, surveillance and real
 entitlements, each with its own tests, and an independent review. None of it is planned in
 `docs/review/PLAN.md`.
+
+## Forward paper record: operational evidence, decision in 2040
+
+Plain idea. The forward paper record (`results/paper/`) is the only data no design choice has
+seen, but a short record cannot tell a 0.2 Sharpe difference from noise. Until the
+pre-registered decision look it shows that the pipeline runs, fills reconcile and nothing
+leaks: operational evidence. It does not show that anything has an edge.
+
+Formal statement. The v0.9 pre-registration amendment (`docs/evaluation/v09_preregistration.md`)
+fixes one decision look. The holdout's paired block-bootstrap half-width for the desk minus its
+control was h = 0.35 Sharpe over n = 1,167 sessions. Half-widths shrink as 1 / sqrt(n), so a
+Sharpe difference d is detectable at 95 % after n_d = 1,167 x (0.35 / d)^2 sessions.
+
+Worked example (`evidence_bounds.decision_horizon`; evidence class: arithmetic on
+pre-registered numbers, tested in `tests/test_v17_l8.py::test_decision_horizon_from_prereg_numbers`):
+
+| Sharpe difference d | sessions | years (252 a year) | decision look, counting NYSE sessions from 2026-09-29 |
+|---|--:|--:|---|
+| 0.2 (pre-registered) | 3,574 | 14.2 | 2040-12-19 |
+| 0.5 | 572 | 2.3 | 2029-01-05 |
+
+The interim summary prints Sharpes and, after 60 sessions, intervals of about +/-1.2 to
++/-1.5 Sharpe; those are descriptions, not decisions. The calendar is the OMS NYSE holiday
+table, so the date can move by a few sessions as one-off closures are added.
+
