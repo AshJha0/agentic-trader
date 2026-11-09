@@ -552,6 +552,8 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             "rules": cfg.get("rules"), "rebalance_band": cfg["risk"].get("rebalance_band"),
             "neutral_weight": cfg["risk"].get("neutral_weight"),
             "use_stops": cfg.get("backtest", {}).get("use_stops"),
+            "exec_lag": int(cfg.get("backtest", {}).get("exec_lag", 0)),
+            "fill": cfg.get("backtest", {}).get("fill", "close"),
             "errors": errors, "seconds": round(time.perf_counter() - t0, 1),
             "agent_sources": sources,
             "macro_sources": dict(macro_sources) if isinstance(macro_sources, dict) else {},

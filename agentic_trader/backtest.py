@@ -111,6 +111,15 @@ def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
         cfg.borrow_annual = costs["equity_borrow_annual"]
         cfg.allow_short = risk["allow_short_equity"]
         cfg.funded = True
+    # Execution timing (review Q1): config["backtest"]["exec_lag"] (bars between the decision
+    # and the fill, default 0 = same-close fill) and ["fill"] ("close", default, or "next_open").
+    # Read with defaults so configs and their hashes from before v0.17 are unchanged.
+    timing = config.get("backtest", {}) or {}
+    cfg.exec_lag = int(timing.get("exec_lag", 0))
+    fill = timing.get("fill", "close")
+    if fill not in ("close", "next_open"):
+        raise ValueError(f"backtest.fill must be 'close' or 'next_open', got {fill!r}")
+    cfg.fill_next_open = fill == "next_open"
     return cfg
 
 
@@ -333,6 +342,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
         extras = dict(carry=carry, rebalance=reb, impact=impact, cash_rate=cash)
         if cfg.get("backtest", {}).get("use_stops"):
             extras.update(ohlc, stop=stop, take=take)
+        elif bt.fill_next_open:
+            extras.update(open=ohlc["open"])
         sources: dict[str, int] = {}
         held = 0.0
         for i in range(rebalance_offset, n - 1, max(1, rebalance_every)):
@@ -370,7 +381,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                                           carry_cap=float(cfg["risk"].get("fx_carry_neutral_cap", 0.5))).items():
         bt_name = dc_replace(bt, allow_short=True) if name in LONG_SHORT_STREAMS else bt
         results[name] = quant.run_backtest(prices, weights[mask], bt_name, carry=carry, impact=impact,
-                                           cash_rate=cash)
+                                           cash_rate=cash, open=ohlc["open"] if bt.fill_next_open else None)
     return ComparisonReport(ins, window.index, results, decisions, bt, carry,
                             sources if include_agent else {}, prices, rf)
 
