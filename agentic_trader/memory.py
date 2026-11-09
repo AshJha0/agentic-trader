@@ -29,6 +29,7 @@ import json
 import logging
 import math
 import os
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, fields
@@ -40,7 +41,7 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-if os.name == "nt":
+if sys.platform == "win32":
     import msvcrt
 
     _LOCK_AT = 1 << 60   # a byte far past any log: Windows locks are mandatory, and a reader
@@ -285,7 +286,7 @@ class DecisionMemory:
             done = [e for e in self.entries if e.symbol == symbol and e.lesson
                     and (provider is None or e.provider == provider)
                     and e.resolved_on and date.fromisoformat(e.resolved_on) <= as_of]
-            return [e.lesson for e in done[-k:]]
+            return [e.lesson for e in done[-k:] if e.lesson]
 
     def track_record(self, symbol: str, as_of: date, k: int = 20,
                      provider: str | None = None) -> dict[str, float]:
@@ -293,9 +294,11 @@ class DecisionMemory:
             self._catch_up()
             done = [e for e in self.entries if e.symbol == symbol and e.pnl is not None
                     and (provider is None or e.provider == provider)
-                    and e.weight != 0 and date.fromisoformat(e.resolved_on) <= as_of][-k:]
-        if not done:
+                    and e.weight != 0 and e.resolved_on is not None
+                    and date.fromisoformat(e.resolved_on) <= as_of][-k:]
+        pnls = [e.pnl for e in done if e.pnl is not None]
+        if not pnls:
             return {}
-        return {"n": float(len(done)),
-                "hit_rate": sum(e.pnl > 0 for e in done) / len(done),
-                "avg_pnl": sum(e.pnl for e in done) / len(done)}
+        return {"n": float(len(pnls)),
+                "hit_rate": sum(p > 0 for p in pnls) / len(pnls),
+                "avg_pnl": sum(pnls) / len(pnls)}

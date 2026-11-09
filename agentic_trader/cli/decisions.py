@@ -43,7 +43,9 @@ def cmd_task(args) -> int:
     harness = AgentHarness(graph, positions=positions)
     _header(f"task {args.symbol} as of {as_of} role={args.role} approval={cfg['agentic']['approval']}", cfg)
     run = harness.run(Task(args.symbol, as_of, Role(args.role), args.position, args.question or ""))
-    print(f"state: {run.state.value}  plan: {run.plan.source}  steps: {len(run.plan.steps)}  "
+    # a task that fails before planning finishes (bad symbol, planner error) has no plan
+    plan_src, n_steps = (run.plan.source, len(run.plan.steps)) if run.plan else ("none", 0)
+    print(f"state: {run.state.value}  plan: {plan_src}  steps: {n_steps}  "
           f"evidence: {len(run.evidence)}  findings: {len(run.findings)}")
     for note in (run.plan.notes if run.plan else ()):
         print(f"  plan note: {note}")

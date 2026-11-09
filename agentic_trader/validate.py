@@ -111,10 +111,11 @@ def common_sessions(frames: dict[str, pd.DataFrame]) -> pd.DatetimeIndex:
     """Trade dates on which every sleeve has a bar: the dates a multi-sleeve book can rebalance."""
     if not frames:
         return pd.DatetimeIndex([])
-    out = None
+    out: pd.DatetimeIndex | None = None
     for df in frames.values():
         idx = pd.DatetimeIndex(df.index).normalize()
         out = idx if out is None else out.intersection(idx)
+    assert out is not None  # frames is non-empty
     return out.sort_values()
 
 

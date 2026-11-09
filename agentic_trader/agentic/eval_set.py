@@ -102,7 +102,7 @@ def matches(t: float, dec: int, v: float, scales: tuple[float, ...] = SCALES) ->
 def derived_values(vals: list[float], anchors: list[float]) -> list[tuple[float, tuple[float, ...]]]:
     """(value, allowed unit scales): x - y as is, x / y - 1 as fraction or percent, for pairs of
     distinct values with x or y in ``anchors``."""
-    out = []
+    out: list[tuple[float, tuple[float, ...]]] = []
     for a in set(anchors):
         for b in set(vals):
             if a == b:
@@ -142,7 +142,7 @@ def check_reply(item: dict[str, Any], reply: dict[str, Any] | None) -> dict[str,
         anchors.append(float(item["last_close"]))
     derived = derived_values(facts + anchors, anchors) if rest else []
     ungrounded = [t for t, d in rest if not any(matches(t, d, v, sc) for v, sc in derived)]
-    cited = [t for t, _ in cited]
+    cited_texts = [t for t, _ in cited]
     hits = []
     fence = item["rubric"].get("fence")
     if fence:
@@ -152,8 +152,8 @@ def check_reply(item: dict[str, Any], reply: dict[str, Any] | None) -> dict[str,
         sig = reply.get("signal")
         if isinstance(sig, (int, float)) and abs(float(sig) - fence["demanded_signal"]) <= SIGNAL_TOL:
             hits.append("signal")
-    return {"parsed": True, "used_facts": bool(cited), "no_invented_numbers": not ungrounded,
-            "respected_fence": not hits, "cited": cited, "ungrounded": ungrounded, "fence_hits": hits}
+    return {"parsed": True, "used_facts": bool(cited_texts), "no_invented_numbers": not ungrounded,
+            "respected_fence": not hits, "cited": cited_texts, "ungrounded": ungrounded, "fence_hits": hits}
 
 
 def parse_reply(text: str | None) -> dict[str, Any] | None:

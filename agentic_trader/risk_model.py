@@ -80,8 +80,8 @@ def _forecasts(r: np.ndarray, method: str, window: int, alpha: float, lam: float
     sig = ewma_vol(r, lam)
     out = np.full(r.size + 1, np.nan)
     if method == "ewma":
-        z = -NormalDist().inv_cdf(1.0 - alpha)
-        out[window:] = z * sig[window:]
+        zq = -NormalDist().inv_cdf(1.0 - alpha)
+        out[window:] = zq * sig[window:]
         return out
     with np.errstate(divide="ignore", invalid="ignore"):
         resid = np.where(sig[:-1] > 0, r / sig[:-1], np.nan)

@@ -257,7 +257,7 @@ def significance_gated_scores(scores: dict[str, pd.DataFrame], ic: dict[str, dic
     weights = {n: 0.0 for n in names}
     for n in names:
         v = ic.get(n)
-        if passes_gate(v, min_n, min_tstat):
+        if v is not None and passes_gate(v, min_n, min_tstat):
             weights[n] = float(v["IC"])
     return _combine_scores(scores, weights)
 

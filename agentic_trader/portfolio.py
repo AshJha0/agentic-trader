@@ -406,6 +406,8 @@ def _allocate(method: str, sub: np.ndarray, cap: float, mu: np.ndarray | None,
         return risk_parity_weights(sub), Convergence(True, 0)
     if method == "min_variance":
         return min_variance_weights(sub, cap, return_info=True)
+    if mu is None:
+        raise ValueError("mean_variance needs expected returns (mu)")
     return mean_variance_weights(mu, sub, risk_aversion, cap, return_info=True)
 
 
@@ -493,6 +495,7 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
                 raise ValueError(f"{method} allocation is not finite: degenerate covariance window")
             alloc[active] = _simplex_box_projection(a, cap)
         else:
+            assert groups is not None  # checked with group_budgets above
             live = [g for g in group_budgets if any(active[i] and groups[s] == g for i, s in enumerate(symbols))]
             if not live:
                 raise ValueError("no active sleeve in any budgeted group")

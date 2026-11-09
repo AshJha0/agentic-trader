@@ -24,6 +24,7 @@ def cmd_backtest(args, include_agent: bool = True) -> int:
                              asset_class=args.asset_class, include_agent=include_agent,
                              on_decision=on_dec if include_agent and args.verbose else None)
     bt = rep.backtest_config
+    assert bt is not None  # run_agent_backtest always attaches its config
     carry = carry_summary(rep.carry, bt.carry_annual)
     print(f"\n{rep.instrument.display}: {len(rep.dates)} bars, cost {bt.cost_bps:.2f}bps + "
           f"slippage {bt.slippage_bps:.2f}bps, {carry}, shorts {'on' if bt.allow_short else 'off'}, "

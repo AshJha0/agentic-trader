@@ -307,6 +307,7 @@ def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0
         idx = rng.integers(0, n, size=(n_boot, n))
         means = d[idx].mean(axis=1)
     else:
+        assert codes is not None  # clustered implies groups were given
         means = _two_stage_cluster_means(d, codes, n_groups, n_boot, rng)
     lo, hi = np.quantile(means, [(1 - ci) / 2, 1 - (1 - ci) / 2])
     tail = float(min((means <= 0).mean(), (means >= 0).mean()))

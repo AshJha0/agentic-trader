@@ -42,7 +42,7 @@ import threading
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -272,7 +272,7 @@ class EdgarClient:
             fresh = (path is not None and path.exists()
                      and (self.cache_max_age_days is None
                           or time.time() - path.stat().st_mtime <= self.cache_max_age_days * 86400.0))
-            if fresh:
+            if fresh and path is not None:
                 data = json.loads(path.read_text(encoding="utf-8"))
             else:
                 wait = self.min_interval - (time.monotonic() - self._last_call)
@@ -520,7 +520,8 @@ class EdgarClient:
             self._warned.add(key)
             log.warning("EDGAR %s: %s", ticker.upper(), msg)
 
-    def _fundamentals_core(self, known: pd.DataFrame, past_splits: list[tuple[pd.Timestamp, float]] = ()) -> dict[str, Any]:
+    def _fundamentals_core(self, known: pd.DataFrame,
+                           past_splits: Sequence[tuple[pd.Timestamp, float]] = ()) -> dict[str, Any]:
         """The price-independent fundamentals from the facts known at a cutoff, per-share
         facts rescaled to the share basis after ``past_splits``."""
         if known.empty:
@@ -879,13 +880,14 @@ def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str
         q = _tag_quarters(((rows["start"] - epoch).dt.days).tolist(), ((rows["end"] - epoch).dt.days).tolist(),
                           rows["val"].astype(float).tolist(), ((rows["filed"] - epoch).dt.days).tolist(), positive, found,
                           additive)
-        for n in found if notes is not None else ():
-            if n[0] == "annual":
-                notes.append(("annual", members[0], day(n[1]), n[3], n[4]))
-            elif n[0] in ("ignored", "confirmed"):
-                notes.append((n[0], members[0], day(n[1]), day(n[2]), n[3], n[4], day(n[5])))
-            else:
-                notes.append(("rejected", members[0], day(n[1]), day(n[2]), n[3], n[4]))
+        if notes is not None:
+            for n in found:
+                if n[0] == "annual":
+                    notes.append(("annual", members[0], day(n[1]), n[3], n[4]))
+                elif n[0] in ("ignored", "confirmed"):
+                    notes.append((n[0], members[0], day(n[1]), day(n[2]), n[3], n[4], day(n[5])))
+                else:
+                    notes.append(("rejected", members[0], day(n[1]), day(n[2]), n[3], n[4]))
         if q:
             per_tag.append((members[0], q))
     tiles: list[dict[str, tuple[list[int], int]]] = []
@@ -948,7 +950,7 @@ PER_SHARE_DURATION_TAGS = set(EPS_TAGS) | {"WeightedAverageNumberOfDilutedShares
 SHARE_INSTANT_TAGS = {"dei:EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"}
 
 
-def rebase_per_share(known: pd.DataFrame, past_splits: list[tuple[pd.Timestamp, float]]) -> pd.DataFrame:
+def rebase_per_share(known: pd.DataFrame, past_splits: Sequence[tuple[pd.Timestamp, float]]) -> pd.DataFrame:
     """Bring per-share and share-count facts to the share basis after ``past_splits``.
 
     A print is in the units of the day it was made: an EPS filed before a 4-for-1 split is

@@ -144,13 +144,17 @@ class LocalLLM:
         try:
             data = self._post(self.build_request(system, prompt, schema))
         except (TimeoutError, socket.timeout) as e:
-            return self._fail("timeouts", f"local model timed out after {self.timeout_s:g} s: {e}")
+            self._fail("timeouts", f"local model timed out after {self.timeout_s:g} s: {e}")
+            return None
         except urllib.error.URLError as e:
             if isinstance(getattr(e, "reason", None), (TimeoutError, socket.timeout)):
-                return self._fail("timeouts", f"local model timed out after {self.timeout_s:g} s: {e}")
-            return self._fail(None, f"cannot reach local model at {self.url}: {e}")
+                self._fail("timeouts", f"local model timed out after {self.timeout_s:g} s: {e}")
+            else:
+                self._fail(None, f"cannot reach local model at {self.url}: {e}")
+            return None
         except (ValueError, OSError) as e:     # unreadable body, reset connection
-            return self._fail(None, f"local model reply unusable: {e}")
+            self._fail(None, f"local model reply unusable: {e}")
+            return None
         return self.read_response(data)
 
     def _fail(self, counter: str | None, problem: str) -> None:

@@ -214,6 +214,7 @@ class Critic:
         """(concerns, multiplier, problems): what the model said, and what in its reply
         could not be used (missing or malformed fields are tolerated, not fatal)."""
         dec = state.decision
+        assert dec is not None  # the critic reviews a finished decision
         untrusted = decision_untrusted(state)
         rationale = fenced("decision rationale (written from third-party material)", [dec.rationale], untrusted)
         prompt = (

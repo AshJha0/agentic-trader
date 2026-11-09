@@ -358,13 +358,13 @@ class ShockedProvider(MarketDataProvider):
     def macro(self, instrument: Instrument, as_of: date) -> dict[str, Any]:
         return self.base.macro(instrument, as_of)
 
-    def carry_series(self, instrument: Instrument, dates: pd.DatetimeIndex) -> np.ndarray:
+    def carry_series(self, instrument: Instrument, dates: pd.Index) -> np.ndarray:
         return self.base.carry_series(instrument, dates)
 
     def as_traded_closes(self, instrument: Instrument, dates: pd.DatetimeIndex) -> np.ndarray | None:
         return self.base.as_traded_closes(instrument, dates)
 
-    def risk_free_series(self, dates: pd.DatetimeIndex) -> np.ndarray:
+    def risk_free_series(self, dates: pd.Index) -> np.ndarray:
         return self.base.risk_free_series(dates)
 
 

@@ -127,9 +127,9 @@ class Metrics:
                 lines.append(f"# TYPE {name} counter")
                 for key, v in sorted(series.items()):
                     lines.append(f"{name}{_fmt_labels(key)} {_num(v)}")
-            for name, series in sorted(self._hists.items()):
+            for name, hseries in sorted(self._hists.items()):
                 lines.append(f"# TYPE {name} histogram")
-                for key, h in sorted(series.items()):
+                for key, h in sorted(hseries.items()):
                     for b, n in zip(_HIST_BUCKETS, h["buckets"]):
                         lines.append(f"{name}_bucket{_fmt_labels(key + (('le', str(b)),))} {n}")
                     lines.append(f"{name}_bucket{_fmt_labels(key + (('le', '+Inf'),))} {h['count']}")
@@ -273,7 +273,9 @@ class Tracer:
             sp.ended_at = time.perf_counter()
             self._local.current = parent
             stage = name.split(":")[0]
-            self.metrics.observe("stage_latency_ms", sp.duration_ms, stage=stage)
+            dur = sp.duration_ms
+            assert dur is not None  # ended_at was set just above
+            self.metrics.observe("stage_latency_ms", dur, stage=stage)
             self.metrics.inc("stage_runs_total", stage=stage, outcome=sp.status)
             if trace_log.isEnabledFor(logging.INFO):
                 trace_log.info(json.dumps({"ts": utc_now().isoformat(), **sp.to_dict()}, default=str))
@@ -333,11 +335,12 @@ def export_otel(tracer: "Tracer", endpoint: str = "http://localhost:4318/v1/trac
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     otel = provider.get_tracer("agentic_trader")
     with tracer._lock:
-        spans = [s for s in tracer.spans if s.ended_at is not None]
+        ended = [(s, s.ended_at) for s in tracer.spans if s.ended_at is not None]
+    spans = [s for s, _ in ended]
     offset_ns = time.time_ns() - int(time.perf_counter() * 1e9)   # perf_counter -> wall clock
     made: dict[str, Any] = {}
     for s in sorted(spans, key=lambda x: x.started_at):
-        parent = made.get(s.parent_id)
+        parent = made.get(s.parent_id) if s.parent_id is not None else None
         ctx = set_span_in_context(parent) if parent is not None else None
         o = otel.start_span(s.name, context=ctx, start_time=offset_ns + int(s.started_at * 1e9),
                             attributes={k: v if isinstance(v, (str, bool, int, float)) else str(v)
@@ -345,7 +348,7 @@ def export_otel(tracer: "Tracer", endpoint: str = "http://localhost:4318/v1/trac
         if s.status == "error":
             o.set_status(Status(StatusCode.ERROR, s.error or ""))
         made[s.id] = o
-    for s in sorted(spans, key=lambda x: x.ended_at, reverse=True):
-        made[s.id].end(end_time=offset_ns + int(s.ended_at * 1e9))
+    for s, ended_at in sorted(ended, key=lambda x: x[1], reverse=True):
+        made[s.id].end(end_time=offset_ns + int(ended_at * 1e9))
     provider.shutdown()
     return len(spans)

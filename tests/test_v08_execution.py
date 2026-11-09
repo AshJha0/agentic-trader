@@ -5,7 +5,7 @@ a size guard; plans sized from the book; long-only truncation; the credited carr
 capital convention; whole-share / whole-lot quantities. Offline, numpy backend."""
 import math
 import re
-from datetime import date, timedelta
+from datetime import date
 from types import SimpleNamespace
 
 import numpy as np

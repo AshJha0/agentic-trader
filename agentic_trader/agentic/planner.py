@@ -203,7 +203,8 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
             notes.append(f"step {i}: not an object, dropped")
             continue
         kind, name = str(raw.get("type", "")).lower(), str(raw.get("name", "")).strip()
-        args = raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {}
+        raw_args = raw.get("arguments")
+        args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
         rationale = str(raw.get("rationale", ""))[:200]
         if kind == "tool":
             if name not in registry:
@@ -224,13 +225,14 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
                     notes.append(f"step {i}: {name} as_of pinned to {task.as_of.isoformat()}")
                 clean["as_of"] = task.as_of.isoformat()
             if "symbols" in props and "symbols" in clean:
-                if isinstance(clean["symbols"], str):
+                syms = clean["symbols"]
+                if isinstance(syms, str):
                     notes.append(f"step {i}: {name} symbols given as a string, repaired to a list")
-                    clean["symbols"] = [clean["symbols"]]
-                elif not isinstance(clean["symbols"], (list, tuple)):
-                    notes.append(f"step {i}: {name} symbols is {type(clean['symbols']).__name__}, not a list; dropped")
+                    syms = clean["symbols"] = [syms]
+                elif not isinstance(syms, (list, tuple)):
+                    notes.append(f"step {i}: {name} symbols is {type(syms).__name__}, not a list; dropped")
                     continue
-                kept, dropped_syms, idx = clip_symbols(clean["symbols"], universe)
+                kept, dropped_syms, idx = clip_symbols(syms, universe)
                 if dropped_syms:
                     notes.append(f"step {i}: {name} symbols {dropped_syms} outside the configured universe dropped")
                 if not kept:

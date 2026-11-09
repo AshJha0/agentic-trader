@@ -19,7 +19,7 @@ from agentic_trader.agentic.critic import Critic
 from agentic_trader.agentic.domain import (RiskLevel, StepType, ToolAnnotations, ToolRequest, TRANSITIONS,
                                            canonical_json, digest)
 from agentic_trader.agentic.harness import IllegalTransition
-from agentic_trader.agentic.planner import ANALYST_PREFIX, make_plan
+from agentic_trader.agentic.planner import make_plan
 from agentic_trader.agentic.reporter import build_report, collect_facts
 from agentic_trader.agentic.tools import coerce_arguments
 from agentic_trader.data import SyntheticProvider
@@ -214,7 +214,9 @@ def test_desk_tools_payloads_are_json_safe_and_point_in_time():
     assert len(reg) == 16 and set(reg.servers()) == {"market_data", "quant", "knowledge", "portfolio", "execution"}
     hist = tools.history("AAPL", AS_OF, 60)
     assert max(hist["dates"]) <= AS_OF.isoformat() and len(hist["Close"]) == len(hist["dates"])
-    json.dumps(hist); json.dumps(tools.technical("EURUSD", AS_OF)); json.dumps(tools.risk("AAPL", AS_OF, 0.5))
+    json.dumps(hist)
+    json.dumps(tools.technical("EURUSD", AS_OF))
+    json.dumps(tools.risk("AAPL", AS_OF, 0.5))
     news = tools.news("AAPL", AS_OF, 7)
     assert all(n["published"] <= AS_OF.isoformat() for n in news)
     assert tools.macro("USDJPY", AS_OF)["rate_diff"] == pytest.approx(3.75)
@@ -502,7 +504,9 @@ def test_tracer_and_metrics_render():
     assert spans[1]["parent_id"] == spans[0]["id"] and spans[2]["status"] == "error"
     assert tr.summary()["errors"] == 1 and tr.summary()["spans"] == 3
     m = Metrics()
-    m.inc("c", tool="a"); m.inc("c", tool="a"); m.observe("h", 12.0, tool="a")
+    m.inc("c", tool="a")
+    m.inc("c", tool="a")
+    m.observe("h", 12.0, tool="a")
     text = m.render()
     assert 'c{tool="a"} 2' in text and "# TYPE h histogram" in text and 'h_count{tool="a"} 1' in text
     assert 'h_bucket{tool="a",le="10.0"} 0' in text and 'h_bucket{tool="a",le="25.0"} 1' in text

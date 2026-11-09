@@ -29,9 +29,10 @@ from agentic_trader.cli.research import carry_summary
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.evaluation import evaluate
 from agentic_trader.llm import EFFORT_LEVELS, AnthropicLLM, BudgetedLLM, UsageTracker, request_shape
+from agentic_trader.prompts import prompt_bundle_hash, prompt_registry, shared_prompt_constants
+
 # The v0.8 suites were written against these ids; P1 (v0.13) moved the defaults.
 V08_MODELS = {"deep_think_llm": "claude-opus-5", "quick_think_llm": "claude-haiku-4-5"}
-from agentic_trader.prompts import prompt_bundle_hash, prompt_registry, shared_prompt_constants
 
 CFG = make_config(memory_path=None)
 EXECUTE = ["execute", "AAPL", "--date", "2024-03-01", "--target", "0.5"]

@@ -20,7 +20,8 @@ def test_tsmom_is_the_signed_12_1_return_at_the_vol_target_size():
     assert np.allclose(tsmom_weights(down, vt, allow_short=True)[TSMOM_LOOKBACK:], -0.7)
     assert np.all(tsmom_weights(down, vt, allow_short=False) == 0.0)   # long-only goes flat, never short
     # the signal skips the last month: a reversal inside the skip window does not flip it
-    rev = close.copy(); rev[-TSMOM_SKIP:] = close[-TSMOM_SKIP] * 0.5
+    rev = close.copy()
+    rev[-TSMOM_SKIP:] = close[-TSMOM_SKIP] * 0.5
     assert tsmom_weights(rev, vt, True)[-1] == pytest.approx(0.7)
 
 
@@ -78,13 +79,16 @@ def test_combiner_shares_are_risk_parity_without_look_ahead_and_sum_to_one():
     assert np.allclose(shares[:120], 0.5)                          # equal until a window exists
     assert shares[-1, 0] > 0.65 > shares[-1, 1]                    # the quiet stream gets more capital
     # no look-ahead: shares on day t only change on a rebalance day and depend on days < t
-    ex2 = ex.copy(); ex2[300:] *= 10.0
+    ex2 = ex.copy()
+    ex2[300:] *= 10.0
     assert np.array_equal(mod.risk_parity_shares(ex2, 120, 5)[:301], shares[:301])
 
 
 def test_drawdown_overlay_halves_after_a_loss_and_recovers():
     mod = _combiner()
-    r = np.zeros(200); r[50] = -0.2; r[120:160] = 0.01
+    r = np.zeros(200)
+    r[50] = -0.2
+    r[120:160] = 0.01
     sc = mod.drawdown_overlay(r, dd_window=60, dd_limit=0.10)
     assert sc[50] == 1.0 and np.all(sc[51:110] == 0.5)             # halved the day after the loss, not on it
     assert np.all(sc[170:] == 1.0)                                  # the loss left the window and the book recovered
@@ -111,11 +115,13 @@ def test_overlay_blend_is_the_control_at_zero_and_the_desk_at_one():
 def test_long_short_multi_horizon_trend_is_signed_and_runs_short_on_long_only_instruments():
     from agentic_trader.backtest import TSMOM_HORIZONS, tsmom_multi_weights
     n = max(TSMOM_HORIZONS) + 80
-    up = np.exp(np.linspace(0.0, 1.0, n)); vt = np.full(n, 0.6)
+    up = np.exp(np.linspace(0.0, 1.0, n))
+    vt = np.full(n, 0.6)
     w = tsmom_multi_weights(up, vt)
     assert np.all(w[:max(TSMOM_HORIZONS)] == 0.0) and np.allclose(w[max(TSMOM_HORIZONS):], 0.6)
     assert np.allclose(tsmom_multi_weights(up[::-1].copy(), vt)[max(TSMOM_HORIZONS):], -0.6)   # short in a downtrend
-    mixed = up.copy(); mixed[-30:] = mixed[-31] * np.linspace(1.0, 0.97, 30)                    # 1-month down, 3/12-month up
+    mixed = up.copy()
+    mixed[-30:] = mixed[-31] * np.linspace(1.0, 0.97, 30)  # 1-month down, 3/12-month up
     assert tsmom_multi_weights(mixed, vt)[-1] == pytest.approx(0.6 / 3)
     rep = run_agent_backtest("AAPL", "2024-01-02", "2024-06-28", CFG, rebalance_every=10)
     assert "TSMOM(L/S)" in rep.results and rep.results["TSMOM(12-1)"].positions.min() >= 0.0

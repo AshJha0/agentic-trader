@@ -90,6 +90,7 @@ class Agent:
     def _send(self, prompt: str, schema: dict[str, Any] | None) -> str | None:
         # Structured outputs when the backend offers them; plain completion otherwise (offline
         # stubs, older backends). Either way the contract check below is the second gate.
+        assert self.llm is not None  # callers return early when the agent has no model
         cj = getattr(self.llm, "complete_json", None) if schema is not None else None
         if callable(cj):
             return cj(self.system_prompt, prompt, deep=self.deep, schema=schema)

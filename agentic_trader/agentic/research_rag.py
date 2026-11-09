@@ -81,7 +81,7 @@ class ResearchPassage:
                 "visible_date": self.visible_date.isoformat(), "section": self.section}
 
     def to_dict(self, score: float | None = None) -> dict[str, Any]:
-        d = {"id": self.id, "source": self.source, "form": self.form, "title": self.title,
+        d: dict[str, Any] = {"id": self.id, "source": self.source, "form": self.form, "title": self.title,
              "text": self.text, **self.metadata}
         if score is not None:
             d["score"] = round(score, 4)

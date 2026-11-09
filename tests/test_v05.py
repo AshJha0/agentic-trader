@@ -12,7 +12,7 @@ import pytest
 from agentic_trader import Instrument, TradingGraph, make_config
 from agentic_trader.agentic import AgentHarness, QueuedApprovalGateway, Role, Task
 from agentic_trader.agentic.store import TaskStore, record_of
-from agentic_trader.backtest import AGENT, run_portfolio_backtest
+from agentic_trader.backtest import run_portfolio_backtest
 from agentic_trader.cli import main
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.data import fred as fred_mod
@@ -319,7 +319,7 @@ def test_task_store_persists_and_archives(tmp_path):
 
 
 def test_api_serves_archived_tasks(tmp_path):
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from agentic_trader.agentic.api import create_app
     db = tmp_path / "api.sqlite"
@@ -346,7 +346,7 @@ def test_api_serves_archived_tasks(tmp_path):
 
 # --------------------------------------------------------------- TLS and posture
 def test_serve_options_guard_deployment(tmp_path, caplog):
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     from agentic_trader.agentic.api import serve_options, uses_dev_keys
     cfg = make_config()
     assert uses_dev_keys(cfg["agentic"]["api_keys"]) and not uses_dev_keys({"k9f2...": "trader"})
@@ -367,7 +367,7 @@ def test_serve_options_guard_deployment(tmp_path, caplog):
 
 
 def test_serve_cli_plumbs_tls_and_store(monkeypatch, tmp_path, capsys):
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     import uvicorn
     seen = {}
     monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(kw))

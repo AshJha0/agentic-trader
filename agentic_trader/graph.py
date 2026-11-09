@@ -34,6 +34,7 @@ from .state import AnalystReport, Book, DebateOutcome, FinalDecision, TradePropo
 if TYPE_CHECKING:
     from .combine import SignalInputs
     from .regime import RegimeSeries
+    from .text_analysts import TextInputs
 
 
 @dataclass
@@ -70,7 +71,7 @@ class TradingGraph:
             self.config.get("memory_path"), max_staleness_days=self.max_staleness_days)
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
         self._research: dict[tuple[int, str, date], _ResearchSeries] = {}
-        self.text_inputs = None   # text_analysts.TextInputs; built from the config on first use
+        self.text_inputs: TextInputs | None = None   # built from the config on first use
         self.text_llm = None      # backend for the text analysts (None = self.llm)
 
         c, m = self.config, self.llm
@@ -393,6 +394,7 @@ class TradingGraph:
                 state, d = self.propagate(ins, as_of,
                                           current_weight=positions.get(ins.symbol), book=book)
                 votes = [r for r in state.reports.values() if not r.abstained]
+                assert state.debate is not None  # propagate always runs the debate
                 rows.append({
                     "symbol": ins.symbol, "asset_class": ins.asset_class,
                     "last": state.last_price, "action": d.action.value,

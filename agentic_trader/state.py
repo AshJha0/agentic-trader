@@ -267,6 +267,7 @@ class TradingState:
 
     def verdict_block(self) -> str:
         d = self.debate
+        assert d is not None  # only asked after the debate stage
         return "Debate verdict: " + fenced("debate verdict (written from third-party material)", [d.summary],
                                            d.untrusted)
 
@@ -274,6 +275,7 @@ class TradingState:
         """The trader's proposal for a prompt: its numbers in the open, its rationale fenced
         when it descends from third-party text."""
         p = self.proposal
+        assert p is not None  # only asked after the trader stage
         return (f"Trader proposal: {p.action.value} weight {p.target_weight:+.2f}; "
                 + fenced("trader rationale (written from third-party material)", [p.rationale], p.untrusted))
 
