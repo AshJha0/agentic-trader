@@ -33,8 +33,7 @@ rules downstream) and then `local_all` (model in every role) against the rules d
 - **Pre-registration (2.8).** `docs/evaluation/v16_preregistration_DRAFT.md`: design bar, the
   single holdout look and its minimum detectable effect (0.59 to 1.32 annual Sharpe). Draft,
   unsigned; the holdout is not run unless a cell clears the bar.
-- **Still to fold in.** 4.2 real planner plans survival on qwen2.5 (v0.15 follow-up, run
-  detached): **PENDING: filled when the run finishes.**
+- **Planner survival on real model plans (4.2, v0.15 follow-up).** 200 tasks, qwen2.5:7b-instruct (4-bit, CPU, temperature 0, compact grammar-constrained prompt): 1,345 of 1,506 proposed steps survived the validator (89.3%); the validator added 520 required steps, repaired 145 plans, and 13 plans (6.5%) were unusable (timeout or unparseable); 0 data-budget hits. Canonical and rule planner: 100% (1800/1800). Recorded plans: `tests/data/v15_local_model_plans.jsonl` (+ `.meta.json`; the run resumed twice after shutdowns, so the meta usage block covers the last segment only). Evidence class: real local model, 7B floor, not Claude.
 - **Known gap.** The usage examples in the `scripts/llm_study.py` docstring still name
   `llama3.1:8b-instruct-q4_K_M`; the model used is `qwen2.5:7b-instruct`. To fix in code, not
   touched in this docs pass because a run was using the script.
@@ -87,7 +86,7 @@ calls, no network.
 - **What the model adds (6.2, skeleton).** `docs/evaluation/what_the_model_adds.md` collects the
   existing results with an evidence class per row: 4.4 red-team 21/150 on the local model, 3.2
   filing tone not supported, 3.7 recall@5 0.92 / 0.98 on real filings, 3.8 usability 11/12 and
-  10/10; 4.2 real plans and the P2 cells pending.
+  10/10; 4.2 real plans filled in (89.3% step survival); the P2 cells pending.
 - **README positioning (6.5).** The first paragraph now describes a governed-agents reference
   with a measured LLM study, names the single-name rules desk as the incumbent control, and links
   the forward paper record with its decision look (3,600 sessions, about 14 years).

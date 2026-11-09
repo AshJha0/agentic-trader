@@ -1,0 +1,33 @@
+{
+ "model": "qwen2.5:7b-instruct",
+ "backend": "ollama (local, $0)",
+ "temperature": 0.0,
+ "seed": 7,
+ "run_utc": "2026-11-09T08:16:34+00:00",
+ "runtime_s": 5831.1,
+ "usage": {
+  "calls": 49,
+  "refusals": 0,
+  "errors": 0,
+  "empty_replies": 0,
+  "timeouts": 0,
+  "fallbacks": 0,
+  "model_drift": 0,
+  "cache_read_tokens": 0,
+  "cache_write_tokens": 0,
+  "cost_usd": 0.0,
+  "unpriced_models": [],
+  "by_model": {
+   "qwen2.5:7b-instruct": {
+    "calls": 49,
+    "input_tokens": 38646,
+    "output_tokens": 16621,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "estimated_calls": 0,
+    "cost_usd": 0.0
+   }
+  }
+ },
+ "note": "7B 4-bit open-weight model: a floor for a small local model, not Claude."
+}
