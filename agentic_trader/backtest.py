@@ -266,7 +266,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                        on_decision: Callable[[FinalDecision], None] | None = None,
                        include_agent: bool = True,
                        capital_share: pd.Series | None = None,
-                       rebalance_offset: int = 0) -> ComparisonReport:
+                       rebalance_offset: int = 0,
+                       stop_check: Callable[[], bool] | None = None) -> ComparisonReport:
     """Walk-forward backtest of the desk and the baselines on one instrument.
 
     ``capital_share`` (a date-indexed fraction of ``initial_capital``, for a portfolio sleeve)
@@ -282,6 +283,10 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     decision is a target that the engine clamps to the leverage cap and trades, so a weight
     that drift has carried past the cap (a losing short, a capped FX long with negative
     carry) is trimmed back to it at the next decision bar.
+
+    ``stop_check`` (default ``None``: no check) is called after each decision; when it returns
+    True the run raises ``batch.PassPending`` before that decision is used. ``batch.run_jobs``
+    passes it so a batched pass stops at the first date still waiting for a model answer.
     """
     cfg = make_config(config)
     ins = Instrument.parse(symbol, asset_class)
@@ -339,6 +344,9 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                     prices[:i + 1], w[:i + 1], bt,
                     **{k: (None if v is None else v[:i + 1]) for k, v in extras.items()}).positions[i])
             st, dec = graph.propagate(ins, window.index[i].date(), current_weight=held)
+            if stop_check is not None and stop_check():
+                from .batch import PassPending
+                raise PassPending(f"{ins.display} {window.index[i].date()}")
             for s in _sources(st):
                 sources[s] = sources.get(s, 0) + 1
             # Hold each decision (weight and its protective levels) until the next one. Only a

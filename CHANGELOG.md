@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.16.0 — Unreleased
+
+- **Batch-friendly walk-forward loop (1.5b).** `batch.walk_forward_jobs(llm, symbols, start, end,
+  config, offsets=(0,))` runs every (symbol, rebalance offset) pair as one job of
+  `batch.run_jobs`: each job keeps its dates in sequence, all jobs share each batch, and a job
+  that finishes a pass with no unanswered question is not re-run. Fake backend, 15 names x 5
+  dates: 34 passes, the slowest single name's count (33-34 each), against 505 for the names run
+  one after another; decisions equal the direct path. `stop_at_pending=True` ends each job's
+  pass at the first date still waiting, so no prompt built on a rule stand-in is queued: 41
+  passes and 3,748 requests instead of 12,115. The new `run_agent_backtest(stop_check=...)`
+  argument defaults to `None`, so the unbatched path is unchanged. Offline tests only
+  (`tests/test_v16_batch_loop.py`); no spend.
+
 ## v0.15.1 — 2026-11-08 (v0.15 follow-up)
 
 Wiring for pieces v0.15 built but left out of the desk. Every new switch is off by default, so a
