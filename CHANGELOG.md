@@ -73,6 +73,20 @@ below; offline, $0). Fast PR-gate suite (`-m "not slow"`), line coverage of `age
   `MemoryToolError` (`10.0` is still accepted).
 - mypy (advisory): 160 -> 153 findings (a shadowed variable in `state.py`); ruff clean.
 
+### Coverage (round 2)
+
+- PR-gate line coverage of `agentic_trader`: **95.2% -> 95.7%** (648 -> 579 missed lines of
+  13,514). New file `tests/test_v16_quality2.py`: 29 test functions, 32 cases (three hypothesis
+  properties). Gains: `agentic/tracing.py` 83% -> 98% (OTLP export driven through stand-in
+  `opentelemetry` modules, no SDK installed; JSON log formatter), `agentic/replay.py` 93% -> 97%,
+  `agentic/research_rag.py` 93% -> 96%, `data/edgar_text.py` 92% -> 97% (point-in-time
+  sections never fetch a later filing; an unreadable document loses its sections only),
+  `local_llm.py` 94% -> 99% (timeout, unreachable and non-object replies fall back and count).
+- **Seam: `ResearchCorpus(embedder=...)`.** The 3.5 local-embeddings ranker accepts any object
+  with `encode(texts)`; tests inject a deterministic fake, so the hybrid three-ranker fusion,
+  embedding-row alignment after the date sort, and the point-in-time property are now tested
+  without `sentence-transformers`. Default behaviour is unchanged. No bugs found this round.
+
 ### Documentation and KPI table (P6)
 
 P6 documentation items 6.2-6.5. Offline tests only (`tests/test_v16_kpi.py`); no spend, no model
