@@ -217,7 +217,29 @@ TRIALS: tuple[Trial, ...] = (
     Trial("P2 local_analysts: local model at the analysts only, rules downstream (trader, risk, PM)",
           "v0.16", None),
     Trial("P2 local_all: local model in every role", "v0.16", None),
+    # v0.16 (PLAN.md 6.1): the remaining five P2 cells, registered before any of them is run so
+    # every study cell counts as a trial in the deflated Sharpe whether or not it is ever run or
+    # adopted. Names equal llm_study.Cell.trial_name (tests/test_v16_study.py checks all cells).
+    Trial("P2 local_text: local model on the free-text roles (bull, bear) only", "v0.16", None),
+    Trial("P2 local_pm: local model at the portfolio manager only", "v0.16", None),
+    Trial("P2 no_debate: local model in every role but the debate (researchers, facilitator on rules)",
+          "v0.16", None),
+    Trial("P2 debate_1: local model in every role, one debate round", "v0.16", None),
+    Trial("P2 neutral_risk: local model in every role, a single neutral risk analyst", "v0.16", None),
 )
+
+
+def registered_trial_count(version: str | None = None) -> int:
+    """How many trials the deflated Sharpe must count: every registered variant (through
+    ``version`` when given, in registry order), measured or not. Pass it to
+    ``stats.selection_report(..., n_trials=...)`` so unmeasured trials (pending LLM cells,
+    signal-level text trials) still raise the expected-maximum benchmark."""
+    if version is None:
+        return len(TRIALS)
+    last = max((i for i, t in enumerate(TRIALS) if t.version == version), default=None)
+    if last is None:
+        raise ValueError(f"no trial registered for version {version!r}")
+    return last + 1
 
 
 def reproducible_trials() -> list[Trial]:

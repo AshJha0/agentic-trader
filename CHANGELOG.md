@@ -109,6 +109,23 @@ calls, no network.
   the forward paper record with its decision look (3,600 sessions, about 14 years).
 
 
+### Documentation (round 2)
+
+- **Every study cell a trial (6.1).** The five remaining P2 cells (`local_text`, `local_pm`,
+  `no_debate`, `debate_1`, `neutral_risk`) are registered in `evaluation.TRIALS` before any of
+  them runs (77 trials, 7 at v0.16). New `evaluation.registered_trial_count(version=None)`;
+  `stats.selection_report(..., n_trials=)` counts unmeasured trials in the expected-maximum
+  benchmark and reports `trials_measured` beside `trials`. Tests in `tests/test_v16_study.py`
+  and the updated registry count in `tests/test_v11.py`. Offline, $0, no model calls.
+- **What the model adds.** A per-cell table (Sharpe minus control, deflated probability at
+  n_trials = 77, cost per decision, evidence class), every cell pending; the 4.2 planner row
+  is now marked real-local. No result is filled in.
+- **Links and diagrams (6.2).** ai.md, LEARN (Part XIII, concept 57), DIAGRAMS (diagram 40:
+  the LLM study cells, the governed path and the rules control) and docs/INDEX link the
+  what-the-model-adds and live-readiness pages.
+- **Stale counts fixed.** README, docs/INDEX and the site: 57 concepts, 119 recipes, 40
+  diagrams, current test count.
+
 ## v0.15.1 — 2026-11-08 (v0.15 follow-up)
 
 Wiring for pieces v0.15 built but left out of the desk. Every new switch is off by default, so a

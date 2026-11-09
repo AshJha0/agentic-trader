@@ -130,7 +130,8 @@ DEFLATED_SHARPE_CAVEAT = (
 )
 
 
-def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: float = 252.0) -> dict:
+def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: float = 252.0,
+                     n_trials: int | None = None) -> dict:
     """Everything a reader needs to judge a chosen variant after a search.
 
     ``trial_sharpes_annual`` are the annualised Sharpe ratios of every variant tried
@@ -141,17 +142,24 @@ def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: flo
     signature of that mismatch). The probabilities in the result are an upper bound
     (``DEFLATED_SHARPE_CAVEAT``, attached as ``"caveat"`` so it travels with the number
     wherever this dict is printed or logged, not only where the docs happen to repeat it).
+
+    ``n_trials`` (v0.16, PLAN 6.1) is the number of trials registered, when some have no
+    Sharpe yet (pending LLM cells): the count used for the expected maximum is the larger of
+    it and ``len(trial_sharpes_annual)``; the dispersion still comes from the measured ones.
     """
     s = sharpe_stats(chosen_returns, periods_per_year)
     trials = np.asarray(trial_sharpes_annual, dtype=float) / math.sqrt(periods_per_year)
-    n_trials = int(trials.size)
+    n_measured = int(trials.size)
+    if n_trials is not None and n_trials < 1:
+        raise ValueError("n_trials must be >= 1")
+    n_trials = max(n_measured, n_trials or 0)
     warning = None
-    if n_trials > 1:
+    if n_measured > 1:
         sd_annual = float(np.std(trial_sharpes_annual, ddof=1))
         if s.sharpe_annual > float(np.max(trial_sharpes_annual)) + 3.0 * sd_annual:
             warning = ("chosen Sharpe exceeds the best trial by more than three trial standard deviations: "
                        "the trials are probably not the same statistic as the chosen series")
-    var_trials = float(trials.var(ddof=1)) if n_trials > 1 else 0.0
+    var_trials = float(trials.var(ddof=1)) if n_measured > 1 else 0.0
     sr0 = expected_max_sharpe(n_trials, var_trials)
     lo, hi = sharpe_ci_bootstrap(chosen_returns, periods_per_year)
     return {
@@ -160,7 +168,7 @@ def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: flo
         "skew": round(s.skew, 3), "kurtosis": round(s.kurt, 2),
         "bootstrap_ci_95": (round(lo, 3), round(hi, 3)),
         "psr_vs_zero": round(probabilistic_sharpe(s.sharpe, s.n, s.skew, s.kurt), 3),
-        "trials": n_trials, "expected_max_sharpe_annual": round(sr0 * math.sqrt(periods_per_year), 3),
+        "trials": n_trials, "trials_measured": n_measured, "expected_max_sharpe_annual": round(sr0 * math.sqrt(periods_per_year), 3),
         "deflated_sharpe_prob": round(deflated_sharpe(s.sharpe, s.n, n_trials, var_trials, s.skew, s.kurt), 3),
         "min_track_record_periods": (None if not math.isfinite(m := min_track_record(s.sharpe, sr0, s.skew, s.kurt))
                                      else round(m)),
