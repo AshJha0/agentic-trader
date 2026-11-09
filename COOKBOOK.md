@@ -2716,7 +2716,8 @@ disagrees is left out and listed. `--horizon 10` scores at the trader's default 
 
 `make_config(backtest={"exec_lag": 1})` executes the target decided at bar t at bar t+1;
 `make_config(backtest={"fill": "next_open"})` fills at the next open, and the position held into
-the bar earns the overnight move (not yet combined with stop/take levels, which raise an error).
+the bar earns the overnight move. Stop/take levels combine with it: the position is on from the
+open, so a level already through the open exits there, otherwise the bar's range decides.
 Re-run the same evaluation with each and compare the Sharpe. A result that survives only at lag
 0 is a same-close artefact. The registered trials at lag 0 and lag 1 (network, queued):
 

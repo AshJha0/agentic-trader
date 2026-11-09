@@ -400,7 +400,9 @@ class BacktestConfig:
     # Execution timing (v0.17, review Q1). exec_lag k: the target decided at bar t is executed at
     # bar t+k (0 = same-close fill, the historical behaviour, bit-identical). fill_next_open: the
     # executed target fills at open[t+1] instead of close[t]; the old position carries the
-    # overnight move close[t] -> open[t+1]. Needs ``open``; not combinable with stop/take levels.
+    # overnight move close[t] -> open[t+1]. Needs ``open``. With stop/take levels the position
+    # is in place from open[t+1], so bar t+1's levels see that open (a level already through it
+    # exits at the open: zero intrabar move after the overnight leg) and then its range.
     exec_lag: int = 0
     fill_next_open: bool = False
     # Financing spreads (v0.17, review A5; agentic_trader.financing): annual fractions charged
@@ -669,8 +671,6 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
     if config.fill_next_open:
         if out["open"] is None:
             raise ValueError("run_backtest: fill_next_open needs open prices")
-        if has_levels:
-            raise ValueError("run_backtest: fill_next_open cannot be combined with stop/take levels")
     return p, w_in, out
 
 

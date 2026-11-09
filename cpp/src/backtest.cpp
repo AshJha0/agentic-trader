@@ -186,8 +186,6 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
     if (cfg.exec_lag < 0) throw std::invalid_argument("exec_lag must be a non-negative integer");
     if (cfg.fill_next_open && in.open.empty())
         throw std::invalid_argument("run_backtest: fill_next_open needs open prices");
-    if (cfg.fill_next_open && has_levels)
-        throw std::invalid_argument("run_backtest: fill_next_open cannot be combined with stop/take levels");
     for (double p : prices)
         if (!(p > 0.0) || std::isinf(p))
             throw std::invalid_argument("run_backtest: prices must be positive and finite");

@@ -110,6 +110,61 @@ def test_next_open_hand_example():
     assert r.traded.tolist() == [0.0, 1.0, 0.0]
 
 
+def _levels_case():
+    p = np.array([100.0, 110.0, 121.0, 121.0])
+    o = np.array([100.0, 105.0, 100.0, 121.0])
+    return p, o, np.maximum(p, o), np.minimum(p, o)
+
+
+def test_next_open_with_stop_inside_the_entry_bar():
+    # Enter at open[1]=105; bar 1 trades down to 99 through the stop at 100: exit at the stop.
+    p, o, h, lo = _levels_case()
+    lo[1] = 99.0
+    stop = np.array([100.0, 100.0, 100.0, 100.0])
+    r = pycore.run_backtest_ex(p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True),
+                               open=o, high=h, low=lo, stop=stop)
+    np.testing.assert_allclose(r.equity, 100_000 * np.array([1.0, 100 / 105, 100 / 105, 100 / 105]), rtol=1e-14)
+    assert [(t.index, t.price) for t in r.trades] == [(1, 105.0), (1, 100.0)]
+    assert r.exits.tolist() == [0.0, 1.0, 0.0, 0.0]
+    assert r.positions.tolist() == [1.0, 0.0, 0.0, 0.0]
+
+
+def test_next_open_stop_gapped_through_exits_at_the_open():
+    # Held long carries the overnight 110 -> 100 gap, then the stop at 104 (already through the
+    # open) exits at the open: no intrabar move is booked after the overnight leg.
+    p, o, h, lo = _levels_case()
+    stop = np.array([90.0, 104.0, 104.0, 104.0])
+    r = pycore.run_backtest_ex(p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True),
+                               open=o, high=h, low=lo, stop=stop)
+    np.testing.assert_allclose(r.equity, 100_000 * np.array([1.0, 110 / 105, 100 / 105, 100 / 105]), rtol=1e-14)
+    assert r.trades[-1].index == 2 and r.trades[-1].price == 100.0
+    assert r.exits.tolist() == [0.0, 0.0, 1.0, 0.0]
+
+
+def test_next_open_take_profit_and_stop_slippage():
+    p, o, h, lo = _levels_case()
+    take = np.full(4, 115.0)
+    r = pycore.run_backtest_ex(p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True),
+                               open=o, high=h, low=lo, take=take)
+    np.testing.assert_allclose(r.equity[-1], 100_000 * 115 / 105, rtol=1e-14)
+    # Slippage on a gapped stop: open less the half spread (floored at the low).
+    stop = np.array([90.0, 104.0, 104.0, 104.0])
+    lo[2] = 99.0
+    r = pycore.run_backtest_ex(p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True,
+                                                            stop_half_spread=0.005),
+                               open=o, high=h, low=lo, stop=stop)
+    np.testing.assert_allclose(r.equity[-1], 100_000 * 110 / 105 * (100 / 110) * 0.995, rtol=1e-14)
+
+
+def test_next_open_without_levels_is_unchanged_by_the_new_path():
+    d = _inputs()
+    cfg = _cfg(fill_next_open=True)
+    a = _run(pycore, d, cfg, levels=False)
+    b = _run(pycore, d, cfg, levels=True, stop=np.full_like(d["p"], np.nan), take=np.full_like(d["p"], np.nan))
+    for attr in ("equity", "positions", "traded", "exits", "returns"):
+        np.testing.assert_array_equal(getattr(a, attr), getattr(b, attr))
+
+
 def test_next_open_overnight_belongs_to_old_position():
     # Flip from long to flat: the long earns close -> open, nothing after the open fill.
     p = np.array([100.0, 100.0, 90.0, 90.0])
@@ -128,18 +183,21 @@ def test_validation():
         pycore.run_backtest_ex(p, np.ones(5), BacktestConfig(exec_lag=1.5))  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="needs open"):
         pycore.run_backtest_ex(p, np.ones(5), BacktestConfig(fill_next_open=True))
-    with pytest.raises(ValueError, match="stop/take"):
-        pycore.run_backtest_ex(p, np.ones(5), BacktestConfig(fill_next_open=True), open=p, high=p, low=p,
+    # Next-open fills combine with stop/take levels (v0.18 lane A, L2): no longer an error.
+    r = pycore.run_backtest_ex(p, np.ones(5), BacktestConfig(fill_next_open=True), open=p, high=p, low=p,
                                stop=p * 0.9)
+    assert r.exits.sum() == 0.0
 
 
 @pytest.mark.skipif(quant.BACKEND != "cpp", reason="C++ extension not built")
-@pytest.mark.parametrize("k,next_open", [(0, False), (1, False), (3, False), (0, True), (2, True)])
-def test_cpp_matches_numpy(k, next_open):
+@pytest.mark.parametrize("k,next_open,levels,slip", [
+    (0, False, True, 0.0), (1, False, True, 0.0), (3, False, True, 0.0), (0, True, False, 0.0),
+    (2, True, False, 0.0), (0, True, True, 0.0), (2, True, True, 0.0), (1, True, True, 5e-4)])
+def test_cpp_matches_numpy(k, next_open, levels, slip):
     d = _inputs()
-    cfg = _cfg(exec_lag=k, fill_next_open=next_open)
-    a = _run(pycore, d, cfg, levels=not next_open)
-    b = _run(quant, d, cfg, levels=not next_open)
+    cfg = _cfg(exec_lag=k, fill_next_open=next_open, stop_half_spread=slip, stop_range_frac=slip * 100)
+    a = _run(pycore, d, cfg, levels=levels)
+    b = _run(quant, d, cfg, levels=levels)
     for attr in ("equity", "positions", "traded", "exits", "returns"):
         np.testing.assert_allclose(getattr(a, attr), getattr(b, attr), rtol=1e-12, atol=1e-12)
     assert [(t.index, t.price) for t in a.trades] == [(t.index, t.price) for t in b.trades]
