@@ -84,7 +84,7 @@ def test_request_shape_puts_the_schema_in_format(server: str) -> None:
     assert body["model"] == MODEL and body["stream"] is False
     assert body["format"] == contracts.ANALYST
     assert body["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "prompt"}]
-    assert body["options"] == {"temperature": 0.0, "num_predict": 512, "seed": 3}
+    assert body["options"] == {"temperature": 0.0, "num_predict": 512, "seed": 3, "num_ctx": 8192}
     llm.complete("sys", "plain", deep=False)
     assert "format" not in FakeOllama.requests[-1]["body"]
 
@@ -94,7 +94,9 @@ def test_evidence_and_usage(server: str) -> None:
     FakeOllama.replies = [_reply("  hello  ", model=MODEL, done_reason="length")]
     assert llm.complete("s", "p", deep=True) == "hello"
     assert llm.last_call == {"model_configured": MODEL, "model_served": MODEL, "stop_reason": "length",
-                             "refusal_category": None, "fallbacks": [], "model_drift": False}
+                             "refusal_category": None, "fallbacks": [], "model_drift": False,
+                             "prompt_eval_count": 120, "eval_count": 30, "prompt_tok_est": 0,
+                             "num_ctx": 8192, "truncated": True}
     s = llm_usage(llm)
     assert s["calls"] == 1 and s["errors"] == 0 and s["cost_usd"] == 0.0 and s["unpriced_models"] == []
     assert s["by_model"][MODEL]["input_tokens"] == 120 and s["by_model"][MODEL]["output_tokens"] == 30

@@ -235,6 +235,12 @@ TRIALS: tuple[Trial, ...] = (
     # cell (scripts/llm_study.py, wired by lane L1) is local_all with agentic.critic_in_graph on,
     # so a flagged model/rules divergence scales target_weight (critic_weight_rule "scale", 0.5).
     Trial(CRITIC_ON_TRIAL, "v0.17", None),
+    # v0.17 (review 2026-11-09 N3, N9): the powered design cells, registered before any run.
+    # Names equal study_design.DesignCell.trial_name (tests/test_v017_study_design.py checks).
+    Trial("P2 decisive_ta: technical-analyst-only local model, weekly design dates 2016-2021, "
+          "5-day horizon, incremental IC over the rule signal", "v0.17", None),
+    Trial("P2 postcutoff_ta: technical-analyst-only local model, weekly dates 2025-07 to 2026-10 "
+          "(post-training leakage control), 5-day horizon, incremental IC over the rule signal", "v0.17", None),
 )
 
 
