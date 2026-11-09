@@ -1,6 +1,6 @@
 # Learn agentic-trader
 
-This guide works through the 52 ideas behind the project in order. For each concept it gives
+This guide works through the 57 ideas behind the project in order. For each concept it gives
 the idea, where the repository implements it, the real numbers it produces, and questions to
 test your understanding. Two shorter pages give the whole picture first: [how the AI works](docs/ai/ai.md) and
 [how the quant works](docs/quant/quant.md). Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
@@ -104,6 +104,11 @@ evaluation is
 
 54. [Measuring retrieval before an analyst may use it](#54-measuring-retrieval-before-an-analyst-may-use-it)
 55. [Red-teaming the fence, and what the numbers do and do not cover](#55-red-teaming-the-fence-and-what-the-numbers-do-and-do-not-cover)
+
+**Part XIII — v0.16: what the model adds**
+
+56. [Asking a small model where it helps, and checking it first (v0.16)](#56-asking-a-small-model-where-it-helps-and-checking-it-first-v016)
+57. [Every study cell is a trial, and what a decision costs (v0.16)](#57-every-study-cell-is-a-trial-and-what-a-decision-costs-v016)
 
 ---
 
@@ -2087,6 +2092,8 @@ The exercise found one real defect: facts whose keys start with `_` could reach
   not enough for an LLM path?
 - Should the lexicon ignore trading verbs that appear inside quoted instructions?
 
+# Part XIII — v0.16: what the model adds
+
 ## 56. Asking a small model where it helps, and checking it first (v0.16)
 
 **The idea.** A model's opinion is useful only if it comes from the facts in front of it. If it
@@ -2115,3 +2122,40 @@ Sharpe (pre-registration, iid approximation), so a null there is weak evidence a
 **Questions.**
 - Why does telling the model the 15 candidate tickers make chance 1/15 rather than one in thousands?
 - Why must the fallback share be capped before the Sharpe difference means anything?
+
+## 57. Every study cell is a trial, and what a decision costs (v0.16)
+
+**The idea.** Each way of putting the model into the desk (analysts only, every role, the
+portfolio manager only, and so on) is one more variant tried on the same design data. Trying
+more variants makes the best one look better by luck alone, so every cell has to be counted
+in the selection statistics, including cells that are never run or never adopted. And because
+a model call costs money where a rule does not, each decision is reported with its cost next
+to its accuracy.
+
+**Formally.** The deflated Sharpe probability compares the chosen Sharpe with the expected
+maximum of N null trials, which grows with N. `evaluation.TRIALS` holds every registered
+variant; `evaluation.registered_trial_count()` returns N, and
+`stats.selection_report(returns, measured_sharpes, n_trials=N)` uses the larger of N and the
+number of measured Sharpes for the expected maximum, while the trial dispersion still comes from
+the measured ones only. All seven P2 model cells are registered before any of them runs
+(`tests/test_v16_study.py::test_every_study_cell_is_a_registered_trial`). Cost per decision is
+`kpi.cost_per_decision_usd` = total model spend over the number of decisions; it is 0 for the
+rules control and for the local model, so for those cells the column records that the
+comparison was free, not that the model is cheap at scale.
+
+**Worked example.** The registry now has 77 trials. On a synthetic series in
+`tests/test_v16_study.py`, five measured Sharpes give one expected maximum; passing
+`n_trials=77` raises it and the deflated probability can only fall. The real P2 numbers are
+pending: [what the model adds](docs/evaluation/what_the_model_adds.md) shows them as pending
+rows, and the [live-readiness statement](docs/evaluation/live_readiness.md) says which parts
+of the path are simulated. The study design is diagram 40 in
+[DIAGRAMS.md](docs/DIAGRAMS.md#40-the-llm-study-cells-trials-and-the-rules-control-v016).
+
+**In the repo.** `agentic_trader/evaluation.py` (`TRIALS`, `registered_trial_count`),
+`agentic_trader/stats.py` (`selection_report`), `agentic_trader/kpi.py`, `scripts/llm_study.py`.
+Evidence class: code and synthetic tests; no model result.
+
+**Questions.**
+- Why count a cell that was registered but never run?
+- If one cell had a measured Sharpe and six did not, what does `trials_measured` tell a reader
+  that `trials` does not?

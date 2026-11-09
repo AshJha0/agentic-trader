@@ -55,6 +55,10 @@ Mermaid 11 parser before release. The prose explanation is in
 38. [Evaluation periods and what each may be used for](#38-evaluation-periods-and-what-each-may-be-used-for)
 39. [Research retrieval behind its gate, and record/replay (v0.15)](#39-research-retrieval-behind-its-gate-and-recordreplay-v015)
 
+**What the model adds** (v0.16)
+
+40. [The LLM study: cells, trials and the rules control (v0.16)](#40-the-llm-study-cells-trials-and-the-rules-control-v016)
+
 ## 1. Decision pipeline
 
 ```mermaid
@@ -1012,4 +1016,31 @@ flowchart LR
     T["task --record"] --> P[".replay.pkl<br/>data and model payloads"]
     P --> RP["replay: served payloads,<br/>no network, no model"]
     RP --> M{"same decision<br/>and end state?"}
+```
+
+## 40. The LLM study: cells, trials and the rules control (v0.16)
+
+Every study cell is registered in `evaluation.TRIALS` before it is run, so the deflated
+Sharpe counts it whether or not it is ever run or adopted. Each cell hands the model to some
+roles only; every other role runs its rules, and the rules cell is the control on the same
+names and dates. Results feed the KPI table and
+[what the model adds](evaluation/what_the_model_adds.md); what is real and what is simulated
+is in the [live-readiness statement](evaluation/live_readiness.md).
+
+```mermaid
+flowchart LR
+    REG["evaluation.TRIALS<br/>7 P2 model cells registered<br/>before any run"] --> CELLS
+    subgraph CELLS["study cells (scripts/llm_study.py)"]
+        RC["rules (control)<br/>no model"]
+        LA["local_analysts"]
+        LL["local_all"]
+        LO["local_text, local_pm,<br/>no_debate, debate_1, neutral_risk"]
+    end
+    ST["same state<br/>15 core names x design dates"] --> CELLS
+    CELLS --> GV["governed path per decision:<br/>model output -> schema check -><br/>rules fallback on refusal or error -><br/>risk team and PM limits"]
+    GV --> REC["decision records<br/>signal, fallback flag, cost_usd"]
+    REC --> KPI["agentic-trader kpi<br/>hit rate vs control, Brier,<br/>model-delta book, cost per decision"]
+    REC --> DSR["stats.selection_report<br/>n_trials = registered_trial_count()"]
+    KPI --> WMA["what_the_model_adds.md"]
+    DSR --> WMA
 ```

@@ -214,6 +214,10 @@ The LLM desk had the same Sharpe ratio as the rules with less than half the expo
 is one small sample, and it was produced under the engine before the v0.8 corrections. No
 multi-year LLM backtest has been run. Every other number in the project is the rule-based
 desk. See [the evaluation](../evaluation/evaluation.md#the-llm-desk-v051-the-first-measured-result).
+The v0.16 local-model results (red-team, text analysts, planner survival) and the pending P2
+study rows are collected, each with its evidence class, in
+[what the model adds](../evaluation/what_the_model_adds.md); what in the path is real,
+simulated or absent is in the [live-readiness statement](../evaluation/live_readiness.md).
 
 ## 3. Memory and reflection
 
@@ -402,6 +406,13 @@ facts it was given. Then compare desks, and look at the holdout once.
 
 Evidence class for every row: tool built and tested offline against fakes and fixtures
 (`tests/test_v16_*.py`); no model result yet.
+
+Every one of the seven model cells in `scripts/llm_study.py` is registered in
+`evaluation.TRIALS` before it is run (PLAN 6.1), so the deflated Sharpe counts all of them;
+`stats.selection_report(..., n_trials=evaluation.registered_trial_count())` applies the count
+when only some cells have a measured Sharpe. Results land in
+[what the model adds](../evaluation/what_the_model_adds.md); the study design is
+[diagram 40](../DIAGRAMS.md#40-the-llm-study-cells-trials-and-the-rules-control-v016).
 
 **Example.** If the recall audit found 20 ticker hits in 200 prompts, the rate 0.10 would be
 compared with chance 1/15 = 0.067 by an exact one-sided binomial test (p = 0.046); a key

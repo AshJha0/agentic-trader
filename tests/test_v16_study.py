@@ -83,6 +83,30 @@ def test_first_pass_cells_are_registered_trials() -> None:
     assert study.LOCAL_BUDGET["max_tokens"] <= 512 and 0 < study.MAX_FALLBACK_SHARE < 0.5
 
 
+def test_every_study_cell_is_a_registered_trial() -> None:
+    # PLAN 6.1: every model cell counts in the deflated Sharpe, run or not.
+    names = {t.name for t in TRIALS}
+    assert all(c.trial_name in names for c in study.CELLS if c.llm_roles)
+    assert sum(1 for c in study.CELLS if c.llm_roles) == 7
+
+
+def test_selection_report_counts_unmeasured_trials() -> None:
+    from agentic_trader.evaluation import registered_trial_count
+    from agentic_trader.stats import selection_report
+    r = np.random.default_rng(0).normal(0.0005, 0.01, 1000)
+    sharpes = [0.2, 0.4, 0.1, 0.5, 0.3]
+    base = selection_report(r, sharpes)
+    more = selection_report(r, sharpes, n_trials=registered_trial_count())
+    assert base["trials"] == base["trials_measured"] == 5
+    assert more["trials"] == len(TRIALS) and more["trials_measured"] == 5
+    assert more["expected_max_sharpe_annual"] > base["expected_max_sharpe_annual"]
+    assert more["deflated_sharpe_prob"] <= base["deflated_sharpe_prob"]
+    assert selection_report(r, sharpes, n_trials=2)["trials"] == 5
+    assert registered_trial_count("v0.14") < registered_trial_count("v0.15") < len(TRIALS)
+    with pytest.raises(ValueError):
+        registered_trial_count("v9.9")
+
+
 def test_run_checkpoints_and_resumes(tmp_path: Path) -> None:
     out = tmp_path / "run.jsonl"
     dates = study.design_dates(20)[1:3]
