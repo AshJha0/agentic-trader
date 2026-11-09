@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased (0.16.0)
+
+P6 documentation items 6.2-6.5. Offline tests only (`tests/test_v16_kpi.py`); no spend, no model
+calls, no network.
+
+- **KPI table (6.4).** `agentic_trader/kpi.py` and `agentic-trader kpi records.jsonl [--json]`:
+  hit rate of the model vs the rules control, Brier score and calibration bins, the model-delta
+  book, cost per decision, and each book's Sharpe as one row. Tested on an invented fixture
+  (`tests/fixtures/kpi_records.jsonl`); the P2 records feed it later. Recipe 114 in COOKBOOK.md.
+- **Live-readiness statement (6.3).** `docs/evaluation/live_readiness.md`: per component what
+  exists, is simulated or is absent, each row sourced to a file and a test. Broker, custodian
+  reconciliation, tax lots, margin and surveillance are absent; no production claim.
+- **What the model adds (6.2, skeleton).** `docs/evaluation/what_the_model_adds.md` collects the
+  existing results with an evidence class per row: 4.4 red-team 21/150 on the local model, 3.2
+  filing tone not supported, 3.7 recall@5 0.92 / 0.98 on real filings, 3.8 usability 11/12 and
+  10/10; 4.2 real plans and the P2 cells pending.
+- **README positioning (6.5).** The first paragraph now describes a governed-agents reference
+  with a measured LLM study, names the single-name rules desk as the incumbent control, and links
+  the forward paper record with its decision look (3,600 sessions, about 14 years).
+
 ## v0.15.1 — 2026-11-08 (v0.15 follow-up)
 
 Wiring for pieces v0.15 built but left out of the desk. Every new switch is off by default, so a

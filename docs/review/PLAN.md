@@ -113,10 +113,10 @@ Effort = wall-clock solo days. Spend = $0 throughout. Order: **P1 → P5 → P2 
 | # | Item |
 |---|---|
 | 6.1 | Every cell a trial; deflated Sharpe over all trials incl. LLM cells; cost-equivalent per decision in tables. |
-| 6.2 | New page "What the model adds" (P2/P3 results, calibration, red-team, retrieval tables, refusal-bias); `ai.md`, LEARN, COOKBOOK, DIAGRAMS updated; a "ready but unrun" box on every Claude cell. |
-| 6.3 | **Live-readiness statement**: per component what exists / is simulated / is absent (broker, entitlements, custodian reconciliation, tax lots, margin, surveillance); no production claim. |
-| 6.4 | **KPI table** from `agent_sources`, `rule_signal`, memory join: hit rate vs control, Brier and calibration curve, model-delta book, cost per decision; Sharpe as one row. |
-| 6.5 | README first paragraph restated for positioning A; single-name desk named as the incumbent control; forward record linked with its decision date. |
+| 6.2 | New page "What the model adds" (P2/P3 results, calibration, red-team, retrieval tables, refusal-bias); `ai.md`, LEARN, COOKBOOK, DIAGRAMS updated; a "ready but unrun" box on every Claude cell. **Status: skeleton v0.16: `docs/evaluation/what_the_model_adds.md` (existing results with evidence class; P2 and 4.2 pending); ai.md, LEARN and DIAGRAMS not yet updated** |
+| 6.3 | **Live-readiness statement**: per component what exists / is simulated / is absent (broker, entitlements, custodian reconciliation, tax lots, margin, surveillance); no production claim. **Status: done v0.16: `docs/evaluation/live_readiness.md`, every row sourced to a file and a test** |
+| 6.4 | **KPI table** from `agent_sources`, `rule_signal`, memory join: hit rate vs control, Brier and calibration curve, model-delta book, cost per decision; Sharpe as one row. **Status: done v0.16: `agentic_trader/kpi.py` + `agentic-trader kpi`, fixture-tested (`tests/test_v16_kpi.py`); awaits the P2 records** |
+| 6.5 | README first paragraph restated for positioning A; single-name desk named as the incumbent control; forward record linked with its decision date. **Status: done v0.16 (decision look at 3,600 sessions, about 14 years from 2026-09-29)** |
 | 6.6 | Tags: v0.13 (P1), v0.14 (P5), v0.15 (P2+P3), v0.16 (P4). One batch PR per phase. |
 
 ## 5. AI features: use / do not use

@@ -253,3 +253,14 @@ def cmd_stats(args) -> int:
         if vb.christoffersen_p is not None and vb.christoffersen_p < 0.05:
             print(f"  -> breaches cluster in time (p={vb.christoffersen_p:.4f}): REJECTS independence")
     return 0
+
+
+def cmd_kpi(args) -> int:
+    from ..kpi import format_table, kpi_table, load_records
+    t = kpi_table(load_records(args.path), bins=args.bins, ppy=args.ppy)
+    if args.json:
+        print(json.dumps({k: v for k, v in t.items() if k != "rows"}, indent=1))
+    else:
+        print(f"{t['n_records']} decisions on {t['n_dates']} dates\n")
+        print(format_table(t))
+    return 0
