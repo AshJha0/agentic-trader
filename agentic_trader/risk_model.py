@@ -116,10 +116,18 @@ def var_next(returns, method: VarMethod = "fhs", window: int = 250, alpha: float
     when it cannot be formed (too short a history). For a history shorter than ``window``
     the whole history is used as the window, so a short book is still checked when it has at
     least ``MIN_RESIDUALS`` usable returns plus the EWMA warm-up.
+
+    Non-finite returns (v0.17, A6): kept in place, never dropped. A missing day stays a day,
+    so the trailing window covers the same calendar span as ``var_forecast`` does on the same
+    data, and ``var_next(r) == var_forecast(append(r, x))[-1]`` for any ``x``. Each method
+    already skips non-finite values inside its window (EWMA leaves the variance unchanged,
+    the quantiles drop them). Only the count of finite returns decides whether a forecast
+    can be formed.
     """
     r = np.asarray(returns, dtype=float)
-    r = r[np.isfinite(r)]
-    if r.size < MIN_RESIDUALS:
+    if np.isinf(r).any():
+        r = np.where(np.isfinite(r), r, np.nan)
+    if int(np.isfinite(r).sum()) < MIN_RESIDUALS:
         return None
     v = float(_forecasts(r, method, min(window, r.size), alpha, lam)[-1])
     return v if math.isfinite(v) else None

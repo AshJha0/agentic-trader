@@ -480,7 +480,7 @@ Steps only the repository owner can take on GitHub:
 
 ```bash
 pytest -q                                   # 1494 passed, 2 skipped on the numpy backend at the v0.15 round (879 at v0.12.0 on the C++ backend) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
-pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend at v0.8.0 (a report, not a gate); weakest file data/yahoo.py at 75% (network branches)
+pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend at v0.8.0 (a report, not a gate); weakest file data/yahoo.py at 75% (network branches); it counts the numpy backend (quant/pycore.py) only: the C++ core in cpp/ is checked by the parity tests, not measured by coverage
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 839 passed, 40 skipped (C++-only tests)
 ctest --test-dir build -C Release           # 26 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests
 python scripts/run_cookbook.py --offline && python scripts/check_mermaid.py && python scripts/check_links.py   # the docs, as CI runs them
