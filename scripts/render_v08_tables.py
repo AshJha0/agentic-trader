@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from agentic_trader.backtest import AGENT  # noqa: E402
-from agentic_trader.evaluation import EvaluationResult, trial_slug  # noqa: E402
-from agentic_trader.stats import paired_bootstrap, paired_sharpe_block_bootstrap, selection_report  # noqa: E402
+from agentic_trader.evaluation import PRE_REGISTRY_TRIALS_ESTIMATE, EvaluationResult, trial_slug  # noqa: E402
+from agentic_trader.stats import paired_bootstrap, selection_report  # noqa: E402
 
 PERIODS = ("design", "holdout", "q1_2024", "reserve")
 BASELINES = ("Buy&Hold", "B&H vol-target", "SMA(20/50)", "MACD", "KDJ+RSI", "ZMR", "TSMOM(12-1)", "Carry")
@@ -229,7 +229,10 @@ def section_selection(trials: dict, design_csv: Path, d: Path) -> None:
     excess = r - (np.where(np.isfinite(rf), rf, 0.0) / PORTFOLIO_PPY if np.ndim(rf) else rf / PORTFOLIO_PPY)
     rows = trials["trials"]
     with_sharpe = [t for t in rows if t.get("portfolio_sharpe") is not None]
-    rep = selection_report(excess, [t["portfolio_sharpe"] for t in with_sharpe], PORTFOLIO_PPY)
+    # v0.17 N6: report the DSR at the registered count and at registered + pre-registry estimate
+    # (evaluation.PRE_REGISTRY_TRIALS_ESTIMATE), so the honest trial count travels with the table.
+    rep = selection_report(excess, [t["portfolio_sharpe"] for t in with_sharpe], PORTFOLIO_PPY,
+                           n_trials=len(rows), pre_registry_trials=PRE_REGISTRY_TRIALS_ESTIMATE)
     rep["trials_in_registry"] = len(rows)
     rep["trials_without_portfolio_sharpe"] = [t["name"] for t in rows if t.get("portfolio_sharpe") is None]
     t = pd.DataFrame([{"trial": t["name"], "version": t["version"],

@@ -241,7 +241,14 @@ def cmd_stats(args) -> int:
     if args.trials:
         trials = [float(x) for x in args.trial_sharpes.split(",")] if args.trial_sharpes else \
             [s.sharpe_annual] * args.trials
-        print(json.dumps(selection_report(r, trials, args.ppy), indent=1))
+        tr = None
+        if args.trial_returns:
+            tr = pd.read_csv(args.trial_returns, index_col=0).astype(float).dropna().to_numpy()
+            if tr.ndim != 2 or tr.shape[1] < 2:
+                raise ValueError("--trial-returns needs at least two trial columns")
+        print(json.dumps(selection_report(r, trials, args.ppy, n_trials=args.trials,
+                                          pre_registry_trials=args.pre_registry_trials,
+                                          trial_returns=tr), indent=1))
     if args.var_backtest:
         forecast = rolling_var_forecast(r, window=args.var_window, alpha=args.var_alpha)
         vb = var_backtest(r, forecast, alpha=args.var_alpha)
