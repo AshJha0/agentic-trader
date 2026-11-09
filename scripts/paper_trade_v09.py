@@ -253,6 +253,9 @@ def main(argv=None) -> int:
     ap.add_argument("--oms", action="store_true",
                     help="also run the paper OMS shadow record (separate label, under <out>/oms; off by default: "
                          "the frozen record is unchanged, and turning it on starts a new, separately labelled record)")
+    ap.add_argument("--oms-corporate-actions", action="store_true",
+                    help="with --oms: apply corporate actions with ex-date in the session window to held "
+                         "quantities (C3 hook; off by default; needs a provider with action tables)")
     ap.add_argument("--freeze-file", default=str(FREEZE_FILE), help="engine freeze record (tests only)")
     ap.add_argument("--refreeze", default=None, metavar="NEW_ID",
                     help="record the current engine as a new vintage in the freeze file and exit (deliberate change)")
@@ -337,7 +340,7 @@ def main(argv=None) -> int:
                             "provenance": provenance()}, default=float) + "\n")
     if a.oms:   # plan item 4.7; never reads or writes the frozen ledger
         from agentic_trader.oms import paper_session
-        log(f"OMS shadow record: {paper_session(as_of, cfg, provider, BOOKS, out / 'oms', freeze)}")
+        log(f"OMS shadow record: {paper_session(as_of, cfg, provider, BOOKS, out / 'oms', freeze, corporate_actions=a.oms_corporate_actions)}")
     if same_day:
         log(f"WARNING: same-day revision of {same_day[0]['date']} ({len(same_day)} cell(s)); see summary.md")
     if rev["changed"] or rev["dropped"]:
