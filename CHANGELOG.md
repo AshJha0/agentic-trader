@@ -88,6 +88,20 @@ below; offline, $0). Fast PR-gate suite (`-m "not slow"`), line coverage of `age
   AttributeError instead of printing `state: FAILED` and the reason. Regression test in
   `tests/test_services.py`.
 
+### Coverage (round 2)
+
+- PR-gate line coverage of `agentic_trader`: **95.2% -> 95.7%** (648 -> 579 missed lines of
+  13,514). New file `tests/test_v16_quality2.py`: 29 test functions, 32 cases (three hypothesis
+  properties). Gains: `agentic/tracing.py` 83% -> 98% (OTLP export driven through stand-in
+  `opentelemetry` modules, no SDK installed; JSON log formatter), `agentic/replay.py` 93% -> 97%,
+  `agentic/research_rag.py` 93% -> 96%, `data/edgar_text.py` 92% -> 97% (point-in-time
+  sections never fetch a later filing; an unreadable document loses its sections only),
+  `local_llm.py` 94% -> 99% (timeout, unreachable and non-object replies fall back and count).
+- **Seam: `ResearchCorpus(embedder=...)`.** The 3.5 local-embeddings ranker accepts any object
+  with `encode(texts)`; tests inject a deterministic fake, so the hybrid three-ranker fusion,
+  embedding-row alignment after the date sort, and the point-in-time property are now tested
+  without `sentence-transformers`. Default behaviour is unchanged. No bugs found this round.
+
 ### Documentation and KPI table (P6)
 
 P6 documentation items 6.2-6.5. Offline tests only (`tests/test_v16_kpi.py`); no spend, no model
@@ -125,6 +139,11 @@ calls, no network.
   what-the-model-adds and live-readiness pages.
 - **Stale counts fixed.** README, docs/INDEX and the site: 57 concepts, 119 recipes, 40
   diagrams, current test count.
+
+### Decisions and review
+
+- **3.3 GDELT dropped** (owner, 2026-11-09): low expected value and the source throttles this connection; the script and registered trial stay in the repo, not run.
+- **Second in-depth review** with a $0 v0.17 plan: `docs/review/2026-11-09_review_and_plan.md`. Its R0 items (seed replication at temperature 0, eval set anonymisation, per-horizon scoring, schema ranges, one VaR default) must land before any P2 result is published.
 
 ## v0.15.1 — 2026-11-08 (v0.15 follow-up)
 

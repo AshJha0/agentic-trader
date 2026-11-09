@@ -227,6 +227,9 @@ class ResearchCorpus:
     passages: list[ResearchPassage]
     buckets: int = 4096
     use_embeddings: bool = False
+    # seam: any object with ``encode(texts) -> (n, d) array`` of unit rows; tests inject a
+    # deterministic fake here. None means the optional local sentence-transformers model.
+    embedder: Any = field(default=None, repr=False)
     _cache: dict[int, tuple] = field(default_factory=dict, repr=False)
     _embedder: Any = field(default=None, repr=False)
 
@@ -237,9 +240,12 @@ class ResearchCorpus:
         self.passages = sorted(self.passages, key=lambda p: (p.visible_date, p.id))
         self._times = [p.visible_date for p in self.passages]
         if self.use_embeddings:
-            if not embeddings_available():
+            if self.embedder is not None:
+                self._embedder = self.embedder
+            elif not embeddings_available():
                 raise RuntimeError("use_embeddings needs the optional [rag] extra (sentence-transformers)")
-            self._embedder = _LocalEmbedder()
+            else:
+                self._embedder = _LocalEmbedder()
             self._emb = self._embedder.encode([self._doc_text(p) for p in self.passages])
 
     @classmethod
