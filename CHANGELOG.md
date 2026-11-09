@@ -2,6 +2,8 @@
 
 ## Unreleased (0.16.0): the LLM study on a local model (PLAN P2 items 2.3 to 2.8)
 
+- **Paper runner schedule.** `paper.yml` now runs at 21:30 UTC on weekdays (was 22:30), still after the New York close in both EST and EDT; the session recorded is unchanged because the script records the last complete New York session.
+
 The tools for the P2 study, run at $0 on a local open-weight model (qwen2.5:7b-instruct, 4-bit,
 CPU, served by Ollama on 127.0.0.1). Results describe that 7B model class, not Claude; the
 Claude cells exist only as dry-run cost estimates. Offline, fixture and fake-backend tests only

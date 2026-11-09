@@ -456,7 +456,7 @@ loading, `task --record` / `replay`, and stage SLOs are new. Recipes 106-112 in
 ## Operations (v0.14)
 
 The forward paper record runs on GitHub Actions (`.github/workflows/paper.yml`, weekdays
-22:30 UTC: jobs `session`, `publish`, `freshness`, `report`). Each run records a
+21:30 UTC: jobs `session`, `publish`, `freshness`, `report`). Each run records a
 `price_vintage` hash of the bars it read in `results/paper/runs.jsonl`; the freshness job fails
 when the last session is more than two business days old, and any failure opens or comments on
 one issue labelled `paper-record`. The laptop task `scripts/paper_daily.cmd` is the fallback;

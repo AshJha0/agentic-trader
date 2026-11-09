@@ -274,7 +274,7 @@ See `config.py` for the full dictionary.
 
 Workflows: `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy advisory);
 `nightly.yml` runs the full suite at 03:17 UTC; `paper.yml` runs the paper session on weekdays
-at 22:30 UTC (`session`, `publish`, `freshness`, `report`). Every action is pinned by commit SHA.
+at 21:30 UTC (`session`, `publish`, `freshness`, `report`). Every action is pinned by commit SHA.
 The OMS kill switch is checked both by `OMS.submit` and by the agentic `submit_order` tool
 (`agentic/servers.py`), so a halt binds both order paths.
 

@@ -19,7 +19,7 @@ name: Paper record
 #   report     opens (or comments on) one issue when any of the above fails
 on:
   schedule:
-    - cron: "30 22 * * 1-5"      # 22:30 UTC: after the 16:00 New York close in both EST and EDT
+    - cron: "30 21 * * 1-5"      # 21:30 UTC: after the 16:00 New York close in both EST (16:30) and EDT (17:30)
   workflow_dispatch:
 
 permissions: {}
