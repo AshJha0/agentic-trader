@@ -50,7 +50,7 @@ from ..agents.risk import risk_facts
 from ..graph import TradingGraph
 from ..instruments import Instrument
 from ..state import TradingState
-from .critic import Critic, CriticReport, decision_untrusted
+from .critic import Critic, CriticReport, apply_weight_rule, decision_untrusted
 from .domain import (EvidenceType, Finding, Plan, PlanStep, PolicyOutcome, StepType, Task, TaskState,
                      TERMINAL_STATES, TRANSITIONS, ToolRequest, new_id, utc_now)
 from .evidence import EvidenceStore
@@ -652,6 +652,14 @@ class AgentHarness:
             critic = self.critic.review(run.trading_state, run.findings, run.evidence,
                                         run.step_results.get("risk_facts"))
             run.critic = critic
+            # v0.17 R2.1: a flagged divergence acts on the weight that sizing reads, not only
+            # on confidence; the action is recorded as evidence beside the decision.
+            act = apply_weight_rule(run.trading_state, critic, self.config)
+            if act is not None:
+                wev = run.evidence.record(EvidenceType.DECISION, "critic.weight_rule",
+                                          f"critic {act['rule']}: weight {act['from']:+.2f} -> {act['to']:+.2f}",
+                                          dict(act), run.correlation_id)
+                act["evidence_id"] = wev.id
         run.completed_steps.add("STEP-critic")
         self._transition(run, TaskState.VALIDATING_EVIDENCE,
                          "critic passed" if critic.passed else "critic flagged errors")

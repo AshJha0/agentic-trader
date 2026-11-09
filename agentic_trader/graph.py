@@ -324,8 +324,33 @@ class TradingGraph:
         self.run_debate(state)
         self.run_trader(state)
         dec = self.run_risk(state)
+        if self.config.get("agentic", {}).get("critic_in_graph", False):
+            self.run_critic(state)
         self.record(state)
         return state, dec
+
+    def run_critic(self, state: TradingState):
+        """v0.17 R2.1: the agentic critic on the plain graph path (the backtest and the P2
+        study use ``propagate``), switched on by ``agentic.critic_in_graph`` (default off, so
+        results produced before v0.17 are unchanged). The deterministic checks run on the
+        state alone (no findings, no evidence store, no risk facts); the model critique runs
+        only when ``agentic.critic_graph_llm`` is on. A flagged model/rules divergence acts
+        on ``target_weight`` through ``critic.apply_weight_rule``; the confidence takes the
+        critic's multiplier as in the harness. Returns the ``CriticReport``."""
+        from .agentic.critic import Critic, apply_weight_rule
+        from .agentic.evidence import EvidenceStore
+        acfg = self.config.get("agentic", {})
+        llm = self.llm if acfg.get("critic_graph_llm", False) else None
+        critic = Critic({**self.config, "agentic": {**acfg, "llm_critic": llm is not None}}, llm)
+        rep = critic.review(state, [], EvidenceStore())
+        act = apply_weight_rule(state, rep, self.config)
+        dec = state.decision
+        if dec is not None:
+            dec.confidence = round(dec.confidence * rep.multiplier, 4)
+        state.critic_report = rep.to_dict()
+        if act is not None:
+            self.on_event("critic", f"{act['rule']}: weight {act['from']:+.2f} -> {act['to']:+.2f}")
+        return rep
 
     def scan(self, symbols: list[str], as_of: date | str,
              positions: dict[str, float] | None = None,

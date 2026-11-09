@@ -100,6 +100,11 @@ def _v03_trial(rules: dict | None = None, risk: dict | None = None, stops: bool 
 
 
 V14_IC = {"method": "ic", "window": 504}
+# The P2 study cell's trial name must equal llm_study.Cell.trial_name for the critic_on cell.
+CRITIC_ON_TRIAL = ("P2 critic_on: local model in every role, critic in the graph acting on target_weight "
+                   "(scale 0.5 on a model/rules divergence)")
+CRITIC_ON_OVERRIDES = {"agentic": {"critic_in_graph": True, "critic_weight_rule": "scale",
+                                   "critic_weight_scale": 0.5}}
 
 
 def _eq(w: float) -> dict:
@@ -226,6 +231,10 @@ TRIALS: tuple[Trial, ...] = (
           "v0.16", None),
     Trial("P2 debate_1: local model in every role, one debate round", "v0.16", None),
     Trial("P2 neutral_risk: local model in every role, a single neutral risk analyst", "v0.16", None),
+    # v0.17 R2.1 (review 2026-11-09 A2): the governed desk. Registered before it is run; the
+    # cell (scripts/llm_study.py, wired by lane L1) is local_all with agentic.critic_in_graph on,
+    # so a flagged model/rules divergence scales target_weight (critic_weight_rule "scale", 0.5).
+    Trial(CRITIC_ON_TRIAL, "v0.17", None),
 )
 
 
