@@ -2086,3 +2086,32 @@ The exercise found one real defect: facts whose keys start with `_` could reach
 - Why is "rules signal equals lexicon score" the right test for the rules path, and why is it
   not enough for an LLM path?
 - Should the lexicon ignore trading verbs that appear inside quoted instructions?
+
+## 56. Asking a small model where it helps, and checking it first (v0.16)
+
+**The idea.** A model's opinion is useful only if it comes from the facts in front of it. If it
+can recognise the stock and the month from a "scrubbed" prompt, it may be recalling what happened
+next, which is look-ahead by memory. If it answers the same question differently each time, its
+signal is partly noise. So the study checks recall, stability and fact use before it compares
+desks.
+
+**Formally.** Recall audit (PLAN 2.4): for n = 200 anonymised prompts, count ticker hits k and
+test H0: hit probability = 1/15 with the exact one-sided binomial P(X >= k). Calibration (2.6):
+dispersion is the spread of the signal over 5 replies at temperature 0.7; the anchoring slope is
+the OLS coefficient of signal on an injected `rsi14` value with state fixed effects. Desk
+comparison (2.3): Sharpe(cell) minus Sharpe(vol-target control) with a circular block bootstrap;
+a cell whose fallback share exceeds 10%, or whose fallbacks depend on regime (chi-square p <
+0.05), is not admissible, because then the run measures the rules more than the model.
+
+**Worked example.** Suppose 20 of 200 prompts name the right ticker. The rate is 0.10 against
+chance 0.067, and P(X >= 20) under H0 is 0.046: weak evidence of leakage, enough to run the
+ablation and drop whichever fact key carries it. (Illustrative numbers, not a result.)
+
+**In the repo.** `scripts/v16_local_study.py`, `scripts/v16_eval.py`, `scripts/llm_study.py`,
+`docs/evaluation/v16_preregistration_DRAFT.md`; recipes 114-117. Model: `qwen2.5:7b-instruct`,
+4-bit, CPU. Results: pending: filled when the run finishes. The minimum detectable effect on the holdout is 0.59 to 1.32 annual
+Sharpe (pre-registration, iid approximation), so a null there is weak evidence against a small gain.
+
+**Questions.**
+- Why does telling the model the 15 candidate tickers make chance 1/15 rather than one in thousands?
+- Why must the fallback share be capped before the Sharpe difference means anything?

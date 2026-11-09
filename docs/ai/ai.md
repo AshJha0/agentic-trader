@@ -367,20 +367,46 @@ still runs afterwards. Anonymisation, evidence (`last_call`) and `max_llm_calls`
 Claude; `estimate_cost` is 0, so only the call cap binds. A timeout, refused connection, HTTP
 error or unreadable body returns `None` and the rules answer, with no retry.
 
-`scripts/llm_study.py` defines seven cells: `rules`, `local_all`, `local_text`, `local_pm`,
+`scripts/llm_study.py` defines eight cells (v0.16 added `local_analysts`): `rules`, `local_all`, `local_text`, `local_pm`, `local_analysts`,
 `no_debate`, `debate_1`, `neutral_risk`. `--describe` lists them, `--dry-run` counts calls
 and prompt tokens without a model, `--live` runs them on a local model and refuses if Ollama
 does not answer.
 
-**Status: ready but unrun.** The development machine has 15.6 GB of RAM, below the plan's
-16 GB bar for a 7-8B model (OD-6), and no Ollama install; the module is tested against a fake
-HTTP server only (`tests/test_v14_local_llm.py`). No model has answered a desk prompt through it.
+**Status (updated v0.16).** OD-6 was decided on 2026-11-08: a 7-8B 4-bit model on the
+15.6 GB machine is acceptable. The model in use is `qwen2.5:7b-instruct` on CPU through Ollama. It has
+answered desk prompts in v0.15 (text analysts, injection compliance); the v0.16 study cells
+(`local_analysts`, then `local_all`, plus `rules`) are pending: filled when the run finishes. An eighth cell, `local_analysts`,
+was added in v0.16 and registered in `evaluation.TRIALS` before any run.
 
 **Example: what the study would cost on Claude.** The dry run for 15 names x 40 dates x 2
 seeds, priced at Claude list prices: `local_all` makes 16,800 calls, estimate $214.82,
 ceiling $1,992.26. The estimate assumes 400 output tokens per quick call and 1,500 per deep
 call; the ceiling assumes every reply runs to `max_tokens`. On a local model the same study
 costs $0, which is why it is planned there.
+
+### 10.1 The v0.16 study tools (plan items 2.3-2.8)
+
+**The idea.** Before trusting a model's view, check three things: that it cannot see through
+the anonymisation, that it gives the same answer to the same question, and that it uses only the
+facts it was given. Then compare desks, and look at the holdout once.
+
+**Precisely.**
+
+| Item | Tool | Measures | Result |
+|---|---|---|---|
+| 2.3, 2.5 | `scripts/llm_study.py --first-pass --live` / `--report` | Sharpe minus vol-target control (block bootstrap), fallback share vs 10% cap, fallback by regime and date (chi-square) | pending: filled when the run finishes |
+| 2.4 | `scripts/v16_local_study.py recall` | ticker hit rate vs 1/15, month vs 1/72; leaking keys by ablation | pending: filled when the run finishes |
+| 2.6 | `scripts/v16_local_study.py calibration`, `drift` | dispersion (n=5, temperature 0.7), anchoring slope on `rsi14`, drift on 20 states | pending: filled when the run finishes |
+| 2.7 | `scripts/v16_eval.py run/check/judge/agreement` | used facts, invented no numbers, respected fence; judge kappa vs human labels | pending: filled when the run finishes |
+| 2.8 | `docs/evaluation/v16_preregistration_DRAFT.md` | design bar and one holdout look | draft, unsigned |
+
+Evidence class for every row: tool built and tested offline against fakes and fixtures
+(`tests/test_v16_*.py`); no model result yet.
+
+**Example.** If the recall audit found 20 ticker hits in 200 prompts, the rate 0.10 would be
+compared with chance 1/15 = 0.067 by an exact one-sided binomial test (p = 0.046); a key
+whose removal loses those hits would be added to the anonymiser's drop list. The numbers here
+are illustrative, not a result.
 
 ## 11. Text, research retrieval and an auditable agent (v0.15, plan items 3.1-3.9, 4.1-4.6, 4.8, 4.9)
 

@@ -2553,3 +2553,63 @@ except ValueError as e:
 
 Two approvers sign the order, so the second signature releases it. A value that looks like a
 secret in place of a variable name is refused, as is an unset variable.
+
+## v0.16: the LLM study on a local model
+
+These recipes call a local Ollama server (`ollama serve`, model `qwen2.5:7b-instruct` pulled);
+nothing leaves 127.0.0.1 and the cost is $0. They are not run in CI. Each long run starts with
+`--smoke`, which runs 2-3 items and exits non-zero if any reply fails to parse or falls back
+(the lesson from the discarded first 4.4 run, PLAN.md section 9). Every model run appends one
+row per item and resumes after a kill.
+
+### 114. Study driver: dry run, smoke, first pass, report
+
+```bash
+python scripts/llm_study.py --describe                     # cells as trial descriptions
+python scripts/llm_study.py --first-pass --dry-run         # call counts and Claude $ estimate, no model
+python scripts/llm_study.py --smoke --model qwen2.5:7b-instruct
+python scripts/llm_study.py --first-pass --live --model qwen2.5:7b-instruct --data yahoo --out results/p2/first_pass.jsonl
+python scripts/llm_study.py --report --out results/p2/first_pass.jsonl
+```
+
+`--first-pass` is 15 names x 20 design dates x 1 seed on `rules`, `local_analysts` and
+`local_all`; `--cells local_analysts` runs one cell. `--live` refuses if Ollama does not answer
+or a model cell is not in `evaluation.TRIALS`. `--report` prints Sharpe minus the vol-target
+control with a block-bootstrap interval and p, the fallback share against the 10% cap, and the
+fallback-by-regime and by-date independence tests. Result: pending: filled when the run finishes.
+
+### 115. Anonymisation recall audit (2.4)
+
+```bash
+python scripts/v16_local_study.py recall --out results/v16_local/recall.json --smoke
+python scripts/v16_local_study.py recall --out results/v16_local/recall.json
+```
+
+200 anonymised prompts, each asking the model for the ticker (chance 1/15) and the month
+(chance 1/72). `--no-ablation` skips the drop-one-key pass; `--data synthetic` needs no network.
+Result: pending: filled when the run finishes.
+
+### 116. Calibration and drift (2.6)
+
+```bash
+python scripts/v16_local_study.py calibration --out results/v16_local/calibration_a.json --smoke
+python scripts/v16_local_study.py calibration --out results/v16_local/calibration_a.json --repeats 5 --temperature 0.7 --anchor-key rsi14 --anchor-values 20,40,60,80
+python scripts/v16_local_study.py drift --a results/v16_local/calibration_a.json --b results/v16_local/calibration_b.json --out results/v16_local/drift.json
+```
+
+`drift` compares two calibration outputs on the same 20 states (for example two builds of the
+model) and refuses if the states differ; it calls no model. Result: pending: filled when the run finishes.
+
+### 117. Analyst eval set (2.7)
+
+```bash
+python scripts/v16_eval.py run --model qwen2.5:7b-instruct --out results/v16_eval/run.jsonl --smoke
+python scripts/v16_eval.py run --model qwen2.5:7b-instruct --out results/v16_eval/run.jsonl
+python scripts/v16_eval.py check --replies results/v16_eval/run.jsonl --out results/v16_eval/check.json
+python scripts/v16_eval.py judge --replies results/v16_eval/run.jsonl --out results/v16_eval/judge.jsonl
+python scripts/v16_eval.py judge --calibration --out results/v16_eval/judge_calibration.jsonl
+python scripts/v16_eval.py agreement --judged results/v16_eval/judge_calibration.jsonl --out results/v16_eval/agreement.json
+```
+
+`check` and `agreement` call no model. `freeze` regenerates the frozen items; use it only on
+purpose, never to make a test pass. Result: pending: filled when the run finishes.

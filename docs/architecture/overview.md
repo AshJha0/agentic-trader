@@ -267,7 +267,9 @@ See `config.py` for the full dictionary.
 | `validate.py` | Bar validator, session clocks, short cap, ledger round trip | always on |
 | `oms.py` | Paper OMS: states, pre-trade checks, kill switch, fills, reconciliation, settlement | shadow only (`paper_trade_v09.py --oms`) |
 | `local_llm.py` | Ollama backend behind the `LLM` protocol | off (`llm_provider = "offline"`) |
-| `scripts/llm_study.py` | Seven-cell LLM study driver | unrun |
+| `scripts/llm_study.py` | Eight-cell LLM study driver (v0.16: `local_analysts`, smoke, first pass, report) | first pass running, results pending |
+| `scripts/v16_local_study.py` | Anonymisation recall audit (2.4), calibration and drift (2.6) | results pending |
+| `scripts/v16_eval.py`, `agentic/eval_set.py` | 150-item analyst eval set, checks, local judge, agreement (2.7) | checks in CI on fixtures; model run pending |
 | `scripts/paper_ops.py` | Price-vintage hash, freshness check, publish commit | used by `paper.yml` |
 
 Workflows: `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy advisory);

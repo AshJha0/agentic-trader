@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased (0.16.0): the LLM study on a local model (PLAN P2 items 2.3 to 2.8)
+
+The tools for the P2 study, run at $0 on a local open-weight model (qwen2.5:7b-instruct, 4-bit,
+CPU, served by Ollama on 127.0.0.1). Results describe that 7B model class, not Claude; the
+Claude cells exist only as dry-run cost estimates. Offline, fixture and fake-backend tests only
+(`tests/test_v16_p2_a.py`, `tests/test_v16_eval.py`, `tests/test_v16_study.py`). The owner asked
+for a model at every stage, so the first pass runs `local_analysts` (model at the analysts,
+rules downstream) and then `local_all` (model in every role) against the rules desk.
+
+- **Study driver (2.3, 2.5).** `scripts/llm_study.py` gains the `local_analysts` cell (eight
+  cells now), `--smoke` (two decisions on `local_all`, exit 1 on any fallback or contract
+  failure), `--first-pass` (15 names x 20 design dates x 1 seed on rules, local_analysts,
+  local_all), checkpointed `--live` runs that resume after a kill, and `--report`: portfolio
+  Sharpe minus the vol-target control with a circular block-bootstrap interval and p, agent
+  sources, contract rejection and fallback rates against `MAX_FALLBACK_SHARE` (10%),
+  dispersion, Claude cost equivalent per decision, and fallback rate by regime and by date with
+  chi-square independence tests. The `local_analysts` trial is registered in
+  `evaluation.TRIALS` before any run. Results: **PENDING: filled when the run finishes.**
+- **Anonymisation recall audit (2.4).** `scripts/v16_local_study.py recall`: 200 anonymised
+  technical-analyst prompts on real point-in-time states, each followed by "name the ticker and
+  month"; hit rates against chance (1/15 ticker, 1/72 month), Wilson intervals, exact binomial
+  p, and a drop-one-key ablation listing leaking fact keys. Results: **PENDING: filled when the run finishes.**
+- **Calibration (2.6).** `scripts/v16_local_study.py calibration` and `drift`: 20 frozen states,
+  dispersion over 5 sampled replies, anchoring slope on `rsi14`, drift between two model builds.
+  Results: **PENDING: filled when the run finishes.**
+- **Eval set (2.7).** `agentic_trader/agentic/eval_set.py` and 150 frozen (state, rubric) items
+  with a human-labelled calibration subset under `agentic/knowledge/eval_set/`;
+  `scripts/v16_eval.py run | check | judge | agreement | freeze`. Deterministic checks run in
+  CI on fixtures; judge agreement (Cohen's kappa) is reported per criterion. Local-model
+  results: **PENDING: filled when the run finishes.**
+- **Pre-registration (2.8).** `docs/evaluation/v16_preregistration_DRAFT.md`: design bar, the
+  single holdout look and its minimum detectable effect (0.59 to 1.32 annual Sharpe). Draft,
+  unsigned; the holdout is not run unless a cell clears the bar.
+- **Still to fold in.** 4.2 real planner plans survival on qwen2.5 (v0.15 follow-up, run
+  detached): **PENDING: filled when the run finishes.**
+- **Known gap.** The usage examples in the `scripts/llm_study.py` docstring still name
+  `llama3.1:8b-instruct-q4_K_M`; the model used is `qwen2.5:7b-instruct`. To fix in code, not
+  touched in this docs pass because a run was using the script.
+
 ## v0.15.1 — 2026-11-08 (v0.15 follow-up)
 
 Wiring for pieces v0.15 built but left out of the desk. Every new switch is off by default, so a

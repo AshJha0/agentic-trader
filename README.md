@@ -9,7 +9,7 @@
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
 | [LEARN.md](LEARN.md) | 55 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 113 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, and signed approvals from the configuration (v0.15.1); every offline one runs in CI |
+| [COOKBOOK.md](COOKBOOK.md) | 117 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117); every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 39 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
@@ -414,6 +414,24 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
+## v0.16 (unreleased): the LLM study on a local model
+
+**Plain idea.** Does a language model make the desk better, and in which roles? Asking that of
+Claude across a full design costs about $215 per cell (dry-run estimate at list prices), so the
+study runs at $0 on a local open-weight model, `qwen2.5:7b-instruct` (4-bit, CPU, Ollama on 127.0.0.1).
+The answer is about that 7B model class only.
+
+**What is built (tested offline).** A study driver with a model at the analysts only
+(`local_analysts`) and in every role (`local_all`), compared with the rules desk and a
+vol-target control; an anonymisation recall audit (can the model name the ticker and month from
+a scrubbed prompt?); calibration (dispersion, anchoring, drift between builds); a 150-item
+analyst eval set with deterministic checks and a local judge; and a draft pre-registration of the
+single holdout look. Recipes 114-117 in [COOKBOOK.md](COOKBOOK.md), lesson 56 in
+[LEARN.md](LEARN.md).
+
+**Results: pending: filled when the run finishes.** The runs take days on CPU; no number is reported until they end
+(source of record: `docs/review/PLAN.md` section 9).
+
 ## v0.15 (v0.15.1, 2026-11-08): text, retrieval and an auditable agent
 
 Filing text from EDGAR and GDELT headlines are in, always fenced as untrusted text. The filing
@@ -421,7 +439,7 @@ tone-change and GDELT features are registered as trials and **not run**. Researc
 point in time and gated: on 100 questions over a 34-passage invented corpus, recall@5 is 0.990
 (TF-IDF and hybrid), which shows the mechanism and says nothing about real filings. The text
 analysts are in the desk behind `text_analysts` (off by default, v0.15.1). A 150-snippet injection corpus is
-150/150 fenced; model compliance is not run. Signed N-of-M approvals (opt-in), deferred tool
+150/150 fenced; on the local qwen2.5:7b-instruct model 21/150 attacks (14%) moved the News analyst's signal (measured, a 7B floor, not Claude). Signed N-of-M approvals (opt-in), deferred tool
 loading, `task --record` / `replay`, and stage SLOs are new. Recipes 106-112 in
 [COOKBOOK.md](COOKBOOK.md); details in [CHANGELOG.md](CHANGELOG.md). Paper trading is unchanged:
 `paper.yml` has no runs yet, and the laptop task still produces the forward record.
