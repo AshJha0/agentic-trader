@@ -668,7 +668,9 @@ def _assert_fenced_everywhere(prompts, expect_in):
 @pytest.mark.parametrize("quote_news", [True, False])
 def test_injected_headline_stays_fenced_in_every_downstream_prompt_and_in_memory(tmp_path, quote_news):
     path = tmp_path / "memory.jsonl"
-    cfg = make_config(memory_path=str(path))
+    # v0.17 L9a: the desk-memory output guard redacts the injected text by default (tested in
+    # test_v17_integration); off here so the fence on a stored payload is still exercised.
+    cfg = make_config(memory_path=str(path), agentic={"memory_output_guard": False})
     # every prompt that embeds reports_digest (the risk analysts see the proposal, not the digest)
     downstream = {"Bull Researcher", "Bear Researcher", "Debate Facilitator", "Trader", "Portfolio Manager"}
     day1 = Quoting(quote_news)
@@ -799,7 +801,7 @@ ROLES_DOWNSTREAM = {"Bull Researcher", "Bear Researcher", "Debate Facilitator", 
 
 def test_model_written_text_derived_from_fenced_input_stays_fenced_one_hop_later(tmp_path):
     path = tmp_path / "memory.jsonl"
-    cfg = make_config(memory_path=str(path))
+    cfg = make_config(memory_path=str(path), agentic={"memory_output_guard": False})  # guard redacts by default (L9a)
     day1 = QuotingEverywhere()
     g = TradingGraph(cfg, llm=day1, provider=EvilNews(cfg), memory=DecisionMemory(path), on_event=lambda *_: None)
     st, _ = g.propagate("AAPL", date(2024, 3, 1))

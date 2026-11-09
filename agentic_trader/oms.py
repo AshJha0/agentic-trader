@@ -767,12 +767,28 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
     or whole FX units, submitted one minute before that session's close and filled at its
     close with the backtester's costs. The OMS book is then reconciled against the target
     quantities. Results go to ``out`` (``orders.csv``, ``breaks.csv``, ``cash_projection.csv``,
-    ``runs.jsonl``), labelled ``SHADOW_LABEL``. This is a separate record: it never reads or
+    ``runs.jsonl``), labelled ``SHADOW_LABEL``.
+
+    v0.17 hooks (review C3/C5). Before the orders, corporate actions with ex-date in
+    ``(dates[-3], dates[-2]]`` (``provider.corporate_actions``, when the provider has it) are
+    applied to the held quantity with ``corporate_actions.apply_actions``; when one falls in
+    that window the held quantity is first re-measured at the as-traded close of ``dates[-3]``
+    (``provider.as_traded_close``) so a split is not counted twice through split-adjusted
+    prices. Dividend and cash-in-lieu cash goes to ``OMS.cash_flows`` via ``cash_flow_rows``
+    and the events to ``actions.csv``. After the fills, ``tca.tca_rows`` compares each fill
+    with its arrival price (the decision close) and the backtester's predicted cost; rows go to
+    ``tca.csv``. Providers without action tables (synthetic, CSV) give the pre-v0.17 orders. This is a separate record: it never reads or
     writes the frozen ledger, and capital is held at ``initial_capital`` (no compounding)."""
     from .backtest import run_portfolio_backtest
+    from .corporate_actions import apply_actions, cash_flow_rows
+    from .tca import predicted_cost, tca_rows
     out.mkdir(parents=True, exist_ok=True)
     capital = float(config["initial_capital"])
+    ccy = str(config.get("account_currency", "USD"))
     rows, breaks, projections, summary = [], [], [], {}
+    action_rows: list[dict[str, Any]] = []
+    tca_out: list[pd.DataFrame] = []
+    actions_fn = getattr(provider, "corporate_actions", None)
     for book, (syms, weighting, streams, _) in books.items():
         rep = run_portfolio_backtest(syms, freeze, as_of, config, rebalance_every=5, provider=provider,
                                      weighting=weighting, cov_window=120)
@@ -782,6 +798,8 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
         alloc = rep.allocations.reindex(rep.dates) if rep.allocations is not None else None
         oms = OMS(config, capital=capital)
         targets: dict[str, float] = {}
+        arrival: dict[str, float] = {}
+        predicted: dict[str, float] = {}
         for sym, sleeve in rep.sleeves.items():
             ins = sleeve.instrument
             pos = np.asarray(sleeve.results[stream].positions, float)
@@ -792,9 +810,15 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
                 continue
             held = float(np.trunc(pos[-3] * share[-3] * capital / px[-3]))
             target = float(np.trunc(pos[-2] * share[-2] * capital / px[-2]))
+            d = pd.Timestamp(sleeve.dates[-2]).date()
+            if callable(actions_fn) and not ins.is_fx and held != 0.0:
+                held, booked = _apply_session_actions(
+                    provider, actions_fn, ins, held, float(pos[-3] * share[-3] * capital),
+                    pd.Timestamp(sleeve.dates[-3]).date(), d, float(px[-2]), apply_actions)
+                oms.cash_flows.extend(cash_flow_rows(booked, ccy))
+                action_rows += [{"label": SHADOW_LABEL, "book": book, **asdict(e)} for e in booked]
             oms.positions[ins.symbol] = held
             targets[ins.symbol] = target
-            d = pd.Timestamp(sleeve.dates[-2]).date()
             hist = provider.history(ins, d - timedelta(days=60), d)
             hist = hist[hist.index <= pd.Timestamp(d)]
             if target == held or len(hist) < 2:
@@ -806,10 +830,18 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
             side = "buy" if target > held else "sell"
             order = oms.submit(cid, ins.symbol, side, abs(target - held), float(px[-2]),
                                float(hist["Close"].iloc[-2]), at)
+            arrival[cid] = float(px[-2])
+            predicted[cid] = predicted_cost(abs(target - held) * float(px[-2]), capital, _unit_cost(config, ins))
             if order.state is OrderState.ACKED:
                 oms.execute(cid, market_snapshot(hist, ins, config), at)
             rows.append({"label": SHADOW_LABEL, "book": book, "stream": stream, **order.snapshot(),
                          "trade_date": d.isoformat()})
+        traded = [o for o in oms.orders.values() if o.client_order_id in arrival]
+        if traded:
+            t = tca_rows(traded, arrival, predicted)
+            t.insert(0, "book", book)
+            t.insert(0, "label", SHADOW_LABEL)
+            tca_out.append(t)
         report = reconcile(oms, targets)
         breaks += [{"label": SHADOW_LABEL, "book": book, **asdict(b)} for b in report.breaks]
         proj = oms.cash_projection()
@@ -819,12 +851,47 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
                          "evidence": len(oms.evidence)}
     _append_csv(out / "orders.csv", rows)
     _append_csv(out / "breaks.csv", breaks)
+    _append_csv(out / "actions.csv", action_rows)
+    if tca_out:
+        _append_csv(out / "tca.csv", [{str(k): v for k, v in r.items()}
+                                      for r in pd.concat(tca_out).to_dict("records")])
     if projections:
         pd.concat(projections).to_csv(out / "cash_projection.csv", index=False)
     line = {"label": SHADOW_LABEL, "as_of": as_of.isoformat(), "books": summary}
     with open(out / "runs.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(line) + "\n")
     return line
+
+
+def _unit_cost(config: dict, ins: Instrument) -> float:
+    """The backtester's per-unit-turnover cost (fraction) for ``ins``: equity bps, or FX
+    slippage bps (the FX spread in pips is price-dependent and left out of this estimate)."""
+    c = config.get("costs", {})
+    if ins.is_fx:
+        return float(c.get("fx_slippage_bps", 0.0)) / 1e4
+    return (float(c.get("equity_cost_bps", 0.0)) + float(c.get("equity_slippage_bps", 0.0))) / 1e4
+
+
+def _apply_session_actions(provider: Any, actions_fn: Any, ins: Instrument, held: float, held_notional: float,
+                           d_prev: date, d: date, post_price: float, apply_actions: Any) -> tuple[float, list]:
+    """Held quantity after corporate actions with ex-date in ``(d_prev, d]``, and the events.
+
+    With no action in the window the held quantity is returned unchanged. Otherwise it is
+    re-measured in the shares that existed on ``d_prev`` (notional over the as-traded close,
+    when the provider has one) and the actions are applied to that."""
+    tbl = actions_fn(ins)
+    if tbl is None or len(tbl) == 0:
+        return held, []
+    idx = pd.to_datetime(tbl.index)
+    if not ((idx > pd.Timestamp(d_prev)) & (idx <= pd.Timestamp(d))).any():
+        return held, []
+    raw_fn = getattr(provider, "as_traded_close", None)
+    raw = raw_fn(ins, d_prev) if callable(raw_fn) else None
+    if raw is not None and math.isfinite(float(raw)) and float(raw) > 0:
+        held = float(np.trunc(held_notional / float(raw)))
+    new, _, events = apply_actions({ins.symbol: held}, {ins.symbol: tbl}, through=d, after=d_prev,
+                                   prices={ins.symbol: post_price})
+    return float(new[ins.symbol]), events
 
 
 def _append_csv(path: Path, rows: Iterable[dict[str, Any]]) -> None:

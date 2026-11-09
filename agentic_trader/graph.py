@@ -297,13 +297,37 @@ class TradingGraph:
         dec = state.decision
         if dec is None:
             raise ValueError("no decision to record")
+        summary = self._guarded_summary(state, dec.rationale)
         self.memory.record(state.instrument.symbol, state.as_of, dec.action.value, dec.target_weight,
-                           state.last_price, dec.rationale,
+                           state.last_price, summary,
                            horizon_days=state.proposal.horizon_days if state.proposal else 10,
                            provider=state.provider_name, price_basis=state.price_basis)
         if self.config.get("save_reports"):
             path = self.save_report(state)
             self.on_event("report", f"saved {path}")
+
+    def _guarded_summary(self, state: TradingState, text: str) -> str:
+        """The desk's own decision summary through the output guard (v0.17, review C3) before it
+        becomes a memory lesson. A refusal stores a redacted line naming the reasons instead of
+        the text, so the decision is still recorded but a planted URL, foreign ticker, canary or
+        instruction never reaches later prompts. ``config["agentic"]["memory_output_guard"]``
+        False switches it off; ``["agentic"]["canaries"]`` adds canary strings."""
+        ag = self.config.get("agentic", {}) or {}
+        if not ag.get("memory_output_guard", True):
+            return text
+        from .agentic.output_guard import check_output
+        ins = state.instrument
+        allowed = {ins.symbol, getattr(ins, "display", ins.symbol)}
+        allowed.update(str(s) for s in (ag.get("symbol_universe") or ()))
+        allowed.update(str(s) for s in (self.config.get("xalpha_universe") or ()))
+        g = check_output(str(text)[:400], allowed, ag.get("canaries") or ())
+        if g.ok:
+            return text
+        log.warning("output guard redacted the %s %s decision summary: %s", ins.symbol, state.as_of, g.reason)
+        self.on_event("guard", f"memory summary redacted: {g.reason}")
+        # Only the reason categories are stored: the reasons quote the offending text.
+        kinds = sorted({r.split(":", 1)[0].split()[0] for r in g.reasons})
+        return f"[summary withheld by output guard: {', '.join(kinds)}]"
 
     # ---------------------------------------------------------- pipeline
     def propagate(self, symbol: str | Instrument, as_of: date | str,

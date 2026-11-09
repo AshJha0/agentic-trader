@@ -234,14 +234,61 @@ def information_coefficient(signal, fwd, horizon: int = 1, method: str = "n_eff"
 class AlphaReport:
     instrument: Instrument
     horizon: int
-    table: pd.DataFrame            # one row per alpha, plus "combined" and "significance_gated"
+    table: pd.DataFrame            # one row per alpha, plus "combined", "significance_gated" and
+    #                                "significance_gated_wf" (walk-forward, v0.17 N6)
     decay: pd.DataFrame            # IC by horizon, one row per alpha
     correlations: pd.DataFrame     # alpha x alpha correlation of signals
     signals: pd.DataFrame = field(repr=False)
 
     def best(self, k: int = 3) -> list[str]:
-        t = self.table.drop(index=["combined", "significance_gated"], errors="ignore")
+        t = self.table.drop(index=list(COMBINATION_ROWS), errors="ignore")
         return list(t.sort_values("IC", ascending=False).index[:k])
+
+
+COMBINATION_ROWS = ("combined", "significance_gated", "significance_gated_wf")
+
+
+def walk_forward_gated_series(sig: pd.DataFrame, close, horizon: int, window: int = 504,
+                              step: int | None = None, min_bars: int = 126) -> pd.Series:
+    """The significance-gated combination with the gate re-decided from prior data only
+    (v0.17, review N6).
+
+    Plain idea. ``significance_gated_series`` picks the alphas on the whole sample's IC and is
+    then scored on that same sample, so it is an in-sample diagnostic. Here, every ``step``
+    bars (default ``horizon``) at position ``t``, ``combine.trailing_ics`` estimates each
+    alpha's IC on the ``window`` bars before ``t`` whose forward returns are known at ``t``
+    (``i + horizon <= t``); an alpha passes when its purged blocked-fold IC clears its own
+    Student-t bar (``PurgedIC.significant``, the one gate of N7), and passing alphas are
+    weighted by their James-Stein-shrunk IC. Those weights combine the signals on bars
+    ``t .. t + step - 1``, with the same "skip a missing value on both sides" rule as
+    ``significance_gated_series``. Before ``min_bars`` labelled bars exist the series is NaN.
+
+    Formal statement. ``g_t = clip(sum_a w_a(tau) s_a,t / sum_a |w_a(tau)| 1[s_a,t finite], -1, 1)``
+    with ``tau`` the last refit at or before ``t`` and ``w_a(tau)`` a function of
+    ``{s_a,i, r_(i, i+h]} for i + h <= tau`` only.
+
+    Worked example. ``horizon = 10``, ``window = 504``: on bar 600 the gate uses bars 86..590
+    and the weights hold for bars 600..609."""
+    from .combine import trailing_ics
+    close = np.asarray(close, float)
+    n = len(close)
+    step = max(1, int(step or horizon))
+    cols = [c for c in sig.columns if c not in COMBINATION_ROWS]
+    vals = sig[cols].to_numpy(float)
+    out = np.full(n, np.nan)
+    first = min_bars + horizon
+    for t in range(first, n, step):
+        est = trailing_ics(sig[cols], close, horizon, window, end=t)
+        w = np.array([est[c][0] if (c in est and est[c][1].significant) else 0.0 for c in cols])
+        if not np.any(w != 0.0):
+            continue
+        blk = vals[t:t + step]
+        valid = np.isfinite(blk)
+        num = (np.where(valid, blk, 0.0) * w).sum(axis=1)
+        den = (valid * np.abs(w)).sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out[t:t + step] = np.clip(np.where(den > 0, num / np.where(den > 0, den, 1.0), np.nan), -1.0, 1.0)
+    return pd.Series(out, index=sig.index)
 
 
 def significance_gated_series(sig: pd.DataFrame, ic: dict[str, dict], min_tstat: float = 2.0,
@@ -262,7 +309,7 @@ def significance_gated_series(sig: pd.DataFrame, ic: dict[str, dict], min_tstat:
     the point-in-time procedure, would have behaved.
     """
     weights = {name: v["IC"] for name, v in (ic or {}).items()
-              if name not in ("combined", "significance_gated") and passes_gate(v, min_n, min_tstat)}
+              if name not in COMBINATION_ROWS and passes_gate(v, min_n, min_tstat)}
     if not weights:
         return pd.Series(np.nan, index=sig.index)
     cols = [c for c in weights if c in sig.columns]
@@ -329,7 +376,11 @@ def _alpha_diagnostics(s: np.ndarray, fwd: np.ndarray, horizon: int = 1) -> dict
 def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
                  names: list[str] | None = None, carry_series: np.ndarray | None = None,
                  decay_horizons: tuple[int, ...] = (1, 5, 10, 21, 42),
-                 weights: dict[str, float] | None = None) -> AlphaReport:
+                 weights: dict[str, float] | None = None, walk_forward: bool = False) -> AlphaReport:
+    """Measure every alpha on ``df``. ``walk_forward=True`` (v0.17 N6) adds the
+    ``significance_gated_wf`` row (``walk_forward_gated_series``); it is off by default so the
+    desk's ``quant.alpha`` tool keeps its cost and payload. With it on, every row also
+    carries ``in-sample selection`` (1 only for ``significance_gated``)."""
     if horizon <= 0:
         raise ValueError("horizon must be positive")
     sig = compute_alphas(df, instrument, names, carry_series)
@@ -348,9 +399,19 @@ def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
     s = sig["significance_gated"].to_numpy()
     rows["significance_gated"] = _alpha_diagnostics(s, fwd, horizon)
     decay["significance_gated"] = {h: ic_purged(s, forward_returns(close, h), h).ic for h in decay_horizons}
+    # v0.17 N6: the same rule with the gate re-decided from trailing ICs at each refit (no
+    # look-ahead), so its row is an out-of-sample measurement rather than a flagged diagnostic.
+    if walk_forward:
+        sig["significance_gated_wf"] = walk_forward_gated_series(
+            sig.drop(columns=["combined", "significance_gated"]), close, horizon)
+        s = sig["significance_gated_wf"].to_numpy()
+        rows["significance_gated_wf"] = _alpha_diagnostics(s, fwd, horizon)
+        decay["significance_gated_wf"] = {h: ic_purged(s, forward_returns(close, h), h).ic for h in decay_horizons}
+        for name in rows:
+            rows[name]["in-sample selection"] = 1.0 if name == "significance_gated" else 0.0
     table = pd.DataFrame(rows).T.round(4)
     with np.errstate(invalid="ignore", divide="ignore"):  # a constant or empty column has no correlation
-        corr = sig.drop(columns=["combined", "significance_gated"]).corr().round(3)
+        corr = sig.drop(columns=list(COMBINATION_ROWS), errors="ignore").corr().round(3)
     return AlphaReport(instrument, horizon, table, pd.DataFrame(decay).T.round(4), corr, sig)
 
 

@@ -133,7 +133,7 @@ def cmd_alpha(args) -> int:
         raise ValueError(f"alpha evaluation needs at least 300 bars; got {len(df)}")
     carry = provider.carry_series(ins, df.index) if ins.is_fx else None
     _header(f"alpha report {ins.display} {start} -> {end} horizon={args.horizon}", cfg)
-    rep = alpha_report(df, ins, args.horizon, carry_series=carry)
+    rep = alpha_report(df, ins, args.horizon, carry_series=carry, walk_forward=True)
     print(rep.table.to_string())
     print("\nIC by horizon:")
     print(rep.decay.to_string())

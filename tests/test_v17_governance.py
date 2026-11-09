@@ -198,7 +198,7 @@ def test_format_1_recordings_are_refused_with_a_rerecord_message(tmp_path):
     p = tmp_path / "old.replay.pkl"
     p.write_bytes(pickle.dumps({"version": 1}))
     with pytest.raises(ValueError, match="record the run again"):
-        load_recording(p)
+        load_recording(p, trust=True)
 
 
 # ------------------------------------------------------------------ R2.2 red team v2 (B3, A4)
