@@ -67,6 +67,13 @@ struct BacktestConfig {
     double risk_free_annual = 0.0;  // constant rf for the metrics when no cash_rate series is given
     bool funded = true;           // positions are funded from the account (cash fraction 1 - |w|);
                                   // false for FX forwards (the whole account earns cash_rate)
+    // Execution timing (v0.17, review Q1). exec_lag k: the target (and its rebalance flag and
+    // stop/take levels) decided at bar t is executed at bar t+k; 0 = same-close fill, the
+    // historical behaviour. fill_next_open: the executed target fills at open[t+1] instead of
+    // close[t] and the held position carries the overnight move close[t] -> open[t+1]
+    // (needs open; not combinable with stop/take levels). Mirrors pycore.run_backtest_ex.
+    int exec_lag = 0;
+    bool fill_next_open = false;
 };
 
 struct Trade {
