@@ -131,7 +131,7 @@ write paraphrased EDGAR questions with `question_overlap.lexical_overlap` agains
 - `tests/test_v17_eval_credibility.py` (new, 17 test cases) together with `tests/test_v16_eval.py`
   and `tests/test_v15_rag.py`: 49 passed, 1 skipped (the skip is pre-existing).
 - `ruff check agentic_trader scripts/paper_ops.py tests` and the new scripts: clean.
-- mypy (global C:\Python312) on the three new modules: see the lane report.
+- mypy (global C:\Python312) on the three new modules: no issues.
 - Regression for B2: `test_cli_judge_refuses_same_family_and_records_models` fails on the old
   code, which has no `--judge-model` flag and no family check.
 
