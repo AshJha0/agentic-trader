@@ -27,3 +27,5 @@ htmlcov/
 results/*
 !results/paper/
 results/paper/cron.log
+# raw Yahoo session bars: not redistributable, kept local / as an Actions artifact (DATA_LICENSING.md)
+results/paper/bars/

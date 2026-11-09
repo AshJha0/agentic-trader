@@ -259,7 +259,7 @@ def benjamini_hochberg(p_values, q: float = 0.05) -> np.ndarray:
     if not ok.any():
         return out
     # BH: reject every hypothesis up to the largest k whose own p clears its threshold.
-    largest = int(np.flatnonzero(ok).max())
+    largest = int(np.max(np.flatnonzero(ok)))
     out[order[:largest + 1]] = True
     return out
 
@@ -334,7 +334,7 @@ def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0
     codes = None
     if groups is not None:
         _, codes = np.unique(groups[ok], return_inverse=True)
-        n_groups = int(codes.max()) + 1 if codes.size else 0
+        n_groups = int(np.max(codes)) + 1 if codes.size else 0
     n = int(d.size)
     if n == 0:
         return PairedBootstrap(0, float("nan"), float("nan"), float("nan"), 1.0, 0, "instruments", n_groups)
@@ -361,7 +361,7 @@ def _two_stage_cluster_means(d: np.ndarray, codes: np.ndarray, n_groups: int, n_
     """Replicate pooled means: ``n_groups`` groups drawn with replacement, then each drawn
     group's own size of instruments drawn with replacement from inside it."""
     sizes = np.bincount(codes, minlength=n_groups)
-    widest = int(sizes.max())
+    widest = int(np.max(sizes))
     members = np.zeros((n_groups, widest), dtype=int)
     for g in range(n_groups):
         gi = np.flatnonzero(codes == g)

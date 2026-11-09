@@ -25,13 +25,20 @@ within ``duplicate_window_seconds`` of a live or filled order under another id),
 ``market_hours`` (per sleeve calendar, below), ``borrow`` (an equity sell that opens or
 increases a short needs the symbol on ``borrow_list``), ``short_notional`` (the short
 after the order may not exceed ``max_short_notional`` of capital, as
-``validate.cap_short_notional`` defines it), then ``approval`` (the approval gateway of the
+``validate.cap_short_notional`` defines it), the book limits on the book as it would stand
+after the order and every working order filled, at the latest mark per symbol
+(``concentration``: the ordered name above ``max_name_concentration`` of capital;
+``gross_exposure`` / ``net_exposure``: sum of |weight| / |sum of weights| above
+``max_gross_exposure`` / ``max_net_exposure``; ``var``: the book's 1-day VaR by
+``risk_model.var_next`` on ``OMS.returns`` above ``max_var_pct``, off by default; an order
+that reduces a breach is never refused by it), then ``approval`` (the approval gateway of the
 agentic layer; a pending answer is a rejection, not a parked order).
 
 Calendars and clocks (validate's conventions: New York wall time)
 -----------------------------------------------------------------
-Equities trade 09:30-16:00 New York on NYSE sessions (weekdays minus the NYSE holiday
-rules in ``nyse_holidays``) and settle T+1 on that calendar. FX trades from Sunday 17:00 to
+Equities trade 09:30-16:00 New York (13:00 on the early-close days in ``nyse_early_closes``)
+on NYSE sessions (weekdays minus the holiday rules and the one-off closures since 2000 in
+``nyse_holidays`` / ``NYSE_SPECIAL_CLOSURES``) and settle T+1 on that calendar. FX trades from Sunday 17:00 to
 Friday 17:00 New York; an FX trade at or after 17:00 belongs to the next trade date (the
 roll), and spot settles T+2 business days, skipping weekends, 1 January, 25 December and
 US Federal Reserve holidays. Open FX positions roll at 17:00 New York: their value date
@@ -39,8 +46,8 @@ moves to the spot date of the new trade date. Because both clocks are New York w
 DST changes move the UTC instants and nothing else.
 
 Documented limitations: the borrow list is a static allow-list (no locate, fee or recall);
-non-USD currency holidays and one-off exchange closures are not modelled unless listed
-in ``extra_equity_holidays`` / ``extra_fx_holidays``; fills are at the reference price
+non-USD currency holidays, NYSE closures before 2000 and future one-off closures are not
+modelled unless listed in ``extra_equity_holidays`` / ``extra_fx_holidays``; fills are at the reference price
 plus modelled cost (no queue, no intraday path); a partial fill's remainder stays working
 until a later ``execute`` or a cancel.
 
@@ -81,11 +88,10 @@ from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 import numpy as np
 import pandas as pd
-from dateutil.easter import easter
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
 from .agentic.domain import EvidenceType, ToolRequest
@@ -93,7 +99,7 @@ from .agentic.evidence import EvidenceStore
 from .agentic.policy import ApprovalGateway, AutoApprovalGateway
 from .backtest import backtest_config_for, impact_coefficients
 from .instruments import Instrument
-from .validate import EQUITY_CLOSE_NY, FX_ROLL_NY, NEW_YORK, cap_short_notional, session_close_utc
+from .validate import FX_ROLL_NY, NEW_YORK, cap_short_notional
 
 EQUITY_OPEN_NY = time(9, 30)
 
@@ -105,6 +111,16 @@ OMS_DEFAULTS: dict[str, Any] = {
     "participation_cap": 0.10,       # largest fill as a fraction of modelled daily volume
     "borrow_list": [],               # equities that may be sold short
     "max_short_notional": 0.5,       # fraction of capital; None = no cap
+    # Book limits re-checked at order time, on the book as it would stand if the order and every
+    # working order filled, valued at the latest mark per symbol (OMS.marks: last close given to
+    # submit, else the fill price; an unmarked position is not counted). Fractions of capital;
+    # None turns a check off.
+    "max_gross_exposure": 3.0,       # sum |quantity x mark| / capital
+    "max_net_exposure": 2.0,         # |sum quantity x mark| / capital
+    "max_name_concentration": 1.0,   # |quantity x mark| / capital for the ordered name (= risk.max_position default)
+    "max_var_pct": None,             # 1-day VaR of the book (risk_model.var_next) / capital; needs OMS.returns
+    "var_method": "fhs",             # risk_model VaR method for max_var_pct
+    "var_alpha": 0.95,
     "kill_switch_path": None,        # JSON file; None keeps the switch in memory
     "extra_equity_holidays": [],     # ISO dates (one-off closures)
     "extra_fx_holidays": [],
@@ -121,49 +137,9 @@ def oms_config(config: dict) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ calendars
-def _observed(d: date) -> date:
-    """NYSE observance: Saturday -> Friday, Sunday -> Monday."""
-    if d.weekday() == 5:
-        return d - timedelta(days=1)
-    if d.weekday() == 6:
-        return d + timedelta(days=1)
-    return d
-
-
-def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
-    d = date(year, month, 1)
-    d += timedelta(days=(weekday - d.weekday()) % 7)
-    return d + timedelta(weeks=n - 1)
-
-
-def _last_weekday(year: int, month: int, weekday: int) -> date:
-    d = date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
-    return d - timedelta(days=(d.weekday() - weekday) % 7)
-
-
-@lru_cache(maxsize=None)
-def nyse_holidays(year: int) -> frozenset[date]:
-    """Full-day NYSE closures from the standing rules (no one-off closures).
-
-    New Year (a Saturday 1 January is not observed on the Friday before), Martin Luther King
-    Jr. Day (from 1998), Washington's Birthday, Good Friday, Memorial Day, Juneteenth (from
-    2022), Independence Day, Labor Day, Thanksgiving, Christmas."""
-    days: set[date] = set()
-    ny = date(year, 1, 1)
-    if ny.weekday() != 5:
-        days.add(_observed(ny))
-    if year >= 1998:
-        days.add(_nth_weekday(year, 1, 0, 3))
-    days.add(_nth_weekday(year, 2, 0, 3))
-    days.add(easter(year) - timedelta(days=2))
-    days.add(_last_weekday(year, 5, 0))
-    if year >= 2022:
-        days.add(_observed(date(year, 6, 19)))
-    days.add(_observed(date(year, 7, 4)))
-    days.add(_nth_weekday(year, 9, 0, 1))
-    days.add(_nth_weekday(year, 11, 3, 4))
-    days.add(_observed(date(year, 12, 25)))
-    return frozenset(days)
+# Shared stdlib calendar (also loaded by the paper freshness job); re-exported here.
+from .nyse_calendar import (EQUITY_EARLY_CLOSE_NY, NYSE_SPECIAL_CLOSURES, nyse_close_time,  # noqa: E402,F401
+                            nyse_early_closes, nyse_holidays)
 
 
 @lru_cache(maxsize=None)
@@ -213,16 +189,22 @@ class SleeveCalendar:
             d += timedelta(days=1)
         return d
 
+    def close_time(self, d: date) -> time:
+        """Equity: the NYSE close on ``d`` (13:00 on early-close days, else 16:00 New York).
+        FX: the 17:00 New York roll."""
+        return FX_ROLL_NY if self.asset_class == "fx" else nyse_close_time(d)
+
     def is_open(self, at: datetime) -> bool:
-        """Equity: 09:30-16:00 New York on a session. FX: the trade date is a trading day
-        (Sunday 17:00 to Friday 17:00 New York, minus 1 January and 25 December)."""
+        """Equity: 09:30 to the close (16:00, or 13:00 on an early-close day) New York on a
+        session. FX: the trade date is a trading day (Sunday 17:00 to Friday 17:00 New York,
+        minus 1 January and 25 December)."""
         d = self.trade_date(at)
         if not self.is_trading_day(d):
             return False
         if self.asset_class == "fx":
             return True
         t = _aware(at).astimezone(NEW_YORK).time()
-        return EQUITY_OPEN_NY <= t <= EQUITY_CLOSE_NY
+        return EQUITY_OPEN_NY <= t <= self.close_time(d)
 
 
 def calendar_for(ins: Instrument, cfg: dict[str, Any]) -> SleeveCalendar:
@@ -425,7 +407,7 @@ def fill_cost(ins: Instrument, config: dict, notional: float, price: float, impa
               capital: float) -> float:
     """Cost in account currency of filling ``notional`` at ``price``: the backtester's entry cost
     ``|dw| * unit_cost + K_t * |dw| ** 1.5`` for ``dw = notional / capital``, times capital."""
-    bc = backtest_config_for(ins, config, np.array([price]), _NoMacro(), date.min)
+    bc = backtest_config_for(ins, config, np.array([price]), cast(Any, _NoMacro()), date.min)
     dw = abs(notional) / capital
     return capital * (dw * (bc.cost_bps + bc.slippage_bps) / 1e4 + (impact_k or 0.0) * dw ** 1.5)
 
@@ -446,6 +428,10 @@ class OMS:
         self.kill_switch = kill_switch or KillSwitch(self.cfg["kill_switch_path"])
         self.positions: dict[str, float] = {k.upper(): float(v) for k, v in (positions or {}).items()}
         self.orders: dict[str, Order] = {}
+        # latest price per symbol for the book limits, and daily simple returns per symbol for
+        # the order-time VaR check (max_var_pct); callers may fill both before submitting
+        self.marks: dict[str, float] = {}
+        self.returns: dict[str, pd.Series] = {}
         self.cash_flows: list[dict[str, Any]] = []      # currency, amount, settle_date, client_order_id
         self.fx_value_dates: dict[str, date] = {}       # open FX position -> value date
         self.fx_rolls: list[dict[str, Any]] = []
@@ -536,7 +522,62 @@ class OMS:
             weight = after * order.price / self.capital
             if cap_short_notional(weight, float(cap)) != weight:
                 return f"short_notional: short of {weight:.2%} of capital exceeds the cap {float(cap):.0%}"
+        return self._book_limits(ins.symbol, after, last_close)
+
+    def _book_limits(self, symbol: str, after: float, last_close: float) -> str | None:
+        """Gross, net, per-name and VaR limits on the book as it would stand after the order."""
+        cfg = self.cfg
+        self.marks[symbol] = last_close
+        fills = self.last_fill_prices()
+        names = set(self.positions) | {o.symbol for o in self.orders.values()} | {symbol}
+        book: dict[str, float] = {}
+        for s in names:
+            qty = after if s == symbol else self.positions.get(s, 0.0) + self._working(s)
+            mark = self.marks.get(s, fills.get(s))
+            if qty and mark is not None:
+                book[s] = qty * mark / self.capital
+        # only the order's own side of a limit refuses it: an order that reduces a breach passes
+        before = dict(book)
+        before[symbol] = (self.positions.get(symbol, 0.0) + self._working(symbol)) * last_close / self.capital
+        gross, net = sum(abs(w) for w in book.values()), sum(book.values())
+        g0, n0 = sum(abs(w) for w in before.values()), sum(before.values())
+        lim = cfg["max_name_concentration"]
+        w = book.get(symbol, 0.0)
+        if lim is not None and abs(w) > float(lim) and abs(w) > abs(before[symbol]):
+            return f"concentration: {symbol} at {w:+.2%} of capital exceeds {float(lim):.0%}"
+        lim = cfg["max_gross_exposure"]
+        if lim is not None and gross > float(lim) and gross > g0:
+            return f"gross_exposure: {gross:.2%} of capital exceeds {float(lim):.0%}"
+        lim = cfg["max_net_exposure"]
+        if lim is not None and abs(net) > float(lim) and abs(net) > abs(n0):
+            return f"net_exposure: {net:+.2%} of capital exceeds {float(lim):.0%}"
+        lim = cfg["max_var_pct"]
+        if lim is not None:
+            var = self._book_var(book)
+            if isinstance(var, str):
+                return var
+            prior = self._book_var(before)
+            if var > float(lim) and var > (prior if isinstance(prior, float) else 0.0):
+                return (f"var: 1-day {float(cfg['var_alpha']):.0%} VaR {var:.2%} of capital exceeds "
+                        f"{float(lim):.2%} ({cfg['var_method']})")
         return None
+
+    def _book_var(self, book: dict[str, float]) -> float | str:
+        """1-day VaR (fraction of capital) of the weights ``book`` on the stored return
+        histories, by ``risk_model.var_next``; a refusal reason when it cannot be formed."""
+        from .risk_model import var_next
+        live = {s: w for s, w in book.items() if w}
+        if not live:
+            return 0.0
+        missing = sorted(s for s in live if s not in self.returns)
+        if missing:
+            return f"var: no return history for {', '.join(missing)}"
+        frame = pd.concat({s: pd.Series(self.returns[s], dtype=float) for s in live}, axis=1).dropna()
+        port = frame.to_numpy(float) @ np.array([live[s] for s in frame.columns])
+        v = var_next(port, method=self.cfg["var_method"], alpha=float(self.cfg["var_alpha"]))
+        if v is None:
+            return f"var: too short a common return history ({len(port)} days)"
+        return float(v)
 
     def _working(self, symbol: str) -> float:
         """Signed quantity still to fill on live orders in ``symbol``."""
@@ -758,7 +799,9 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
             hist = hist[hist.index <= pd.Timestamp(d)]
             if target == held or len(hist) < 2:
                 continue
-            at = session_close_utc(d, ins.asset_class) - timedelta(minutes=1)
+            # one minute before that session's actual close (13:00 on an NYSE early-close day)
+            close_ny = calendar_for(ins, oms.cfg).close_time(d)
+            at = datetime.combine(d, close_ny, NEW_YORK).astimezone(timezone.utc) - timedelta(minutes=1)
             cid = f"{book}-{ins.symbol}-{d.isoformat()}"
             side = "buy" if target > held else "sell"
             order = oms.submit(cid, ins.symbol, side, abs(target - held), float(px[-2]),

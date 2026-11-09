@@ -45,12 +45,19 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements-lock.txt
+      # Hashed lock when it exists (requirements/lock-py3.12.txt, made by scripts/gen_lockfiles.sh
+      # in the "Lockfiles" workflow), else the v0.8 pin list (no hashes).
       - name: Install from the lock
         run: |
-          python -m pip install -r requirements-lock.txt
+          if [ -f requirements/lock-py3.12.txt ]; then
+            python -m pip install --require-hashes -r requirements/lock-py3.12.txt
+          else
+            python -m pip install -r requirements-lock.txt
+          fi
           python -m pip install -e . --no-deps
-      # Records the last complete New York session (the script's default as-of is New York's
-      # yesterday), so a provisional close is never written into the append-only ledger.
+      # Records the last complete NYSE session on or before New York's yesterday (a Monday run
+      # records Friday), refuses a session that may not be final, and refuses to run when the
+      # engine differs from docs/evaluation/paper_freeze.json (N1).
       - name: Paper session
         run: python scripts/paper_trade_v09.py
       - name: Mask the runner path in runs.jsonl
@@ -58,8 +65,22 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: paper-record
-          path: results/paper/
+          path: |
+            results/paper/
+            !results/paper/bars/
           retention-days: 30
+      # The session's raw Yahoo bars and corporate actions, never committed, because Yahoo data
+      # may not be redistributed (DATA_LICENSING.md); their SHA-256 is in runs.jsonl. Uploaded
+      # as an artifact (90-day retention) only when the repository variable PAPER_BARS_ARTIFACT
+      # is "true": on a public repository artifacts are downloadable by others, so it is off by
+      # default and the laptop's git-ignored copy is the archive.
+      - if: vars.PAPER_BARS_ARTIFACT == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: paper-bars
+          path: results/paper/bars/
+          retention-days: 90
+          if-no-files-found: ignore
 
   publish:
     needs: session
@@ -74,20 +95,23 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
-      - name: Install
-        run: python -m pip install numpy pandas
+      # No pip install in the job that can write to main (N3): commit and push are stdlib only.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           name: paper-record
           path: results/paper/
       # Same files, message and branch as the laptop task; commits only when they changed,
-      # and a push that loses a race with another commit rebases once and retries.
+      # and a push that loses a race with another commit rebases and retries, up to 5 pushes
+      # with 5/10/20/40 s backoff. The raw bars are not in this artifact and not committed.
+      # Pushing to main: the GITHUB_TOKEN push must be allowed by the main ruleset (the bot in
+      # its bypass list); "[skip ci]" only skips workflow runs, it does not bypass required
+      # checks. If the bypass is removed this step fails and the report job opens an issue.
       - name: Commit and push the record
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           python scripts/paper_ops.py commit --message "paper: daily record [skip ci]"
-          git push -q origin HEAD:main || { git pull -q --rebase origin main && git push -q origin HEAD:main; }
+          python scripts/paper_ops.py push --attempts 5 --backoff 5
 
   freshness:
     needs: publish
@@ -103,9 +127,8 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
-      - name: Install
-        run: python -m pip install numpy pandas
-      - name: Last recorded session is at most 2 business days old
+      # stdlib only: freshness counts NYSE sessions with agentic_trader/nyse_calendar.py
+      - name: Last recorded session is at most 2 NYSE sessions old
         run: python scripts/paper_ops.py freshness
 
   report:

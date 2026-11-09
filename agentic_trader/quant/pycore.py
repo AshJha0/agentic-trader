@@ -148,7 +148,7 @@ def atr(high, low, close, n: int = 14) -> np.ndarray:
     tr = h - l
     if len(c) > 1:
         pc = c[:-1]
-        tr[1:] = np.maximum.reduce([h[1:] - l[1:], np.abs(h[1:] - pc), np.abs(l[1:] - pc)])
+        tr[1:] = np.maximum(np.maximum(h[1:] - l[1:], np.abs(h[1:] - pc)), np.abs(l[1:] - pc))
     return _wilder(tr, n, 0)
 
 
