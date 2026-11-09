@@ -1,0 +1,902 @@
+[
+ {
+  "id": "v2-001",
+  "question": "ACME exposure if its sole metal vendor goes offline",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#risk_factors#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-002",
+  "question": "What upstream sourcing dependency could stop ACME's factories for roughly three months?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#risk_factors#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-003",
+  "question": "Key input concentration risk at ACME",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#risk_factors#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-004",
+  "question": "ACME top-line growth and what drove it",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#mda#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-005",
+  "question": "Why did ACME profitability per unit sold get squeezed?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#mda#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-006",
+  "question": "Which ACME product line powered revenue expansion?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#mda#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-007",
+  "question": "ACME balance sheet: how much dry powder and bank backup lines?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#liquidity#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-008",
+  "question": "When does ACME's committed borrowing arrangement expire?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#liquidity#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-009",
+  "question": "Does ACME have unused lending capacity available?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#liquidity#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-010",
+  "question": "Is ACME facing a consumer injury lawsuit, and where?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#legal#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-011",
+  "question": "ACME open court case and management's view of it",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#legal#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-012",
+  "question": "Legal exposure for ACME's novelty item",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000001-24-000011#legal#0"
+  ],
+  "gold_accession": "0000000001-24-000011"
+ },
+ {
+  "id": "v2-013",
+  "question": "How exposed is BOLT profitability to raw material inflation in its energy storage packs?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#risk_factors#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-014",
+  "question": "BOLT input commodity sensitivity",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#risk_factors#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-015",
+  "question": "What happens to BOLT earnings if a key metal gets more expensive?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#risk_factors#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-016",
+  "question": "BOLT unit shipments last year",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#mda#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-017",
+  "question": "Did BOLT discount to protect its position on the continent?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#mda#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-018",
+  "question": "BOLT pricing trend per vehicle",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#mda#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-019",
+  "question": "How did BOLT finance its cash burn?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#liquidity#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-020",
+  "question": "BOLT equity-linked debt issuance terms",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#liquidity#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-021",
+  "question": "Is BOLT generating or consuming money after capex?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#liquidity#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-022",
+  "question": "Federal probe into stopping problems on a BOLT vehicle",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#legal#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-023",
+  "question": "How many customer grievances triggered scrutiny of BOLT's S3?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#legal#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-024",
+  "question": "BOLT recall risk from government investigation",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000002-24-000007#legal#0"
+  ],
+  "gold_accession": "0000000002-24-000007"
+ },
+ {
+  "id": "v2-025",
+  "question": "How reliant is CRUX on a handful of chipmaking clients?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#risk_factors#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-026",
+  "question": "CRUX exposure to trade restrictions on Beijing",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#risk_factors#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-027",
+  "question": "Customer dependency at CRUX",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#risk_factors#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-028",
+  "question": "CRUX unfilled order book size",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#mda#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-029",
+  "question": "Is CRUX booking more business than it ships?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#mda#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-030",
+  "question": "Which CRUX product is leading demand?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#mda#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-031",
+  "question": "Is CRUX returning capital to stockholders?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#liquidity#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-032",
+  "question": "CRUX payout to investors each quarter",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#liquidity#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-033",
+  "question": "CRUX stock buyback size",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#liquidity#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-034",
+  "question": "Intellectual property litigation against CRUX",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#legal#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-035",
+  "question": "Which rival accuses CRUX of copying, and in what court?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#legal#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-036",
+  "question": "CRUX IP dispute over heat management technology",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000003-24-000019#legal#0"
+  ],
+  "gold_accession": "0000000003-24-000019"
+ },
+ {
+  "id": "v2-037",
+  "question": "How much of DYNA's income comes from government health insurance for low-income people?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#risk_factors#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-038",
+  "question": "DYNA vulnerability to public funding pressure",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#risk_factors#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-039",
+  "question": "Payer mix risk at DYNA",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#risk_factors#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-040",
+  "question": "DYNA patient volume trend",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#mda#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-041",
+  "question": "Did temporary clinician costs ease at DYNA?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#mda#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-042",
+  "question": "DYNA workforce cost improvements",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#mda#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-043",
+  "question": "How indebted is DYNA relative to operating profit?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#liquidity#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-044",
+  "question": "DYNA asset sale plans to cut debt",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#liquidity#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-045",
+  "question": "Is DYNA divesting facilities?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#liquidity#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-046",
+  "question": "Federal inquiry into DYNA's claims for ER patients",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#legal#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-047",
+  "question": "DYNA government probe over invoicing practices",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#legal#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-048",
+  "question": "Is DYNA under DOJ scrutiny?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000004-25-000003#legal#0"
+  ],
+  "gold_accession": "0000000004-25-000003"
+ },
+ {
+  "id": "v2-049",
+  "question": "Why did ECHO ad pricing weaken?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#risk_factors#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-050",
+  "question": "ECHO sponsor demand risk",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#risk_factors#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-051",
+  "question": "ECHO audience size",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#mda#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-052",
+  "question": "How fast is ECHO's paid membership income growing?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#mda#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-053",
+  "question": "Effect of ECHO's commercial-free plan",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#mda#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-054",
+  "question": "ECHO user base",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#mda#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-055",
+  "question": "Did ECHO pay down debt ahead of schedule?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#liquidity#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-056",
+  "question": "What did ECHO do with cash from divesting a business?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#liquidity#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-057",
+  "question": "ECHO borrowing reduction",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#liquidity#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-058",
+  "question": "Is ECHO facing song rights litigation?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#legal#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-059",
+  "question": "ECHO IP claims from the recording industry",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000005-25-000021#legal#0"
+  ],
+  "gold_accession": "0000000005-25-000021"
+ },
+ {
+  "id": "v2-060",
+  "question": "What slows FLUX's at-sea energy project build-out?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#risk_factors#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-061",
+  "question": "FLUX ship shortage risk",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#risk_factors#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-062",
+  "question": "FLUX write-down size",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#mda#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-063",
+  "question": "Which FLUX development was abandoned and why?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#mda#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-064",
+  "question": "FLUX asset value hit from rising borrowing rates",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#mda#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-065",
+  "question": "FLUX power purchase pricing problem",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#mda#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-066",
+  "question": "Did FLUX stop paying shareholders?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#liquidity#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-067",
+  "question": "FLUX funding from selling green subsidies",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#liquidity#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-068",
+  "question": "Who is contesting FLUX's approval in court?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#legal#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-069",
+  "question": "FLUX opposition from seafood groups",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#legal#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-070",
+  "question": "Ecological lawsuit against a FLUX project",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "0000000006-25-000005#legal#0"
+  ],
+  "gold_accession": "0000000006-25-000005"
+ },
+ {
+  "id": "v2-071",
+  "question": "Size of the Fed's opening easing move in autumn 2024",
+  "as_of": "2024-10-01T00:00:00+00:00",
+  "gold": [
+   "FOMC-2024-09-18#statement#0"
+  ],
+  "gold_accession": "FOMC-2024-09-18"
+ },
+ {
+  "id": "v2-072",
+  "question": "Why did US monetary policymakers begin easing?",
+  "as_of": "2024-10-01T00:00:00+00:00",
+  "gold": [
+   "FOMC-2024-09-18#statement#0"
+  ],
+  "gold_accession": "FOMC-2024-09-18"
+ },
+ {
+  "id": "v2-073",
+  "question": "Fed jumbo 50bp move",
+  "as_of": "2024-10-01T00:00:00+00:00",
+  "gold": [
+   "FOMC-2024-09-18#statement#0"
+  ],
+  "gold_accession": "FOMC-2024-09-18"
+ },
+ {
+  "id": "v2-074",
+  "question": "US policy rate band after the year-end 2024 Fed meeting",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "FOMC-2024-12-18#statement#0"
+  ],
+  "gold_accession": "FOMC-2024-12-18"
+ },
+ {
+  "id": "v2-075",
+  "question": "Did the Fed signal a slower easing path in December 2024?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "FOMC-2024-12-18#statement#0"
+  ],
+  "gold_accession": "FOMC-2024-12-18"
+ },
+ {
+  "id": "v2-076",
+  "question": "Did the Fed taper balance sheet runoff in March 2025?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "FOMC-2025-03-19#statement#0"
+  ],
+  "gold_accession": "FOMC-2025-03-19"
+ },
+ {
+  "id": "v2-077",
+  "question": "US central bank QT change",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "FOMC-2025-03-19#statement#0"
+  ],
+  "gold_accession": "FOMC-2025-03-19"
+ },
+ {
+  "id": "v2-078",
+  "question": "Fed pause on borrowing costs spring 2025",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "FOMC-2025-03-19#statement#0"
+  ],
+  "gold_accession": "FOMC-2025-03-19"
+ },
+ {
+  "id": "v2-079",
+  "question": "Eurozone monetary authority first easing move",
+  "as_of": "2024-07-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2024-06-06#statement#0"
+  ],
+  "gold_accession": "ECB-2024-06-06"
+ },
+ {
+  "id": "v2-080",
+  "question": "How much did Frankfurt loosen policy in June 2024?",
+  "as_of": "2024-07-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2024-06-06#statement#0"
+  ],
+  "gold_accession": "ECB-2024-06-06"
+ },
+ {
+  "id": "v2-081",
+  "question": "End of the eurozone tightening plateau",
+  "as_of": "2024-07-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2024-06-06#statement#0"
+  ],
+  "gold_accession": "ECB-2024-06-06"
+ },
+ {
+  "id": "v2-082",
+  "question": "Frankfurt policy easing October 2024 rationale",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2024-10-17#statement#0"
+  ],
+  "gold_accession": "ECB-2024-10-17"
+ },
+ {
+  "id": "v2-083",
+  "question": "Eurozone weak economy prompts another cut",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2024-10-17#statement#0"
+  ],
+  "gold_accession": "ECB-2024-10-17"
+ },
+ {
+  "id": "v2-084",
+  "question": "European Central Bank autumn 2024 decision",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2024-10-17#statement#0"
+  ],
+  "gold_accession": "ECB-2024-10-17"
+ },
+ {
+  "id": "v2-085",
+  "question": "Has eurozone price growth reached the ECB's goal?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2025-06-05#statement#0"
+  ],
+  "gold_accession": "ECB-2025-06-05"
+ },
+ {
+  "id": "v2-086",
+  "question": "Frankfurt policy rate in mid-2025",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2025-06-05#statement#0"
+  ],
+  "gold_accession": "ECB-2025-06-05"
+ },
+ {
+  "id": "v2-087",
+  "question": "ECB June 2025 easing",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "ECB-2025-06-05#statement#0"
+  ],
+  "gold_accession": "ECB-2025-06-05"
+ },
+ {
+  "id": "v2-088",
+  "question": "How split were UK rate setters on the August 2024 easing?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoE-2024-08-01#statement#0"
+  ],
+  "gold_accession": "BoE-2024-08-01"
+ },
+ {
+  "id": "v2-089",
+  "question": "Britain's initial loosening since the pandemic",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoE-2024-08-01#statement#0"
+  ],
+  "gold_accession": "BoE-2024-08-01"
+ },
+ {
+  "id": "v2-090",
+  "question": "Bank of England narrow decision",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoE-2024-08-01#statement#0"
+  ],
+  "gold_accession": "BoE-2024-08-01"
+ },
+ {
+  "id": "v2-091",
+  "question": "Why did British policymakers ease in February 2025?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoE-2025-02-06#statement#0"
+  ],
+  "gold_accession": "BoE-2025-02-06"
+ },
+ {
+  "id": "v2-092",
+  "question": "Persistent service-sector inflation in Britain",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoE-2025-02-06#statement#0"
+  ],
+  "gold_accession": "BoE-2025-02-06"
+ },
+ {
+  "id": "v2-093",
+  "question": "Bank of England early 2025 decision",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoE-2025-02-06#statement#0"
+  ],
+  "gold_accession": "BoE-2025-02-06"
+ },
+ {
+  "id": "v2-094",
+  "question": "When did Tokyo exit sub-zero policy?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoJ-2024-03-19#statement#0"
+  ],
+  "gold_accession": "BoJ-2024-03-19"
+ },
+ {
+  "id": "v2-095",
+  "question": "Did the BoJ scrap JGB targeting?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoJ-2024-03-19#statement#0"
+  ],
+  "gold_accession": "BoJ-2024-03-19"
+ },
+ {
+  "id": "v2-096",
+  "question": "Japan monetary normalisation spring 2024",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoJ-2024-03-19#statement#0"
+  ],
+  "gold_accession": "BoJ-2024-03-19"
+ },
+ {
+  "id": "v2-097",
+  "question": "Why did the BoJ hike in January 2025?",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoJ-2025-01-24#statement#0"
+  ],
+  "gold_accession": "BoJ-2025-01-24"
+ },
+ {
+  "id": "v2-098",
+  "question": "Japanese pay talks and currency driving tightening",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoJ-2025-01-24#statement#0"
+  ],
+  "gold_accession": "BoJ-2025-01-24"
+ },
+ {
+  "id": "v2-099",
+  "question": "BoJ benchmark level early 2025",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoJ-2025-01-24#statement#0"
+  ],
+  "gold_accession": "BoJ-2025-01-24"
+ },
+ {
+  "id": "v2-100",
+  "question": "Tokyo rate increase reasons",
+  "as_of": "2026-01-01T00:00:00+00:00",
+  "gold": [
+   "BoJ-2025-01-24#statement#0"
+  ],
+  "gold_accession": "BoJ-2025-01-24"
+ }
+]
