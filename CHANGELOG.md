@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 ## Unreleased (0.17.0): the second review's fixes (review 2026-11-09, R0-R4 and N1-N11)
 
@@ -9,6 +9,31 @@ offline tests** unless a line says otherwise; **simulation** and **synthetic fix
 nothing about markets; **arithmetic** numbers follow from registered inputs. The model and
 network re-runs are queued, not run, and are listed in `docs/review/PLAN.md` section 4 (v0.17).
 Tag plan: v0.16.0 is tagged first on its own section below, then v0.17.0.
+### Follow-up round (v0.18 notes, 2026-11-09): leftovers closed
+
+Lane notes in `docs/review/v018_notes/`. Evidence class: code + offline tests; no model run.
+
+- **Next-open fills with stops** (L2): `fill_next_open` together with stop or take levels used to
+  raise in both backends; it now runs. A level already through the next open exits at that open,
+  otherwise the bar's range decides. Four hand-worked tests and a C++ parity case.
+- **Honest trial count in rendered DSR** (N6): `scripts/render_v08_tables.py` passes the registered
+  count and the pre-registry estimate (64). `agentic-trader stats` gains `--pre-registry-trials N`
+  and `--trial-returns CSV` (effective-trials DSR); `--trials` now reaches `n_trials`.
+- **Paraphrased memory poison** (C6): `output_guard.poison_match` (word-pair overlap against known
+  steering phrases, threshold 0.75). Existing corpus 19/20 -> 20/20 refused; in-sample, one phrase
+  was written after seeing the miss, so no out-of-sample rate is claimed.
+- **Behaviour change, paper OMS:** corporate actions are applied only with
+  `--oms-corporate-actions` (default off). Paper engine freeze hash unchanged.
+- **Model-swap guard in `llm_study`**: the served model digest is checked before the first new row
+  and every 25 rows; a change raises `ModelSwapped` and keeps rows already written.
+- **Red-team v2 scope** (owner-authorised, 2026-11-09): the 1,500-unit end-to-end run (~19 CPU-days)
+  is replaced by two passes: analyst-only on all 1,500 units, then end-to-end on
+  `--per-category 2` (10 snippets, 100 units). Interleaved unit order keeps any prefix balanced;
+  reports give Wilson 95% intervals and the governance catch rate given analyst compliance
+  (intervals understate uncertainty because snippets repeat across cells).
+- Checked and already done in v0.17, no change: financing spread, stop slippage, participation cap,
+  signed-gateway public keys, guarded memory writes, replay digest allowlist, flaky-test clocks.
+
 
 ### R0: study integrity before any P2 result is published
 
@@ -410,7 +435,7 @@ calls, no network.
 - **3.3 GDELT dropped** (owner, 2026-11-09): low expected value and the source throttles this connection; the script and registered trial stay in the repo, not run.
 - **Second in-depth review** with a $0 v0.17 plan: `docs/review/2026-11-09_review_and_plan.md`. Its R0 items (seed replication at temperature 0, eval set anonymisation, per-horizon scoring, schema ranges, one VaR default) must land before any P2 result is published.
 
-## v0.15.1 — 2026-11-08 (v0.15 follow-up)
+## v0.15.1 â€” 2026-11-08 (v0.15 follow-up)
 
 Wiring for pieces v0.15 built but left out of the desk. Every new switch is off by default, so a
 desk run with the default configuration makes the same decisions as v0.15.0. Offline tests only
@@ -449,7 +474,7 @@ desk run with the default configuration makes the same decisions as v0.15.0. Off
 - **Not run here.** GDELT (3.3) stays deferred: the service throttles this machine; the script
   is on main.
 
-## v0.15.0 — 2026-11-08 (P3 and P4)
+## v0.15.0 â€” 2026-11-08 (P3 and P4)
 
 Plan items 3.1-3.9 and 4.1-4.6, 4.8, 4.9 in [docs/review/PLAN.md](docs/review/PLAN.md). Offline,
 fixture and synthetic tests only; no live model call and no spend. Tests:
@@ -517,7 +542,7 @@ remains the producer of the forward record.
   lock regeneration is needed); golden transcripts of the canonical plan on three frozen states
   in `tests/golden/`, generated on the numpy backend.
 
-## v0.14.0 — unreleased (P5)
+## v0.14.0 â€” unreleased (P5)
 
 Plan items of phase P5 in [docs/review/PLAN.md](docs/review/PLAN.md), plus 4.7, 4.10 and 4.11
 pulled forward from P4 and 2.1-2.2 from P2. Offline and synthetic tests only; no live model
@@ -631,7 +656,7 @@ stated at release.
   deep call, ceiling assumes every reply runs to `max_tokens`). The study itself would cost $0
   on a local model.
 
-## v0.13.0 — unreleased (P1 foundation)
+## v0.13.0 â€” unreleased (P1 foundation)
 
 Plan items 1.1 to 1.8 of [docs/review/PLAN.md](docs/review/PLAN.md). **No live Claude run was
 made**: everything below is tested offline in `tests/test_v13_foundation.py` against a
@@ -669,7 +694,7 @@ stand-in `anthropic` module that returns the API's reply shapes. Nothing was spe
 - **Token counting in admission (1.7).** `ESTIMATED_INPUT_TOKENS` is removed. Budget admission
   prices the actual prompt: the free `count_tokens` endpoint when `ANTHROPIC_API_KEY` is set
   (`llm_count_tokens`: `auto` / `True` / `False`), else `estimate_tokens` ((chars / 3 + 64)
-  × 1.35). `llm_min_input_tokens` (default 0) sets a floor. `estimate_call_cost` now takes
+  Ã— 1.35). `llm_min_input_tokens` (default 0) sets a floor. `estimate_call_cost` now takes
   `input_tokens` as a required argument. A test checks that a retry storm cannot pass the cap.
 - **Served-model drift (1.8).** A reply must come from the configured id or that id with a
   `-YYYYMMDD` suffix unless a fallback is recorded. With `llm_strict_model` (default `True`)
@@ -679,7 +704,7 @@ stand-in `anthropic` module that returns the API's reply shapes. Nothing was spe
   `llm_calls`; recipe 94 re-priced on the new defaults; 101 in all), the AI, API and
   architecture pages updated to the new defaults and keys.
 
-## v0.12.0 — 2026-09-30
+## v0.12.0 â€” 2026-09-30
 
 The first release since v0.8.0. It collects four rounds of work: the v0.9 research (attribution,
 a multi-asset base, trend and carry), the v0.10 overlay, the v0.11 tier-2 review with every
@@ -705,7 +730,7 @@ The three steps the tier-2 review approved, run on design data only. Outcome: no
 adopted ([v012_trend_core.md](docs/evaluation/v012_trend_core.md), generated from
 `results/v12` by `scripts/render_v12_doc.py`; no number is typed).
 
-- **`design_long`** (`PERIODS`, 2008-07-01 → 2021-12-31): the earliest start at which the
+- **`design_long`** (`PERIODS`, 2008-07-01 â†’ 2021-12-31): the earliest start at which the
   eleven multi-asset ETFs have a year of history; it ends where the design period ends, so
   no holdout or reserve day is in it. The core 15 cannot start there (one stock listed in
   2012), so the ETF, FX and combined runs carry this round.
@@ -730,8 +755,8 @@ adopted ([v012_trend_core.md](docs/evaluation/v012_trend_core.md), generated fro
   on bars where J is within 1e-9 of 0 or 100.
 - **18 trials registered** (`evaluation.TRIALS`, version `v0.12`, 62 in all): the trend stream
   on four runs, five books, nine interior overlay sizes.
-- **Docs**: LEARN.md 35 → 50 concepts (Parts VIII and IX), COOKBOOK.md 72 → 100 recipes (every
-  offline one executed), DIAGRAMS.md 30 → 38, architecture and API pages updated.
+- **Docs**: LEARN.md 35 â†’ 50 concepts (Parts VIII and IX), COOKBOOK.md 72 â†’ 100 recipes (every
+  offline one executed), DIAGRAMS.md 30 â†’ 38, architecture and API pages updated.
   `scripts/overlay_v09.py --files/--title/--label` and `scripts/combine_v09.py --trend/--tag`
   take other runs and streams.
 
@@ -751,8 +776,8 @@ changes below move the next re-measurement (`results/v11`, [v011_review.md](docs
 - **Market impact prices dollar volume in the shares' own units**: the dollar ADV uses the
   split-adjusted, dividend-unadjusted close (`MarketDataProvider.as_traded_closes`) instead of the
   total-return close, which understated dollar volume on high-yield names.
-- **The aggressive risk analyst sizes at 1.25× the vol-targeted weight** (`risk.aggressive_vol_scaled`,
-  default on). The v0.8 rule, `max(1.25 × proposal, vol target)`, pinned the aggressive view at the
+- **The aggressive risk analyst sizes at 1.25Ã— the vol-targeted weight** (`risk.aggressive_vol_scaled`,
+  default on). The v0.8 rule, `max(1.25 Ã— proposal, vol target)`, pinned the aggressive view at the
   position cap and gave the blended book a fixed floor at a quarter of the cap; the old rule is a
   registered trial and the v0.2 rule set keeps it.
 - **The news analyst's confidence follows the tone the headlines carry** (`rules.news_tone_mass`,
@@ -760,7 +785,7 @@ changes below move the next re-measurement (`results/v11`, [v011_review.md](docs
   confidence; the v0.8 count rule is a registered trial.
 - **Evaluation rows are stored at full precision** (`ComparisonReport.table(decimals=None)`); every
   aggregate, interval and p in a re-measured table runs on unrounded per-instrument metrics.
-- **Benjamini–Hochberg runs over the rows a table prints** (`paired_table(baselines=...)`): the
+- **Benjaminiâ€“Hochberg runs over the rows a table prints** (`paired_table(baselines=...)`): the
   control-only drawdown and Calmar tables were corrected over six baselines and then cut to two.
 - **The deflated Sharpe is computed on one statistic**: every reproducible trial's design-period
   15-sleeve portfolio Sharpe (`scripts/measure_v08.py` measures it; `selection_report` warns when the
@@ -790,9 +815,9 @@ changes below move the next re-measurement (`results/v11`, [v011_review.md](docs
   the sleeves that can pay it (FX sleeves pay none without `costs.fx_adv_notional`).
 - **Re-measured (`results/v11`, copied to `docs/results/v11/tables.md`; every file at a clean commit).**
   15-sleeve portfolio, holdout: desk Sharpe 0.91 with a 6.41% drawdown (v0.8: 0.80 / 7.80%) against 0.86
-  buy & hold and 0.99 vol-target; desk − vol-target −0.08 [−0.46, +0.30] p 0.688, desk − buy & hold +0.05
-  [−0.40, +0.50] p 0.820. Core holdout median Sharpe 0.35 (v0.8: 0.30) against 0.52 for the control, paired
-  difference −0.08 [−0.18, +0.02] p 0.14; extended 0.21 (v0.8: 0.25) against 0.27. The desk still has no
+  buy & hold and 0.99 vol-target; desk âˆ’ vol-target âˆ’0.08 [âˆ’0.46, +0.30] p 0.688, desk âˆ’ buy & hold +0.05
+  [âˆ’0.40, +0.50] p 0.820. Core holdout median Sharpe 0.35 (v0.8: 0.30) against 0.52 for the control, paired
+  difference âˆ’0.08 [âˆ’0.18, +0.02] p 0.14; extended 0.21 (v0.8: 0.25) against 0.27. The desk still has no
   measurable edge over the vol-targeted control. Design-period choice of the two rule changes: the
   vol-scaled aggressive stance gives portfolio Sharpe 1.44 against 1.40 for the v0.8 rule; the news
   tone-mass rule 1.44 against 1.44 (kept for correctness, not for Sharpe); a symmetric equity tilt 1.45
@@ -814,22 +839,22 @@ carry streams, their combination, and a forward test. Every number is in
 mean was written before it ran ([docs/evaluation/v09_preregistration.md](docs/evaluation/v09_preregistration.md)).
 
 - **Attribution** (`scripts/attribution_v09.py`): against the vol-target control the v0.8
-  desk has beta 0.92 (design) / 0.89 (holdout), R² 0.89 / 0.86, alpha +0.41%/yr (t 0.40) /
-  −0.80%/yr (t −0.68); the active tilt's Sharpe is −0.17 [−0.90, +0.56] and −0.61
-  [−1.51, +0.29]. The signals add nothing over holding the same sleeves mechanically.
+  desk has beta 0.92 (design) / 0.89 (holdout), RÂ² 0.89 / 0.86, alpha +0.41%/yr (t 0.40) /
+  âˆ’0.80%/yr (t âˆ’0.68); the active tilt's Sharpe is âˆ’0.17 [âˆ’0.90, +0.56] and âˆ’0.61
+  [âˆ’1.51, +0.29]. The signals add nothing over holding the same sleeves mechanically.
 - **Two return streams as baselines in every sleeve**, fully costed and combinable by the
   portfolio machinery: `TSMOM(12-1)` (sign of the trailing 12-month return skipping the last
   month, at the vol-target size, long-only where shorts are not allowed) and `Carry` (the
   FX carry premium at the desk's strategic size; flat on equities). Every `backtest`,
   `baselines`, `portfolio` and `evaluate` table gains the two rows.
-- **Design-period verdict (2016–2021), nothing adopted**: the 11-ETF risk-parity base
+- **Design-period verdict (2016â€“2021), nothing adopted**: the 11-ETF risk-parity base
   (`B&H vol-target`) has Sharpe 1.02 against the v0.8 core-15 control's 1.43; risk parity
   on the core 15 gives 0.91 (it overweights FX sleeves that earn nothing); ETF trend 0.50,
-  −0.52 [−0.89, −0.15] p 0.007 against its control; FX carry 0.13, +0.05 [−0.98, +1.08];
-  every risk-parity book with trend or carry is at or below the base (beta + trend −0.24
-  [−0.42, −0.05] p 0.012). Six books and five runs count as trials.
-- **The pre-registered holdout report (2022–2026)**, a report and not a choice: the
-  bond-heavy base −0.09, ETF trend 0.16, FX carry 0.43, the core-15 controls 1.28–1.32;
+  âˆ’0.52 [âˆ’0.89, âˆ’0.15] p 0.007 against its control; FX carry 0.13, +0.05 [âˆ’0.98, +1.08];
+  every risk-parity book with trend or carry is at or below the base (beta + trend âˆ’0.24
+  [âˆ’0.42, âˆ’0.05] p 0.012). Six books and five runs count as trials.
+- **The pre-registered holdout report (2022â€“2026)**, a report and not a choice: the
+  bond-heavy base âˆ’0.09, ETF trend 0.16, FX carry 0.43, the core-15 controls 1.28â€“1.32;
   no difference clears its interval.
 - **The forward test** (`scripts/paper_trade_v09.py`): from 2026-09-29 a daily job
   recomputes the frozen books' returns (the v0.8 desk on the core 15 with its controls, the
@@ -842,7 +867,7 @@ mean was written before it ran ([docs/evaluation/v09_preregistration.md](docs/ev
   (risk parity across streams, drawdown overlay), `scripts/render_v09_tables.py`,
   `scripts/render_v09_doc.py`. Tests: `tests/test_v09.py`, `tests/test_v09_paper.py`.
 
-## v0.8.0 — 2026-09-28
+## v0.8.0 â€” 2026-09-28
 
 A tier-1 review of v0.7.0 -- the code, the tests and every claim in the documentation --
 produced 91 findings (17 high, 58 medium, 16 low; the digest with each verifier's reasoning
@@ -1666,7 +1691,7 @@ interval printed as [0.00, x] or [-0.00, x] is not "excluding zero". Periods: de
   `max_llm_cost_usd` admits fewer concurrent calls under the default `llm_budget_mode`
   (`estimate` restores the earlier admission at the price of a soft cap).
 
-## v0.7.0 — 2026-09-27
+## v0.7.0 â€” 2026-09-27
 
 A pass through the whole codebase against its own highest-quality bar: risk aggregated
 across the book instead of only per-instrument, two textbook tests of whether the risk
@@ -1688,12 +1713,12 @@ dependency drift apart from a real result change.
   Christoffersen (1998) independence likelihood-ratio tests of a walk-forward historical-VaR
   forecast against realized returns, closed-form against the standard normal CDF (no scipy
   dependency). Run against the 15-sleeve core portfolio's holdout returns: neither test
-  rejects at either a 120-day or 250-day window — the desk's own risk model is
+  rejects at either a 120-day or 250-day window â€” the desk's own risk model is
   well-calibrated on this data (see
   [the evaluation's VaR coverage section](docs/evaluation/evaluation.md#var-coverage-is-the-desks-risk-model-calibrated)
   and [LEARN.md #34](LEARN.md#34-is-the-risk-model-telling-the-truth-var-coverage-backtesting)).
   *Retracted in v0.8.0: the test covered a rolling quantile of the portfolio's own returns,
-  not the per-instrument forecast the desk sizes on — see [v0.8.0 Retracted](#v080--2026-09-28).*
+  not the per-instrument forecast the desk sizes on â€” see [v0.8.0 Retracted](#v080--2026-09-28).*
 
 ### Execution
 - **Execution-algorithm-aware impact cost** (`algo.algo_cost_ratio`,
@@ -1711,7 +1736,7 @@ dependency drift apart from a real result change.
   2.37%, and an aggressively front-loaded Almgren-Chriss (kappa=5) pays 3.14% (see
   [the evaluation's execution-algorithm section](docs/evaluation/evaluation.md#execution-algorithm-aware-impact-v07)).
   *Retracted in v0.8.0: these magnitudes charged each sleeve sqrt(15) times the impact of its
-  own capital; the ordering stands, the numbers are re-measured — see [v0.8.0 Retracted](#v080--2026-09-28).*
+  own capital; the ordering stands, the numbers are re-measured â€” see [v0.8.0 Retracted](#v080--2026-09-28).*
 
 ### Evaluation
 - **Benjamini-Hochberg FDR correction** (`stats.benjamini_hochberg`). The cross-instrument
@@ -1723,7 +1748,7 @@ dependency drift apart from a real result change.
   majors) do not masquerade as independent draws; `EvaluationResult.paired(stratify=True)`
   is the default when the rows carry more than one group.
   *Retracted in v0.8.0: this scheme narrows the interval rather than widening it and was
-  replaced by a cluster bootstrap — see [v0.8.0 Retracted](#v080--2026-09-28).*
+  replaced by a cluster bootstrap â€” see [v0.8.0 Retracted](#v080--2026-09-28).*
 - **Deflated-Sharpe caveat** made explicit in `selection_report`'s own output
   (`DEFLATED_SHARPE_CAVEAT`), not only in the surrounding prose.
 - **Significance-gated diagnostic column** (`alpha.significance_gated_series`,
@@ -1749,12 +1774,12 @@ dependency drift apart from a real result change.
   data drift or a real code change (see Reproducing in
   [the evaluation](docs/evaluation/evaluation.md#reproducing)).
 - **Coverage reporting in CI** (`pytest-cov`, `--cov-report=xml`/`term-missing`, uploaded as
-  a CI artifact) — report-only, not a merge gate. 94% overall on the numpy backend; weakest
+  a CI artifact) â€” report-only, not a merge gate. 94% overall on the numpy backend; weakest
   are `data/yahoo.py` (50%, mostly network-dependent branches) and `llm.py` (75%, the live
   Anthropic call path).
 - 319 tests (up from 280), including a new `tests/test_v07.py` covering every item above.
 
-## v0.6.0 — 2026-09-27
+## v0.6.0 â€” 2026-09-27
 
 Point-in-time filings for the idle half of the analyst team, statistical power across the
 universe, a calibration harness for the model's judgement, pinned prompts, a cross-sectional
@@ -1780,8 +1805,8 @@ alpha window. The measured results of every data and rule change are in
   checked for every equity in the 60-name universe at two dates. The Yahoo provider uses it
   for every historical date; `--no-edgar` and `--edgar-cache` on the CLI. Social media has no
   free point-in-time archive and that analyst still abstains on real data.
-- `alpha_lookback_days` (900) is the one knob for the alpha library's window — the alpha
-  analysts and the `quant.alpha` / `quant.xalpha` tools — next to `lookback_days` (400) for
+- `alpha_lookback_days` (900) is the one knob for the alpha library's window â€” the alpha
+  analysts and the `quant.alpha` / `quant.xalpha` tools â€” next to `lookback_days` (400) for
   everything else; every desk tool's `lookback_days` argument now defaults to the configured
   value instead of a hard-coded 400 or 900.
 
@@ -1793,7 +1818,7 @@ alpha window. The measured results of every data and rule change are in
   the universe is distinguishable from the luck of which instruments were drawn.
 - **Repeated runs.** `evaluate(repeats=N)` / `--repeats N` runs the agent N times per
   (period, symbol), tags rows with `run`, and `run_dispersion` reports the across-run
-  spread — the model's own variance, which any single-run difference has to clear.
+  spread â€” the model's own variance, which any single-run difference has to clear.
 - **Prompt registry** (`prompts.py`). A SHA-256 hash of every agent's system prompt and
   prompt-building code, bundled into one hash recorded in every evaluation and calibration
   result.
@@ -1802,12 +1827,12 @@ alpha window. The measured results of every data and rule change are in
   slope of the target on the position the desk is told it holds, and drift against a stored
   report on the same state.
 - **Cross-sectional alpha analyst** (`xalpha`): the v0.5 cross-sectional research consumed
-  by an analyst at last — z-scored against a peer universe on every date (`xalpha_universe`,
+  by an analyst at last â€” z-scored against a peer universe on every date (`xalpha_universe`,
   `--xalpha-universe core|extended|all|SYM,...`), significance-gated exactly like the
   time-series alpha analyst, cached per (universe, date). Measured under the protocol on top
   of EDGAR: core design -0.01 [-0.02, 0.00] of per-instrument
   Sharpe, core holdout 0.00, extended holdout -0.01 [-0.01, 0.00],
-  reserve +0.01 / -0.03 — **off by default**: it spoke on 2.6% of sampled decisions (never on
+  reserve +0.01 / -0.03 â€” **off by default**: it spoke on 2.6% of sampled decisions (never on
   FX) because no alpha clears the cross-sectional significance gate on most dates.
 - **The multi-year LLM harness**: model tiers, repeats and prompt hashes on the core universe
   over design and holdout, staged with a dollar cap per stage -- built and budgeted, **not
@@ -1872,7 +1897,7 @@ alpha window. The measured results of every data and rule change are in
   `xalpha_report` (decay curves, quantile spreads and correlations cost six times the IC
   itself), and the desk tools' `lookback_days` arguments no longer carry hard-coded windows.
 
-## v0.5.1 — 2026-09-26
+## v0.5.1 â€” 2026-09-26
 
 The first measured LLM results, and the evaluation protocol's first use for a rule change.
 
@@ -1889,22 +1914,22 @@ The first measured LLM results, and the evaluation protocol's first use for a ru
 
 ### Rules
 - **FX carry-neutral strategic weight** (`rules.fx_carry_neutral`, on by default). The FX
-  analogue of the equity strategic weight: `clip(rate_diff% / 2, ±0.5)` from the macro
+  analogue of the equity strategic weight: `clip(rate_diff% / 2, Â±0.5)` from the macro
   analyst's point-in-time policy-rate differential, so the desk holds the higher-yielding
   currency unless convinced otherwise. Chosen on the core FX pairs' design period only
-  (mean Sharpe −0.03 → +0.11, monotonic across five settings), then judged on data no choice
-  had touched, where it improved every slice: extended crosses design −0.24 → −0.15, holdout
-  +0.12 → +0.31, reserve −0.63 → +0.22; core reserve −0.58 → −0.10. It does not make the desk
+  (mean Sharpe âˆ’0.03 â†’ +0.11, monotonic across five settings), then judged on data no choice
+  had touched, where it improved every slice: extended crosses design âˆ’0.24 â†’ âˆ’0.15, holdout
+  +0.12 â†’ +0.31, reserve âˆ’0.63 â†’ +0.22; core reserve âˆ’0.58 â†’ âˆ’0.10. It does not make the desk
   beat buy & hold on crosses. `RULES_V03` / `--rules v03` reproduces the previous rule set;
   the published tables are re-run under the new default and the v0.3-rule tables are kept as
-  the record. Re-run headline numbers: core holdout mean Sharpe 0.44 → 0.46, extended holdout
-  0.37 → 0.42, 15-sleeve portfolio holdout 1.14 → 1.16 (design 1.50 → 1.54); equities unchanged.
+  the record. Re-run headline numbers: core holdout mean Sharpe 0.44 â†’ 0.46, extended holdout
+  0.37 â†’ 0.42, 15-sleeve portfolio holdout 1.14 â†’ 1.16 (design 1.50 â†’ 1.54); equities unchanged.
 
 ### Fixed
 - `UsageTracker` cost lookup now matches a served model id with a date suffix
   (`claude-haiku-4-5-20251001`) to its family's list price instead of reporting `n/a`.
 
-## v0.5.0 — 2026-09-26
+## v0.5.0 â€” 2026-09-26
 
 A wider, fresher evaluation; execution-aware backtests; cross-sectional alphas; cross-asset
 risk budgets; ALFRED vintages; a persistent task store; a dollar LLM budget; TLS and
@@ -1920,14 +1945,14 @@ deployment guards; property-based fuzzing of the C++ boundary; and the alpha-ana
   EURJPY, GBPJPY, AUDJPY, EURCHF, AUDNZD, CADJPY, EURAUD). `UNIVERSES`, `universe_group()`,
   a `universe` column in every result row, `summary(universe=)`, `head_to_head(universe=)`
   and `evaluate --universe core|extended|all`.
-- **A fresh holdout for the next rule change.** The 2022–2026 holdout has been seen, so
+- **A fresh holdout for the next rule change.** The 2022â€“2026 holdout has been seen, so
   v0.5 defines what "unseen" means from here: the extended universe over *every* period,
-  plus a `reserve` period (2026-07-01 → 2026-09-25) that no number in the documentation
+  plus a `reserve` period (2026-07-01 â†’ 2026-09-25) that no number in the documentation
   consults. The protocol is written down in the evaluation.
 - **Execution-aware backtests.** `costs.impact_coeff` (default 0) charges square-root market
-  impact in the backtester — the execution simulator's model, applied per trade to the agent
-  *and* every baseline: a trade of `|dw|` costs `|dw|^1.5 · K_t` of equity with
-  `K_t = coeff · daily_vol · sqrt(capital / (price · ADV))`. `Impact%` is reported per
+  impact in the backtester â€” the execution simulator's model, applied per trade to the agent
+  *and* every baseline: a trade of `|dw|` costs `|dw|^1.5 Â· K_t` of equity with
+  `K_t = coeff Â· daily_vol Â· sqrt(capital / (price Â· ADV))`. `Impact%` is reported per
   strategy; `--impact` and `--capital` on the backtest, portfolio and evaluation commands.
   The published tables include the core universe at three account sizes.
 - **Alpha analyst.** Two bugs fixed (see below); measured a third time and still off by default.
@@ -1968,13 +1993,13 @@ deployment guards; property-based fuzzing of the C++ boundary; and the alpha-ana
 ### Quant core
 - `BacktestInputs.impact` / `BacktestResult.impact_paid` in C++, the numpy twin and the
   bindings; `run_backtest(impact=)`.
-- **Property-based fuzzing of the Python ↔ C++ boundary** (`tests/test_fuzz.py`, hypothesis):
-  every quant entry point on NaN / ±inf / empty / huge inputs must either return a
+- **Property-based fuzzing of the Python â†” C++ boundary** (`tests/test_fuzz.py`, hypothesis):
+  every quant entry point on NaN / Â±inf / empty / huge inputs must either return a
   well-formed result or raise `ValueError`, and the two backends must agree on sane inputs.
   It found and fixed five divergences: `quantile(x, NaN)`, `max_drawdown` with NaN (numpy
   did not skip it), `kdj` and `atr` windows containing NaN (`std::max` silently skips NaN,
-  numpy propagates it — both now treat a missing bar as a missing range), `zscore` on a
-  flat window (cancellation noise gave ±1; both now floor the spread), and a
+  numpy propagates it â€” both now treat a missing bar as a missing range), `zscore` on a
+  flat window (cancellation noise gave Â±1; both now floor the spread), and a
   `compute_metrics` overflow on the numpy side. Non-finite prices are now rejected by both.
 
 ### Fixed
@@ -1997,13 +2022,13 @@ deployment guards; property-based fuzzing of the C++ boundary; and the alpha-ana
   [docs/evaluation/evaluation.md](docs/evaluation/evaluation.md#the-v04-alpha-analyst-design-period-check).
 
 ### Tests and docs
-- **Tests:** 199 → **240** pytest tests (v0.5 features 18, fuzz 21 property tests, impact 3)
+- **Tests:** 199 â†’ **240** pytest tests (v0.5 features 18, fuzz 21 property tests, impact 3)
   + 14 C++ test groups; hypothesis added to the `dev` and `all` extras.
 - **Docs:** LEARN (30 concepts), COOKBOOK (64 recipes), DIAGRAMS (27), architecture,
   specification, threat model (36 threats), API, evaluation (60-instrument tables, impact
   sweep, the fresh-holdout protocol) and the landing page updated.
 
-## v0.4.0 — 2026-09-26
+## v0.4.0 â€” 2026-09-26
 
 The agentic layer, the quant research layer, and a rewrite of the documentation.
 
@@ -2052,7 +2077,7 @@ The agentic layer, the quant research layer, and a rewrite of the documentation.
   an `AlphaAnalyst` agent (off by default, see the evaluation).
 - **Execution algorithms** (`algo.py`): TWAP, VWAP, POV and Almgren-Chriss schedules; an
   intraday simulator (Brownian-bridge bars from a daily bar, half-spread and square-root
-  impact, implementation shortfall and slippage vs VWAP); decision → parent order planning.
+  impact, implementation shortfall and slippage vs VWAP); decision â†’ parent order planning.
 - **Portfolio construction** (`portfolio.py`): EWMA and Ledoit-Wolf covariance; equal,
   inverse-vol, risk parity, minimum variance and mean-variance weights with caps; risk
   contributions and diversification ratio; `run_portfolio_backtest(weighting=...)` with
@@ -2065,8 +2090,8 @@ The agentic layer, the quant research layer, and a rewrite of the documentation.
 
 ### Evaluation
 - The evaluation period formerly labelled after an external publication is now `q1_2024`.
-- Adding the alpha analyst was measured on the design period (mean Sharpe 0.65 → 0.60,
-  median 0.55 → 0.60): noise, so it stays off by default.
+- Adding the alpha analyst was measured on the design period (mean Sharpe 0.65 â†’ 0.60,
+  median 0.55 â†’ 0.60): noise, so it stays off by default.
 - Deflated Sharpe ratio reported for the v0.3 rule choice (16 variants).
 
 ### Changed
@@ -2080,20 +2105,20 @@ The agentic layer, the quant research layer, and a rewrite of the documentation.
   parallel evaluation (`evaluate(workers=)`) from the pending LLM-evaluation work are included.
 
 ### Tests and docs
-- **Tests:** 116 → **197** pytest tests (agentic 30, adversarial 15, services 7 incl. a real
+- **Tests:** 116 â†’ **197** pytest tests (agentic 30, adversarial 15, services 7 incl. a real
   MCP stdio round trip and the FastAPI client, quant research 18, LLM evaluation 11).
 - **Docs:** LEARN (26 concepts), COOKBOOK (56 recipes), DIAGRAMS (24), architecture,
   specification, threat model (32 threats), API and evaluation rewritten; landing page updated.
 
-## v0.3.0 — 2026-09-25
+## v0.3.0 â€” 2026-09-25
 
 Hardening, real-life workflows and an honest real-price evaluation.
 
 ### Evaluation
 - **New protocol on real prices.** The universe is 15 instruments (10 equities, 5 FX pairs)
   and there are three periods:
-  - a 2016–2021 **design** period, the only data used for choices;
-  - a 2022–2026 **holdout**, run once with frozen rules;
+  - a 2016â€“2021 **design** period, the only data used for choices;
+  - a 2022â€“2026 **holdout**, run once with frozen rules;
   - a Q1 2024 reference window.
 
   The protocol is available as `evaluate()` and `agentic-trader evaluate`.
@@ -2136,7 +2161,7 @@ Hardening, real-life workflows and an honest real-price evaluation.
 - `clean_ohlcv` normalises every provider's output: sort, dedupe, drop bad closes, fill and
   widen OHLC, strip time zones.
 - **Yahoo performance.** Coverage-cached downloads, and news is no longer requested for
-  dates Yahoo cannot serve. Real-data backtests are about 8× faster.
+  dates Yahoo cannot serve. Real-data backtests are about 8Ã— faster.
 
 ### Safety and robustness
 - **Prompt-injection containment.** Headlines and posts reach the model only inside
@@ -2153,14 +2178,14 @@ Hardening, real-life workflows and an honest real-price evaluation.
 - `.env` files are git-ignored.
 
 ### Tests and docs
-- **Tests.** 18 → **116** pytest tests; 7 → **13** C++ test groups (34 checks).
+- **Tests.** 18 â†’ **116** pytest tests; 7 â†’ **13** C++ test groups (34 checks).
 - **Docs.**
   - `LEARN.md` now has 18 concepts, `COOKBOOK.md` 38 recipes (all runnable ones executed),
     and `DIAGRAMS.md` 16 diagrams, each parsed with Mermaid 11.
   - Architecture, specification, threat model (20 threats), API reference, evaluation and
     the landing page were rewritten.
 
-## v0.2.0 — 2026-09-25
+## v0.2.0 â€” 2026-09-25
 
 ### Added
 - **Documentation site**, published with GitHub Pages from `docs/` at
@@ -2176,14 +2201,14 @@ Hardening, real-life workflows and an honest real-price evaluation.
   `docs/INDEX.md` and `docs/GITHUB_PAGES.md`.
 - An evaluation on **real Q1 2024 prices** (Yahoo) for AAPL, NVDA, MSFT, META, GOOGL, EURUSD,
   USDJPY and GBPUSD with the rule-based agents, next to the synthetic results.
-- GitHub Actions CI (#1): pytest on Python 3.10–3.14, and a C++ build with ctest and pytest
+- GitHub Actions CI (#1): pytest on Python 3.10â€“3.14, and a C++ build with ctest and pytest
   on the C++ backend on Linux, Windows and macOS.
 
 ### Changed
 - `examples/compare_baselines.py` now covers all eight evaluation instruments over the
-  documented window (2024-01-02 → 2024-03-28).
+  documented window (2024-01-02 â†’ 2024-03-28).
 
-## v0.1.0 — 2026-09-25
+## v0.1.0 â€” 2026-09-25
 
 First release.
 
