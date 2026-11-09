@@ -2613,3 +2613,46 @@ python scripts/v16_eval.py agreement --judged results/v16_eval/judge_calibration
 
 `check` and `agreement` call no model. `freeze` regenerates the frozen items; use it only on
 purpose, never to make a test pass. Result: pending: filled when the run finishes.
+
+## v0.16: batching a whole walk-forward
+
+### 118. Many names in one batched walk-forward
+
+`walk_forward_jobs` puts every name (and rebalance offset) in the same batch on each pass, so
+the run takes about as many passes as its slowest name rather than the sum over names. The fake
+backend answers offline; with `AnthropicBatchBackend` the same call goes to Message Batches.
+
+```python
+import tempfile
+from pathlib import Path
+
+from agentic_trader import make_config
+from agentic_trader.batch import BatchLLM, FakeBatchBackend, walk_forward_jobs
+
+cfg = make_config(memory_path=None)
+REPLIES = {   # one canned reply per role, matched on the system prompt
+    "Researcher": "Evidence-based argument.",
+    "Facilitator": '{"winner": "bull", "score": 0.6, "conviction": 0.7, "summary": "s"}',
+    "Trader.": '{"action": "BUY", "target_weight": 0.5, "confidence": 0.7, "stop_loss": null, '
+               '"take_profit": null, "horizon_days": 5, "rationale": "r"}',
+    "Risk Analyst": '{"recommended_weight": 0.4, "argument": "fine"}',
+    "Portfolio Manager": '{"target_weight": 0.3, "confidence": 0.6, "rationale": "pm"}',
+}
+ANALYST = '{"signal": 0.2, "confidence": 0.6, "summary": "view", "key_points": ["a"]}'
+
+
+def respond(params):
+    return next((r for k, r in REPLIES.items() if k in params["system"]), ANALYST)
+
+
+store = Path(tempfile.mkdtemp()) / "store.jsonl"
+llm = BatchLLM(None, FakeBatchBackend(respond), store)
+reports = walk_forward_jobs(llm, ["AAPL", "MSFT", "EURUSD"], "2024-01-01", "2024-02-05", cfg,
+                            rebalance_every=5, stop_at_pending=True)
+print(llm.submissions, "batches;", sum(len(r.decisions) for r in reports), "decisions")
+```
+
+`stop_at_pending=True` trades a few extra passes for no wasted requests: a name stops its pass
+at the first date still waiting instead of queueing prompts built on rule stand-ins. Leave it
+off when wall-clock time per batch matters more than request count.
+
