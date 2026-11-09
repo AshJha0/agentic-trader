@@ -83,3 +83,31 @@ class DeferredToolCatalog:
             raise KeyError(f"unknown tool {name!r}")
         if not self.is_loaded(name):
             raise PermissionError(f"tool {name} is deferred: call tool_search first")
+
+
+def _chars_tokens(text: str) -> int:
+    """Deterministic token estimate: ceil(chars / 4), no request overhead or margin, so the
+    ratio between two payloads is not flattered by a fixed constant."""
+    return -(-len(text) // 4)
+
+
+def token_saving(registry: ToolRegistry, queries: tuple[str, ...] = ("price history", "submit order"),
+                 limit: int = 5) -> dict[str, Any]:
+    """Measured context cost of up-front vs deferred tool listing on ``registry``.
+
+    ``full`` is the JSON of every descriptor (what an eager client holds); ``deferred`` is the
+    names list plus the descriptors a client loads after one search per query (top ``limit``
+    each, deduplicated). Same estimator on both sides: ``ceil(chars / 4)``.
+    """
+    import json
+    full = _chars_tokens(json.dumps(registry.catalogue(), sort_keys=True))
+    cat = DeferredToolCatalog(registry)
+    names = _chars_tokens(json.dumps(cat.names()))
+    loaded: dict[str, dict[str, Any]] = {}
+    for q in queries:
+        for e in cat.search(q, limit, load=False):
+            loaded[e["name"]] = e
+    after = names + _chars_tokens(json.dumps(sorted(loaded.values(), key=lambda e: e["name"]), sort_keys=True))
+    return {"tools": len(registry), "full_tokens": full, "names_tokens": names,
+            "deferred_tokens_after_search": after, "loaded_tools": len(loaded),
+            "saving_tokens": full - after, "saving_share": (full - after) / full if full else 0.0}
