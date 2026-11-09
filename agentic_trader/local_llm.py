@@ -6,9 +6,9 @@ replies use Ollama's JSON-schema constrained decoding: the contract schema from
 ``contracts.py`` goes in the request's ``format`` field, and the agent's contract check stays
 the second gate exactly as it does for Claude.
 
-Status: unrun here. The development machine has 15.6 GB of RAM, below the plan's 16 GB bar
-for a 7-8B model, and no Ollama install, so this module is built and tested against a fake
-HTTP server only. No model has answered a desk prompt through it yet.
+Status: run on the development machine since v0.15 with qwen2.5:7b-instruct under Ollama
+(``docs/results/v15_local/redteam_compliance.json``, ``text_analysts.json``; the P2 study
+uses the same backend). The unit tests still use a fake HTTP server only.
 
 What carries over from ``AnthropicLLM`` unchanged:
 
@@ -74,7 +74,7 @@ class LocalLLM:
     """``LLM`` over Ollama's ``/api/chat``. One model serves both tiers (``deep`` is accepted
     for protocol compatibility and recorded nowhere else); ``config`` keys: ``local_llm_url``,
     ``local_llm_model``, ``local_llm_timeout_s``, ``local_llm_seed``, ``max_tokens`` (sent as
-    ``num_predict``) and ``llm_strict_model``. Unrun on the development machine (see the
+    ``num_predict``) and ``llm_strict_model``. Run locally since v0.15 (see the
     module docstring)."""
 
     def __init__(self, config: dict):

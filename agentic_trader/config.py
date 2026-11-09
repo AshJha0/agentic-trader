@@ -11,7 +11,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # "local": agents reason with a local open-weight model (see local_llm_* below).
     "llm_provider": "offline",
     # "local": a model served on this machine by Ollama (local_llm.py; plan item 2.1). Zero
-    # cost; max_llm_calls still caps calls. Unrun on the development machine (below 16 GB RAM).
+    # cost; max_llm_calls still caps calls. Run on the development machine since v0.15 (qwen2.5:7b-instruct;
+    # docs/results/v15_local).
     "local_llm_url": "http://127.0.0.1:11434",
     "local_llm_model": None,       # Ollama model name; required when llm_provider is "local"
     "local_llm_timeout_s": 120,
@@ -294,6 +295,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "llm_reporter": True,        # model-written executive summary (audited either way)
         "use_alpha_tool": True,      # run quant.alpha in the canonical plan
         "critic_divergence": 0.6,    # max |model signal - rule signal| before the critic flags it
+        # v0.17 R2.1: what a flagged divergence does to the position (critic.apply_weight_rule).
+        # "scale": tilt from the neutral weight x critic_weight_scale; "veto": neutral weight;
+        # "off": confidence only (the v0.16 behaviour).
+        "critic_weight_rule": "scale",
+        "critic_weight_scale": 0.5,
+        # Run the critic on the plain graph path (backtest, P2 study) too. Off by default so
+        # results produced before v0.17 are unchanged; the "critic_on" study cell turns it on.
+        "critic_in_graph": False,
+        "critic_graph_llm": False,   # the model critique on the graph path (confidence only)
         "tool_timeout_s": 30.0,
         "symbol_universe": None,     # list of allowed symbols for tool calls (None = any valid)
         "deny_tools": [],

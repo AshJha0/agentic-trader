@@ -22,23 +22,35 @@ local model, save it, and serve the model's answers from the file in an offline 
 
 Recordings are pickled (exact DataFrames and floats, so the replay is bit-for-bit). Load
 only recordings you made yourself: unpickling runs code from the file.
+
+Request keys (v0.17 R2.4, format 2) are SHA-256 digests of a canonical JSON form of the
+request (``canonical``: sorted keys, floats by ``repr``, dates ISO, frames by
+``to_json(orient="split")``), not of a pickle byte stream, so a key does not change when
+pandas, numpy or Python change their pickle output. Format-1 recordings (pickle keys) cannot
+be re-keyed, because a digest cannot be inverted; ``load_recording`` refuses them with a
+message to record the run again.
 """
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import pickle
 import threading
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
+
+import numpy as np
+import pandas as pd
 
 from ..data.base import MarketDataProvider
 from ..memory import series_basis
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2   # 2: canonical JSON request keys (v0.17); 1: pickle keys
 DEFAULT_DIR = "results/replay"
 
 
@@ -50,8 +62,52 @@ class ReplayMismatch(AssertionError):
     """A replayed run reached a different decision (or end state) from the recorded one."""
 
 
+def canonical(obj: Any) -> Any:
+    """A JSON-ready, version-stable form of a request part. Types are tagged where two types
+    could print alike (a float and its string, a tuple and a list, a date and its ISO text).
+    Raises ``TypeError`` for a type it does not know rather than guess an unstable form."""
+    if obj is None or isinstance(obj, (bool, str)):
+        return obj
+    if isinstance(obj, (int, np.integer)) and not isinstance(obj, bool):
+        return int(obj)
+    if isinstance(obj, (float, np.floating)):
+        x = float(obj)
+        return {"$f": repr(x)}
+    if isinstance(obj, Enum):
+        return {"$enum": type(obj).__name__, "v": canonical(obj.value)}
+    if isinstance(obj, pd.Timestamp):
+        return {"$ts": obj.isoformat()}
+    if isinstance(obj, datetime):
+        return {"$dt": obj.isoformat()}
+    if isinstance(obj, date):
+        return {"$d": obj.isoformat()}
+    if isinstance(obj, pd.DataFrame):
+        return {"$df": obj.to_json(orient="split", date_format="iso", double_precision=15)}
+    if isinstance(obj, pd.Series):
+        return {"$s": obj.to_json(orient="split", date_format="iso", double_precision=15)}
+    if isinstance(obj, pd.Index):
+        return {"$ix": [canonical(v) for v in obj.tolist()]}
+    if isinstance(obj, np.ndarray):
+        return {"$nd": [canonical(v) for v in obj.tolist()]}
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return {"$dc": type(obj).__name__,
+                "v": {f.name: canonical(getattr(obj, f.name)) for f in dataclasses.fields(obj)}}
+    if isinstance(obj, dict):
+        items = sorted(((json.dumps(canonical(k), sort_keys=True), canonical(v)) for k, v in obj.items()))
+        return {"$map": [[k, v] for k, v in items]}
+    if isinstance(obj, tuple):
+        return {"$t": [canonical(v) for v in obj]}
+    if isinstance(obj, (list, set, frozenset)):
+        vals = [canonical(v) for v in obj]
+        if isinstance(obj, (set, frozenset)):
+            return {"$set": sorted(vals, key=lambda v: json.dumps(v, sort_keys=True))}
+        return vals
+    raise TypeError(f"replay key: no canonical form for {type(obj).__name__}")
+
+
 def _key(kind: str, *parts: Any) -> str:
-    return hashlib.sha256(pickle.dumps((kind, parts), protocol=4)).hexdigest()
+    body = json.dumps(canonical((kind, parts)), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(body.encode("ascii")).hexdigest()
 
 
 class Tape:
@@ -282,6 +338,10 @@ class Recording:
 def load_recording(path: str | Path) -> Recording:
     """Load a recording written by ``Recording.save`` (only load files you made yourself)."""
     body = pickle.loads(Path(path).read_bytes())  # noqa: S301 - own recordings only, documented
+    if body.get("version") == 1:
+        raise ValueError(f"{path}: replay format 1 keys requests by a pickle digest, which v0.17 replaced "
+                         "with canonical JSON keys (format 2); a digest cannot be re-keyed, so record the "
+                         "run again with `task --record`")
     if body.get("version") != FORMAT_VERSION:
         raise ValueError(f"{path}: replay format {body.get('version')!r}, expected {FORMAT_VERSION}")
     body["data_tape"] = Tape(*body["data_tape"])

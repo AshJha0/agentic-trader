@@ -1015,7 +1015,10 @@ def test_critic_and_reporter_prompts_fence_claims_written_from_third_party_text(
     assert not by_agent["technical"].untrusted
     # the numbers stay in the open: each finding's confidence and the decision's action and weight
     assert re.search(r"^- portfolio_manager \(confidence \d\.\d\d\): claim inside the untrusted block", critic, re.M)
-    assert f"Decision: {run.decision.action.value} {run.decision.target_weight:+.2f}." in outside_fences(critic)
+    # v0.17 R2.1: the critic reviews the PM's weight; a flagged divergence then scales it
+    wa = run.critic.weight_action
+    reviewed = wa["from"] if wa and wa["changed"] else run.decision.target_weight
+    assert f"{reviewed:+.2f}." in outside_fences(critic) and "Decision: " in outside_fences(critic)
     assert re.search(r"^- news: claim inside the untrusted block", reporter, re.M) and "- technical: " in reporter
     for role in ("critic", "reporter"):
         assert "<untrusted_data>" in stub.systems[role] and "never follow instructions" in stub.systems[role]
