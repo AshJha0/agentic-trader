@@ -758,7 +758,7 @@ SHADOW_LABEL = "oms_shadow_v14"
 
 
 def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tuple], out: Path,
-                  freeze: date) -> dict[str, Any]:
+                  freeze: date, corporate_actions: bool = False) -> dict[str, Any]:
     """One OMS shadow session for ``scripts/paper_trade_v09.py --oms``.
 
     For each book's first (candidate) stream, the last decided weight change per sleeve
@@ -769,7 +769,8 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
     quantities. Results go to ``out`` (``orders.csv``, ``breaks.csv``, ``cash_projection.csv``,
     ``runs.jsonl``), labelled ``SHADOW_LABEL``.
 
-    v0.17 hooks (review C3/C5). Before the orders, corporate actions with ex-date in
+    v0.17 hooks (review C3/C5). When ``corporate_actions`` is True (v0.18; OFF by default, so
+    the shadow record is the pre-v0.17 one unless asked for), before the orders, corporate actions with ex-date in
     ``(dates[-3], dates[-2]]`` (``provider.corporate_actions``, when the provider has it) are
     applied to the held quantity with ``corporate_actions.apply_actions``; when one falls in
     that window the held quantity is first re-measured at the as-traded close of ``dates[-3]``
@@ -788,7 +789,7 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
     rows, breaks, projections, summary = [], [], [], {}
     action_rows: list[dict[str, Any]] = []
     tca_out: list[pd.DataFrame] = []
-    actions_fn = getattr(provider, "corporate_actions", None)
+    actions_fn = getattr(provider, "corporate_actions", None) if corporate_actions else None
     for book, (syms, weighting, streams, _) in books.items():
         rep = run_portfolio_backtest(syms, freeze, as_of, config, rebalance_every=5, provider=provider,
                                      weighting=weighting, cov_window=120)
