@@ -280,7 +280,7 @@ def test_setup_ships_only_a_core_built_for_this_interpreter(tmp_path):
     assert setup.native_extension(tmp_path) == native
     assert setup.package_data(tmp_path)["agentic_trader.quant"] == [native.name]
     assert len(setup.extension_files(tmp_path)) == 3
-    assert setup.package_data(tmp_path)["agentic_trader.agentic.knowledge"] == ["docs/*.md", "retrieval_eval/*.json"]
+    assert setup.package_data(tmp_path)["agentic_trader.agentic.knowledge"] == ["docs/*.md", "retrieval_eval/*.json", "eval_set/*.json"]
 
 
 def test_wheel_tag_matches_its_contents(tmp_path):

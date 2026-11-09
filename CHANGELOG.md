@@ -1,5 +1,97 @@
 # Changelog
 
+## Unreleased (0.16.0): the LLM study on a local model (PLAN P2 items 2.3 to 2.8)
+
+The tools for the P2 study, run at $0 on a local open-weight model (qwen2.5:7b-instruct, 4-bit,
+CPU, served by Ollama on 127.0.0.1). Results describe that 7B model class, not Claude; the
+Claude cells exist only as dry-run cost estimates. Offline, fixture and fake-backend tests only
+(`tests/test_v16_p2_a.py`, `tests/test_v16_eval.py`, `tests/test_v16_study.py`). The owner asked
+for a model at every stage, so the first pass runs `local_analysts` (model at the analysts,
+rules downstream) and then `local_all` (model in every role) against the rules desk.
+
+- **Study driver (2.3, 2.5).** `scripts/llm_study.py` gains the `local_analysts` cell (eight
+  cells now), `--smoke` (two decisions on `local_all`, exit 1 on any fallback or contract
+  failure), `--first-pass` (15 names x 20 design dates x 1 seed on rules, local_analysts,
+  local_all), checkpointed `--live` runs that resume after a kill, and `--report`: portfolio
+  Sharpe minus the vol-target control with a circular block-bootstrap interval and p, agent
+  sources, contract rejection and fallback rates against `MAX_FALLBACK_SHARE` (10%),
+  dispersion, Claude cost equivalent per decision, and fallback rate by regime and by date with
+  chi-square independence tests. The `local_analysts` trial is registered in
+  `evaluation.TRIALS` before any run. Results: **PENDING: filled when the run finishes.**
+- **Anonymisation recall audit (2.4).** `scripts/v16_local_study.py recall`: 200 anonymised
+  technical-analyst prompts on real point-in-time states, each followed by "name the ticker and
+  month"; hit rates against chance (1/15 ticker, 1/72 month), Wilson intervals, exact binomial
+  p, and a drop-one-key ablation listing leaking fact keys. Results: **PENDING: filled when the run finishes.**
+- **Calibration (2.6).** `scripts/v16_local_study.py calibration` and `drift`: 20 frozen states,
+  dispersion over 5 sampled replies, anchoring slope on `rsi14`, drift between two model builds.
+  Results: **PENDING: filled when the run finishes.**
+- **Eval set (2.7).** `agentic_trader/agentic/eval_set.py` and 150 frozen (state, rubric) items
+  with a human-labelled calibration subset under `agentic/knowledge/eval_set/`;
+  `scripts/v16_eval.py run | check | judge | agreement | freeze`. Deterministic checks run in
+  CI on fixtures; judge agreement (Cohen's kappa) is reported per criterion. Local-model
+  results: **PENDING: filled when the run finishes.**
+- **Pre-registration (2.8).** `docs/evaluation/v16_preregistration_DRAFT.md`: design bar, the
+  single holdout look and its minimum detectable effect (0.59 to 1.32 annual Sharpe). Draft,
+  unsigned; the holdout is not run unless a cell clears the bar.
+- **Planner survival on real model plans (4.2, v0.15 follow-up).** 200 tasks, qwen2.5:7b-instruct (4-bit, CPU, temperature 0, compact grammar-constrained prompt): 1,345 of 1,506 proposed steps survived the validator (89.3%); the validator added 520 required steps, repaired 145 plans, and 13 plans (6.5%) were unusable (timeout or unparseable); 0 data-budget hits. Canonical and rule planner: 100% (1800/1800). Recorded plans: `tests/data/v15_local_model_plans.jsonl` (+ `.meta.json`; the run resumed twice after shutdowns, so the meta usage block covers the last segment only). Evidence class: real local model, 7B floor, not Claude.
+- **Known gap.** The usage examples in the `scripts/llm_study.py` docstring still name
+  `llama3.1:8b-instruct-q4_K_M`; the model used is `qwen2.5:7b-instruct`. To fix in code, not
+  touched in this docs pass because a run was using the script.
+
+- **Batch-friendly walk-forward loop (1.5b).** `batch.walk_forward_jobs(llm, symbols, start, end,
+  config, offsets=(0,))` runs every (symbol, rebalance offset) pair as one job of
+  `batch.run_jobs`: each job keeps its dates in sequence, all jobs share each batch, and a job
+  that finishes a pass with no unanswered question is not re-run. Fake backend, 15 names x 5
+  dates: 34 passes, the slowest single name's count (33-34 each), against 505 for the names run
+  one after another; decisions equal the direct path. `stop_at_pending=True` ends each job's
+  pass at the first date still waiting, so no prompt built on a rule stand-in is queued: 41
+  passes and 3,748 requests instead of 12,115. The new `run_agent_backtest(stop_check=...)`
+  argument defaults to `None`, so the unbatched path is unchanged. Offline tests only
+  (`tests/test_v16_batch_loop.py`); no spend.
+
+### Quality
+
+Coverage and correctness pass on `agentic_trader/` (no behaviour change apart from the four fixes
+below; offline, $0). Fast PR-gate suite (`-m "not slow"`), line coverage of `agentic_trader`:
+**94.3% -> 95.1%** (744 -> 645 missed lines of ~13,150). New file `tests/test_v16_quality.py`:
+31 test functions, 47 cases (one hypothesis property). Largest gains: `data/yahoo.py` 71% -> 99%,
+`data/fred.py` 90% -> 97%, `agentic/governance.py` 91% -> 99%, `provenance.py` 82% -> 100%,
+`validate.py` 95% -> 100%, `oms.py` 98% -> 99%.
+
+- **Fix: Almgren-Chriss schedule NaN for huge kappa** (both backends, `quant/pycore.py` and
+  `cpp/src/indicators.cpp`). For `kappa > DBL_MAX / 2`, `-2 * kappa` overflowed to `-inf` and
+  `-inf * 0` at the last slice gave NaN. Now `-2 * (kappa * (1 - t))`; doubling is exact, so every
+  finite result is bit-identical to before. Found by `test_fuzz`.
+- **Fix: `oms.reconcile` crashed on a zero ledger price** (ZeroDivisionError lost the whole
+  report). A non-positive or non-finite ledger price is now a price break.
+- **Fix: `OMS.submit` numeric checks.** `True` passed as a 1-unit quantity and numpy integer
+  scalars (`np.int64`) were refused; now any real number except a bool is accepted.
+- **Fix: `MemoryTool.remember` horizon.** A non-integer `horizon_days` (`"10"`, `2.5`) raised a
+  bare ValueError or was truncated, skipping the audit trail; it is now an audited
+  `MemoryToolError` (`10.0` is still accepted).
+- mypy (advisory): 160 -> 153 findings (a shadowed variable in `state.py`); ruff clean.
+
+### Documentation and KPI table (P6)
+
+P6 documentation items 6.2-6.5. Offline tests only (`tests/test_v16_kpi.py`); no spend, no model
+calls, no network.
+
+- **KPI table (6.4).** `agentic_trader/kpi.py` and `agentic-trader kpi records.jsonl [--json]`:
+  hit rate of the model vs the rules control, Brier score and calibration bins, the model-delta
+  book, cost per decision, and each book's Sharpe as one row. Tested on an invented fixture
+  (`tests/fixtures/kpi_records.jsonl`); the P2 records feed it later. Recipe 114 in COOKBOOK.md.
+- **Live-readiness statement (6.3).** `docs/evaluation/live_readiness.md`: per component what
+  exists, is simulated or is absent, each row sourced to a file and a test. Broker, custodian
+  reconciliation, tax lots, margin and surveillance are absent; no production claim.
+- **What the model adds (6.2, skeleton).** `docs/evaluation/what_the_model_adds.md` collects the
+  existing results with an evidence class per row: 4.4 red-team 21/150 on the local model, 3.2
+  filing tone not supported, 3.7 recall@5 0.92 / 0.98 on real filings, 3.8 usability 11/12 and
+  10/10; 4.2 real plans filled in (89.3% step survival); the P2 cells pending.
+- **README positioning (6.5).** The first paragraph now describes a governed-agents reference
+  with a measured LLM study, names the single-name rules desk as the incumbent control, and links
+  the forward paper record with its decision look (3,600 sessions, about 14 years).
+
+
 ## v0.15.1 — 2026-11-08 (v0.15 follow-up)
 
 Wiring for pieces v0.15 built but left out of the desk. Every new switch is off by default, so a

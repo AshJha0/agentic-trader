@@ -84,7 +84,6 @@ def test_edgar_visibility_follows_the_acceptance_time_in_eastern_time():
 
 
 def test_edgar_news_and_facts_use_the_visible_date(tmp_path, monkeypatch):
-    from agentic_trader.data import edgar as edgar_mod
     from agentic_trader.data.edgar import EdgarClient
     sub = {"filings": {"recent": {"form": ["10-Q", "8-K"], "filingDate": ["2024-05-02", "2024-05-06"],
                                   "reportDate": ["2024-03-31", ""], "items": ["", "2.02"],
@@ -178,9 +177,10 @@ def test_trials_registry_counts_the_v09_v010_and_v011_variants():
     versions = [t.version for t in TRIALS]
     assert versions.count("v0.9") == 10 and versions.count("v0.10") == 5 and versions.count("v0.11") == 3
     assert all(t.overrides is None and t.recorded_portfolio_sharpe is not None for t in TRIALS if t.version in ("v0.9", "v0.10", "v0.12"))
-    # 62 through v0.12, three v0.14, five v0.15 (3.2, 3.3, 3.8 x2, 3.9)
-    assert len({t.name for t in TRIALS}) == len(TRIALS) == 70
-    assert sum(t.version != "v0.15" for t in TRIALS) == 65
+    # 62 through v0.12, three v0.14, five v0.15 (3.2, 3.3, 3.8 x2, 3.9), two v0.16 (P2 first pass)
+    assert len({t.name for t in TRIALS}) == len(TRIALS) == 72
+    assert sum(t.version not in ("v0.15", "v0.16") for t in TRIALS) == 65
+    assert sum(t.version == "v0.16" for t in TRIALS) == 2
     for t in TRIALS:
         if t.version == "v0.11":
             make_config(t.overrides)

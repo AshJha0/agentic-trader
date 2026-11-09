@@ -1,0 +1,4 @@
+{"as_of": "2024-01-02", "symbol": "AAA", "model_signal": 1.0, "rule_signal": -1.0, "outcome_return": 0.02, "prob_up": 0.8, "cost_usd": 0.01, "agent_sources": {"llm": 2, "rules": 1}}
+{"as_of": "2024-01-02", "symbol": "BBB", "model_signal": 1.0, "rule_signal": 1.0, "outcome_return": -0.01, "prob_up": 0.6, "cost_usd": 0.01, "agent_sources": {"llm": 2, "rules": 1}}
+{"as_of": "2024-01-03", "symbol": "AAA", "model_signal": -0.5, "rule_signal": 0.5, "outcome_return": -0.03, "prob_up": 0.3, "cost_usd": 0.02}
+{"as_of": "2024-01-03", "symbol": "BBB", "model_signal": 0.0, "rule_signal": 1.0, "outcome_return": 0.01, "prob_up": 0.5, "cost_usd": 0.0}

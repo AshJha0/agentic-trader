@@ -23,7 +23,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol, TypeVar
+from typing import Any, Callable, Protocol, Sequence, TypeVar
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ class BatchLLM:
         self.max_resubmits = max_resubmits
         self.incomplete = False
         self.submissions = 0
+        self.misses = 0   # lookups answered None because no result is held yet (read by run_jobs)
         self.summary: dict[str, int] = {"succeeded": 0, "resubmitted": 0, "failed": 0, "from_store": 0}
         self._lock = threading.Lock()
         self._results: dict[str, str | None] = {}
@@ -107,6 +108,7 @@ class BatchLLM:
                                     if self.inner is not None else
                                     {"system": system, "prompt": prompt, "deep": deep, "schema": schema})
             self.incomplete = True
+            self.misses += 1
             return None
 
     def _record(self, cid: str, text: str | None) -> None:
@@ -161,6 +163,65 @@ class BatchLLM:
                 return result
             self.flush()
         raise RuntimeError(f"batch run did not converge in {max_passes} passes")
+
+
+class PassPending(Exception):
+    """Raised by a job's ``stop`` check to end that job's pass early (see ``run_jobs``)."""
+
+
+def run_jobs(llm: BatchLLM, jobs: Sequence[Callable[[Callable[[], bool]], T]],
+             max_passes: int = 64, *, stop_at_pending: bool = False) -> list[T]:
+    """Batch-friendly driver (plan item 1.5b): independent jobs advance together, one batch per pass.
+
+    Each job (one instrument, or one rebalance offset of one instrument) keeps its dates in
+    sequence; all jobs share each batch, so a run needs about the passes of its slowest job, not
+    the sum over jobs. A job that completes a pass with no miss is final and is not re-run.
+
+    A job is called with a ``stop`` callable. With ``stop_at_pending=False`` (default) it always
+    returns False: later dates run on rule stand-ins and their questions are queued
+    speculatively. The ones that do not depend on the held weight (the analysts) are the final
+    questions, so they are answered early and the pass count stays lowest; the ones that do are
+    paid for and never used. With ``stop_at_pending=True`` it returns True once the job has asked
+    a question with no stored answer, and a job that raises ``PassPending`` then ends its pass at
+    the first date still waiting: no wasted request, but each date's analysts wait for the date
+    before, so more passes. Returns results in job order; ``RuntimeError`` after ``max_passes``.
+    """
+    results: dict[int, T] = {}
+    for _ in range(max_passes):
+        for j, job in enumerate(jobs):
+            if j in results:
+                continue
+            before = llm.misses
+            try:
+                out = job((lambda: llm.misses > before) if stop_at_pending else (lambda: False))
+            except PassPending:
+                continue
+            if llm.misses == before:
+                results[j] = out
+        with llm._lock:
+            pending = bool(llm._queue)
+        if len(results) == len(jobs) and not pending:
+            return [results[j] for j in range(len(jobs))]
+        llm.flush()
+    raise RuntimeError(f"batched jobs did not converge in {max_passes} passes")
+
+
+def walk_forward_jobs(llm: BatchLLM, symbols: Sequence[str], start: Any, end: Any,
+                      config: dict | None = None, *, rebalance_every: int = 5,
+                      offsets: Sequence[int] = (0,), stop_at_pending: bool = False,
+                      max_passes: int = 64, **kwargs: Any) -> list[Any]:
+    """``run_agent_backtest`` for every (symbol, offset) pair through ``run_jobs``.
+
+    Returns ``ComparisonReport`` objects in (symbol, offset) order; each equals the report a
+    direct, unbatched call returns, because every decision is computed from stored answers only.
+    """
+    from .backtest import run_agent_backtest
+
+    def job(sym: str, off: int) -> Callable[[Callable[[], bool]], Any]:
+        return lambda stop: run_agent_backtest(sym, start, end, config, rebalance_every=rebalance_every,
+                                               llm=llm, rebalance_offset=off, stop_check=stop, **kwargs)
+    return run_jobs(llm, [job(s, o) for s in symbols for o in offsets], max_passes,
+                    stop_at_pending=stop_at_pending)
 
 
 class FakeBatchBackend:

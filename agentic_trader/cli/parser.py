@@ -10,7 +10,7 @@ import argparse
 
 from .decisions import cmd_analyze, cmd_replay, cmd_scan, cmd_task
 from .evaluate import cmd_calibrate, cmd_evaluate
-from .research import cmd_alpha, cmd_backtest, cmd_execute, cmd_portfolio, cmd_stats, cmd_xalpha
+from .research import cmd_alpha, cmd_backtest, cmd_execute, cmd_kpi, cmd_portfolio, cmd_stats, cmd_xalpha
 from .services import cmd_info, cmd_mcp, cmd_serve, cmd_tools
 
 
@@ -209,6 +209,13 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--var-window", type=int, default=250, help="trailing window for the VaR forecast")
     st.add_argument("--var-alpha", type=float, default=0.95, help="VaR confidence level")
     st.set_defaults(func=cmd_stats)
+
+    kp = sub.add_parser("kpi", help="KPI table of model vs rules control from decision records (JSONL)")
+    kp.add_argument("path", help="JSONL of decision records (see agentic_trader.kpi)")
+    kp.add_argument("--bins", type=int, default=10, help="calibration bins on [0, 1]")
+    kp.add_argument("--ppy", type=float, default=252.0, help="periods per year for Sharpe")
+    kp.add_argument("--json", action="store_true", help="print the full result as JSON")
+    kp.set_defaults(func=cmd_kpi)
 
     tl = sub.add_parser("tools", help="list the tool catalogue")
     common(tl, symbol_required=None)

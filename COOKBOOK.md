@@ -2553,3 +2553,141 @@ except ValueError as e:
 
 Two approvers sign the order, so the second signature releases it. A value that looks like a
 secret in place of a variable name is refused, as is an unset variable.
+
+## v0.16: the LLM study on a local model
+
+These recipes call a local Ollama server (`ollama serve`, model `qwen2.5:7b-instruct` pulled);
+nothing leaves 127.0.0.1 and the cost is $0. They are not run in CI. Each long run starts with
+`--smoke`, which runs 2-3 items and exits non-zero if any reply fails to parse or falls back
+(the lesson from the discarded first 4.4 run, PLAN.md section 9). Every model run appends one
+row per item and resumes after a kill.
+
+### 114. Study driver: dry run, smoke, first pass, report
+
+```bash
+python scripts/llm_study.py --describe                     # cells as trial descriptions
+python scripts/llm_study.py --first-pass --dry-run         # call counts and Claude $ estimate, no model
+python scripts/llm_study.py --smoke --model qwen2.5:7b-instruct
+python scripts/llm_study.py --first-pass --live --model qwen2.5:7b-instruct --data yahoo --out results/p2/first_pass.jsonl
+python scripts/llm_study.py --report --out results/p2/first_pass.jsonl
+```
+
+`--first-pass` is 15 names x 20 design dates x 1 seed on `rules`, `local_analysts` and
+`local_all`; `--cells local_analysts` runs one cell. `--live` refuses if Ollama does not answer
+or a model cell is not in `evaluation.TRIALS`. `--report` prints Sharpe minus the vol-target
+control with a block-bootstrap interval and p, the fallback share against the 10% cap, and the
+fallback-by-regime and by-date independence tests. Result: pending: filled when the run finishes.
+
+### 115. Anonymisation recall audit (2.4)
+
+```bash
+python scripts/v16_local_study.py recall --out results/v16_local/recall.json --smoke
+python scripts/v16_local_study.py recall --out results/v16_local/recall.json
+```
+
+200 anonymised prompts, each asking the model for the ticker (chance 1/15) and the month
+(chance 1/72). `--no-ablation` skips the drop-one-key pass; `--data synthetic` needs no network.
+Result: pending: filled when the run finishes.
+
+### 116. Calibration and drift (2.6)
+
+```bash
+python scripts/v16_local_study.py calibration --out results/v16_local/calibration_a.json --smoke
+python scripts/v16_local_study.py calibration --out results/v16_local/calibration_a.json --repeats 5 --temperature 0.7 --anchor-key rsi14 --anchor-values 20,40,60,80
+python scripts/v16_local_study.py drift --a results/v16_local/calibration_a.json --b results/v16_local/calibration_b.json --out results/v16_local/drift.json
+```
+
+`drift` compares two calibration outputs on the same 20 states (for example two builds of the
+model) and refuses if the states differ; it calls no model. Result: pending: filled when the run finishes.
+
+### 117. Analyst eval set (2.7)
+
+```bash
+python scripts/v16_eval.py run --model qwen2.5:7b-instruct --out results/v16_eval/run.jsonl --smoke
+python scripts/v16_eval.py run --model qwen2.5:7b-instruct --out results/v16_eval/run.jsonl
+python scripts/v16_eval.py check --replies results/v16_eval/run.jsonl --out results/v16_eval/check.json
+python scripts/v16_eval.py judge --replies results/v16_eval/run.jsonl --out results/v16_eval/judge.jsonl
+python scripts/v16_eval.py judge --calibration --out results/v16_eval/judge_calibration.jsonl
+python scripts/v16_eval.py agreement --judged results/v16_eval/judge_calibration.jsonl --out results/v16_eval/agreement.json
+```
+
+`check` and `agreement` call no model. `freeze` regenerates the frozen items; use it only on
+purpose, never to make a test pass. Result: pending: filled when the run finishes.
+
+## v0.16: batching a whole walk-forward
+
+### 118. Many names in one batched walk-forward
+
+`walk_forward_jobs` puts every name (and rebalance offset) in the same batch on each pass, so
+the run takes about as many passes as its slowest name rather than the sum over names. The fake
+backend answers offline; with `AnthropicBatchBackend` the same call goes to Message Batches.
+
+```python
+import tempfile
+from pathlib import Path
+
+from agentic_trader import make_config
+from agentic_trader.batch import BatchLLM, FakeBatchBackend, walk_forward_jobs
+
+cfg = make_config(memory_path=None)
+REPLIES = {   # one canned reply per role, matched on the system prompt
+    "Researcher": "Evidence-based argument.",
+    "Facilitator": '{"winner": "bull", "score": 0.6, "conviction": 0.7, "summary": "s"}',
+    "Trader.": '{"action": "BUY", "target_weight": 0.5, "confidence": 0.7, "stop_loss": null, '
+               '"take_profit": null, "horizon_days": 5, "rationale": "r"}',
+    "Risk Analyst": '{"recommended_weight": 0.4, "argument": "fine"}',
+    "Portfolio Manager": '{"target_weight": 0.3, "confidence": 0.6, "rationale": "pm"}',
+}
+ANALYST = '{"signal": 0.2, "confidence": 0.6, "summary": "view", "key_points": ["a"]}'
+
+
+def respond(params):
+    return next((r for k, r in REPLIES.items() if k in params["system"]), ANALYST)
+
+
+store = Path(tempfile.mkdtemp()) / "store.jsonl"
+llm = BatchLLM(None, FakeBatchBackend(respond), store)
+reports = walk_forward_jobs(llm, ["AAPL", "MSFT", "EURUSD"], "2024-01-01", "2024-02-05", cfg,
+                            rebalance_every=5, stop_at_pending=True)
+print(llm.submissions, "batches;", sum(len(r.decisions) for r in reports), "decisions")
+```
+
+`stop_at_pending=True` trades a few extra passes for no wasted requests: a name stops its pass
+at the first date still waiting instead of queueing prompts built on rule stand-ins. Leave it
+off when wall-clock time per batch matters more than request count.
+
+## v0.16: measuring what the model adds
+
+### 119. KPI table: model against the rules control
+
+Each decision record says what the model said, what the rules control said for the same name
+and date, the realised forward return, and optionally the model's probability of an up move and
+its spend. `kpi_table` turns a list of them into hit rate vs control, Brier score and
+calibration bins, the model-delta book (trade only the difference), cost per decision, and the
+Sharpe of each book as one row among the others. The fixture below is invented; it checks the
+arithmetic, not a model. The P2 study records go through the same function.
+
+```python
+from agentic_trader.kpi import KPIRecord, format_table, kpi_table
+
+# the same four records as tests/fixtures/kpi_records.jsonl (load_records reads that file)
+recs = [KPIRecord("2024-01-02", "AAA", 1.0, -1.0, 0.02, prob_up=0.8, cost_usd=0.01),
+        KPIRecord("2024-01-02", "BBB", 1.0, 1.0, -0.01, prob_up=0.6, cost_usd=0.01),
+        KPIRecord("2024-01-03", "AAA", -0.5, 0.5, -0.03, prob_up=0.3, cost_usd=0.02),
+        KPIRecord("2024-01-03", "BBB", 0.0, 1.0, 0.01, prob_up=0.5)]
+t = kpi_table(recs, bins=5)
+print(t["hit_rate_model"], t["hit_rate_control"])   # 0.667 vs 0.25 on 3 and 4 non-flat views
+print(round(t["delta_book_total"], 4))              # 0.06: +0.04 on day one, +0.02 on day two
+print(format_table(t))
+```
+
+From the shell:
+
+```bash
+agentic-trader kpi tests/fixtures/kpi_records.jsonl          # markdown table
+agentic-trader kpi tests/fixtures/kpi_records.jsonl --json   # every field, incl. calibration bins
+```
+
+A flat view (signal 0) is left out of the hit rate rather than counted as a miss; records
+without `prob_up` are left out of the Brier score, and the table prints `n` for each row so the
+reader can see how many records each number rests on.

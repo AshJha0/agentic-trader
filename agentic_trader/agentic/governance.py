@@ -280,6 +280,11 @@ class MemoryTool:
             for v, nm in ((weight, "weight"), (price, "price")):
                 if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v):
                     raise MemoryToolError(f"{nm} must be a finite number")
+            # A bool is an int and a str may parse: accept only a real integer, so a bad
+            # horizon is a refusal written to the audit trail, not a bare ValueError.
+            if (isinstance(horizon_days, bool) or not isinstance(horizon_days, (int, float))
+                    or not math.isfinite(horizon_days) or horizon_days != int(horizon_days)):
+                raise MemoryToolError(f"horizon_days must be a whole number, got {horizon_days!r}")
             if price <= 0 or not 1 <= int(horizon_days) <= 260:
                 raise MemoryToolError("price must be positive and horizon_days in 1..260")
             key = f"{sym}|{day.isoformat()}|{self.provider}"

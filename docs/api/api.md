@@ -1047,7 +1047,7 @@ New configuration: `combination` {`method` "rules" | "ic", `window` 504, `horizo
 `alpha` 0.2, `calibration_share` 0.4}; `local_llm_url`, `local_llm_model`,
 `local_llm_timeout_s`, `local_llm_seed`; `oms` (above).
 
-Scripts: `scripts/llm_study.py --describe | --dry-run | --live --model NAME --out FILE`;
+Scripts: `scripts/llm_study.py --describe | --dry-run | --smoke | --live | --report [--first-pass] [--cells A,B] [--model NAME] [--url URL] [--out FILE]` (v0.16 adds `--smoke`, `--report`, `--first-pass` and the `local_analysts` cell); `scripts/v16_local_study.py recall | calibration | drift` and `scripts/v16_eval.py run | check | judge | agreement | freeze` (v0.16, COOKBOOK 114-117);
 `scripts/paper_ops.py freshness [--runs FILE] [--today DATE]`, `scripts/paper_ops.py commit
 [--message TEXT]`; `scripts/paper_trade_v09.py --oms`.
 

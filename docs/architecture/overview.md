@@ -267,7 +267,9 @@ See `config.py` for the full dictionary.
 | `validate.py` | Bar validator, session clocks, short cap, ledger round trip | always on |
 | `oms.py` | Paper OMS: states, pre-trade checks, kill switch, fills, reconciliation, settlement | shadow only (`paper_trade_v09.py --oms`) |
 | `local_llm.py` | Ollama backend behind the `LLM` protocol | off (`llm_provider = "offline"`) |
-| `scripts/llm_study.py` | Seven-cell LLM study driver | unrun |
+| `scripts/llm_study.py` | Eight-cell LLM study driver (v0.16: `local_analysts`, smoke, first pass, report) | first pass running, results pending |
+| `scripts/v16_local_study.py` | Anonymisation recall audit (2.4), calibration and drift (2.6) | results pending |
+| `scripts/v16_eval.py`, `agentic/eval_set.py` | 150-item analyst eval set, checks, local judge, agreement (2.7) | checks in CI on fixtures; model run pending |
 | `scripts/paper_ops.py` | Price-vintage hash, freshness check, publish commit | used by `paper.yml` |
 
 Workflows: `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy advisory);
@@ -296,3 +298,15 @@ The research retriever is reachable by the analysts only after `evaluate_retriev
 recall@5 0.8 on the labelled questions (diagram 39). Replay swaps the market-data provider and
 the LLM for ones that serve recorded payloads, so a recorded task re-runs with no network and no
 model. Status, plainly: the 3.2 and 3.3 trials are registered and not run; the 3.8 text analysts are wired into the desk and off by default (v0.15.1); the retrieval numbers come from an invented corpus; signed approvals are opt-in, configured by an `agentic.approval` block; no real TaskRuns have been recorded for 4.1.
+
+## v0.16: measuring the model, and what is not built
+
+`kpi.py` (CLI `agentic-trader kpi`) reads decision records, one JSON object per name and date
+with the model's view, the rules control's view (`AgentState.rule_signal`), the realised
+forward return and optionally `prob_up`, `cost_usd` and `agent_sources`, and computes hit rate
+vs control, Brier score with calibration bins, the model-delta book, cost per decision and each
+book's Sharpe. It does no I/O beyond reading the file and calls no model; it is tested on a
+fixture today and takes the P2 records later. The results it will feed are collected in
+[what the model adds](../evaluation/what_the_model_adds.md); what the system does not have
+(broker, custodian reconciliation, tax lots, margin, surveillance, real entitlements) is listed
+in the [live-readiness statement](../evaluation/live_readiness.md).
