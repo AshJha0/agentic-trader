@@ -2656,3 +2656,38 @@ print(llm.submissions, "batches;", sum(len(r.decisions) for r in reports), "deci
 at the first date still waiting instead of queueing prompts built on rule stand-ins. Leave it
 off when wall-clock time per batch matters more than request count.
 
+## v0.16: measuring what the model adds
+
+### 119. KPI table: model against the rules control
+
+Each decision record says what the model said, what the rules control said for the same name
+and date, the realised forward return, and optionally the model's probability of an up move and
+its spend. `kpi_table` turns a list of them into hit rate vs control, Brier score and
+calibration bins, the model-delta book (trade only the difference), cost per decision, and the
+Sharpe of each book as one row among the others. The fixture below is invented; it checks the
+arithmetic, not a model. The P2 study records go through the same function.
+
+```python
+from agentic_trader.kpi import KPIRecord, format_table, kpi_table
+
+# the same four records as tests/fixtures/kpi_records.jsonl (load_records reads that file)
+recs = [KPIRecord("2024-01-02", "AAA", 1.0, -1.0, 0.02, prob_up=0.8, cost_usd=0.01),
+        KPIRecord("2024-01-02", "BBB", 1.0, 1.0, -0.01, prob_up=0.6, cost_usd=0.01),
+        KPIRecord("2024-01-03", "AAA", -0.5, 0.5, -0.03, prob_up=0.3, cost_usd=0.02),
+        KPIRecord("2024-01-03", "BBB", 0.0, 1.0, 0.01, prob_up=0.5)]
+t = kpi_table(recs, bins=5)
+print(t["hit_rate_model"], t["hit_rate_control"])   # 0.667 vs 0.25 on 3 and 4 non-flat views
+print(round(t["delta_book_total"], 4))              # 0.06: +0.04 on day one, +0.02 on day two
+print(format_table(t))
+```
+
+From the shell:
+
+```bash
+agentic-trader kpi tests/fixtures/kpi_records.jsonl          # markdown table
+agentic-trader kpi tests/fixtures/kpi_records.jsonl --json   # every field, incl. calibration bins
+```
+
+A flat view (signal 0) is left out of the hit rate rather than counted as a miss; records
+without `prob_up` are left out of the Brier score, and the table prints `n` for each row so the
+reader can see how many records each number rests on.

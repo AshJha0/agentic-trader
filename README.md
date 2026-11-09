@@ -9,12 +9,21 @@
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
 | [LEARN.md](LEARN.md) | 55 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 118 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117) and the batched walk-forward (118); every offline one runs in CI |
+| [COOKBOOK.md](COOKBOOK.md) | 119 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117) and the batched walk-forward (118) and the KPI table (119); every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 39 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
 
-AgenticTrader is an **agentic trading desk** for **equities and FX**. A team of specialised
+AgenticTrader is a **reference implementation of governed trading agents** with a **measured
+study of what a language model adds**. The incumbent is a rules-based single-name desk; every
+model variant is scored against it on the same states, and so far nothing a model produced has
+been adopted ([what the model adds](docs/evaluation/what_the_model_adds.md)). The only unseen
+data is the forward paper record ([results/paper/](results/paper/README.md), daily since
+2026-09-29), whose single pre-registered decision look is at 3,600 sessions, about 14 years
+([pre-registration](docs/evaluation/v09_preregistration.md)). Nothing here is production
+trading ([live-readiness statement](docs/evaluation/live_readiness.md)).
+
+In more detail: it is an **agentic trading desk** for **equities and FX**. A team of specialised
 agents (analysts, bull and bear researchers, a trader, a risk team, a portfolio manager)
 produces sized, explained decisions. An **agentic layer** runs them the way an enterprise
 system would: every data access is a catalogued, policy-gated tool call that leaves an
