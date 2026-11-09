@@ -110,7 +110,7 @@ class LocalLLM:
     """``LLM`` over Ollama's ``/api/chat``. One model serves both tiers (``deep`` is accepted
     for protocol compatibility and recorded nowhere else); ``config`` keys: ``local_llm_url``,
     ``local_llm_model``, ``local_llm_timeout_s``, ``local_llm_seed``, ``local_llm_num_ctx``
-    (default 8192, sent as ``num_ctx``), ``local_llm_temperature`` (default 0),
+    (default 8192, sent as ``num_ctx``), ``local_llm_temperature`` (default 0: greedy, so the seed has no effect),
     ``local_llm_digest`` (optional pinned model digest, review N5), ``max_tokens`` (sent as
     ``num_predict``) and ``llm_strict_model``. Run locally since v0.15 (see the
     module docstring)."""
@@ -127,11 +127,13 @@ class LocalLLM:
         if not self.timeout_s > 0:
             raise ValueError("local_llm_timeout_s must be > 0")
         self.seed = config.get("local_llm_seed")
+        self.temperature = float(config.get("local_llm_temperature") or 0.0)
+        if self.temperature < 0:
+            raise ValueError("local_llm_temperature must be >= 0")
         self.max_tokens = int(config.get("max_tokens", 16000))
         self.num_ctx = int(config.get("local_llm_num_ctx") or DEFAULT_NUM_CTX)
         if self.num_ctx <= 0:
             raise ValueError("local_llm_num_ctx must be > 0")
-        self.temperature = float(config.get("local_llm_temperature") or 0.0)
         self.digest = config.get("local_llm_digest") or None
         self.usage = LocalUsageTracker()
         self._tls = threading.local()

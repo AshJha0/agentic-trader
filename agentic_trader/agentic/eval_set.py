@@ -32,6 +32,14 @@ The items are generated once by ``build_items`` and frozen as JSON under
 synthetic provider (all five analyst roles) and 30 from real cached data, the paper ledger in
 ``results/paper/ledger.csv`` (daily returns of nine live paper strategies, Yahoo-priced), turned
 into a NAV series and read by the technical analyst. Nothing here calls a model.
+
+*Anonymised like the study* (v0.17 R0.2, review B1). The P2 study runs with ``llm_anonymize``
+on, so every item is rendered through the same ``Anonymizer`` the desk uses: the ticker becomes
+``STOCK_X`` / ``PAIR_X`` (currency codes ``CCY_BASE``/``CCY_QUOTE``), ISO dates become offsets
+(``D0``, ``D-12``), price-level facts are rebased so the last close is 100, and only scale-free
+fact keys reach the prompt. ``facts`` and ``last_close`` hold exactly what the model sees, so the
+checkers match numbers on the same scale. ``instrument`` and ``as_of`` stay in each item as
+provenance only; they are never sent to a model.
 """
 from __future__ import annotations
 
@@ -258,12 +266,25 @@ def _round(x: Any) -> Any:
     return x
 
 
+def _scrub_strings(x: Any, scrub) -> Any:
+    """Apply ``scrub`` to every string inside ``x`` (the prompt gets the same treatment)."""
+    if isinstance(x, str):
+        return scrub(x)
+    if isinstance(x, dict):
+        return {k: _scrub_strings(v, scrub) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_scrub_strings(v, scrub) for v in x]
+    return x
+
+
 def _render(name: str, instrument, as_of: date, history, provider, cfg: dict,
-            inject: tuple[str, str, float] | None) -> dict[str, Any]:
+            inject: tuple[str, str, float] | None, anonymize: bool = True) -> dict[str, Any]:
     from ..agents.analysts import ANALYSTS
+    from ..anonymize import Anonymizer
     from ..state import TradingState
     agent = ANALYSTS[name](None, cfg)
     state = TradingState(instrument=instrument, as_of=as_of, history=history)
+    anon = Anonymizer(instrument, as_of, state.last_price) if anonymize else None
     facts = agent.gather(state, provider)
     facts = {k: v for k, v in facts.items() if not k.startswith("_")}
     fence = None
@@ -275,15 +296,29 @@ def _render(name: str, instrument, as_of: date, history, provider, cfg: dict,
         facts[key] = lines
         fence = {"canary": canary, "demanded_signal": sig, "key": key}
     facts = _round(facts)
+    last_close = float(history["Close"].iloc[-1])
+    if anon is None:
+        prompt, shown = agent.prompt(facts, state), facts
+    else:
+        # Exactly the desk path: the state carries the anonymiser (rebased, allow-listed facts
+        # in the prompt) and Agent._complete scrubs names and dates from the finished prompt.
+        state.anon = anon
+        prompt = anon.scrub(agent.prompt(facts, state))
+        shown = {**anon.facts({k: v for k, v in facts.items() if k not in agent.untrusted_keys}),
+                 **{k: [anon.scrub(str(x)) for x in facts[k]] for k in agent.untrusted_keys if k in facts}}
+        shown = _round(_scrub_strings(shown, anon.scrub))
+        last_close = float(anon.px(last_close) or 0.0)
     return {"role": name, "instrument": instrument.display, "as_of": as_of.isoformat(),
-            "last_close": _round(float(history["Close"].iloc[-1])),
-            "system": agent.system_prompt, "prompt": agent.prompt(facts, state), "facts": facts,
+            "anonymized": anon is not None, "last_close": _round(float(last_close)),
+            "system": agent.system_prompt, "prompt": prompt, "facts": shown,
             "untrusted_keys": list(agent.untrusted_keys),
             "rubric": {"must_cite": True, "no_invented_numbers": True, "fence": fence}}
 
 
-def build_items(ledger_path: Path | None = None) -> list[dict[str, Any]]:
-    """The 150 items, deterministically. 120 synthetic (24 per role), 30 from the ledger."""
+def build_items(ledger_path: Path | None = None, anonymize: bool = True) -> list[dict[str, Any]]:
+    """The 150 items, deterministically. 120 synthetic (24 per role), 30 from the ledger.
+    ``anonymize`` (default, as in the study) renders every prompt through the ``Anonymizer``;
+    ``False`` gives the named prompts, useful only as an explicit leak-probe arm."""
     import numpy as np
     from .. import make_config
     from ..data import SyntheticProvider
@@ -310,7 +345,7 @@ def build_items(ledger_path: Path | None = None) -> list[dict[str, Any]]:
                 canary = f"ZX-{int(rng.integers(1000, 9999))}"
                 sig = float(rng.choice([0.987, -0.987, 0.913, -0.913]))
                 inject = (INJECTIONS[(i // 2) % len(INJECTIONS)].format(sig=sig, canary=canary), canary, sig)
-            it = _render(role, ins, as_of, hist, prov, cfg, inject)
+            it = _render(role, ins, as_of, hist, prov, cfg, inject, anonymize)
             it.update(id=f"syn-{role}-{i:02d}", source="synthetic")
             items.append(it)
     path = ledger_path or Path(__file__).resolve().parents[2] / "results" / "paper" / "ledger.csv"
@@ -325,7 +360,7 @@ def build_items(ledger_path: Path | None = None) -> list[dict[str, Any]]:
         as_of = nav.index[cut].date()
         ins = Instrument.parse("PAPERNAV", "equity")
         it = _render("technical", ins, as_of, LedgerProvider(nav.iloc[: cut + 1]).history(ins, nav.index[0], as_of),
-                     None, cfg, None)
+                     None, cfg, None, anonymize)
         it.update(id=f"real-ledger-{n:02d}", source=f"real_cached:results/paper/ledger.csv:{col}")
         items.append(it)
         n += 1
@@ -336,7 +371,9 @@ def freeze(items: list[dict[str, Any]], path: Path = ITEMS_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"_note": "Frozen analyst eval set (PLAN.md 2.7); regenerate only with "
                                 "scripts/v16_eval.py freeze. Synthetic items are invented data; real_cached "
-                                "items read the paper ledger.", "items": items}, indent=1), encoding="utf-8")
+                                "items read the paper ledger. Prompts are anonymised as in the P2 study "
+                                "(names, dates, price levels); instrument and as_of are provenance only, "
+                                "never sent to a model.", "items": items}, indent=1), encoding="utf-8")
 
 
 def load_items(path: Path = ITEMS_PATH) -> list[dict[str, Any]]:

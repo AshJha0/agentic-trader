@@ -14,6 +14,7 @@ import logging
 import math
 from typing import Any
 
+from ..contracts import violation
 from ..llm import LLM, extract_json
 from ..state import _TAG, untrusted_block  # noqa: F401  (defined with the state so prompts can fence it)
 
@@ -120,13 +121,15 @@ class Agent:
         when present -- a required one may not be ``null``; an optional one may be ``null``
         (its default applies) but not a string, ``NaN`` or a boolean. A reply that fails is
         rejected as a whole: a coerced ``0`` would otherwise be booked as the model's view.
+        A value outside the ``schema``'s ``minimum``/``maximum`` or ``enum`` is rejected the
+        same way (v0.17 R0.4): ``signal: 999`` is a contract failure, not a clipped +1.0.
         """
         if self.llm is None:
             return None
         text = self._complete(
             prompt + "\n\nRespond with a single JSON object only (no prose outside it).", state, schema)
         data = extract_json(text)
-        problem = self._contract_problem(data, required, numeric)
+        problem = self._contract_problem(data, required, numeric, schema)
         if problem is not None:
             if text is not None:
                 log.warning("%s: LLM reply rejected (%s); using rule-based output", self.name, problem)
@@ -135,7 +138,7 @@ class Agent:
 
     @staticmethod
     def _contract_problem(data: dict[str, Any] | None, required: tuple[str, ...],
-                          numeric: tuple[str, ...]) -> str | None:
+                          numeric: tuple[str, ...], schema: dict[str, Any] | None = None) -> str | None:
         if data is None:
             return "no JSON object"
         missing = [k for k in required if k not in data]
@@ -145,4 +148,4 @@ class Agent:
                and not (data[k] is None and k not in required)]
         if bad:
             return "non-numeric " + ", ".join(f"{k}={data[k]!r}" for k in bad)
-        return None
+        return violation(data, schema)

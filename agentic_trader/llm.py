@@ -34,6 +34,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .contracts import api_schema
+
 log = logging.getLogger(__name__)
 
 # NEVER RUN AGAINST THE LIVE API (see the module box). Server-side refusal fallback, ``fallbacks: "default"`` form (beta header below): the API
@@ -477,7 +479,7 @@ class AnthropicLLM:
         kwargs.update(system=self._system_blocks(system), messages=[{"role": "user", "content": prompt}])
         if schema is not None:
             kwargs["output_config"] = {**kwargs.get("output_config", {}),
-                                       "format": {"type": "json_schema", "schema": schema}}
+                                       "format": {"type": "json_schema", "schema": api_schema(schema)}}
         return kwargs
 
     def read_response(self, resp: Any, configured: str) -> str | None:
