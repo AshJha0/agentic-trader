@@ -118,15 +118,22 @@ class FundamentalsTextAnalyst:
     system = FUNDAMENTALS_SYSTEM
     schema = FUNDAMENTALS_SCHEMA
 
-    def __init__(self, llm: Any, max_chars_per_section: int = 6000):
+    def __init__(self, llm: Any, max_chars_per_section: int = 6000, anon: Any = None):
         self.llm = llm
         self.max_chars = max_chars_per_section
+        self.anon = anon     # anonymize.Anonymizer (None = prompts carry real names and dates)
+
+    def _t(self, text: str) -> str:
+        return self.anon.scrub_text(text) if self.anon is not None else text
 
     def prompt(self, symbol: str, sections: Iterable[Any]) -> str:
-        blocks = [untrusted_block(f"EDGAR {s.form} accession={s.accession} section={s.section} "
-                                  f"accepted={s.visible_date.isoformat()}", [s.text[: self.max_chars]])
+        """The user prompt. With ``anon`` set the company line, accession numbers (which carry
+        the CIK), acceptance times and the filing text itself go through ``scrub_text``."""
+        blocks = [untrusted_block(self._t(f"EDGAR {s.form} accession={s.accession} section={s.section} "
+                                          f"accepted={s.visible_date.isoformat()}"),
+                                  [self._t(s.text[: self.max_chars])])
                   for s in sections]
-        return f"Company: {symbol}\nFiling sections:\n" + "\n".join(blocks)
+        return self._t(f"Company: {symbol}") + "\nFiling sections:\n" + "\n".join(blocks)
 
     def analyze(self, symbol: str, sections: list[Any]) -> TextAnalysis:
         if not sections:
@@ -135,7 +142,12 @@ class FundamentalsTextAnalyst:
                                               schema=self.schema))
         if reply is None or not isinstance(reply.get("claims"), list):
             return TextAnalysis(self.name, False, problem="no usable reply")
-        by_key = {(s.accession, s.section): _norm(s.text[: self.max_chars]) for s in sections}
+        # The model saw the scrubbed text and the aliased accession, so quotes are checked
+        # against what it saw and the cited accession is mapped back to the real one.
+        by_key = {(s.accession, s.section): _norm(self._t(s.text[: self.max_chars])) for s in sections}
+        if self.anon is not None:
+            reply["claims"] = [{**c, "accession": self.anon.accession_real(str(c.get("accession")))}
+                               if isinstance(c, dict) else c for c in reply["claims"]]
         kept, dropped = [], []
         for c in reply["claims"]:
             if not isinstance(c, dict):
@@ -158,18 +170,23 @@ class MacroTextAnalyst:
     system = MACRO_SYSTEM
     schema = MACRO_SCHEMA
 
-    def __init__(self, llm: Any):
+    def __init__(self, llm: Any, anon: Any = None):
         self.llm = llm
+        self.anon = anon     # anonymize.Anonymizer: statement dates become offsets
+
+    def _t(self, text: str | None) -> str | None:
+        return self.anon.scrub_text(text) if self.anon is not None and text else text
 
     def prompt(self, current: str, previous: str | None = None) -> str:
-        parts = [untrusted_block("central-bank text (current)", [current])]
+        parts = [untrusted_block("central-bank text (current)", [self._t(current) or ""])]
         if previous:
-            parts.insert(0, untrusted_block("central-bank text (previous)", [previous]))
+            parts.insert(0, untrusted_block("central-bank text (previous)", [self._t(previous) or ""]))
         return "\n".join(parts)
 
     def analyze(self, current: str, previous: str | None = None) -> TextAnalysis:
         reply = _parse(self.llm.complete_json(self.system, self.prompt(current, previous), deep=False,
                                               schema=self.schema))
+        current, previous = self._t(current) or "", self._t(previous)   # quotes are checked against what it saw
         if reply is None or reply.get("stance") not in ("hawkish", "dovish", "neutral"):
             return TextAnalysis(self.name, False, problem="no usable reply")
         try:
@@ -261,10 +278,32 @@ def _visible(items: Iterable[Any], cut: datetime) -> list[Any]:
     return [x for x in items if getattr(x, "visible_date", None) is not None and x.visible_date <= cut]
 
 
-def text_reports(names: Iterable[str], llm: Any, inputs: TextInputs, instrument: Any, as_of: Any) -> list[Any]:
-    """One ``AnalystReport`` per requested text analyst, point in time and fenced."""
+def _edgar_identity(edgar: Any, symbol: str) -> list[str]:
+    """Company names (``entityName``, ``formerNames``) from the cached EDGAR submissions JSON."""
+    fn = getattr(edgar, "company_names", None)
+    if fn is None:
+        return []
+    try:
+        return list(fn(symbol))
+    except Exception as e:   # a failed lookup leaves the built-in name map in force
+        log.warning("EDGAR company names for %s unavailable: %s", symbol, e)
+        return []
+
+
+def text_reports(names: Iterable[str], llm: Any, inputs: TextInputs, instrument: Any, as_of: Any,
+                 anon: Any = None) -> list[Any]:
+    """One ``AnalystReport`` per requested text analyst, point in time and fenced.
+
+    With ``anon`` (``state.anon``, set when ``llm_anonymize`` is on) every text prompt goes
+    through ``Anonymizer.scrub_text``, and the report's points and summary keep the aliases
+    the model saw (``ACC_1``, ``COMPANY_X``), so they stay anonymised when later agents quote
+    them. The real accession numbers stay in ``facts["sections"]`` for the audit trail; facts
+    outside the anonymiser's allow-list never reach a prompt.
+    """
     from .state import AnalystReport
     cut = text_cutoff(as_of)
+    if anon is not None and inputs.edgar is not None and not instrument.is_fx:
+        anon.add_names(_edgar_identity(inputs.edgar, instrument.symbol))
     out = []
     for name in names:
         if name not in TEXT_ANALYST_NAMES:
@@ -286,7 +325,7 @@ def text_reports(names: Iterable[str], llm: Any, inputs: TextInputs, instrument:
                     secs = secs + _visible(extra, cut)
                 facts["sections"] = [f"{s.accession}/{s.section}" for s in secs]
                 facts["visible_dates"] = [s.visible_date.isoformat() for s in secs]
-                res = FundamentalsTextAnalyst(llm).analyze(instrument.symbol, secs)
+                res = FundamentalsTextAnalyst(llm, anon=anon).analyze(instrument.symbol, secs)
         else:
             pairs = ([(CCY_BANK.get(instrument.base), 1.0), (CCY_BANK.get(instrument.quote), -1.0)]
                      if instrument.is_fx else [("FOMC", -0.5)])   # tighter policy is an equity headwind
@@ -302,7 +341,8 @@ def text_reports(names: Iterable[str], llm: Any, inputs: TextInputs, instrument:
             else:
                 facts.update(statements=[st.accession for st in sts[-2:]],
                              visible_dates=[st.released.isoformat() for st in sts[-2:]])
-                res = MacroTextAnalyst(llm).analyze(sts[-1].text, sts[-2].text if len(sts) > 1 else None)
+                res = MacroTextAnalyst(llm, anon=anon).analyze(sts[-1].text,
+                                                               sts[-2].text if len(sts) > 1 else None)
         facts["dropped"] = len(res.dropped)
         if not res.ok:
             out.append(AnalystReport(name, 0.0, 0.0, f"{name}: {res.problem}", facts=facts, source="llm",
@@ -313,6 +353,8 @@ def text_reports(names: Iterable[str], llm: Any, inputs: TextInputs, instrument:
             signal = max(-1.0, min(1.0, res.result["net_direction"] / max(3, len(claims))))
             conf = min(0.5, 0.1 * len(claims))
             points = [f"{c['direction']}: {c['claim']} [{c['accession']} {c['section']}]" for c in claims]
+            if anon is not None:
+                points = [anon.scrub_text(p) for p in points]
             summary = f"{len(claims)} cited filing claims, net {res.result['net_direction']:+d}"
         else:
             signal = max(-1.0, min(1.0, facts["sign"] * res.result["shift"]))

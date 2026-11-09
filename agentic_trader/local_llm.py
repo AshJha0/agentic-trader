@@ -26,11 +26,13 @@ backend adds no dependency.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import socket
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from types import SimpleNamespace
 from typing import Any
@@ -59,6 +61,22 @@ class LocalUsageTracker(UsageTracker):
         return out
 
 
+def llm_host(url: str) -> str:
+    """The host part of a model URL (``http://127.0.0.1:11434`` -> ``127.0.0.1``)."""
+    return (urllib.parse.urlsplit(url if "//" in url else "//" + url).hostname or "").lower()
+
+
+def is_loopback_host(host: str) -> bool:
+    """True for ``localhost`` and loopback IP literals (127.0.0.0/8, ::1). A name other than
+    ``localhost`` is not resolved: it counts as remote, since DNS can point it anywhere."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def served_matches(configured: str, served: str | None) -> bool:
     """Ollama reports an untagged model as ``name:latest``; any other difference is drift."""
     if not served:
@@ -85,6 +103,14 @@ class LocalLLM:
         self.config = config
         self.model = str(model)
         self.url = str(config.get("local_llm_url") or DEFAULT_URL).rstrip("/")
+        self.host = llm_host(self.url)
+        self.allow_remote = bool(config.get("allow_remote_llm"))
+        if not is_loopback_host(self.host) and not self.allow_remote:
+            raise ValueError(f"local_llm_url {self.url!r} is not a loopback address: prompts would leave "
+                             "this machine. Set allow_remote_llm: True to allow it deliberately")
+        if not is_loopback_host(self.host):
+            log.warning("local model at non-loopback host %s (allow_remote_llm is set): prompts leave "
+                        "this machine", self.host)
         self.timeout_s = float(config.get("local_llm_timeout_s", 120))
         if not self.timeout_s > 0:
             raise ValueError("local_llm_timeout_s must be > 0")
@@ -174,6 +200,7 @@ class LocalLLM:
         self._tls.last = {"model_configured": self.model, "model_served": served,
                           "stop_reason": data.get("done_reason"), "refusal_category": None,
                           "fallbacks": [], "model_drift": drift}
+        self._tls.last.update(llm_host=self.host, remote_llm_allowed=self.allow_remote)
         if drift:
             self.usage.count("model_drift")
             log.warning("configured local model %r but the server answered as %r", self.model, served)

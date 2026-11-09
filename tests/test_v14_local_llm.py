@@ -94,7 +94,8 @@ def test_evidence_and_usage(server: str) -> None:
     FakeOllama.replies = [_reply("  hello  ", model=MODEL, done_reason="length")]
     assert llm.complete("s", "p", deep=True) == "hello"
     assert llm.last_call == {"model_configured": MODEL, "model_served": MODEL, "stop_reason": "length",
-                             "refusal_category": None, "fallbacks": [], "model_drift": False}
+                             "refusal_category": None, "fallbacks": [], "model_drift": False,
+                             "llm_host": "127.0.0.1", "remote_llm_allowed": False}
     s = llm_usage(llm)
     assert s["calls"] == 1 and s["errors"] == 0 and s["cost_usd"] == 0.0 and s["unpriced_models"] == []
     assert s["by_model"][MODEL]["input_tokens"] == 120 and s["by_model"][MODEL]["output_tokens"] == 30

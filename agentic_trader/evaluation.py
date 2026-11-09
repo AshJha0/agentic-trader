@@ -198,7 +198,9 @@ TRIALS: tuple[Trial, ...] = (
     Trial("v0.14 IC combination + HMM regime conditioning", "v0.14",
           {"combination": V14_IC, "regime": {"enabled": True, "condition": True}}),
     Trial("v0.14 IC combination + conformal interval sizing", "v0.14",
-          {"combination": V14_IC, "conformal": {"enabled": True}}),
+          # design pinned to "v14" (every-bar raw residuals) so the registered trial still
+          # means what ran; the v0.17 default design is a separate, unregistered fix (N7).
+          {"combination": V14_IC, "conformal": {"enabled": True, "design": "v14"}}),
     # v0.15 (PLAN.md 3.2, 3.3, 3.8): text features, registered before any design-period run so
     # they count in the deflated Sharpe whether or not they are ever adopted. Signal-level trials
     # (IC/decay via alpha.text_alpha_decay), not reproducible from the desk config.
