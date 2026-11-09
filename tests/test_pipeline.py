@@ -102,10 +102,11 @@ class StubLLM:
             return ('```json\n{"action": "BUY", "target_weight": 0.9, "confidence": 0.7, '
                     '"stop_loss": 1, "take_profit": null, "horizon_days": 5, "rationale": "r"}\n```')
         if "Risk Analyst" in system:
-            return '{"recommended_weight": 5.0, "argument": "size up"}'  # out of range -> clipped
+            # in range (v0.17 R0.4 rejects out-of-range replies instead of clipping them)
+            return f'{{"recommended_weight": {CFG["risk"]["max_position"]}, "argument": "size up"}}'
         if "Portfolio Manager" in system:
             return f'{{"target_weight": {self.pm_weight}, "confidence": 0.6, "rationale": "pm"}}'
-        return '{"signal": 2.5, "confidence": 0.8, "summary": "LLM view", "key_points": ["a"]}'
+        return '{"signal": 1.0, "confidence": 0.8, "summary": "LLM view", "key_points": ["a"]}'
 
 
 def test_llm_branches_and_guardrails():
