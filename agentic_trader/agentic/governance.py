@@ -242,6 +242,10 @@ class MemoryTool:
     universe: tuple[str, ...] | None = None
     max_writes: int = 5
     max_summary_chars: int = 400
+    # Output-side guard (review C3): a summary with a URL, an out-of-universe ticker, a canary
+    # echo or instruction-like text is refused before it is stored; the reason goes to audit.
+    output_guard: bool = True
+    canaries: tuple[str, ...] = ()
     audit: list[dict[str, Any]] = field(default_factory=list)
     _writes: int = 0
 
@@ -287,6 +291,12 @@ class MemoryTool:
                 raise MemoryToolError(f"horizon_days must be a whole number, got {horizon_days!r}")
             if price <= 0 or not 1 <= int(horizon_days) <= 260:
                 raise MemoryToolError("price must be positive and horizon_days in 1..260")
+            if self.output_guard:
+                from .output_guard import check_output
+                allowed = (sym,) + tuple(self.universe or ())
+                g = check_output(str(summary)[:self.max_summary_chars], allowed, self.canaries)
+                if not g.ok:
+                    raise MemoryToolError(f"output guard refused summary: {g.reason}")
             key = f"{sym}|{day.isoformat()}|{self.provider}"
             self.memory._catch_up()
             if key in self.memory._by_key:

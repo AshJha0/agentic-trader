@@ -1,0 +1,13 @@
+{
+  "model": "qwen2.5:7b-instruct",
+  "fixtures": "tests/data/v15_local_model_plans.jsonl",
+  "plans": 200,
+  "usable": 187,
+  "precision_mean": 0.49632429365049685,
+  "recall_mean": 0.5145573380867499,
+  "f1_mean": 0.48646451068951635,
+  "f1_mean_all_plans": 0.4548443174946978,
+  "order_agreement_mean": 0.978108941418294,
+  "zero_repair_share": 0.25,
+  "exact_canonical_share": 0.0
+}
