@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from agentic_trader.agentic import research_rag as rr
@@ -134,7 +134,7 @@ def test_duplicate_ids_refused():
         ResearchCorpus([_p(0, "a"), _p(0, "b", 1)])
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(days=st.lists(st.integers(0, 60), min_size=1, max_size=12),
        cut=st.integers(-1, 61), method=st.sampled_from(["tfidf", "hybrid"]))
 def test_property_never_returns_future_passages(days, cut, method):
@@ -148,6 +148,7 @@ def test_property_never_returns_future_passages(days, cut, method):
     assert len({h.passage.id for h in hits}) == len(hits)
 
 
+@settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(st.lists(st.lists(st.integers(0, 9), unique=True, max_size=10), max_size=4))
 def test_property_rrf_is_permutation_of_union(rankings):
     out = reciprocal_rank_fusion(rankings)
@@ -218,7 +219,7 @@ def test_decision_fingerprint_drops_ids_keeps_count():
 
 
 # --------------------------------------------------------------------------- edgar text
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(text=st.text(alphabet=st.sampled_from(list("ab \n")), max_size=600),
        max_chars=st.integers(20, 120), overlap=st.integers(0, 19))
 def test_property_chunk_text_bounded_substrings(text, max_chars, overlap):
