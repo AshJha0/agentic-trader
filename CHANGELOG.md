@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 ## Unreleased (0.17.0): the second review's fixes (review 2026-11-09, R0-R4 and N1-N11)
 
