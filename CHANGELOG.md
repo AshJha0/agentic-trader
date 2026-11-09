@@ -50,6 +50,28 @@ rules downstream) and then `local_all` (model in every role) against the rules d
   argument defaults to `None`, so the unbatched path is unchanged. Offline tests only
   (`tests/test_v16_batch_loop.py`); no spend.
 
+### Quality
+
+Coverage and correctness pass on `agentic_trader/` (no behaviour change apart from the four fixes
+below; offline, $0). Fast PR-gate suite (`-m "not slow"`), line coverage of `agentic_trader`:
+**94.3% -> 95.1%** (744 -> 645 missed lines of ~13,150). New file `tests/test_v16_quality.py`:
+31 test functions, 47 cases (one hypothesis property). Largest gains: `data/yahoo.py` 71% -> 99%,
+`data/fred.py` 90% -> 97%, `agentic/governance.py` 91% -> 99%, `provenance.py` 82% -> 100%,
+`validate.py` 95% -> 100%, `oms.py` 98% -> 99%.
+
+- **Fix: Almgren-Chriss schedule NaN for huge kappa** (both backends, `quant/pycore.py` and
+  `cpp/src/indicators.cpp`). For `kappa > DBL_MAX / 2`, `-2 * kappa` overflowed to `-inf` and
+  `-inf * 0` at the last slice gave NaN. Now `-2 * (kappa * (1 - t))`; doubling is exact, so every
+  finite result is bit-identical to before. Found by `test_fuzz`.
+- **Fix: `oms.reconcile` crashed on a zero ledger price** (ZeroDivisionError lost the whole
+  report). A non-positive or non-finite ledger price is now a price break.
+- **Fix: `OMS.submit` numeric checks.** `True` passed as a 1-unit quantity and numpy integer
+  scalars (`np.int64`) were refused; now any real number except a bool is accepted.
+- **Fix: `MemoryTool.remember` horizon.** A non-integer `horizon_days` (`"10"`, `2.5`) raised a
+  bare ValueError or was truncated, skipping the audit trail; it is now an audited
+  `MemoryToolError` (`10.0` is still accepted).
+- mypy (advisory): 160 -> 153 findings (a shadowed variable in `state.py`); ruff clean.
+
 
 ## v0.15.1 — 2026-11-08 (v0.15 follow-up)
 

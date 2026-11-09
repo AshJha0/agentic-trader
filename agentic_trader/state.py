@@ -325,12 +325,12 @@ class TradingState:
                            f"{v.argument}")
             out.append("")
         if self.decision:
-            d = self.decision
+            fd = self.decision   # not ``d``: that name is the DebateOutcome above (mypy)
             out.append("## Portfolio manager decision")
-            out.append(f"**{d.action.value}** target weight {d.target_weight:+.2f} "
-                       f"(approved={d.approved}, confidence {d.confidence:.2f})")
-            out.append(d.rationale)
-            out.extend(f"- adjustment: {a}" for a in d.adjustments)
+            out.append(f"**{fd.action.value}** target weight {fd.target_weight:+.2f} "
+                       f"(approved={fd.approved}, confidence {fd.confidence:.2f})")
+            out.append(fd.rationale)
+            out.extend(f"- adjustment: {a}" for a in fd.adjustments)
         if self.lessons:
             out.append("\n## Lessons from memory")
             out.extend(f"- {l}" for l in self.lessons)
