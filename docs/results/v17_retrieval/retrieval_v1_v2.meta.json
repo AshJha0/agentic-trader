@@ -1,0 +1,7 @@
+{
+ "run_utc": "2026-11-09T10:11:48+00:00",
+ "git_head": "ae262429401cf3ab663e610b6dd10315cd264ffe",
+ "command": "python scripts/v17_retrieval_eval.py --out docs/results/v17_retrieval",
+ "evidence_class": "synthetic fixture corpus (invented filings, real-looking central-bank text); offline, deterministic, no model",
+ "note": "Real-EDGAR 50-question set not re-run: results/edgar_text_cache is absent on this machine."
+}
