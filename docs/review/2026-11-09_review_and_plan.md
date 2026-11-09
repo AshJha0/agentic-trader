@@ -92,6 +92,43 @@ Recall and calibration are unaffected. B4 is fixed in the report from stored row
 Real: EWMA/FHS VaR, factor and stress rows, leak canary, Actions paper runner with freshness check, SHA-pinned actions, ruff, schemas plus contracts, anonymiser, replay. Half: vintages (hash only). Not real: "mypy strict" (advisory, lenient). Not fixed: stop slippage, financing spread, horizon from decay. Fixture-only: most agentic fixes have met no real model outside the 7B runs.
 
 
+
+## 5. Second review (2026-11-09, independent; gaps and corrections to sections 1-4)
+
+Two further reviewers read the first review and this plan and reported only what it missed, got wrong or under-specified. Full texts: Appendix C (AI) and D (quant, code, ops). All items below are ADDED to the plan; owner order 2026-11-09: implement everything, leave nothing out.
+
+### 5.1 AI layer (Appendix C)
+| # | Severity | Finding | Fix | Lane |
+|---|---|---|---|---|
+| N1 | critical | Recall audit measures option order, not memory: items run name by name with AAPL first and a fixed candidate order; model answers AAPL 129/138, 2019-10 133/138 | shuffle candidates per item, ranked top-3 vs permutation null, synthetic placebo arm, real vs date-shifted test; re-run recall | L6 |
+| N2 | high | Text analysts bypass the anonymiser (company, accession/CIK, ISO timestamps, raw text); scrub replaces tickers only | route text prompts through the anonymiser incl. company names, accession and dates; tests | L4 |
+| N3 | high | P2 first pass cannot detect an edge (19 periods, MDE ~0.9 Sharpe / ~0.36 IC) | preregister first pass as descriptive; decisive design: technical-analyst cell, weekly dates, 5-day horizon, model IC over rule signal with date-clustered SE, ~5,000 decisions, futility stop | L1 |
+| N4 | high | `num_ctx` never set; Ollama default may truncate long prompts from the start (system prompt and fence first); no token count stored | `num_ctx` 8192, store `prompt_eval_count`, flag truncation | L1 |
+| N5 | high | No lineage per decision: no prompt hash, git SHA, Ollama version or model digest; resume never checks versions | run header, digest pinning, refuse resume on mismatch | L1 |
+| N6 | medium | R0.3 "recompute from stored rows" impossible as written (no horizon, no forward closes; Yahoo re-adjusts) | store horizon and forward closes per row going forward; for past rows use the session vintage, stated | L1 |
+| N7 | medium | Conformal sizing on overlapping h-step residuals breaks coverage; ignores regime mask; tested on iid only | non-overlapping/blocked calibration, regime-aware, dependent-data test | L8 |
+| N8 | medium | "Nothing leaves the host" not enforced; `llm_anonymize` defaults False | loopback check on `local_llm_url` unless explicit flag; anonymise by default for model cells | L4 |
+| N9 | medium | All study dates inside the model training window | post-cutoff slice (2025-07 to 2026-10) as the leakage test cell | L1 |
+| N10 | medium | No model inventory or model/dataset cards (SR 11-7 style) | inventory + cards for each model and dataset | L7 |
+| N11 | low | Shipped dev API keys accepted on loopback; full config with keys written to a temp file | refuse default keys outside tests; redact secrets in the temp config | L7 |
+
+### 5.2 Quant, code and ops (Appendix D)
+| # | Severity | Finding | Fix | Lane |
+|---|---|---|---|---|
+| N1q | high | Frozen paper books are not frozen: workflow checks out main and recomputes with current code | run from a pinned freeze, engine+config hash check, per-row vintage_id | L5 |
+| N2q | high | Planned R4.1 would publish raw Yahoo bars (licensing) | raw bars as Actions artifacts / local, publish hashes only; DATA_LICENSING.md | L5 |
+| N3q | medium | Unpinned `pip install` in the write-permission job; direct push to main | hashed install or stdlib step; document or route the push | L5 |
+| N4q | medium | IC and spreads rank equities and FX together while scores are per class | per-group IC and spreads | L3 |
+| N5q | medium | No beta/sector neutralisation; 2 names a side | beta residualisation option; breadth printed | L3 |
+| N6q | medium | `significance_gated` selected and scored in sample; `best()` uses in-sample IC | walk-forward or flag and exclude | L3 |
+| N7q | medium | Two gate thresholds (2.0 vs t_crit) | one gate; BH on Newey-West p; explicit families | L3 |
+| N8q | low-med | Correlated ablation trials make DSR under-deflate | DSR at an effective trial count | L3 |
+| N9q | low | Monday/holiday "yesterday" may be a non-session | resolve to last NYSE session; freshness tolerates gaps | L5 |
+| N10q | low | Hand-copied trial count, breadth not stated | generated count; breadth stated | L3 |
+
+### 5.3 Corrections to the first plan
+R1.4 gates on the fixed recall audit (N1). R0.2 and R2.2 need N2 first; R2.2 also needs N4. R0.3 is redefined by N6. R3.3 depends on N5. R4.1 is replaced by N2q. P2 headline framing changes per N3: descriptive first pass, decisive design as a new preregistered cell.
+
 ## Appendix A. AI layer review
 
 # AgenticTrader AI-side review (hostile, 2026-11-09, main @cb8dd38)
@@ -367,3 +404,269 @@ the code supports.
 10. **B3 + B7** DSR with a pre-registry DoF estimate, and BH over the gate family. (0.8 d) Low-Med.
 
 Total is about 9 wall-clock solo days. Deletion candidate: the C++ core, unless a benchmark justifies it (D1).
+
+
+## Appendix C. Second review: AI layer
+
+# AgenticTrader: second hostile AI review (2026-11-09)
+
+Scope: AI / ML / LLM / RAG / agents / evaluation. Code: `C:\Work\Claude\AgenticTrader-round2` (feat/v0.16-round2). Live artefacts checked read-only in `C:\Work\Claude\AgenticTrader-v16\results\v16_local\` (the running chain). Findings already in `docs/review/2026-11-09_review_and_plan.md` are not repeated unless the planned fix is wrong or incomplete.
+
+## Verdict
+
+The first review was right on what it covered, but it reviewed the study design on paper. It did not open the running chain's output, and it did not trace the anonymiser through the text path. Doing both shows three things:
+
+1. The anonymisation recall audit (2.4), which the plan now makes a precondition for any holdout look (R1.4), is running and is degenerate. The model answers one constant. A pass or fail from it means nothing.
+2. The text analysts bypass the anonymiser completely.
+3. The P2 first pass has no statistical power for its headline metric, so it cannot be decisive. It should be re-framed before results land, not after.
+
+The model runs also lack the lineage a model-risk function would need: no stored prompt, no prompt hash, no weights digest, no Ollama version, no git SHA. In addition, nothing sets `num_ctx`, so long prompts can be silently truncated by Ollama.
+
+---
+
+## Findings
+
+### N1. CRITICAL: the recall audit is a constant responder; its verdict depends on the stopping point
+Evidence:
+- `results/v16_local/recall.rows.jsonl` (137 rows at review time): the guessed ticker is `AAPL` 129 times and `MSFT` 9 times. The guessed month is `2019-10` 133 times and `2018-10` 5 times. All 15 ticker hits are AAPL items (14) plus one MSFT item.
+- `scripts/v16_local_study.py:231`: items are built in name-major order (`[(n, d) for n in NAMES for d in design_dates(14)][:200]`), with AAPL first, and `recall_question` (`:144-146`) always lists the candidates in the same order with AAPL first. The rate test is in `:137-140` (Wilson CI and binomial against p0 = 1/15).
+
+Why it matters:
+- A model that always says the first option scores 14/200 = 7.0%, against a chance level of 6.7%. That reads as "no recall" even if the model could recognise every series.
+- A run stopped early (for example at 30 items, 14 of them hits) is flagged `above_chance`.
+- The audit therefore measures position bias, not memorisation. R1.4 makes this audit a gate, and R0.2 re-runs the eval through the same anonymiser, so both would rest on a null instrument.
+- The 200-item cap also drops most of the last FX name: 15 x 14 = 210 items, so the last 10 are cut.
+
+Why it was missed: the review read the design (`:24-31`), not the rows.
+
+$0 fix:
+- Shuffle the candidate order per item, with a recorded seed, and interleave items across names.
+- Ask for a ranked top-3, and score the mean reciprocal rank (MRR) against a permutation null that preserves the model's own answer distribution. Equivalently, compare against a "same prompt, shuffled labels" control.
+- Add a placebo arm: synthetic series with the same volatility and drift, which no model can recognise. The audit passes only if real-series accuracy does not beat the placebo.
+- Add a behavioural leak test, which matters more than naming. Run the same anonymised state twice, once with the real future and once with a date-shifted state of the same name. Then test whether the model's signal correlates with realised forward returns more on real states than on shifted ones.
+- Stop and restart the recall step of the chain. It costs about 4 h of CPU.
+
+Effort: 1.5 d.
+
+### N2. HIGH: the text analysts never see the anonymiser; the prompt carries ticker, CIK and absolute dates
+Evidence:
+- `graph.py:265` calls `text_reports(names, llm, self.text_inputs, state.instrument, state.as_of)` without `state.anon`.
+- `text_analysts.py:134,171` call `self.llm.complete_json` directly, not through `agents/base.py:73,105`, which is where `anon.scrub` lives.
+- The prompt itself (`text_analysts.py:126-128`) contains `Company: {symbol}`, the accession number (its first 10 digits are the CIK, which identifies the company), the ISO `accepted=` timestamp, and up to 6,000 characters of raw filing text.
+- Even where scrubbing does apply, `anonymize.py:86-104` replaces only the ticker and Yahoo symbol, not company or product names ("Apple Inc.", "iPhone").
+
+Impact: `llm_anonymize: True` gives a false assurance for any text-analyst run. The 3.8 local text-analyst result and the planned R2.2 red-team v2 ("all text analysts") run fully de-anonymised. P2 is not affected today, because `config.py:68` defaults `text_analysts: []`.
+
+Why it was missed: B1 looked at the eval set. Nobody traced the text path.
+
+$0 fix:
+- Pass `anon` into `text_reports`.
+- Scrub the accession number (or drop it), the dates (rewrite them as D-offsets, as the price path does) and the company name. Take a name list from the EDGAR `entityName` and `formerNames` fields in the submissions JSON, which is already fetched.
+- Refuse `text_analysts` together with `llm_anonymize` until the scrub is in place.
+- Add a test that no prompt contains a CIK, a ticker or a 4-digit year.
+
+Effort: 1 d.
+
+### N3. HIGH: P2 first pass is not powered for its headline metric, and the fix list makes it worse
+Evidence:
+- `scripts/llm_study.py:207`: 20 dates, of which 19 periods are usable because the last date drops (`:435`). The periods are about 115 calendar days apart, so `ppy` is about 3.2 (`:424-425`).
+- `:389-406`: circular block bootstrap with block 3 over 19 points, which gives about 6 effective blocks; percentile intervals at that size under-cover.
+- Rough power: the model portfolio and the control are both long-biased on mega-caps, so assume a correlation of about 0.7. Over 6 years, the SE of the annualised Sharpe difference is about sqrt(2(1-0.7)/6) = 0.32, so the minimum detectable effect at 80% power and 5% two-sided is about 0.9 Sharpe.
+- Decision-level IC: 300 decisions, but cross-sectional correlation among the 10 equities makes the effective n about 20 dates x 3 = 60, so the MDE IC is about 0.36. Realistic effects are 0.02 to 0.05.
+- R0.3 (score over each decision's own horizon) helps validity, not power.
+
+Why it was missed: the first review flagged the forward record (about 14 years to decide) and the CV gate power (Q2), but not P2's own power.
+
+$0 fix: pre-register now, before rows land, that the first pass is descriptive (contract rates, agreement with rules, fallback bias) and cannot accept or reject edge. For a decisive $0 design:
+- Analysts-only cell with the technical analyst only, which is 1 call per decision.
+- Daily-to-weekly dates, 5-day horizon, paired against the rule signal on the same state.
+- Primary metric: the incremental IC of (model signal minus rule signal) on forward 5-day returns, with a cluster-by-date Newey-West SE.
+- Size: at about 60 s per call, 4 days of CPU is about 5,000 decisions. With 15 names x about 330 weekly dates, the effective n is about 1,000 or more, so the MDE IC is about 0.09. Add the second free model (qwen2.5:3b or llama3.2:3b, about 3x faster) to reach about 0.05.
+- Write a futility rule: stop when the 90% CI upper bound is below IC 0.03.
+
+This turns P2 from "inconclusive by construction" into an answerable question.
+
+Effort: 1 d design and prereg, plus CPU days.
+
+### N4. HIGH: no `num_ctx`; long prompts can be silently truncated
+Evidence:
+- `local_llm.py:122` sends only `temperature`, `num_predict` and `seed`. Ollama then applies its default context (2,048 or 4,096 tokens depending on version) and truncates the oldest tokens, which drops the system prompt and the fence instructions first, without raising an error.
+- The deep roles (debate history), the planner and the text analysts (6,000 characters per section, several sections) can exceed that limit.
+- PLAN.md:161 records planner calls over 300 s. That fits very long prompts, but it was never diagnosed.
+- `llm_study.py:265-267` records `in_tok_est`, a character estimate, not `prompt_eval_count`. `local_llm.py:171` books `prompt_eval_count` into usage but never compares it with the estimate, so truncation cannot be detected from the rows.
+
+Why it was missed: the first review checked temperature (A1) but not the other options.
+
+$0 fix:
+- Set `num_ctx` explicitly (8192 fits a 7B Q4 in about 6 GB on this laptop) and record it.
+- Store `prompt_eval_count` per call.
+- Flag a call as `truncated` when `prompt_eval_count < 0.9 x estimate`, or when `done_reason == "length"`, and count both in the contract and fallback share.
+- Add a unit test on `build_request`.
+- Check one current chain row for `prompt_eval_count` against the estimate before trusting P2.
+
+Effort: 0.5 d.
+
+### N5. HIGH: no per-decision lineage (prompt, weights, runtime, code); resume can mix versions
+Evidence:
+- `llm_study.py:369-372`: a row stores the reply but not the prompt or system text, `prompt_bundle_hash` (which exists at `prompts.py:162` but is used only by `calibration.py:161`), the git SHA (`provenance.py:66` exists but is unused here), the Ollama version, or the model digest.
+- `local_llm.py:62-71,173`: drift is detected only by served name, so a re-pulled `qwen2.5:7b-instruct` tag with new weights passes.
+- Resume (`llm_study.py:342-347`) skips keys already in the file and does not check that the code or prompt version matches. The chain runs from a worktree (`run_v16_chain.cmd:2`) for 4-6 days while 8 lanes change code, and its interpreter comes from another checkout's venv (`:5`).
+
+Why it was missed: lineage was listed only as C1 (an eval gate on the prompt hash). Per-decision lineage for model risk was not.
+
+$0 fix:
+- On start, write a run header: `git rev-parse HEAD` plus a dirty flag, `prompt_bundle_hash`, the Ollama `/api/version`, `/api/show` (model digest, quantisation, template hash), the options, and `pip freeze` hashes.
+- Stamp the header id on every row, and refuse to resume on a mismatch.
+- Store a sha256 of each prompt, and the full prompt gzipped in a side file.
+- Pin the model by digest: `llm_strict_model` should compare digests, not names.
+
+Effort: 1 d.
+
+### N6. MEDIUM: R0.3 "recompute from stored rows, no re-run" is not feasible as written
+Evidence:
+- The rows store `close` only at design dates (`llm_study.py:300-312,369`) and do not store `horizon_days`, which lives on the proposal (`state.py:107`).
+- Forward closes at each decision's horizon must be re-fetched. Yahoo adjusted closes are re-adjusted after later dividends, so splicing a run-time `close` with a later fetch mixes vintages (B4/R4.1).
+
+Fix:
+- Re-fetch the full series once and recompute both ends from that one vintage, ignoring the stored `close`.
+- Recover the horizon from the trader reply (model cells) or recompute it with the rules (rule cells).
+- Add `horizon_days` and `entry_bar_date` to the row schema now, so the local_all cell, which has not started, records them.
+
+Effort: 0.5 d.
+
+### N7. MEDIUM: conformal sizing assumes exchangeability that overlapping h-step residuals break; regime mismatch
+Evidence:
+- `combine.py:310-315`: the calibration residuals are consecutive h-bar forward returns. Neighbours overlap by h-1 bars, and volatility clusters, so split-conformal coverage is not guaranteed.
+- The weights may be regime-restricted (`:294`, `rows`), but the calibration residuals span all regimes.
+- `tests/test_v14_combine.py:207` tests coverage on iid draws only.
+
+Fix:
+- Use non-overlapping residuals (stride h), or adaptive conformal inference (Gibbs and Candès 2021), which is a few lines of code.
+- Scale residuals by `vol` (normalised conformal).
+- Restrict calibration to the same regime mask.
+- Report empirical coverage on real walk-forward data in the evaluation doc.
+
+Effort: 1 d.
+
+### N8. MEDIUM: "nothing leaves the host" is not enforced
+Evidence: `config.py:15` sets `local_llm_url` with no loopback check in `local_llm.py:80-95`, and `config.py:61` defaults `llm_anonymize: False`. A typo or a shared config sends full, de-anonymised prompts to any host. The docstring claim at `local_llm.py:4` is unenforced.
+
+Fix: refuse non-loopback URLs unless `allow_remote_llm: true` is set, and log the resolved host in the run header (N5).
+
+Effort: 0.2 d.
+
+### N9. MEDIUM: the recall and calibration designs share the design-period dates, which all fall inside the model's training data, and there is no out-of-training control
+Evidence: `v16_local_study.py:24,34` and `llm_study.py:73` cover 2016-2021. qwen2.5's corpus extends well past that, so every study date is in-training.
+
+Fix: add a post-cutoff slice (2025-07 to 2026-10, free Yahoo data) as a contamination control. A model edge that disappears after the cutoff is memory, not reasoning. This is the cheapest decisive leakage test available at $0. Run it on the analysts-only cell from N3.
+
+Effort: 0.5 d plus CPU.
+
+### N10. LOW-MEDIUM: model-risk documentation is missing (SR 11-7 style)
+There is no model inventory entry, model card or dataset card for qwen2.5:7b Q4, TF-IDF/BM25, MiniLM, the HMM regime model, combine/conformal, or the judge. There are no documented intended uses, limits, validation evidence, monitoring thresholds or owner. `docs/evaluation/live_readiness.md` covers the desk, not the models.
+
+Fix: one `docs/models/INVENTORY.md` table plus a 1-page card per model, generated partly from the run header (N5). Include the ongoing monitoring metrics already planned (C4).
+
+Effort: 1 d.
+
+### N11. LOW: the shipped development API keys work on loopback, and the config is written to a temp file
+Evidence: `config.py:317` ships the keys, and `api.py:286-312` blocks them only off loopback. `api.py:398-401` writes the full config, including keys, to `%TEMP%`. On a shared laptop, any local process can call the analyst and approver roles.
+
+Fix: generate random keys on first serve when only the development keys are configured, and pass the config by environment or pipe, not by file.
+
+Effort: 0.3 d.
+
+---
+
+## Planned fixes that are inadequate
+
+| Plan item | Problem | Change |
+|---|---|---|
+| R1.4 recall audit as a precondition | The instrument is degenerate (N1) | Gate on the N1 v2 audit (shuffled candidates, placebo, behavioural leak) |
+| R0.2 eval re-frozen through the anonymiser | The anonymiser misses names, CIKs and dates on the text path (N2) | Fix N2 first |
+| R0.3 recompute from stored rows | Horizon and forward closes are not stored, and the vintages differ (N6) | Re-fetch one vintage; extend the row schema |
+| R2.2 red-team "all text analysts" | Runs de-anonymised (N2) and possibly truncated (N4) | Do after N2 and N4 |
+| R3.3 eval gate tied to the prompt hash | No per-row lineage to tie to (N5) | Add the N5 header first |
+| P2 "first pass" framing | Unpowered (N3) | Pre-register it as descriptive; add the N3 decisive design |
+
+## Prioritised list ($0)
+
+1. N1: kill the recall step, fix and re-run the audit (1.5 d).
+2. N4: `num_ctx`, `prompt_eval_count` and a truncation flag. Check the chain rows today (0.5 d).
+3. N5: run header, digest pin and resume guard, before local_all starts (1 d).
+4. N3: pre-register the first pass as descriptive, plus the powered analysts-only incremental-IC design (1 d).
+5. N9: post-cutoff contamination slice, folded into the N3 design (0.5 d).
+6. N2: anonymise the text path, with a refusal until done (1 d).
+7. N6: row schema plus single-vintage recompute (0.5 d).
+8. N7: conformal on non-overlapping or adaptive residuals, with real-data coverage (1 d).
+9. N8: loopback enforcement (0.2 d).
+10. N10: model inventory and cards (1 d).
+11. N11: random API keys, no temp-file config (0.3 d).
+
+Total about 8.5 solo days plus CPU time. Items 1-4 should land before any P2 number is quoted.
+
+
+## Appendix D. Second review: quant, code and ops
+
+# AgenticTrader second quant/dev review (2026-11-09, feat/v0.16-round2, read only)
+
+Scope: non-LLM. Only findings not in docs/review/2026-11-09_review_and_plan.md, or where its fix is wrong/inadequate. Every item checked in code; no tests run (targeted reads only). Effort = solo days, $0.
+
+## N1 HIGH: the "frozen" forward books are not frozen; every merge to main changes the strategy being forward-tested
+Evidence: `.github/workflows/paper.yml:40-42` checks out `ref: main`, installs `-e .` (`:49-51`) and runs `scripts/paper_trade_v09.py`, which recomputes the whole record freeze->as_of with the *current* code and current `cfg` (`paper_trade_v09.py:78-88, 216-218`). `merge_append_only` (`:225`) keeps old rows, so each new row is produced by whatever code is on main that day. Only `provenance()` is logged (`:248`); nothing refuses a code change. v0.17 R1.1 (exec_lag), R0.4 (schema reject), R2.1 (critic on target_weight), R4.4 (OMS limits) will all silently change the forward books mid-record.
+Why missed: first review treated revisions as a data-vintage problem only (B4/B5, R4.1/R4.2); the code-vintage half is bigger.
+Fix: tag the freeze commit (e.g. `paper-freeze-v09`); paper job checks out that tag for the computation (main only for the ledger commit); store a hash of the frozen config + engine source in the ledger header and fail if it differs; any intended change = new book with a new freeze date. Also: the stitched ledger mixes rows computed on different Yahoo vintages; add a `vintage_id` column per row. Effort 0.75.
+
+## N2 HIGH (plan fix inadequate): R4.1 "store raw bars per session" in a public repo redistributes Yahoo data
+Evidence: plan R4.1 and Appendix B B4 propose committing raw bars under `results/paper/bars/`. Yahoo's terms forbid redistribution; no data-licence statement exists (grep of README/docs finds none). FRED series also carry per-series source licences; EDGAR is public domain.
+Fix: store raw bars as a GitHub Actions artifact (90-day retention) or in a git-ignored local store plus a published SHA-256 per file; publish only derived returns (already done). Add `docs/DATA_LICENSING.md` (Yahoo: personal/research, no redistribution; FRED: check per series; EDGAR: public, SEC fair-access UA). Effort 0.5.
+
+## N3 MED: unpinned dependencies inside the job that holds `contents: write`
+Evidence: `paper.yml:78` and `:107` run `pip install numpy pandas` (no version, no hash) in the commit job with `permissions: contents: write` (`:68-69`), which then pushes straight to main with `[skip ci]` (`:89-90`). A compromised or simply new pandas release runs with a write token, and the `[skip ci]` commit lands on main with no required check (or requires a ruleset bypass that is not documented).
+Why missed: first review checked SHA-pinned actions and the 3.12 lockfile, not this job. R4.5 hashes the lockfile but does not touch these lines.
+Fix: install from `requirements-lock.txt --require-hashes` (or need no pandas at all: make `paper_ops.py commit` stdlib-only); document the bot's ruleset bypass or push to a `paper-record` branch. Effort 0.3.
+
+## N4 MED: cross-sectional IC pools asset classes after standardising within them
+Evidence: `xalpha.py:205-207` z-scores within `groups` (default asset class), but `cross_sectional_ic` (`:116-127`) and `quantile_spread` (`:149-172`) rank all columns together. With equities + FX in one call (reachable via `agentic/servers.py:240-252`), IC partly measures "equities beat FX this period", with FX forward returns at ~1/3 the vol. The analyst path filters to one class (`agents/analysts.py:606`), so research tables and the traded signal measure different things.
+Fix: compute IC and spreads per group and average (or require one group); test with a two-group panel whose within-group IC is 0 but between-group mean differs. Effort 0.5.
+
+## N5 MED: no risk neutralisation in the cross-section; "alphas" on 10 mega-caps are beta/vol bets
+Evidence: `cs_zscore` (`xalpha.py:70-94`) only demeans within asset class. low_vol, tsmom, high_52w on 10 large caps load on market beta and size; no beta/sector regression residualisation anywhere in xalpha.py. With top/bottom 20% of ~10 names = 2 names a side (`:166`), spread t is driven by 2-4 stocks. First review's B8 notes survivorship but not exposure or breadth.
+Fix: optional `neutralise=("beta",)`: residualise scores on trailing 252d beta to SPY each date (numpy lstsq); report IC raw and neutral; print breadth and names-per-leg in every table, and state the fundamental-law ceiling (IR ~ IC*sqrt(breadth)). Effort 1.
+
+## N6 MED: in-sample selection rows sit in the same table as honest ones
+Evidence: `xalpha.py:225-230` gates on full-sample IC and then scores the gated combination on the same sample; `XAlphaReport.best()` (`:183-185`) ranks by in-sample IC. The comment says "full-sample diagnostic", but the table carries no flag and the row is formatted like the others.
+Fix: either compute the gate walk-forward (reuse `combine.trailing_ics`, which already respects `i+h<=end`) or mark the row `in_sample=True` and exclude it from `best()`. Effort 0.5.
+
+## N7 MED (plan R1.3 incomplete): BH over gates ignores that the 9 alphas x horizons are strongly dependent
+Evidence: decay table computes the same signal at horizons (1,5,10,21,42) (`xalpha.py:189, 218-219`); overlapping horizons on one signal are positively dependent, which BH tolerates (PRDS) but the ~5-fold t (Appendix B B1) gives near-discrete p-values. More important: the gate threshold `min_tstat=2.0` (`xalpha.py:245`) is a fixed t, not the t_crit for 4 df (2.776) used elsewhere (`passes_gate`, which reads t_crit). Check which applies: two bars coexist.
+Fix: one gate function; BH on Newey-West p-values (after R1.2), not on fold-t p-values; state horizons as one family per signal, signals as the family for BH. Effort 0.3.
+
+## N8 LOW-MED: DSR trial count vs dependence
+Evidence: `evaluation.py:112+` registers 62-65 trials, mostly one-rule ablations of the same v0.2 control; `stats.deflated_sharpe` (`stats.py:104-111`) uses raw N and the dispersion of trial Sharpes. Highly correlated trials shrink `var_trials_sr` and so under-deflate even as N looks large. First review (B3) only argued N is a floor.
+Fix: report effective N from the trial-return correlation matrix (eigenvalue count or clustering, Lopez de Prado 2019), show DSR at N_eff and at N + pre-registry DoF. Effort 0.5.
+
+## N9 LOW: Monday/holiday behaviour of "New York yesterday"
+Evidence: cron Mon-Fri (`paper.yml:22`); as-of default is NY yesterday (`paper_trade_v09.py:186,198`). Monday's run asks for Sunday, Tuesday after a holiday asks for the holiday; the script then relies on the SPY calendar (`:212`) to find the last session. Friday's session is first recorded Monday (3 days of Yahoo re-adjustment before first write). Not a bug, but the freshness check (`paper_ops.py freshness`) must allow a 3-day gap; verify it does and add a test for Mon and post-holiday dates. Effort 0.2.
+
+## N10 LOW: stale-but-plausible statements to check in docs site
+- `docs/evaluation/evaluation.md:2688` "62 to 65" registered trials: the count depends on version; render from `len(TRIALS)`.
+- Coverage/quant docs should state the cross-section breadth (10 equities) wherever ICs are quoted.
+Effort 0.3.
+
+## Things the first review got right and I confirm
+Same-bar execution, low-power fold t, two VaR defaults, calendar gaps. The disputed cron item: the maintainer is right that the script records yesterday, so 21:30 is fine.
+
+## Prioritised list
+1. N1 freeze the paper code/config by tag + hash check (0.75 d) - before R1/R2 land on main, or the forward record is contaminated.
+2. N2 replace "commit raw Yahoo bars" with artifacts/hashes + licensing doc (0.5 d).
+3. N3 hashed install / stdlib-only commit job; document bot bypass (0.3 d).
+4. N4 per-group IC (0.5 d).
+5. N6 walk-forward or flagged gated row (0.5 d).
+6. N5 beta-neutral scores + breadth disclosure (1 d).
+7. N7 single gate threshold, BH on NW p (0.3 d).
+8. N8 effective-N DSR (0.5 d).
+9. N9 calendar edge tests (0.2 d). 10. N10 docs (0.3 d).
+Total ~4.9 solo days, $0.
+
+Not covered (time): C++/Python numeric parity across BLAS, mutation testing, docs-site build, OMS idempotency/state recovery.
