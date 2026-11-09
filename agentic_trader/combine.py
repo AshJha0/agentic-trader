@@ -227,6 +227,54 @@ def conformal_halfwidth(residuals: np.ndarray, alpha: float) -> float | None:
     return float(r[k - 1])
 
 
+def calibration_points(fit_end: int, end: int, horizon: int, rows: np.ndarray | None = None,
+                       design: str = "v17") -> np.ndarray:
+    """Bars ``t`` whose residual ``r_t - mu_t`` calibrates the conformal interval.
+
+    ``t`` runs from ``fit_end + horizon`` (purge after the estimation part) to
+    ``end - horizon`` (the last bar whose ``horizon``-bar return is known at the as-of bar).
+
+    * ``design="v14"`` (the registered v0.14 trial): every such bar. Neighbouring residuals
+      share ``horizon - 1`` daily returns, so they are strongly dependent and the
+      exchangeability behind split-conformal coverage does not hold (review N7).
+    * ``design="v17"`` (default): every ``horizon``-th bar counted back from ``end -
+      horizon``, so no two calibration returns overlap, and, when ``rows`` (the regime mask)
+      is given, only bars in the current regime, matching the bars the weights came from.
+    """
+    t = np.arange(fit_end + horizon, end - horizon + 1)
+    if design == "v14":
+        return t
+    if design != "v17":
+        raise ValueError(f"unknown conformal design {design!r} (use 'v14' or 'v17')")
+    t = t[::-1][::max(1, horizon)][::-1]
+    if rows is not None:
+        t = t[np.asarray(rows, bool)[t]]
+    return t
+
+
+def conformal_interval(close: np.ndarray, mus: np.ndarray, vol: np.ndarray, cal: np.ndarray, horizon: int,
+                       alpha: float, design: str = "v17") -> float | None:
+    """The conformal half-width at the last bar from calibration bars ``cal``.
+
+    ``v17`` is normalised conformal: residuals are divided by the ``horizon``-bar volatility
+    known at their own bar, and the quantile is scaled back by the volatility at the last
+    bar, so a calm calibration window does not give a too-narrow interval in a volatile
+    present (and the reverse). ``v14`` uses raw residuals."""
+    if cal.size == 0:
+        return None
+    resid = forward_returns(close, horizon)[cal] - mus[cal]
+    if design == "v14":
+        return conformal_halfwidth(resid, alpha)
+    v = np.asarray(vol, float)
+    scale = v[cal]
+    ok = np.isfinite(scale) & (scale > 0)
+    q = conformal_halfwidth(resid[ok] / scale[ok], alpha)
+    now = float(v[-1])
+    if q is None or not math.isfinite(now) or now <= 0:
+        return None
+    return q * now
+
+
 @dataclass(frozen=True)
 class SignalInputs:
     """The per-bar inputs of ``desk_forecast``: the signal panel, its trailing z-scores and
@@ -270,7 +318,10 @@ def desk_forecast(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
     ``1 - calibration_share`` and the calibration residuals ``r_t - mu_t`` come from the
     rest, ``horizon`` bars after the estimation part ends (the purge) and only for ``t``
     whose return is known at the as-of bar, so the calibration set lies strictly before the
-    forecast and was not used to fit the weights it calibrates.
+    forecast and was not used to fit the weights it calibrates. ``conformal["design"]``
+    picks the calibration set: ``"v17"`` (default; non-overlapping, regime-masked,
+    volatility-normalised, see ``calibration_points`` and ``conformal_interval``) or
+    ``"v14"`` (the registered v0.14 trial: every bar, raw residuals).
     """
     horizon, window = int(cfg["horizon"]), int(cfg["window"])
     close = df["Close"].to_numpy(float)
@@ -308,11 +359,11 @@ def desk_forecast(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
     tilt = float(mean_variance(np.array([mu]), np.array([[sigma ** 2]]), float(cfg["risk_aversion"]))[0])
     interval = None
     if split:
-        cal = np.arange(fit_end + horizon, end - horizon + 1)
+        design = str(conf.get("design", "v17"))
+        cal = calibration_points(fit_end, end, horizon, rows, design)
         if cal.size:
-            mus = _mu_series(z, weights, vol)[cal]
-            fwd = forward_returns(close, horizon)[cal]
-            interval = conformal_halfwidth(fwd - mus, float(conf.get("alpha", 0.2)))
+            interval = conformal_interval(close, _mu_series(z, weights, vol), vol, cal, horizon,
+                                          float(conf.get("alpha", 0.2)), design)
         if interval is None:            # too few calibration points: an unbounded interval sizes to zero
             interval = math.inf
     return Forecast(mu, sigma, tilt, weights, t_stats, interval, regime)

@@ -352,7 +352,9 @@ def test_serve_options_guard_deployment(tmp_path, caplog):
     from agentic_trader.agentic.api import serve_options, uses_dev_keys
     cfg = make_config()
     assert uses_dev_keys(cfg["agentic"]["api_keys"]) and not uses_dev_keys({"k9f2...": "trader"})
-    assert serve_options("127.0.0.1", cfg) == {}
+    with pytest.raises(ValueError, match="development API keys"):   # v0.17 N11: loopback too
+        serve_options("127.0.0.1", cfg)
+    assert serve_options("127.0.0.1", cfg, allow_dev_keys=True) == {}
     with pytest.raises(ValueError, match="development API keys"):
         serve_options("0.0.0.0", cfg)
     with caplog.at_level(logging.WARNING):
@@ -376,7 +378,7 @@ def test_serve_cli_plumbs_tls_and_store(monkeypatch, tmp_path, capsys):
     cert, key = tmp_path / "c.pem", tmp_path / "k.pem"
     cert.write_text("x"), key.write_text("y")
     assert main(["serve", "--host", "127.0.0.1", "--port", "9", "--ssl-cert", str(cert), "--ssl-key", str(key),
-                 "--task-db", str(tmp_path / "t.sqlite")]) == 0
+                 "--task-db", str(tmp_path / "t.sqlite"), "--allow-dev-keys"]) == 0
     assert seen["ssl_certfile"] == str(cert) and seen["port"] == 9
     assert "https://127.0.0.1:9" in capsys.readouterr().out
     assert main(["serve", "--host", "0.0.0.0", "--port", "9"]) == 2   # dev keys on a public interface

@@ -22,7 +22,7 @@ import pandas as pd
 
 from .agents import (ANALYSTS, BearResearcher, BullResearcher, DebateFacilitator,
                      PortfolioManager, RiskAnalyst, Trader, run_debate, run_risk_team)
-from .anonymize import Anonymizer
+from .anonymize import Anonymizer, enforce_llm_anonymize
 from .config import make_config
 from .data import MarketDataProvider, get_provider
 from .validate import MAX_GAP_DAYS, require_valid_bars
@@ -67,6 +67,7 @@ class TradingGraph:
         self.llm = llm if llm is not None else get_llm(self.config)
         if self.llm is not None:
             self.llm = budget_llm(self.llm, self.config)
+            enforce_llm_anonymize(self.config)   # N8: a model run is anonymised unless opted out
         self.memory = memory if memory is not None else DecisionMemory(
             self.config.get("memory_path"), max_staleness_days=self.max_staleness_days)
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
@@ -262,7 +263,7 @@ class TradingGraph:
         if self.text_inputs is None:
             self.text_inputs = TextInputs.from_config(self.config)
         llm = self.text_llm if self.text_llm is not None else self.llm
-        reports = text_reports(names, llm, self.text_inputs, state.instrument, state.as_of)
+        reports = text_reports(names, llm, self.text_inputs, state.instrument, state.as_of, anon=state.anon)
         for r in reports:
             state.reports[r.analyst] = r
             self.on_event("analyst", f"{r.analyst:<12} signal {r.signal:+.2f} conf {r.confidence:.2f} "

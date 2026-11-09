@@ -233,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--ssl-cert", default=None, help="TLS certificate (PEM); needs --ssl-key")
     sv.add_argument("--ssl-key", default=None, help="TLS private key (PEM)")
     sv.add_argument("--allow-dev-keys", action="store_true",
-                    help="allow the shipped development API keys on a non-loopback host (tests only)")
+                    help="allow the shipped development API keys (refused on every host otherwise; throwaway tests only)")
     sv.add_argument("--workers", type=int, default=None, help="task threads per process (default 4)")
     sv.add_argument("--processes", type=int, default=1,
                     help="uvicorn worker processes; more than one needs --task-db")
