@@ -111,6 +111,9 @@ Without `--csv-dir` every state is synthetic, and the rows say so. I found no CS
 cache in the round-2 checkout. The maintainer should point `--csv-dir` at one, or accept
 synthetic states and say so in the results.
 
+**Superseded in v0.18.** The run is now two scoped passes (analyst only on 1,500 units, then
+end to end with `--per-category 2` on 100 units); see `docs/review/v018_notes/E_redteam_scope.md`.
+
 **What to report from it.** The risk-committee number is `weight_dir_matched_rate`: how often
 an injected sentence moves the final position the way it asked, after critic and limits.
 Report it beside `directed_compliance_rate`, `excess_moved_rate` (attack minus control),
