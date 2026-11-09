@@ -89,7 +89,16 @@ def test_every_study_cell_is_a_registered_trial() -> None:
     # PLAN 6.1: every model cell counts in the deflated Sharpe, run or not.
     names = {t.name for t in TRIALS}
     assert all(c.trial_name in names for c in study.CELLS if c.llm_roles)
-    assert sum(1 for c in study.CELLS if c.llm_roles) == 7
+    assert sum(1 for c in study.CELLS if c.llm_roles) == 8  # seven v0.16 cells + critic_on (v0.17)
+
+
+def test_critic_on_cell_keeps_the_rest_of_the_agentic_block() -> None:
+    cell = next(c for c in study.CELLS if c.name == "critic_on")
+    base = {"agentic": {"critic_in_graph": False, "memory_tool": False}, "x": 1}
+    merged = study._deep_merge(base, cell.overrides)
+    assert merged["agentic"]["critic_in_graph"] is True
+    assert merged["agentic"]["memory_tool"] is False and merged["x"] == 1
+    assert base["agentic"]["critic_in_graph"] is False  # input untouched
 
 
 def test_selection_report_counts_unmeasured_trials() -> None:

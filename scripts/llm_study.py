@@ -57,7 +57,8 @@ import pandas as pd
 
 from agentic_trader.agents import RiskAnalyst
 from agentic_trader.config import make_config
-from agentic_trader.evaluation import CORE_UNIVERSE, TRIALS
+from agentic_trader.bootstrap import null_centred_pvalue
+from agentic_trader.evaluation import CORE_UNIVERSE, CRITIC_ON_OVERRIDES, CRITIC_ON_TRIAL, TRIALS
 from agentic_trader.graph import TradingGraph
 from agentic_trader.llm import LLM, estimate_tokens, price_for
 from agentic_trader.local_llm import reachable
@@ -106,10 +107,21 @@ CELLS: tuple[Cell, ...] = (
     Cell("debate_1", "local model in every role, one debate round", ROLES, {"max_debate_rounds": 1}),
     Cell("neutral_risk", "local model in every role, a single neutral risk analyst", ROLES,
          neutral_risk_only=True),
+    # v0.17 R2.1: the governed desk, registered as evaluation.CRITIC_ON_TRIAL before any run.
+    Cell("critic_on", CRITIC_ON_TRIAL.split(": ", 1)[1], ROLES, CRITIC_ON_OVERRIDES),
 )
 
 
 TRIAL_NAMES = frozenset(t.name for t in TRIALS)
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    """Cell overrides merged into the config one level deep per nested dict, so an override
+    of ``agentic.critic_in_graph`` keeps the rest of the ``agentic`` block."""
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
 
 
 class StudyGraph(TradingGraph):
@@ -117,7 +129,7 @@ class StudyGraph(TradingGraph):
     rules. Sequential use only: ``run_analyst`` swaps ``self.llm`` for the call."""
 
     def __init__(self, cell: Cell, config: dict, llm: LLM | None):
-        super().__init__({**config, **cell.overrides}, llm=llm, on_event=lambda stage, msg: None)
+        super().__init__(_deep_merge(config, cell.overrides), llm=llm, on_event=lambda stage, msg: None)
         self.llm_roles = frozenset(cell.llm_roles)
         if cell.neutral_risk_only:
             self.risk_team = [RiskAnalyst(self.llm, self.config, "neutral")]
@@ -422,7 +434,7 @@ def block_bootstrap_diff(a: np.ndarray, b: np.ndarray, ppy: float, block: int = 
         idx = (rng.integers(0, n, nb)[:, None] + np.arange(block)[None, :]).ravel()[:n] % n
         out[i] = _sr(a[idx], ppy) - _sr(b[idx], ppy)
     lo, hi = np.percentile(out, [2.5, 97.5])
-    p = float(min(1.0, 2 * min(np.mean(out <= 0), np.mean(out >= 0))))
+    p = null_centred_pvalue(out, diff)  # review B8: replicates shifted onto the null
     return diff, float(lo), float(hi), p
 
 
@@ -444,7 +456,7 @@ def block_bootstrap_diff_seeds(a: np.ndarray, b: np.ndarray, ppy: float, block: 
         idx = (rng.integers(0, n, nb)[:, None] + np.arange(block)[None, :]).ravel()[:n] % n
         out[i] = np.mean([_sr(x[idx], ppy) - _sr(y[idx], ppy) for x, y in zip(a, b)])
     lo, hi = np.percentile(out, [2.5, 97.5])
-    p = float(min(1.0, 2 * min(np.mean(out <= 0), np.mean(out >= 0))))
+    p = null_centred_pvalue(out, diff)  # review B8: replicates shifted onto the null
     return diff, float(lo), float(hi), p
 
 
