@@ -20,7 +20,7 @@ results are on the evaluation pages.
 | Execution | `algo.py` | Schedules (TWAP, VWAP, POV, Almgren-Chriss), a fill simulator, implementation shortfall |
 | Portfolio | `portfolio.py` | Covariance estimation, five weighting schemes, risk budgets, book VaR |
 | Risk model | `risk_model.py` (v0.14) | EWMA and filtered-historical-simulation VaR forecasts, factor exposures, stress rows, a capacity row |
-| Validation and leakage | `validate.py`, `leakage.py` (v0.14) | Bar validator and edge-case conventions; purged walk-forward IC, the future-leak canary, a point-in-time feature table |
+| Validation and leakage | `validate.py`, `leakage.py` (v0.14) | Bar validator and edge-case conventions; blocked-fold IC with a Newey-West t and minimum detectable IC (v0.17), gate-family BH, the future-leak canary, a point-in-time feature table |
 | Statistics | `stats.py` | Sharpe inference, bootstraps, deflated Sharpe, false discovery control, VaR coverage tests |
 | Evaluation | `evaluation.py`, `scripts/` | Periods, universes, the trials registry, the measurement and rendering scripts |
 | Data | `data/` | Synthetic, Yahoo and CSV prices; FRED (rates, inflation, vintages); SEC EDGAR (filings) |
@@ -240,6 +240,27 @@ Newey-West) remains public for comparison. With five folds the t-statistic has f
 of freedom, so the right threshold is a Student-t critical value, not the normal one; that
 correction is plan item 5.1.
 
+**v0.17 correction of the label.** These signals are fixed: nothing is fitted on the training
+side of each fold, so the purge and the embargo do nothing for them and "purged CV" was the
+wrong name. The functions are now `leakage.ic_blocked_folds` / `ic_blocked_folds_series` (the
+old names remain as aliases), and the label "purged" is kept for things that are fitted
+(IC-weight combination, the regime model, conformal calibration). A five-fold t on 4 degrees of
+freedom has little power, so every row now also carries:
+
+- `t_NW`, a Newey-West (HAC) t on every scored pair (time series: the mean of standardised rank
+  products, whose mean is the Spearman IC; cross section: the scored daily ICs), Bartlett lag
+  `max(floor(4 (n/100)^(2/9)), horizon)` (Newey and West 1994 rule, raised to the overlap);
+- `MDE_IC`, the smallest |IC| a two-sided 5% test detects with 80% power,
+  `(1.960 + 0.842) x se_NW`. Worked example: about 1,200 scored pairs of independent data give
+  an MDE near 0.08, so a null in such a table reads "cannot detect |IC| below 0.08", not "no edge".
+
+Evidence class: method (code and tests in `tests/test_v17_stats.py`, including a hand-computed
+Newey-West value). Gate decisions read together go through Benjamini-Hochberg over a stated family
+(`leakage.GATE_FAMILIES`, `leakage.gate_family_bh`) on the Newey-West p-values. Cross-sectional
+tables compute IC and spreads within each asset class (pooled mixed-class IC is a labelled extra
+column), print breadth and names per side, and can residualise scores on point-in-time beta
+(`neutralise="beta"`, off by default).
+
 Only signals whose IC t-statistic clears the gate (`min_tstat`) are combined. The two alpha
 analysts that use them are off by default because the design period did not support them.
 
@@ -290,7 +311,7 @@ This is the part of the quant that decides what the project is allowed to claim.
 | Are the flagged rows of a table luck? | `benjamini_hochberg` | False discovery rate over the rows printed |
 | How long a record is needed? | `min_track_record`, `probabilistic_sharpe` | A Sharpe near 1 needs years |
 | Is the VaR forecast honest? | `rolling_var_forecast`, `risk_model.var_forecast`, `var_backtest` | Kupiec tests the breach rate, Christoffersen tests whether breaches cluster |
-| Is a signal's IC real, given overlapping labels? | `leakage.ic_purged`, `ic_purged_series` | Purged, embargoed walk-forward folds; t from the dispersion of fold ICs |
+| Is a signal's IC real, given overlapping labels? | `leakage.ic_blocked_folds`, `ic_blocked_folds_series` (aliases `ic_purged*`) | Blocked walk-forward folds (fixed signal, nothing fitted); fold t plus Newey-West t and minimum detectable IC |
 | Can the code see the future? | `leakage.future_leak_canary` | Shock the data from date T; every output before T must be byte-identical |
 
 ## 10. The evaluation protocol
@@ -394,7 +415,7 @@ signal no weight at all unless that record clears a significance bar.
 **Precisely.** `agentic_trader/combine.py`, on with `combination.method = "ic"`:
 
 1. every library alpha plus two trend components, each a trailing z-score clipped at +-3;
-2. a trailing purged IC per signal over the last `window` bars whose forward return is known
+2. a trailing blocked-fold IC per signal over the last `window` bars whose forward return is known
    at the as-of bar (`leakage.ic_purged`);
 3. shrinkage: `IC * max(0, 1 - (t_crit / t)^2)`, where `t_crit` is the two-sided 5% Student-t
    value for `k - 1` degrees of freedom over the `k` finite folds (2.776 for five folds); with

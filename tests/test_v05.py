@@ -110,7 +110,9 @@ def test_significance_gated_scores_excludes_non_significant_alphas(universe):
     frames, instruments, carry = universe
     scores = {"a": pd.DataFrame({"AAPL": [1.0, 0.5], "MSFT": [0.5, 1.0]}),
              "b": pd.DataFrame({"AAPL": [-1.0, -0.5], "MSFT": [-0.5, -1.0]})}
-    ic = {"a": {"IC": 0.3, "t(IC)": 3.0, "n": 100}, "b": {"IC": 0.1, "t(IC)": 0.5, "n": 100}}
+    # v0.17 N7: entries carry their own t_crit/df and a Newey-West t (BH runs on it).
+    ic = {"a": {"IC": 0.3, "t(IC)": 3.0, "n": 100, "t_crit": 2.776, "df": 4, "t_NW": 4.0},
+          "b": {"IC": 0.1, "t(IC)": 0.5, "n": 100, "t_crit": 2.776, "df": 4, "t_NW": 0.5}}
     got = significance_gated_scores(scores, ic)
     only_a = scores["a"]   # only "a" clears the bar, so this must equal "a" exactly (weight 1, den = |0.3|)
     pd.testing.assert_frame_equal(got, only_a.clip(-1.0, 1.0), check_dtype=False)
