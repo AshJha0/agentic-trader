@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-1",
+  "vintage_id": "v09-engine-2",
   "frozen_on": "2026-11-09",
   "freeze_session": "2026-09-29",
-  "reason": "first recorded engine vintage of the v0.9 frozen books (v0.17 R4, N1); the engine as of the v0.16 round-2 branch",
+  "reason": "v0.17 merged: exec lag/financing/stop options (default off), OMS limits, calendar, schema ranges; recorded numbers unchanged by default",
   "engine_files": [
     "agentic_trader/backtest.py",
     "agentic_trader/config.py",
@@ -37,6 +37,13 @@
     "max_debate_rounds",
     "max_risk_discuss_rounds"
   ],
-  "engine_hash": "dba0e1bd55aa2a4d23439ba659291a62aa8745e43d1cac3f0d432c1b43b5b9af",
-  "history": []
+  "engine_hash": "577740005f2f7bfda4f95f16d067ad5d70c1d4ffeb543264eb3e8ea625281e10",
+  "history": [
+    {
+      "vintage_id": "v09-engine-1",
+      "engine_hash": "dba0e1bd55aa2a4d23439ba659291a62aa8745e43d1cac3f0d432c1b43b5b9af",
+      "frozen_on": "2026-11-09",
+      "reason": "first recorded engine vintage of the v0.9 frozen books (v0.17 R4, N1); the engine as of the v0.16 round-2 branch"
+    }
+  ]
 }
