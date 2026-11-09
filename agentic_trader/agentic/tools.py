@@ -71,7 +71,7 @@ def _type_spec(ann: Any) -> dict[str, Any]:
     origin = typing.get_origin(ann)
     if origin is typing.Union or (origin is not None and origin.__name__ == "UnionType"):
         args = [a for a in typing.get_args(ann) if a is not type(None)]
-        spec = _type_spec(args[0]) if len(args) == 1 else {"anyOf": [_type_spec(a) for a in args]}
+        spec: dict[str, Any] = _type_spec(args[0]) if len(args) == 1 else {"anyOf": [_type_spec(a) for a in args]}
         spec["nullable"] = True
         return spec
     if origin in (list, tuple):
@@ -101,7 +101,7 @@ def coerce_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[
     missing = [r for r in schema.get("required", []) if r not in arguments]
     if missing:
         raise ValueError(f"missing arguments: {missing}")
-    out = {}
+    out: dict[str, Any] = {}
     for k, v in arguments.items():
         spec = props[k]
         if v is None:

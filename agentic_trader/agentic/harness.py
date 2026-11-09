@@ -301,14 +301,16 @@ class AgentHarness:
 
     def _heartbeat_loop(self) -> None:
         interval = max(self.lease_s / 3.0, 0.02)
+        store = self.store
+        assert store is not None  # the heartbeat thread is only started with a store
         while not self._stop.wait(interval):
             try:
                 with self._lock:
                     live = [r.id for r in self.runs.values() if not r.done]
-                self.store.heartbeat(self.owner, live)
+                store.heartbeat(self.owner, live)
                 # Periodic sweep of records whose owner stopped heartbeating (a crashed
                 # sibling, or a predecessor that died within the lease before we started).
-                swept = self.store.mark_interrupted(lease_s=self.lease_s)
+                swept = store.mark_interrupted(lease_s=self.lease_s)
                 if swept:
                     log.warning("%d task(s) lost their owner's heartbeat; marked FAILED", swept)
             except Exception as e:  # noqa: BLE001 - a closed store ends the loop, anything else is logged
@@ -522,6 +524,7 @@ class AgentHarness:
                 held = run.positions.get(Instrument.parse(run.task.symbol).symbol, run.task.current_weight)
                 run.trading_state = self.graph.prepare(run.task.symbol, run.task.as_of, current_weight=held,
                                                        provider=run._provider)
+        assert run.plan is not None  # planning precedes execution
         steps = [s for s in run.plan.steps if s.type in (StepType.TOOL, StepType.AGENT)]
         i = 0
         while i < len(steps):
@@ -562,20 +565,23 @@ class AgentHarness:
         else:
             with ThreadPoolExecutor(max_workers=min(4, len(batch))) as pool:
                 results = list(pool.map(one, batch))
+        st = run.trading_state
+        assert st is not None  # set by _execute before any step runs
         for step, res in results:
             if not res.ok and "awaiting approval" in (res.error or ""):
                 continue  # not completed: the run pauses and retries this step on resume
             run.step_results[step.id] = res.payload if res.ok else {"error": res.error}
             run.completed_steps.add(step.id)
             if res.ok and step.name == "knowledge.search" and isinstance(res.payload, list):
-                run.trading_state.knowledge = res.payload
+                st.knowledge = res.payload
             if res.ok and step.name == "quant.alpha" and isinstance(res.payload, dict):
-                run.trading_state.alpha = res.payload
+                st.alpha = res.payload
             if not res.ok:
                 run.errors.append(f"{step.name}: {res.error}")
 
     def _run_agent_step(self, run: TaskRun, step: PlanStep) -> None:
         st, ev = run.trading_state, run.evidence
+        assert st is not None  # set by _execute before any step runs
         before = len(ev)
         if step.name.startswith(ANALYST_PREFIX):
             name = step.name[len(ANALYST_PREFIX):]
@@ -623,30 +629,32 @@ class AgentHarness:
             facts = risk_facts(st, self.config)
             fev = ev.record(EvidenceType.CALCULATION, "quant.risk", "risk facts for the proposal", facts,
                             run.correlation_id)
-            d = self.graph.run_risk(st)
+            fd = self.graph.run_risk(st)
             for v in st.risk_views:
                 vev = ev.record(EvidenceType.DECISION, f"risk.{v.stance}", v.argument,
                                 {"weight": v.recommended_weight, "round": v.round}, run.correlation_id)
                 v.evidence_ids = (fev.id, vev.id)
-            dev = ev.record(EvidenceType.DECISION, "portfolio_manager", d.rationale, d.to_dict(),
+            dev = ev.record(EvidenceType.DECISION, "portfolio_manager", fd.rationale, fd.to_dict(),
                             run.correlation_id)
-            d.evidence_ids = tuple(dict.fromkeys(
+            fd.evidence_ids = tuple(dict.fromkeys(
                 (st.proposal.evidence_ids if st.proposal else ()) + (fev.id,)
                 + tuple(i for v in st.risk_views for i in v.evidence_ids) + (dev.id,)))
-            run.findings.append(Finding.make("portfolio_manager", d.rationale, d.confidence, d.evidence_ids,
-                                             {"target_weight": d.target_weight}, ("decision", d.source),
+            run.findings.append(Finding.make("portfolio_manager", fd.rationale, fd.confidence, fd.evidence_ids,
+                                             {"target_weight": fd.target_weight}, ("decision", fd.source),
                                              untrusted=decision_untrusted(st)))
             run.step_results["risk_facts"] = facts
         else:
             raise ValueError(f"unknown agent stage {step.name}")
 
     def _critique(self, run: TaskRun) -> None:
+        assert run.trading_state is not None  # set by _execute
         with run.tracer.span("critic"):
-            run.critic = self.critic.review(run.trading_state, run.findings, run.evidence,
-                                            run.step_results.get("risk_facts"))
+            critic = self.critic.review(run.trading_state, run.findings, run.evidence,
+                                        run.step_results.get("risk_facts"))
+            run.critic = critic
         run.completed_steps.add("STEP-critic")
         self._transition(run, TaskState.VALIDATING_EVIDENCE,
-                         "critic passed" if run.critic.passed else "critic flagged errors")
+                         "critic passed" if critic.passed else "critic flagged errors")
 
     def _validate(self, run: TaskRun) -> None:
         with run.tracer.span("validate_evidence"):
@@ -665,11 +673,12 @@ class AgentHarness:
         with run.tracer.span("finalise"):
             acfg = self.config.get("agentic", {})
             llm = self.graph.llm if acfg.get("llm_reporter", True) else None
-            run.report = build_report(run.task, run.trading_state, run.findings, run.critic, run.evidence, llm)
-            if run.critic is not None and run.trading_state.decision is not None:
-                run.trading_state.decision.confidence = round(
-                    run.trading_state.decision.confidence * run.critic.multiplier, 4)
-            self.graph.record(run.trading_state)
+            st = run.trading_state
+            assert st is not None and run.critic is not None  # set by _execute and _critique
+            run.report = build_report(run.task, st, run.findings, run.critic, run.evidence, llm)
+            if run.critic is not None and st.decision is not None:
+                st.decision.confidence = round(st.decision.confidence * run.critic.multiplier, 4)
+            self.graph.record(st)
         run.completed_steps.add("STEP-finalise")
         self._transition(run, TaskState.COMPLETED)
 

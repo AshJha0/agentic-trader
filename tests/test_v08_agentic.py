@@ -761,7 +761,7 @@ def test_metrics_histograms_are_bounded_and_counters_render_exactly():
     assert set(raw) == {"count", "sum", "min", "max", "buckets"} and not any(isinstance(v, list) and len(v) > 11
                                                                             for v in raw.values())
     text = m.render()
-    assert f'lat_bucket{{tool="t",le="+Inf"}} 5000\n' in text and f'lat_count{{tool="t"}} 5000\n' in text
+    assert 'lat_bucket{tool="t",le="+Inf"} 5000\n' in text and 'lat_count{tool="t"} 5000\n' in text
     n_le_100 = sum(1 for i in range(5000) if 0.5 + (i % 400) * 3.0 <= 100.0)
     assert f'lat_bucket{{tool="t",le="100.0"}} {n_le_100}\n' in text
     assert m.histogram("lat", tool="nope") is None

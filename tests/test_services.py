@@ -142,6 +142,20 @@ def test_mcp_stdio_round_trip_and_remote_registry():
 
 
 # ------------------------------------------------------------------- CLI
+def test_cli_task_that_fails_before_planning_reports_instead_of_crashing(monkeypatch, capsys):
+    # Regression: the summary line dereferenced run.plan, which is None when planning raises,
+    # so a FAILED task crashed the CLI with AttributeError instead of printing the reason.
+    from agentic_trader.agentic import harness as harness_mod
+
+    def boom(*a, **k):
+        raise ValueError("planner refused")
+
+    monkeypatch.setattr(harness_mod, "make_plan", boom)
+    assert main(["task", "AAPL", "--date", "2024-03-01", "--no-memory"]) == 1
+    out = capsys.readouterr().out
+    assert "state: FAILED  plan: none  steps: 0" in out and "planner refused" in out
+
+
 def test_cli_task_tools_and_research_commands(tmp_path, capsys):
     assert main(["task", "EURUSD", "--date", "2024-03-01", "--position", "0.2", "--no-memory"]) == 0
     out = capsys.readouterr().out

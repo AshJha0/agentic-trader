@@ -83,13 +83,13 @@ def _validated(name: str, args: tuple, kw: dict) -> tuple[tuple, dict]:
     spec = _WINDOW_ARGS.get(name)
     if not spec:
         return args, kw
-    args = list(args)
+    checked = list(args)
     for i, key in spec:
-        if i < len(args):
-            args[i] = _window(args[i])
+        if i < len(checked):
+            checked[i] = _window(checked[i])
         elif key in kw:
             kw[key] = _window(kw[key])
-    return tuple(args), kw
+    return tuple(checked), kw
 
 
 def _l(x) -> list[float]:

@@ -33,7 +33,7 @@ import copy
 import threading
 import math
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -484,7 +484,7 @@ class DeskTools:
                      "notional": notional, "notional_currency": str(notional_currency).upper(), "price": price}
             if planned != given:
                 raise ValueError(f"ticket fields differ from plan {plan_id}: submit the plan's ticket unchanged")
-        ticket = {"id": f"ORD-{len(self.orders) + 1:05d}", "plan_id": plan_id, "symbol": ins.symbol,
+        ticket: dict[str, Any] = {"id": f"ORD-{len(self.orders) + 1:05d}", "plan_id": plan_id, "symbol": ins.symbol,
                   "side": side, "intent": trade_intent(before, after, tol=one_lot), "quantity": quantity,
                   "quantity_unit": quantity_unit, "notional": notional, "notional_currency": self.account_currency,
                   "price": price, "position_before": before, "position_after": round(after, 6),
@@ -526,6 +526,7 @@ def _news_payload(i: NewsItem) -> dict:
 
 def build_registry(tools: DeskTools) -> ToolRegistry:
     reg = ToolRegistry()
+    fn: Callable[..., Any]
     for fn in (tools.history, tools.news, tools.social, tools.fundamentals, tools.macro):
         reg.register("market_data", fn, annotations=_DATA)
     for fn in (tools.technical, tools.risk, tools.alpha, tools.xalpha, tools.baselines):
@@ -586,7 +587,7 @@ class RecordingProvider(MarketDataProvider):
     def macro(self, instrument: Instrument, as_of: date) -> dict[str, Any]:
         return self._call("market_data.macro", symbol=instrument.symbol, as_of=as_of) or {}
 
-    def carry_series(self, instrument: Instrument, dates: pd.DatetimeIndex) -> np.ndarray:
+    def carry_series(self, instrument: Instrument, dates: pd.Index) -> np.ndarray:
         return self.inner.carry_series(instrument, dates)
 
 

@@ -23,7 +23,6 @@ class Recorder:
 
 def test_critic_reporter_and_planner_prompts_carry_no_name_or_date_under_anonymisation():
     from agentic_trader.agentic.critic import Critic
-    from agentic_trader.agentic.domain import Finding
     from agentic_trader.agentic.planner import propose_plan
     from agentic_trader.agentic.reporter import llm_narrative
     from agentic_trader.graph import TradingGraph

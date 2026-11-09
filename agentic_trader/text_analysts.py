@@ -148,7 +148,8 @@ class FundamentalsTextAnalyst:
                 dropped.append({**c, "reason": "quote not found in the cited section"})
             else:
                 kept.append(c)
-        score = sum({"positive": 1, "negative": -1}.get(c.get("direction"), 0) for c in kept)
+        directions: dict[Any, int] = {"positive": 1, "negative": -1}
+        score = sum(directions.get(c.get("direction"), 0) for c in kept)
         return TextAnalysis(self.name, True, {"claims": kept, "net_direction": score}, dropped)
 
 

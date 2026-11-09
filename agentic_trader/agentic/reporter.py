@@ -175,6 +175,7 @@ def collect_facts(state: TradingState, critic: CriticReport) -> dict[str, float]
 def template_narrative(state: TradingState, facts: dict[str, float], findings: list[Finding],
                        critic: CriticReport) -> str:
     d = state.decision
+    assert d is not None  # the report is built after the portfolio manager decided
     ins = state.instrument
     votes = [r for r in state.reports.values() if not r.abstained]
     bulls = [r.analyst for r in votes if r.signal > 0.1]

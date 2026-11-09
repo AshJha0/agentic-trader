@@ -26,10 +26,11 @@ from agentic_trader.agentic import AgentHarness, Role, Task, TaskState
 from agentic_trader.llm import (AnthropicLLM, BudgetedLLM, UsageTracker, budget_llm, extract_json, get_llm,
                                 request_shape, retry_after_seconds)
 from agentic_trader.memory import DecisionMemory
+from agentic_trader.prompts import prompt_bundle_hash, prompt_registry
+
 # The v0.8 suites were written against these ids; P1 (v0.13) moved the defaults.
 V08_MODELS = {"deep_think_llm": "claude-opus-5", "quick_think_llm": "claude-haiku-4-5", "deep_effort": "high",
               "llm_min_input_tokens": 8000, "llm_strict_model": False}
-from agentic_trader.prompts import prompt_bundle_hash, prompt_registry
 
 CFG = make_config(memory_path=None)
 QUIET = dict(memory=DecisionMemory(None), on_event=lambda *_: None)

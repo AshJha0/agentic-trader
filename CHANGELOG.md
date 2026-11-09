@@ -73,6 +73,21 @@ below; offline, $0). Fast PR-gate suite (`-m "not slow"`), line coverage of `age
   `MemoryToolError` (`10.0` is still accepted).
 - mypy (advisory): 160 -> 153 findings (a shadowed variable in `state.py`); ruff clean.
 
+### Quality (round 2)
+
+- **ruff now lints `tests/` in CI.** The 40 findings there (imports below module code, `a; b`
+  one-liners, unused imports and variables) are fixed rather than suppressed; no `noqa` added.
+- **mypy (advisory): 170 -> 35 findings** (measured with the CI pin, mypy 2.4.1; 25 when the
+  venv's `mcp>=2` is visible, since the rest of the gap is the older global `mcp` stubs).
+  Optional state is narrowed where the stage order guarantees it (harness, risk team, critic,
+  reporter), annotations added where inference was wrong, shadowed variables renamed, and the
+  provider `carry_series` / `risk_free_series` signatures widened to `pd.Index`. No behaviour
+  change on any path that previously worked.
+- **Fix: `agentic-trader task` crashed when planning failed.** The summary line read
+  `run.plan.source` while `run.plan` was None (bad symbol, planner refusal), so the CLI raised
+  AttributeError instead of printing `state: FAILED` and the reason. Regression test in
+  `tests/test_services.py`.
+
 ### Documentation and KPI table (P6)
 
 P6 documentation items 6.2-6.5. Offline tests only (`tests/test_v16_kpi.py`); no spend, no model

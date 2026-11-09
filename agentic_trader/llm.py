@@ -189,7 +189,9 @@ def model_matches(configured: str, served: str | None) -> bool:
     """True when the id the API reports serving is the configured one (an exact match, or the
     configured id followed by a ``-YYYYMMDD`` snapshot suffix; ``claude-haiku-5`` does not
     match ``claude-haiku-5-5``)."""
-    return bool(served) and (served == configured or re.fullmatch(re.escape(configured) + r"-\d{8}", served) is not None)
+    if not served:
+        return False
+    return served == configured or re.fullmatch(re.escape(configured) + r"-\d{8}", served) is not None
 
 
 def estimate_call_cost(model: str, output_tokens: int, input_tokens: int) -> float:
@@ -343,7 +345,7 @@ class UsageTracker:
                 "cache_write_tokens": sum(u.cache_write_tokens for u in self.by_model.values()),
                 "cost_usd": round(self._cost_usd(), 4),
                 "unpriced_models": self._unpriced_models(),
-                "by_model": {m: {**u.__dict__, "cost_usd": None if u.cost(m) is None else round(u.cost(m), 4)}
+                "by_model": {m: {**u.__dict__, "cost_usd": None if (c := u.cost(m)) is None else round(c, 4)}
                              for m, u in self.by_model.items()},
             }
 
@@ -669,8 +671,9 @@ class BudgetedLLM:
         if hasattr(self.inner, "admit_retry"):
             self.inner.admit_retry = self._admit_retry
         try:
-            if schema is not None and callable(getattr(self.inner, "complete_json", None)):
-                return self.inner.complete_json(system, prompt, deep=deep, schema=schema)
+            cj = getattr(self.inner, "complete_json", None)
+            if schema is not None and callable(cj):
+                return cj(system, prompt, deep=deep, schema=schema)
             return self.inner.complete(system, prompt, deep=deep)
         finally:
             with self._lock:

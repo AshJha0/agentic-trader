@@ -157,10 +157,10 @@ def argument_guard_rule(ctx: PolicyContext) -> PolicyDecision | None:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "notional is not a number")
         if not math.isfinite(nv) or nv <= 0:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "notional must be a positive finite number")
-        cap = ctx.config.get("max_order_notional")
-        if cap is not None and nv > float(cap):
+        ncap = ctx.config.get("max_order_notional")
+        if ncap is not None and nv > float(ncap):
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard",
-                                  f"notional {nv:,.0f} exceeds the per-order cap {float(cap):,.0f}")
+                                  f"notional {nv:,.0f} exceeds the per-order cap {float(ncap):,.0f}")
     return None
 
 

@@ -18,12 +18,13 @@ from agentic_trader.backtest import AGENT
 from agentic_trader.calibration import CalibrationReport, calibrate
 from agentic_trader.cli import main
 from agentic_trader.data import SyntheticProvider
-from agentic_trader.evaluation import UNIVERSES, EvaluationResult, evaluate
+from agentic_trader.evaluation import UNIVERSES, evaluate
 
-UNIVERSES_ALL = UNIVERSES["all"]
 from agentic_trader.memory import DecisionMemory
 from agentic_trader.prompts import prompt_bundle_hash, prompt_registry
 from agentic_trader.stats import paired_bootstrap
+
+UNIVERSES_ALL = UNIVERSES["all"]
 
 CFG = make_config(memory_path=None)
 QUIET = dict(memory=DecisionMemory(None), on_event=lambda *_: None)
@@ -181,7 +182,7 @@ def test_xalpha_analyst_ranks_within_its_universe():
 
 # --------------------------------------------------- bounded task pool / processes
 def test_api_task_pool_is_bounded():
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from agentic_trader.agentic.api import create_app
     h = AgentHarness(TradingGraph(CFG, **QUIET), gateway=QueuedApprovalGateway())
