@@ -89,7 +89,7 @@ PLAN 4.11): run 20 times in a row, numpy backend, while a 13-minute test run and
 
 ## Tests run
 
-`pytest tests/test_v17_l8.py tests/test_v14_risk.py tests/test_v14_oms.py tests/test_v08_portfolio.py` (numpy backend): **140 passed**, 0 failed (25 new in test_v17_l8.py). ruff on the lane-rule paths plus the two new scripts: clean. mypy on the 8 touched or new modules: 0 errors. `git grep -i interview`: one hit, in the pre-existing docs/review/v017_LANE_RULES.md (the rule itself).
+`pytest tests/test_v17_l8.py tests/test_v14_risk.py tests/test_v14_oms.py tests/test_v08_portfolio.py` (numpy backend): **140 passed**, 0 failed (25 new in test_v17_l8.py). ruff on the lane-rule paths plus the two new scripts: clean. mypy on the 8 touched or new modules: 0 errors. The banned-word grep (owner rule 2026-10-27): one hit, in the pre-existing docs/review/v017_LANE_RULES.md (the rule itself).
 
 ## Model runs / network runs to queue (maintainer, $0, network only)
 

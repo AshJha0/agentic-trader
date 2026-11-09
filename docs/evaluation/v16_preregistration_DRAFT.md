@@ -70,8 +70,8 @@ with more than 10 % fallbacks is inadmissible as above.
   in-sample effect is attributed to memory and the cell is not adopted.
 - **Data note**: the post-cutoff window overlaps the holdout (to 2026-06-30) and the reserve
   window (2026-07-01 to 2026-09-25). Running `postcutoff_ta` spends those dates for this LLM
-  question; no rule choice may be made on them afterwards. This needs the owner's sign-off at
-  signing.
+  question; no rule choice may be made on them afterwards. Owner sign-off recorded on
+  2026-11-09: the cell is approved on these terms and runs after the `decisive_ta` smoke test.
 
 Worked example: if `decisive_ta` gives IC 0.06 (SE 0.033), the 95 % interval is
 [-0.005, 0.125]: not a pass. If after 2,000 decisions the IC is -0.02 with SE 0.035, the upper
