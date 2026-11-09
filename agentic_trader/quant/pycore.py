@@ -239,8 +239,9 @@ def almgren_chriss(total: float, n: int, kappa: float) -> np.ndarray:
         return np.full(n, total / n)
     # x(t) = X sinh(kappa (1 - t)) / sinh(kappa) = X exp(-kappa t) expm1(-2 kappa (1 - t)) / expm1(-2 kappa):
     # overflow-free for any kappa (sinh(710) is inf) and cancellation-free for small kappa.
+    # kappa * (1 - t) first: for kappa > DBL_MAX / 2, -2 * kappa is -inf and -inf * 0 at t = 1 is NaN.
     t = np.arange(1, n + 1) / n
-    remaining = total * np.exp(-kappa * t) * np.expm1(-2.0 * kappa * (1.0 - t)) / np.expm1(-2.0 * kappa)
+    remaining = total * np.exp(-kappa * t) * np.expm1(-2.0 * (kappa * (1.0 - t))) / np.expm1(-2.0 * kappa)
     prev = np.concatenate([[total], remaining[:-1]])
     return prev - remaining
 

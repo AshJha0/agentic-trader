@@ -305,7 +305,7 @@ Series almgren_chriss(double total, int n, double kappa) {
     double prev = total;
     for (int k = 1; k <= n; ++k) {
         const double t = static_cast<double>(k) / n;
-        const double remaining = total * std::exp(-kappa * t) * std::expm1(-2.0 * kappa * (1.0 - t)) / denom;
+        const double remaining = total * std::exp(-kappa * t) * std::expm1(-2.0 * (kappa * (1.0 - t))) / denom;
         out[k - 1] = prev - remaining;
         prev = remaining;
     }

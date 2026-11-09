@@ -75,6 +75,7 @@ from __future__ import annotations
 
 import json
 import math
+import numbers
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
@@ -480,7 +481,9 @@ class OMS:
         if side not in ("buy", "sell"):
             raise ValueError("side must be 'buy' or 'sell'")
         for name, v in (("quantity", quantity), ("price", price), ("last_close", last_close)):
-            if not (isinstance(v, (int, float)) and math.isfinite(float(v)) and float(v) > 0):
+            # numbers.Real admits numpy scalars (np.int64 is not an int); a bool is not a quantity.
+            if not (isinstance(v, numbers.Real) and not isinstance(v, (bool, np.bool_))
+                    and math.isfinite(float(v)) and float(v) > 0):
                 raise ValueError(f"{name} must be a positive finite number")
         order = Order(str(client_order_id), ins.symbol, ins.asset_class, side, float(quantity), float(price), at)
         known = self.orders.get(order.client_order_id)
@@ -697,7 +700,10 @@ def reconcile(oms: OMS, ledger_positions: dict[str, float], ledger_cash: float |
         if k.upper() in fills:
             checked += 1
             a = fills[k.upper()]
-            if abs(a / float(px) - 1.0) * 1e4 > price_tol_bps:
+            # A non-positive or non-finite ledger price cannot be compared in bps; it is a
+            # break in itself (it used to raise ZeroDivisionError and abort the whole report).
+            if (not math.isfinite(float(px)) or float(px) <= 0
+                    or abs(a / float(px) - 1.0) * 1e4 > price_tol_bps):
                 breaks.append(Break("price", k.upper(), a, float(px), a - float(px)))
     report = BreakReport(breaks, checked)
     report.evidence_id = oms.evidence.record(
