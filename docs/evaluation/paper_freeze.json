@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-2",
+  "vintage_id": "v09-engine-3",
   "frozen_on": "2026-11-09",
   "freeze_session": "2026-09-29",
-  "reason": "v0.17 merged: exec lag/financing/stop options (default off), OMS limits, calendar, schema ranges; recorded numbers unchanged by default",
+  "reason": "v0.18: next-open fills allowed with stop/take levels (quant core); default results unchanged",
   "engine_files": [
     "agentic_trader/backtest.py",
     "agentic_trader/config.py",
@@ -37,13 +37,19 @@
     "max_debate_rounds",
     "max_risk_discuss_rounds"
   ],
-  "engine_hash": "577740005f2f7bfda4f95f16d067ad5d70c1d4ffeb543264eb3e8ea625281e10",
+  "engine_hash": "079980f0238a7c1360f4a48180ea5556f437e069d1a6604ab01e3667457ca2e4",
   "history": [
     {
       "vintage_id": "v09-engine-1",
       "engine_hash": "dba0e1bd55aa2a4d23439ba659291a62aa8745e43d1cac3f0d432c1b43b5b9af",
       "frozen_on": "2026-11-09",
       "reason": "first recorded engine vintage of the v0.9 frozen books (v0.17 R4, N1); the engine as of the v0.16 round-2 branch"
+    },
+    {
+      "vintage_id": "v09-engine-2",
+      "engine_hash": "577740005f2f7bfda4f95f16d067ad5d70c1d4ffeb543264eb3e8ea625281e10",
+      "frozen_on": "2026-11-09",
+      "reason": "v0.17 merged: exec lag/financing/stop options (default off), OMS limits, calendar, schema ranges; recorded numbers unchanged by default"
     }
   ]
 }
