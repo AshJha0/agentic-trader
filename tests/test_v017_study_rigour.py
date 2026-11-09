@@ -385,3 +385,32 @@ def test_llm_study_rows_carry_lineage_and_refuse_mismatch(tmp_path: Path) -> Non
                         lambda s: None, header=_hdr(sha="other"))
     ev = {"prompt_eval_count": 5, "eval_count": 2, "truncated": False}
     assert lin.call_lineage("s", "p", ev)["prompt_eval_count"] == 5
+
+
+def test_llm_study_stops_on_a_mid_run_model_swap(tmp_path: Path) -> None:
+    """L10: run_study re-checks the served digest every N written rows and stops on a swap."""
+    study = _study()
+    out = tmp_path / "swap.jsonl"
+    cell = next(c for c in study.CELLS if c.name == "rules")
+    dates = study.design_dates(20)[1:6]
+    hdr = dict(_hdr(), model="m:7b", model_digest="sha256:aaa")
+    served = iter(["sha256:aaa", "sha256:aaa", "sha256:bbb"])
+    looks: list[str] = []
+
+    def digest_fn(url: str, model: str) -> dict[str, Any]:
+        looks.append(model)
+        return {"digest": next(served)}
+    cfg = make_config(study.STUDY_BASE, local_llm_url="http://127.0.0.1:11434")
+    with pytest.raises(study.ModelSwapped, match="sha256:bbb"):
+        study.run_study(["AAPL"], dates, 1, [cell], cfg, out, None, lambda s: None, header=hdr,
+                        swap_check_every=2, digest_fn=digest_fn)
+    assert looks == ["m:7b"] * 3                               # before rows 1, 3 and 5
+    assert len(study.load_rows(out)) == 4                      # rows before the swap are kept
+    seen: list[str] = []
+
+    def never(url: str, model: str) -> dict[str, Any]:
+        seen.append(model)
+        return {"digest": "x"}
+    study.run_study(["AAPL"], dates, 1, [cell], cfg, out, None, lambda s: None, header=hdr,
+                    swap_check_every=0, digest_fn=never)
+    assert seen == [] and len(study.load_rows(out)) == 5      # 0 disables the check

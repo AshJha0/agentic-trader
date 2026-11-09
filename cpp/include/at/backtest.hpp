@@ -71,7 +71,8 @@ struct BacktestConfig {
     // stop/take levels) decided at bar t is executed at bar t+k; 0 = same-close fill, the
     // historical behaviour. fill_next_open: the executed target fills at open[t+1] instead of
     // close[t] and the held position carries the overnight move close[t] -> open[t+1]
-    // (needs open; not combinable with stop/take levels). Mirrors pycore.run_backtest_ex.
+    // (needs open). Stop/take levels then apply to bar t+1 from its open: a level already through
+    // the open exits there, else the range. Mirrors pycore.run_backtest_ex.
     int exec_lag = 0;
     bool fill_next_open = false;
     // Financing spreads (v0.17, review A5): annual fractions, charged per bar next to the cash

@@ -62,7 +62,7 @@ from agentic_trader.evaluation import CORE_UNIVERSE, CRITIC_ON_OVERRIDES, CRITIC
 from agentic_trader.graph import TradingGraph
 from agentic_trader.llm import LLM, estimate_tokens, price_for
 from agentic_trader.local_llm import reachable
-from agentic_trader.study_lineage import call_lineage, check_resume, market_lineage, stamp
+from agentic_trader.study_lineage import call_lineage, check_resume, market_lineage, stamp, swapped_digest
 
 # Every desk role a cell can hand to the model.
 ROLES = ("analysts", "bull", "bear", "facilitator", "trader", "risk", "pm")
@@ -356,11 +356,24 @@ def check_seeds(seeds: int, temperature: float) -> None:
                          "replicates; use --seeds 1, or set --temperature > 0 to sample")
 
 
+SWAP_CHECK_EVERY = 25   # written rows between mid-run model-digest checks (L10)
+
+
+class ModelSwapped(RuntimeError):
+    """The digest Ollama serves for the header's model no longer matches the header."""
+
+
 def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[Cell], config: dict,
               out: Path, llm_factory: Callable[[dict], Any] | None = None,
               echo: Callable[[str], None] = print, header: dict[str, Any] | None = None,
-              allow_version_change: bool = False) -> list[dict[str, Any]]:
+              allow_version_change: bool = False, swap_check_every: int = SWAP_CHECK_EVERY,
+              digest_fn: Callable[[str, str], dict[str, Any] | None] | None = None) -> list[dict[str, Any]]:
     """Run ``cells`` on the design, one checkpointed JSON line per decision.
+
+    Model swap (L10): with a ``header`` naming a model, the digest now served is checked before
+    the first new row and after every ``swap_check_every`` written rows
+    (``study_lineage.swapped_digest``; ``digest_fn`` is injectable for tests; 0 disables). A
+    changed digest stops the run with ``ModelSwapped``, so two sets of weights never share a file.
 
     Resume: decisions already in ``out`` are skipped, so a killed run restarts where it
     stopped. Each line carries the decision, the market facts for the metrics, the source of
@@ -380,7 +393,16 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
     done = {_key(r) for r in load_rows(out)}
     cells = list(cells)
     total = len(cells) * seeds * len(names) * len(dates)
-    k = 0
+    k = written = 0
+    url = config.get("local_llm_url")
+
+    def check_swap() -> None:
+        h = header or {}
+        now = swapped_digest(h, url, digest_fn) if h else None
+        if now is not None:
+            raise ModelSwapped(f"{h.get('model')} digest changed mid-run: header "
+                               f"{h.get('model_digest')}, now served {now}; the {written} rows "
+                               f"written this run are kept; start a new output file for the new weights")
     with out.open("a", encoding="utf-8") as fh:
         for cell in cells:
             for seed in range(seeds):
@@ -393,6 +415,8 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
                         key = (cell.name, seed, name, d.isoformat())
                         if key in done:
                             continue
+                        if swap_check_every > 0 and written % swap_check_every == 0:
+                            check_swap()
                         t = time.perf_counter()
                         state, dec = graph.propagate(name, d)
                         calls = llm.take() if llm is not None else []
@@ -405,6 +429,7 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
                             stamp(row, header)
                         fh.write(json.dumps(row, default=str) + "\n")
                         fh.flush()
+                        written += 1
                         bad = sum(c["status"] != "ok" for c in calls)
                         echo(f"[{k}/{total}] {cell.name} s{seed} {d} {name}: {dec.action.value} "
                              f"w={dec.target_weight:+.3f} calls={len(calls)} not_ok={bad} "

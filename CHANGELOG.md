@@ -9,6 +9,32 @@ offline tests** unless a line says otherwise; **simulation** and **synthetic fix
 nothing about markets; **arithmetic** numbers follow from registered inputs. The model and
 network re-runs are queued, not run, and are listed in `docs/review/PLAN.md` section 4 (v0.17).
 Tag plan: v0.16.0 is tagged first on its own section below, then v0.17.0.
+### Follow-up round (v0.18 notes, 2026-11-09): leftovers closed
+
+Lane notes in `docs/review/v018_notes/`. Evidence class: code + offline tests; no model run.
+
+- **Next-open fills with stops** (L2): `fill_next_open` together with stop or take levels used to
+  raise in both backends; it now runs. A level already through the next open exits at that open,
+  otherwise the bar's range decides. Four hand-worked tests and a C++ parity case.
+- **Honest trial count in rendered DSR** (N6): `scripts/render_v08_tables.py` passes the registered
+  count and the pre-registry estimate (64). `agentic-trader stats` gains `--pre-registry-trials N`
+  and `--trial-returns CSV` (effective-trials DSR); `--trials` now reaches `n_trials`.
+- **Paraphrased memory poison** (C6): `output_guard.poison_match` (word-pair overlap against known
+  steering phrases, threshold 0.75). Existing corpus 19/20 -> 20/20 refused; in-sample, one phrase
+  was written after seeing the miss, so no out-of-sample rate is claimed.
+- **Behaviour change, paper OMS:** corporate actions are applied only with
+  `--oms-corporate-actions` (default off). Paper engine freeze hash unchanged.
+- **Model-swap guard in `llm_study`**: the served model digest is checked before the first new row
+  and every 25 rows; a change raises `ModelSwapped` and keeps rows already written.
+- **Red-team v2 scope** (owner-authorised, 2026-11-09): the 1,500-unit end-to-end run (~19 CPU-days)
+  is replaced by two passes: analyst-only on all 1,500 units, then end-to-end on
+  `--per-category 2` (10 snippets, 100 units). Interleaved unit order keeps any prefix balanced;
+  reports give Wilson 95% intervals and the governance catch rate given analyst compliance
+  (intervals understate uncertainty because snippets repeat across cells).
+- Checked and already done in v0.17, no change: financing spread, stop slippage, participation cap,
+  signed-gateway public keys, guarded memory writes, replay digest allowlist, flaky-test clocks.
+
+
 
 ### R0: study integrity before any P2 result is published
 

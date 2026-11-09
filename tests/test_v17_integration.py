@@ -196,8 +196,12 @@ def test_paper_session_books_corporate_actions_and_writes_tca(tmp_path):
     assert {"slippage_bp", "fill_ratio", "predicted_cost", "realised_cost"} <= set(tca.columns)
     assert len(tca) == plain["books"]["eq"]["orders"]
 
+    off = paper_session(date(2024, 2, 15), CFG, _ActionsProvider(CFG), BOOK, tmp_path / "off", date(2024, 1, 2))
+    assert off == {**off, "books": plain["books"]}       # flag off (default): actions ignored
+    assert not (tmp_path / "off" / "actions.csv").exists()
     out = tmp_path / "acts"
-    paper_session(date(2024, 2, 15), CFG, _ActionsProvider(CFG), BOOK, out, date(2024, 1, 2))
+    paper_session(date(2024, 2, 15), CFG, _ActionsProvider(CFG), BOOK, out, date(2024, 1, 2),
+                  corporate_actions=True)
     acts = pd.read_csv(out / "actions.csv")
     assert set(acts["kind"]) >= {"split", "dividend"} and set(acts["symbol"]) == {"AAPL", "JPM"}
     split = acts[acts["kind"] == "split"]

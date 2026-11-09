@@ -203,6 +203,12 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--ppy", type=float, default=252.0, help="periods per year")
     st.add_argument("--trials", type=int, default=0, help="number of variants tried (for DSR)")
     st.add_argument("--trial-sharpes", default=None, help="comma list of the trials' annual Sharpes")
+    st.add_argument("--pre-registry-trials", type=int, default=0,
+                    help="estimated variants tried before the registry (v0.17 R1.3), e.g. "
+                         "evaluation.PRE_REGISTRY_TRIALS_ESTIMATE (64)")
+    st.add_argument("--trial-returns", default=None,
+                    help="CSV of the trials' return series (periods x trials, first column = dates); "
+                         "adds the deflated Sharpe at the effective number of trials (v0.17 N8)")
     st.add_argument("--var-backtest", action="store_true",
                     help="Kupiec + Christoffersen coverage test of a rolling historical VaR forecast "
                          "against the same return series")
