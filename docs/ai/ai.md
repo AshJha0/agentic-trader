@@ -570,7 +570,7 @@ records per-call spans.
 `text_analysts: []` stays the default. Evidence: (1) the rules-based filing-tone feature was
 not supported on real SEC filings (design period, 9 names, 201 filings: IC negative at every
 horizon, no |t| >= 2; PLAN 3.2, measured); (2) the model-backed analysts were checked for
-usability only (macro 11/12 usable, fundamentals 10/10 sections with 0 claims dropped;
+usability only, in a de-anonymised run whose prompts carried real names and dates (review N2) (macro 11/12 usable, fundamentals 10/10 sections with 0 claims dropped;
 `docs/results/v15_local/text_analysts.json`, local qwen2.5:7b), not for any effect on decisions
 or P&L; (3) turning them on adds a third-party-text channel (fenced, but still attack surface)
 and about 20 s of CPU per call on the local model. Until a registered trial shows they add

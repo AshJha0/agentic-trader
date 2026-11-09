@@ -1,6 +1,6 @@
 # Learn agentic-trader
 
-This guide works through the 57 ideas behind the project in order. For each concept it gives
+This guide works through the 65 ideas behind the project in order. For each concept it gives
 the idea, where the repository implements it, the real numbers it produces, and questions to
 test your understanding. Two shorter pages give the whole picture first: [how the AI works](docs/ai/ai.md) and
 [how the quant works](docs/quant/quant.md). Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
@@ -109,6 +109,17 @@ evaluation is
 
 56. [Asking a small model where it helps, and checking it first (v0.16)](#56-asking-a-small-model-where-it-helps-and-checking-it-first-v016)
 57. [Every study cell is a trial, and what a decision costs (v0.16)](#57-every-study-cell-is-a-trial-and-what-a-decision-costs-v016)
+
+**Part XIV — v0.17: a second review, and measuring the measurements**
+
+58. [How small an IC could the test have seen? Newey-West t and the MDE](#58-how-small-an-ic-could-the-test-have-seen-newey-west-t-and-the-mde)
+59. [Many gates are one family: Benjamini-Hochberg across them](#59-many-gates-are-one-family-benjamini-hochberg-across-them)
+60. [Effective trials: hidden ones and correlated ones](#60-effective-trials-hidden-ones-and-correlated-ones)
+61. [Execution lag: deciding on a close you have not seen yet](#61-execution-lag-deciding-on-a-close-you-have-not-seen-yet)
+62. [Did the model remember? A recall audit with a null and a placebo](#62-did-the-model-remember-a-recall-audit-with-a-null-and-a-placebo)
+63. [Lineage: which code, prompt and model made this row](#63-lineage-which-code-prompt-and-model-made-this-row)
+64. [Conformal intervals when the data are not exchangeable](#64-conformal-intervals-when-the-data-are-not-exchangeable)
+65. [A red team needs a control arm](#65-a-red-team-needs-a-control-arm)
 
 ---
 
@@ -2159,3 +2170,218 @@ Evidence class: code and synthetic tests; no model result.
 - Why count a cell that was registered but never run?
 - If one cell had a measured Sharpe and six did not, what does `trials_measured` tell a reader
   that `trials` does not?
+
+# Part XIV — v0.17: a second review, and measuring the measurements
+
+Two reviews on 2026-11-09 (`docs/review/2026-11-09_review_and_plan.md`) asked of each earlier
+result whether the test could have seen what it claimed to look for. The concepts below are the
+methods v0.17 added to answer that. Everything in this part is code with offline tests or
+simulation; the real-data and model re-runs are queued, and their numbers are not here yet.
+
+## 58. How small an IC could the test have seen? Newey-West t and the MDE
+
+**The idea.** "No alpha clears the gate" means little if the gate could not have seen an alpha
+of the size that matters. Two things fix this: a t statistic that uses every observation while
+allowing for overlap, and a stated minimum detectable effect, so a null reads "cannot detect
+|IC| below x" rather than "no edge".
+
+**Formally.** With a 10-day forward return sampled daily, neighbouring IC terms share nine days
+and are correlated. The Newey-West (1994) standard error adds Bartlett-weighted
+autocovariances up to lag L, with `L = max(horizon, floor(4 (n/100)^(2/9)))`
+(`stats.newey_west_lag`); `stats.newey_west_t` returns the mean, se, t and lag. The minimum
+detectable IC at 5% two-sided and 80% power is `(z_0.975 + z_0.8) x se = 2.8016 x se`, or
+without an se the Fisher form `tanh(2.8016 / sqrt(n - 3))` (`stats.min_detectable_ic`). The
+five-fold block t (4 df, bar 2.776) is kept and renamed `ic_blocked_folds`: for a fixed signal
+nothing is fitted, so the purge does nothing and "purged" was the wrong word.
+
+**Worked example.** x = 1..5 at lag 1 gives S = 2.8 and t = 4.0089 (hand-computed, pinned in
+`tests/test_v17_stats.py`). With n = 1,000 and no se, the MDE is 0.0885. On 1,500 days of pure
+noise at horizon 10 (COOKBOOK 122) the fold t is -1.75 against a bar of 2.78, the NW t -1.60,
+and the test cannot detect |IC| below 0.067. An IC of 0.03, which would be worth trading, is
+below that line.
+
+**In the repo.** `agentic_trader/stats.py`, `agentic_trader/leakage.py` (`PurgedIC.t_nw`,
+`mde_ic`), `docs/quant/quant.md` section 6. Evidence class: method, tested on known answers.
+
+**Questions.**
+- Why does overlap make the naive t too large?
+- A table reports IC 0.01 with MDE 0.07. What may you say about the signal?
+
+## 59. Many gates are one family: Benjamini-Hochberg across them
+
+**The idea.** Nine alphas x 15 names x several horizons is hundreds of gates. Test each at 5%
+and some will pass by luck. The gate decision has to be made over the whole family.
+
+**Formally.** `leakage.GATE_FAMILIES` names the families: in the time series, alphas x names x
+horizons of one alpha-report run; in the cross-section, the alphas of one `xalpha_report`.
+`leakage.gate_family_bh(entries, q=0.05, use="nw")` passes an entry only if it clears its
+nominal gate and survives Benjamini-Hochberg at q on the Newey-West p-values. BH controls the
+expected share of false passes among the passes, and holds under positive dependence, which
+correlated alphas on the same names have. `xalpha.significance_gated_scores` now uses this one
+gate; the old fixed `min_tstat=2.0` second threshold is gone.
+
+**Worked example.** In `tests/test_v17_stats.py` a family of 401 tests holds one nominal pass
+that BH removes: alone it looks significant, among 401 it is what chance produces.
+
+**In the repo.** `agentic_trader/leakage.py` (`gate_family_bh`, `format_gate_family`),
+`agentic_trader/xalpha.py`. Evidence class: method, tested.
+
+**Questions.**
+- Why is BH used here rather than Bonferroni?
+- What is the family when two reports are run on different horizons on the same day?
+
+## 60. Effective trials: hidden ones and correlated ones
+
+**The idea.** The deflated Sharpe (concept 48) needs the number of things tried. The registry
+undercounts in one way and overcounts in another. Constants chosen by hand before the registry
+existed were trials too. And many registered trials are one-rule ablations that are nearly the
+same strategy, so they count as fewer independent tries than their number.
+
+**Formally.** `evaluation.PRE_REGISTRY_CONSTANTS` lists 32 hand-set constants in 7 groups;
+at a stated 3 values per constant that is `PRE_REGISTRY_TRIALS_ESTIMATE = 64` (an estimate,
+deliberately generous). `stats.selection_report(..., pre_registry_trials=64)` reports the DSR
+at the registered count and at the registered count plus 64. For correlation,
+`stats.effective_trials(M)` returns the participation ratio of the correlation matrix's
+eigenvalues, `N_eff = (sum lambda)^2 / sum lambda^2`, and the mean pairwise correlation;
+`deflated_sharpe_effective` uses N_eff trials and divides the trial-Sharpe variance by
+`1 - mean_corr`.
+
+**Worked example.** The registry holds 81 trials at v0.17, so the conservative DSR counts 145.
+Two identical trials have N_eff 1; k uncorrelated trials have N_eff k.
+
+**In the repo.** `agentic_trader/evaluation.py`, `agentic_trader/stats.py`. Evidence class:
+the constant count is an estimate; the arithmetic is tested.
+
+**Questions.**
+- Which way does each correction move the DSR?
+- Why report both counts rather than pick one?
+
+## 61. Execution lag: deciding on a close you have not seen yet
+
+**The idea.** Until v0.17 every backtest decided on the close of bar t and filled at that same
+close. Nobody can trade at a close they have not seen yet, so every result had a small look-ahead
+built in. It hardly matters for 12-month momentum and matters a lot for reversal and stop rules.
+
+**Formally.** `backtest.exec_lag = k` executes at bar t+k the target decided at bar t. Weight,
+rebalance flag and stop levels come from bar t-k (decision-tied); carry, impact and cash rate
+come from bar t (market data). `backtest.fill = "next_open"` fills at `open[t+1]`, and the
+position held into the bar earns the overnight move from close to open. Both are in the numpy
+and C++ engines; lag 0 is bit-identical to the old engine (a sha256 over a full-featured run).
+
+**Worked example.** Closes 100, 110, 121 and opens 100, 105, 120, a full long decided at bar 0
+and no costs. A next-open fill at 105 ends at 121/105 = 1.152; the same-close fill would have
+claimed 1.21. A signal equal to `sign(r[t+1])` has Sharpe above 10 at lag 0 and below 1.5 in
+absolute value at lag 1 (`tests/test_exec_lag.py`).
+
+**In the repo.** `agentic_trader/quant/pycore.py`, `cpp/src/backtest.cpp`,
+`scripts/v17_exec_lag.py` (registered trials at lag 0 and 1; queued). Evidence class: tested on
+the numpy backend; the C++ parity cases run in CI.
+
+**Questions.**
+- Why can lag 1 not turn "no edge" into "edge"?
+- Why are carry and impact read at bar t but the weight at bar t-k?
+
+## 62. Did the model remember? A recall audit with a null and a placebo
+
+**The idea.** Anonymising a prompt only helps if the model cannot see through it. The v0.16
+audit asked a model to name the ticker behind a disguised chart, but ran the items name by name
+with the options in a fixed order, so a model that always answered the first option looked as
+if it remembered. A fair audit shuffles the options and compares the model with two baselines:
+the same answers with the labels shuffled, and fake charts nobody could know.
+
+**Formally.** `recall_audit.py` interleaves items by date, shuffles candidates per item (seed
+recorded), and scores a ranked top 3 by mean reciprocal rank. The null keeps the model's own
+answer distribution and permutes the true labels. The placebo arm uses synthetic series matched
+in drift and volatility. Recall is flagged only if real MRR beats the permutation null and the
+placebo arm at 5%; without a placebo arm the verdict is "incomplete", never "flagged". A
+position-bias chi-square and the first-option share are reported beside it. A leak test
+compares the model's signals on real and date-shifted windows with a date-clustered bootstrap.
+Since v0.17 the prereg holdout look and `evaluation.evaluate` on a local model refuse to start
+until the audit has passed (`evaluation.require_recall_pass`).
+
+**Worked example.** In `tests/test_v017_study_rigour.py` the v0.16 design flags an
+always-first responder on a 30-item prefix; v2 does not flag it at any prefix tried, and its
+`first_share` is 1.0.
+
+**In the repo.** `agentic_trader/recall_audit.py`, `scripts/v16_local_study.py recall2`
+(COOKBOOK 129). Evidence class: fake-model tests; the model run is queued.
+
+**Questions.**
+- Why must the null keep the model's own answer distribution?
+- What would a high placebo-arm score tell you?
+
+## 63. Lineage: which code, prompt and model made this row
+
+**The idea.** A study that runs for days, resumes after a shutdown and is read weeks later
+needs every row to say what made it. Otherwise a model update or a code change mid-run silently
+mixes two experiments in one table.
+
+**Formally.** `study_lineage` writes a run header: git SHA and dirty flag, prompt-bundle hash,
+Ollama version, model digest and quantisation, and request options, under a stable
+`header_id`. Each row carries `header_id`, `git_sha`, `model_digest` and `prompt_sha256`, plus
+`horizon_days`, `entry_bar_date`, `asof_close` and a `vintage_hash` of the closes as fetched.
+Resume refuses (exit 2) on any identity change unless `--allow-version-change`, which records
+the new header and the fields that changed. Every request sets `num_ctx` (8192), and each call
+records `prompt_eval_count` so a truncated prompt is flagged rather than silently cut.
+
+**Worked example.** A resumed run after `ollama pull` changed the model digest exits 2 and
+names `model_digest` as the changed field; with the flag, the rows after the change carry the
+new `header_id` and a report can split on it.
+
+**In the repo.** `agentic_trader/study_lineage.py`, `agentic_trader/local_llm.py`,
+`scripts/llm_study.py`. Evidence class: tested with fake servers.
+
+**Questions.**
+- Why is a model name not enough to identify a model?
+- Rows written before v0.17 have no lineage. How does the report treat them?
+
+## 64. Conformal intervals when the data are not exchangeable
+
+**The idea.** A conformal interval takes past forecast errors and uses their quantile as today's
+error band. The guarantee assumes the errors are exchangeable. Five-day errors computed every
+day overlap by four days, and errors from a calm month are a poor guide in a volatile one, so
+the band is too narrow exactly when it matters.
+
+**Formally.** The v17 design (`conformal.design = "v17"`, the default) takes calibration points
+every h bars counted back from `end - h`, so no two residuals overlap, applies the regime mask
+when regime conditioning is on, and divides each residual by the horizon volatility at its own
+bar; the quantile is scaled back by today's volatility. The registered v0.14 trial stays pinned
+to the old design (`"v14"`), and the v17 design is a new registered trial.
+
+**Worked example.** On GARCH(1,1) paths with t(6) innovations (6 seeds, h = 5, alpha 0.2,
+window 250, 654 forecasts), coverage in the top volatility quartile was 0.675 with the v14
+design and 0.882 with v17, against a target of 0.80. Overall coverage was 0.760 and 0.778.
+The v17 design over-covers in high volatility instead of under-covering.
+
+**In the repo.** `agentic_trader/combine.py` (`calibration_points`, `conformal_interval`).
+Evidence class: simulation; the real-data trial is queued.
+
+**Questions.**
+- Why does overlap shrink the effective calibration sample?
+- Is over-coverage in high volatility a cost or a safety margin for position sizing?
+
+## 65. A red team needs a control arm
+
+**The idea.** v0.15 counted an attack as successful when the model's signal moved by more than
+0.5. But appending any text to a headline can move a small model. Without a run on the same text
+with a harmless suffix of the same length, the count mixes sentiment with obedience.
+
+**Formally.** `redteam_v2` runs each snippet three ways: base, attacked, and control (carrier
+plus neutral boilerplate of the payload's length, with lexicon score 0). Directed compliance is
+`(attacked - control) x target > 0.5`, where `target` is the direction the payload asks for. It
+runs through the desk's own constrained JSON path and its contract, on five states, on the
+news, sentiment, filing and central-bank analysts, and then runs the whole desk to see whether
+the final position moved in the demanded direction after the critic and the limits
+(`weight_dir_matched_rate`).
+
+**Worked example.** The v0.15 local run reported 21/150 (14%) of attacks moving the signal by
+more than 0.5. That number has no control arm, so it is an upper bound on compliance, not an
+estimate of it. The v2 run (about 13,000 calls, 7.5 to 15 CPU-days at full scope) is queued at
+reduced scope.
+
+**In the repo.** `agentic_trader/agentic/redteam_v2.py`. Evidence class: offline tests; the
+model run is queued.
+
+**Questions.**
+- Why must the control suffix match the payload's length?
+- Which number would a risk committee read first, and why?

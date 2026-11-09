@@ -101,6 +101,7 @@ def _v03_trial(rules: dict | None = None, risk: dict | None = None, stops: bool 
 
 V14_IC = {"method": "ic", "window": 504}
 # The P2 study cell's trial name must equal llm_study.Cell.trial_name for the critic_on cell.
+CONFORMAL_V17_TRIAL = "v0.17 IC combination + conformal interval sizing (non-overlapping, vol-scaled calibration)"
 CRITIC_ON_TRIAL = ("P2 critic_on: local model in every role, critic in the graph acting on target_weight "
                    "(scale 0.5 on a model/rules divergence)")
 CRITIC_ON_OVERRIDES = {"agentic": {"critic_in_graph": True, "critic_weight_rule": "scale",
@@ -243,6 +244,11 @@ TRIALS: tuple[Trial, ...] = (
           "5-day horizon, incremental IC over the rule signal", "v0.17", None),
     Trial("P2 postcutoff_ta: technical-analyst-only local model, weekly dates 2025-07 to 2026-10 "
           "(post-training leakage control), 5-day horizon, incremental IC over the rule signal", "v0.17", None),
+    # v0.17 (review 2026-11-09 N7): the conformal design trial re-run with the non-overlapping,
+    # vol-scaled calibration (conformal.design "v17"). Registered before the real-data re-run
+    # (scripts/v14_design_trials.py), so it counts in the deflated Sharpe whatever it shows.
+    Trial(CONFORMAL_V17_TRIAL, "v0.17",
+          {"combination": V14_IC, "conformal": {"enabled": True, "design": "v17"}}),
 )
 
 

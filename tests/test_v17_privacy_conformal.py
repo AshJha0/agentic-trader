@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from agentic_trader.anonymize import Anonymizer, enforce_llm_anonymize
+from agentic_trader.anonymize import COMPANY_NAMES, Anonymizer, enforce_llm_anonymize
 from agentic_trader.combine import calibration_points, conformal_halfwidth, conformal_interval
 from agentic_trader.config import make_config
 from agentic_trader.evaluation import CORE_UNIVERSE
@@ -124,10 +124,28 @@ def test_macro_prompt_dates_scrubbed():
     assert "2021" not in llm.prompts[0] and res.ok
 
 
-def test_price_path_scrub_unchanged_for_price_prompts():
+def test_price_path_scrub_keeps_numbers_and_scrubs_names():
     anon = Anonymizer(AAPL, AS_OF, 120.0)
     s = "AAPL close 120.0 on 2021-02-26, rsi 55, 2000 shares, Apple headline"
-    assert anon.scrub(s) == "STOCK_X close 120.0 on D-3, rsi 55, 2000 shares, Apple headline"
+    assert anon.scrub(s) == "STOCK_X close 120.0 on D-3, rsi 55, 2000 shares, COMPANY_X headline"
+
+
+def test_price_path_headlines_do_not_name_the_company():
+    # v0.17 boundary fix: on v0.16 code ``scrub`` left every name in a headline untouched.
+    anon = Anonymizer(AAPL, AS_OF, 120.0)
+    heads = ["Apple Inc. beats estimates as iPhone sales jump",
+             "Microsoft and Apple trade blows over the App Store",
+             "APPLE files 10-K; Nvidia rallies"]
+    out = [anon.scrub(h) for h in heads]
+    assert out == ["COMPANY_X beats estimates as PRODUCT_X sales jump",
+                   "OTHER_CO and COMPANY_X trade blows over the PRODUCT_X",
+                   "COMPANY_X files 10-K; OTHER_CO rallies"]
+    names = [n for t in CORE_UNIVERSE for n in COMPANY_NAMES.get(t, ()) if len(n) >= 3]
+    assert not any(re.search(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])", o)
+                   for o in out for n in names)
+    # peer tickers are not aliased on the price path (``MA``, ``CAT`` collide with prompt text)
+    assert anon.scrub("MA crossover; CAT score 3") == "MA crossover; CAT score 3"
+    assert anon.scrub(anon.scrub(heads[0])) == out[0]                  # idempotent
 
 
 # ------------------------------------------------------------------ N8

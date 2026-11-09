@@ -34,11 +34,12 @@ Third-party text (filings, central-bank statements) read by the text analysts go
            months without a day become ``M`` offsets; bare years become ``Y`` offsets.
 
 ``scrub`` (the price path) also rewrites accession numbers, CIKs and ISO timestamps, which
-never occur in a price-path prompt, so its output for those prompts is unchanged.
+never occur in a price-path prompt. Since v0.17 it also replaces company and product names
+(own -> ``COMPANY_X`` / ``PRODUCT_X``, peers -> ``OTHER_CO``), so real headlines no longer name
+the company; it does not alias peer tickers, which collide with ordinary upper-case text.
 
 Residual leakage (documented in the threat model): distinctive statistics such
-as a -0.1% policy rate, company names in real headlines on the price path (``scrub``
-leaves names alone), names outside the built-in map, the wording of a filing, and the
+as a -0.1% policy rate, names outside the built-in map, the wording of a filing, and the
 shape of the return series itself. One-letter tickers (``V``) are not aliased in text:
 they collide with Roman numerals.
 """
@@ -179,6 +180,7 @@ class Anonymizer:
         self.accessions: dict[str, str] = {}      # real accession -> ACC_n
         self._names: set[str] = set()
         self._text_patterns: list[tuple[re.Pattern, str]] | None = None
+        self._name_patterns: list[tuple[re.Pattern, str]] | None = None
         if not instrument.is_fx:
             self.add_names(COMPANY_NAMES.get(instrument.symbol.upper(), ()))
 
@@ -189,32 +191,43 @@ class Anonymizer:
             if isinstance(n, str) and len(n.strip()) >= 3:
                 self._names.update({n.strip(), _name_stem(n)} - {""})
         self._text_patterns = None
+        self._name_patterns = None
+
+    def _build_rules(self, with_tickers: bool) -> list[tuple[re.Pattern, str]]:
+        own = self.instrument.symbol.upper()
+        mine = {n for n in self._names if len(n) >= 3}
+        products = set(PRODUCT_NAMES.get(own, ())) if not self.instrument.is_fx else set()
+        others: set[str] = set()
+        for t in _universe():
+            if t.upper() == own:
+                continue
+            if with_tickers and len(t) >= 2 and t.isupper():
+                others.add(t)
+            for n in COMPANY_NAMES.get(t, ()):
+                others.update({n, _name_stem(n)} - {""})
+        others -= mine
+        # Case-sensitive (so "Prime" is not "prime"), plus the all-caps form EDGAR uses
+        # ("APPLE INC"); a dict keeps the first alias for a spelling.
+        rules: dict[str, str] = {}
+        for names, alias in ((mine, "COMPANY_X"), (products, "PRODUCT_X"), (others, "OTHER_CO")):
+            for n in names:
+                rules.setdefault(n, alias)
+                rules.setdefault(n.upper(), alias)
+        return [(re.compile(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])"), rules[n])
+                for n in sorted(rules, key=len, reverse=True)]   # longest first: "Apple Inc." before "Apple"
 
     def _text_rules(self) -> list[tuple[re.Pattern, str]]:
+        """Names and other universe tickers (third-party text)."""
         if self._text_patterns is None:
-            own = self.instrument.symbol.upper()
-            mine = {n for n in self._names if len(n) >= 3}
-            products = set(PRODUCT_NAMES.get(own, ())) if not self.instrument.is_fx else set()
-            others: set[str] = set()
-            for t in _universe():
-                if t.upper() == own:
-                    continue
-                if len(t) >= 2 and t.isupper():
-                    others.add(t)
-                for n in COMPANY_NAMES.get(t, ()):
-                    others.update({n, _name_stem(n)} - {""})
-            others -= mine
-            # Case-sensitive (so "Prime" is not "prime"), plus the all-caps form EDGAR uses
-            # ("APPLE INC"); a dict keeps the first alias for a spelling.
-            rules: dict[str, str] = {}
-            for names, alias in ((mine, "COMPANY_X"), (products, "PRODUCT_X"), (others, "OTHER_CO")):
-                for n in names:
-                    rules.setdefault(n, alias)
-                    rules.setdefault(n.upper(), alias)
-            self._text_patterns = [
-                (re.compile(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])"), rules[n])
-                for n in sorted(rules, key=len, reverse=True)]   # longest first: "Apple Inc." before "Apple"
+            self._text_patterns = self._build_rules(with_tickers=True)
         return self._text_patterns
+
+    def _name_rules(self) -> list[tuple[re.Pattern, str]]:
+        """Company and product names only (price path). Other universe tickers are left alone
+        here: short upper-case tickers (``MA``, ``CAT``, ``COST``) collide with prompt text."""
+        if self._name_patterns is None:
+            self._name_patterns = self._build_rules(with_tickers=False)
+        return self._name_patterns
 
     def accession_real(self, alias: str) -> str:
         """``ACC_n`` -> the real accession number (unknown strings come back unchanged)."""
@@ -271,6 +284,10 @@ class Anonymizer:
 
     def scrub(self, text: str) -> str:
         for pat, alias in self._patterns:
+            text = pat.sub(alias, text)
+        # v0.17: company and product names (own -> COMPANY_X / PRODUCT_X, peers -> OTHER_CO), so
+        # real headlines on the price path no longer name the company.
+        for pat, alias in self._name_rules():
             text = pat.sub(alias, text)
         text = _ACCESSION.sub(self._acc, text)
         text = _CIK.sub("CIK_X", text)
