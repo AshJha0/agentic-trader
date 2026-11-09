@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from . import quant
+from .config import DEFAULT_VAR_METHOD
 from .stats import rolling_var_forecast
 
 VarMethod = Literal["historical", "ewma", "fhs"]
@@ -95,7 +96,8 @@ def _forecasts(r: np.ndarray, method: str, window: int, alpha: float, lam: float
     return out
 
 
-def var_forecast(returns, method: VarMethod = "fhs", window: int = 250, alpha: float = 0.95,
+def var_forecast(returns, method: VarMethod = DEFAULT_VAR_METHOD,
+                 window: int = 250, alpha: float = 0.95,
                  lam: float = EWMA_LAMBDA) -> np.ndarray:
     """1-day VaR (a non-negative loss fraction) forecast *for* each day ``t`` from returns
     strictly before it, aligned with ``returns``; a drop-in for ``stats.rolling_var_forecast``
@@ -110,7 +112,8 @@ def var_forecast(returns, method: VarMethod = "fhs", window: int = 250, alpha: f
     return _forecasts(r, method, window, alpha, lam)[:-1]
 
 
-def var_next(returns, method: VarMethod = "fhs", window: int = 250, alpha: float = 0.95,
+def var_next(returns, method: VarMethod = DEFAULT_VAR_METHOD,
+             window: int = 250, alpha: float = 0.95,
              lam: float = EWMA_LAMBDA) -> float | None:
     """VaR for the day after ``returns`` ends, by the same rule as ``var_forecast``; ``None``
     when it cannot be formed (too short a history). For a history shorter than ``window``

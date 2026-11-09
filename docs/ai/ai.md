@@ -325,7 +325,7 @@ estimated from data and then used:
 |---|---|---|
 | Information coefficient of each alpha | `alpha.py`, `xalpha.py`, `leakage.py` | Estimated on purged walk-forward folds since v0.14. The alpha analysts combine signals weighted by IC, and only signals whose fold t-statistic clears the gate. Otherwise they abstain |
 | Covariance with EWMA weights and Ledoit-Wolf shrinkage | `portfolio.py` | Risk parity, minimum variance and mean-variance weights |
-| Historical VaR and CVaR; EWMA volatility and FHS VaR (v0.14) | `quant`, `risk_model.py`, `agents/risk.py` | Position limit (historical); book limit (FHS by default) |
+| Historical VaR and CVaR; EWMA volatility and FHS VaR (v0.14) | `quant`, `risk_model.py`, `agents/risk.py` | Position limit (historical); book limit (EWMA by default, `config.DEFAULT_VAR_METHOD`) |
 | TF-IDF document frequencies | `agentic/rag.py` | Retrieval |
 | Hit rate of past decisions | `memory.py` | The trader's size cut |
 | Bootstrap distributions | `stats.py` | Every interval and p-value in the evaluation |

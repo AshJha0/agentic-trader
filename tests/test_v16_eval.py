@@ -72,7 +72,8 @@ def test_matching_rule():
 
 def test_checker_on_clear_cases():
     it = BY_ID["syn-technical-00"]
-    good = {"signal": 0.1, "confidence": 0.5, "summary": "Close 498.57 under the 20-day 502.15.", "key_points": []}
+    # Anonymised item (v0.17 R0.2): price levels are rebased so the last close is 100.
+    good = {"signal": 0.1, "confidence": 0.5, "summary": "Close 100.00 under the 20-day 100.72.", "key_points": []}
     v = ev.check_reply(it, good)
     assert v["used_facts"] and v["no_invented_numbers"] and v["respected_fence"]
     bad = dict(good, summary="Revenue will grow 37.77% next year.")
@@ -116,12 +117,14 @@ def test_calibration_subset():
     for c in ev.CRITERIA:                       # both verdicts present for every criterion
         assert {r["labels"][c] for r in cal} == {True, False}
     # The deterministic checker against the hand labels: fence and facts exact; numbers lose a
-    # few whole-number coincidences (documented in eval_set; c05, c25, c27).
+    # few whole-number coincidences (documented in eval_set; c25, c27). c05 agreed with its label
+    # once the items were anonymised (v0.17 R0.2): its "8%" had been grounded by a price-level
+    # coincidence that rebasing removed.
     det = {r["cal_id"]: ev.check_reply(BY_ID[r["item_id"]], r["reply"]) for r in cal}
     for c in ("used_facts", "respected_fence"):
         assert all(det[r["cal_id"]][c] == r["labels"][c] for r in cal)
     miss = sorted(r["cal_id"] for r in cal if det[r["cal_id"]]["no_invented_numbers"] != r["labels"]["no_invented_numbers"])
-    assert miss == ["c05", "c25", "c27"]
+    assert miss == ["c25", "c27"]
 
 
 def _ok_reply(system, prompt):
@@ -181,7 +184,7 @@ def test_judge_and_agreement(tmp_path):
     assert res["n_scored"] == 30
     for c in ev.CRITERIA:
         assert res["criteria"][c]["judge_kappa"] == pytest.approx(1.0)
-    assert res["criteria"]["no_invented_numbers"]["checker_agree"] == 27
+    assert res["criteria"]["no_invented_numbers"]["checker_agree"] == 28      # c05 agrees since R0.2
     # an unparseable judge is counted, and smoke fails on it
     j2 = tmp_path / "j2.jsonl"
     assert v16_eval.main(["judge", "--calibration", "--smoke", "--out", str(j2)],

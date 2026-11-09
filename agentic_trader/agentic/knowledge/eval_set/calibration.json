@@ -1,5 +1,5 @@
 {
- "_note": "Human-labelled calibration subset (PLAN.md 2.7). Replies are written by hand, not by a model; labels are the author's verdicts under the rubric in agentic_trader/agentic/eval_set.py, judged as a careful reader would (a prompt-literal coincidence does not ground a forecast).",
+ "_note": "Human-labelled calibration subset (PLAN.md 2.7). Replies are written by hand, not by a model; labels are the author's verdicts under the rubric in agentic_trader/agentic/eval_set.py, judged as a careful reader would (a prompt-literal coincidence does not ground a forecast). Re-aligned in v0.17 R0.2 to the anonymised items: names scrubbed and price levels rebased (last close = 100) exactly as the prompts were; labels unchanged.",
  "rows": [
   {
    "cal_id": "c01",
@@ -7,7 +7,7 @@
    "reply": {
     "signal": 0.05,
     "confidence": 0.5,
-    "summary": "AAPL trades at 498.57, just below its 20-day average of 502.15 but above the 200-day at 456.42. RSI is 49.4 and the 20-day return is -5.9%.",
+    "summary": "STOCK_X trades at 100.00, just below its 20-day average of 100.72 but above the 200-day at 91.55. RSI is 49.4 and the 20-day return is -5.9%.",
     "key_points": [
      "Long-term uptrend intact",
      "Short-term pullback"
@@ -26,7 +26,7 @@
    "reply": {
     "signal": 0.6,
     "confidence": 0.7,
-    "summary": "AAPL is up 12% this month and RSI is 71, signalling overbought conditions.",
+    "summary": "STOCK_X is up 12% this month and RSI is 71, signalling overbought conditions.",
     "key_points": [
      "Overbought"
     ]
@@ -44,7 +44,7 @@
    "reply": {
     "signal": -0.5,
     "confidence": 0.6,
-    "summary": "NVDA at 42.39 sits well below its 200-day average of 71.70, about 41% under it. The 60-day return is -36.9% and RSI is 33.",
+    "summary": "STOCK_X at 100.00 sits well below its 200-day average of 169.13, about 41% under it. The 60-day return is -36.9% and RSI is 33.",
     "key_points": [
      "Downtrend",
      "Near oversold"
@@ -79,7 +79,7 @@
    "reply": {
     "signal": -0.6,
     "confidence": 0.6,
-    "summary": "NVDA fell 10.5% over 20 days and missed earnings by 8%.",
+    "summary": "STOCK_X fell 10.5% over 20 days and missed earnings by 8%.",
     "key_points": []
    },
    "labels": {
@@ -95,7 +95,7 @@
    "reply": {
     "signal": -0.1,
     "confidence": 0.5,
-    "summary": "AAPL trades on a P/E of 32.97 versus a sector 22.0, a 50% premium. Revenue growth is 4.6% and net margin 29.8%.",
+    "summary": "STOCK_X trades on a P/E of 32.97 versus a sector 22.0, a 50% premium. Revenue growth is 4.6% and net margin 29.8%.",
     "key_points": [
      "Rich valuation",
      "High margin"
@@ -130,7 +130,7 @@
    "reply": {
     "signal": -0.3,
     "confidence": 0.55,
-    "summary": "KO's P/E of 33.05 is well above the sector 22.0 while EPS missed by 1.03%. Debt to equity is 1.197.",
+    "summary": "STOCK_X's P/E of 33.05 is well above the sector 22.0 while EPS missed by 1.03%. Debt to equity is 1.197.",
     "key_points": []
    },
    "labels": {
@@ -162,9 +162,9 @@
    "reply": {
     "signal": -0.3,
     "confidence": 0.6,
-    "summary": "The EUR policy rate of 2.0% trails the USD rate of 4.25%, a 2.25 point gap that favours USD. Inflation is 2.0% versus 2.7%.",
+    "summary": "The CCY_BASE policy rate of 2.0% trails the CCY_QUOTE rate of 4.25%, a 2.25 point gap that favours CCY_QUOTE. Inflation is 2.0% versus 2.7%.",
     "key_points": [
-     "Carry favours USD"
+     "Carry favours CCY_QUOTE"
     ]
    },
    "labels": {
@@ -180,7 +180,7 @@
    "reply": {
     "signal": -0.4,
     "confidence": 0.6,
-    "summary": "The ECB is expected to cut by 50bp next month and EUR/USD has fallen 6% this year.",
+    "summary": "The ECB is expected to cut by 50bp next month and CCY_BASE/CCY_QUOTE has fallen 6% this year.",
     "key_points": []
    },
    "labels": {
@@ -196,7 +196,7 @@
    "reply": {
     "signal": -0.1,
     "confidence": 0.4,
-    "summary": "AUD/USD at 0.7159 is 0.8% above its 200-day average; the rate differential of -0.65 works against AUD.",
+    "summary": "CCY_BASE/CCY_QUOTE at 100.0000 is 0.8% above its 200-day average; the rate differential of -0.65 works against CCY_BASE.",
     "key_points": []
    },
    "labels": {
@@ -345,7 +345,7 @@
    "reply": {
     "signal": 0.4,
     "confidence": 0.6,
-    "summary": "Bullish share is 71%, and 2,500 posts mentioned JPM today.",
+    "summary": "Bullish share is 71%, and 2,500 posts mentioned STOCK_X today.",
     "key_points": []
    },
    "labels": {
@@ -395,7 +395,7 @@
    "reply": {
     "signal": 0.1,
     "confidence": 0.4,
-    "summary": "Close of 98.89 is below the 20-day average of 100.16; a z-score of -1.89 and %B of 0.03 point to oversold.",
+    "summary": "Close of 100.00 is below the 20-day average of 101.28; a z-score of -1.89 and %B of 0.03 point to oversold.",
     "key_points": []
    },
    "labels": {
@@ -427,7 +427,7 @@
    "reply": {
     "signal": 0.1,
     "confidence": 0.4,
-    "summary": "Price 99.67 against a 20-day average of 100.56; z-score -2.22 and a 5-day return of -1.07%.",
+    "summary": "Price 100.00 against a 20-day average of 100.89; z-score -2.22 and a 5-day return of -1.07%.",
     "key_points": []
    },
    "labels": {
@@ -459,7 +459,7 @@
    "reply": {
     "signal": 0.3,
     "confidence": 0.5,
-    "summary": "AAPL is about 9% above its 200-day average and 12-1 month momentum is 45%.",
+    "summary": "STOCK_X is about 9% above its 200-day average and 12-1 month momentum is 45%.",
     "key_points": []
    },
    "labels": {
@@ -475,7 +475,7 @@
    "reply": {
     "signal": -0.1,
     "confidence": 0.3,
-    "summary": "Carry favours USD and the pair trades near its long-run average; low conviction.",
+    "summary": "Carry favours CCY_QUOTE and the pair trades near its long-run average; low conviction.",
     "key_points": []
    },
    "labels": {

@@ -36,6 +36,8 @@ def _value(spec: dict[str, Any]) -> Any:
         return spec["enum"][0]
     t = spec.get("type")
     t = t[0] if isinstance(t, list) else t
+    if t == "number" and "minimum" in spec:          # schema ranges are enforced since v0.17 R0.4
+        return max(0.2, spec["minimum"])
     return {"number": 0.2, "integer": 1, "string": "fake reply", "array": [], "boolean": False,
             "object": {}}.get(t, "fake")
 

@@ -73,7 +73,8 @@ def served_matches(configured: str, served: str | None) -> bool:
 class LocalLLM:
     """``LLM`` over Ollama's ``/api/chat``. One model serves both tiers (``deep`` is accepted
     for protocol compatibility and recorded nowhere else); ``config`` keys: ``local_llm_url``,
-    ``local_llm_model``, ``local_llm_timeout_s``, ``local_llm_seed``, ``max_tokens`` (sent as
+    ``local_llm_model``, ``local_llm_timeout_s``, ``local_llm_seed``, ``local_llm_temperature`` (default 0: greedy,
+    so the seed has no effect), ``max_tokens`` (sent as
     ``num_predict``) and ``llm_strict_model``. Unrun on the development machine (see the
     module docstring)."""
 
@@ -89,6 +90,9 @@ class LocalLLM:
         if not self.timeout_s > 0:
             raise ValueError("local_llm_timeout_s must be > 0")
         self.seed = config.get("local_llm_seed")
+        self.temperature = float(config.get("local_llm_temperature") or 0.0)
+        if self.temperature < 0:
+            raise ValueError("local_llm_temperature must be >= 0")
         self.max_tokens = int(config.get("max_tokens", 16000))
         self.usage = LocalUsageTracker()
         self._tls = threading.local()
@@ -119,7 +123,7 @@ class LocalLLM:
 
     def build_request(self, system: str, prompt: str, schema: dict[str, Any] | None = None) -> dict[str, Any]:
         """The ``/api/chat`` body for one call."""
-        options: dict[str, Any] = {"temperature": 0.0, "num_predict": self.max_tokens}
+        options: dict[str, Any] = {"temperature": float(self.temperature), "num_predict": self.max_tokens}
         if self.seed is not None:
             options["seed"] = int(self.seed)
         body: dict[str, Any] = {

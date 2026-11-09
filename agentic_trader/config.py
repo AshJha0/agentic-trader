@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import Any, Final
+
+# The one VaR method default (v0.17 R0.5): the desk config ("book_var_method") and the
+# risk_model functions (var_forecast, var_next) both read it. EWMA per the owner decision of
+# 2026-11-07 (design Kupiec and independence passed on 13/15 names, FHS on 10/15).
+DEFAULT_VAR_METHOD: Final = "ewma"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     # ---- LLM ---------------------------------------------------------------
@@ -15,7 +20,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "local_llm_url": "http://127.0.0.1:11434",
     "local_llm_model": None,       # Ollama model name; required when llm_provider is "local"
     "local_llm_timeout_s": 120,
-    "local_llm_seed": None,        # sampling seed sent to Ollama (temperature is 0 regardless)
+    "local_llm_seed": None,        # sampling seed sent to Ollama; only matters when temperature > 0
+    # Decoding temperature for the local model. 0 (greedy) is the desk default: replies are
+    # deterministic and a different seed reproduces the same reply (review A1, v0.17 R0.1).
+    "local_llm_temperature": 0.0,
     "deep_think_llm": "claude-sonnet-5-5",  # researchers, facilitator, trader, risk team, PM
     "quick_think_llm": "claude-haiku-5-5",  # analysts summarising tool output
     # claude-opus-5-5 is the optional upgrade for the PM / critic: set deep_think_llm to it.
@@ -166,7 +174,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # independence both passed on 13/15 names, FHS on 10/15), "fhs" (filtered historical
         # simulation, risk_model),
         # or "historical" (the plain quantile of the book history, the rule before v0.14).
-        "book_var_method": "ewma",
+        "book_var_method": DEFAULT_VAR_METHOD,
         "min_trade_weight": 0.05,  # smaller targets are rounded to flat
         "rebalance_band": 0.10,    # keep the current position if the new target is within this
                                    # distance of it (a no-trade band; 0 disables)
