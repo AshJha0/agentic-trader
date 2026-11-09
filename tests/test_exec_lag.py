@@ -200,7 +200,9 @@ def test_cpp_matches_numpy(k, next_open, levels, slip):
     b = _run(quant, d, cfg, levels=levels)
     for attr in ("equity", "positions", "traded", "exits", "returns"):
         np.testing.assert_allclose(getattr(a, attr), getattr(b, attr), rtol=1e-12, atol=1e-12)
-    assert [(t.index, t.price) for t in a.trades] == [(t.index, t.price) for t in b.trades]
+    # indices must match exactly; prices only to the last bit (platform exp/log differ)
+    assert [t.index for t in a.trades] == [t.index for t in b.trades]
+    np.testing.assert_allclose([t.price for t in a.trades], [t.price for t in b.trades], rtol=1e-12, atol=1e-12)
 
 
 def test_config_plumbing():
