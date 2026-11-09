@@ -463,6 +463,10 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     if isinstance(macro_sources, dict):
         macro_sources.clear()   # this run's tally only: the provider may be shared across runs
     llm = llm if llm is not None else get_llm(cfg)
+    if llm is not None and cfg.get("llm_provider") == "local" and touches_holdout(periods):
+        # v0.17 R1.4: the anonymised local-model study may look at the holdout only after
+        # the 2.4 recall audit has passed (v16 preregistration).
+        require_recall_pass(cfg.get("recall_audit_path") or DEFAULT_RECALL_AUDIT_PATH)
     if workers < 1:
         raise ValueError("workers must be >= 1")
     if repeats < 1:
@@ -564,3 +568,97 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
                     usage=llm_usage(llm),
                     budget_refused=getattr(llm, "refused", 0))
     return EvaluationResult(pd.DataFrame(rows), meta)
+
+
+# ------------------------------------------------------- pre-registry trials (v0.17 R1.3)
+# The registry (TRIALS) starts in v0.5. Before it, v0.1-v0.4 set rule constants on the design
+# period by hand; those choices are trials the deflated Sharpe never counted, so the registered
+# count is a floor. Each group below is a set of hand-set constants on the rules path (source in
+# the key). Evidence class: estimate (constants counted from code; how many values were tried
+# for each was never recorded). PRE_REGISTRY_VALUES_PER_CONSTANT assumes each was tried at 3
+# values (the chosen one plus two rejected), a deliberately generous guess, so the DSR at the
+# summed count is the conservative figure. Report both: DSR at registered_trial_count() and at
+# registered_trial_count() + PRE_REGISTRY_TRIALS_ESTIMATE.
+PRE_REGISTRY_CONSTANTS: dict[str, int] = {
+    "technical analyst component weights 0.30/0.20/0.15 (agents/analysts.py:144-180)": 6,
+    "fundamentals analyst weights and tanh scales (agents/analysts.py:272-289)": 9,
+    "analyst role weights (config analyst_weights, 7 roles)": 7,
+    "decision_threshold 0.10 (config)": 1,
+    "risk-stance blend 25/50/25 (2 free weights)": 2,
+    "stop and sizing constants: ATR stop multiple, vol target, vol lookback": 3,
+    "news / sentiment confidences (agents/analysts.py:468-471 and the news analyst)": 4,
+}
+PRE_REGISTRY_VALUES_PER_CONSTANT = 3
+
+
+def pre_registry_trial_estimate(values_per_constant: int = PRE_REGISTRY_VALUES_PER_CONSTANT) -> int:
+    """Estimated unregistered trials: constants x (values tried - 1). Default 32 x 2 = 64.
+    Pass it as ``stats.selection_report(..., pre_registry_trials=...)``."""
+    if values_per_constant < 1:
+        raise ValueError("values_per_constant must be >= 1")
+    return sum(PRE_REGISTRY_CONSTANTS.values()) * (values_per_constant - 1)
+
+
+PRE_REGISTRY_TRIALS_ESTIMATE = pre_registry_trial_estimate()
+
+
+# ------------------------------------------- recall audit as holdout precondition (v0.17 R1.4)
+class HoldoutLocked(RuntimeError):
+    """Raised when a holdout look is attempted without a passing 2.4 recall audit."""
+
+
+DEFAULT_RECALL_AUDIT_PATH = "results/v16_local/recall.json"
+
+
+def touches_holdout(periods: dict[str, tuple[str, str]]) -> bool:
+    """Whether any ``(start, end)`` window overlaps ``PERIODS["holdout"]``."""
+    h0, h1 = (pd.Timestamp(x) for x in PERIODS["holdout"])
+    return any(pd.Timestamp(a) <= h1 and pd.Timestamp(b) >= h0 for a, b in periods.values())
+
+
+def recall_audit_verdict(result: dict, *, n_se: float = 2.0, min_n: int = 100,
+                         max_unparsed_share: float = 0.10) -> dict:
+    """Judge a ``scripts/v16_local_study.py recall`` result (its ``summarise_recall`` dict).
+
+    Pass rule (v16 prereg, "recall <= chance + 2 SE"): for each of ``ticker``, ``month`` and
+    ``month_within_1`` the hit rate must not exceed ``p0 + n_se * sqrt(p0 (1 - p0) / n)``;
+    at least ``min_n`` items; at most ``max_unparsed_share`` unparsed replies (an unparsed
+    reply cannot hit, so many of them would make recall look low by construction).
+    Worked example: ticker p0 = 1/15, n = 200 -> bound 0.0667 + 2 x 0.0176 = 0.1019, so 20
+    hits (0.100) pass and 21 (0.105) fail. Returns ``{"passed", "reasons", "bounds"}``."""
+    reasons: list[str] = []
+    bounds: dict[str, float] = {}
+    n = int(result.get("n") or 0)
+    if n < min_n:
+        reasons.append(f"n = {n} < {min_n}")
+    unparsed = int(result.get("unparsed") or 0)
+    if n and unparsed / n > max_unparsed_share:
+        reasons.append(f"unparsed share {unparsed / n:.3f} > {max_unparsed_share}")
+    for key in ("ticker", "month", "month_within_1"):
+        row = result.get(key)
+        if not isinstance(row, dict) or row.get("rate") is None or not row.get("n"):
+            reasons.append(f"{key}: missing")
+            continue
+        p0, k = float(row["chance"]), int(row["n"])
+        bound = p0 + n_se * math.sqrt(p0 * (1 - p0) / k)
+        bounds[key] = bound
+        if float(row["rate"]) > bound:
+            reasons.append(f"{key}: rate {float(row['rate']):.4f} > chance + {n_se:g} SE = {bound:.4f}")
+    return {"passed": not reasons, "reasons": reasons, "bounds": bounds}
+
+
+def require_recall_pass(path: str | Path, **kw) -> dict:
+    """Guard for any holdout run: read the recall-audit JSON at ``path`` and raise
+    ``HoldoutLocked`` unless ``recall_audit_verdict`` passes. A holdout entry point calls
+    this one line before it touches ``PERIODS["holdout"]``."""
+    p = Path(path)
+    if not p.is_file():
+        raise HoldoutLocked(f"no recall-audit result at {p}; run the 2.4 audit first")
+    try:
+        result = json.loads(p.read_text(encoding="utf-8"))
+    except ValueError as e:
+        raise HoldoutLocked(f"recall-audit result {p} is not JSON: {e}") from e
+    v = recall_audit_verdict(result, **kw)
+    if not v["passed"]:
+        raise HoldoutLocked("recall audit did not pass: " + "; ".join(v["reasons"]))
+    return v

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -171,7 +172,9 @@ def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float = 252.0) -
         "sharpe_model": sharpe(model_book, ppy),
         "sharpe_control": sharpe(control_book, ppy),
         "agent_sources": dict(sources),
+        "model_changed": model_changed_attribution(records),
     }
+    mc = out["model_changed"]
     out["rows"] = [
         ("hit rate, model", out["hit_rate_model"], m_n),
         ("hit rate, rules control", out["hit_rate_control"], c_n),
@@ -182,7 +185,83 @@ def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float = 252.0) -
         ("cost per decision, USD", out["cost_per_decision_usd"], len(records)),
         ("Sharpe, model book", out["sharpe_model"], len(model_book)),
         ("Sharpe, rules control book", out["sharpe_control"], len(control_book)),
+        ("model-changed decisions, share", mc["share_changed"], mc["n_changed"]),
+        ("model-changed, hit rate model", mc["hit_rate_model"], mc["hit_n"]),
+        ("model-changed, hit rate rules", mc["hit_rate_rules"], mc["hit_n"]),
+        ("model-changed, P&L delta total", mc["pnl_delta_total"], mc["n_changed"]),
+        ("model-changed, P&L delta CI low", mc["ci_total"][0], mc["n_dates"]),
+        ("model-changed, P&L delta CI high", mc["ci_total"][1], mc["n_dates"]),
     ]
+    return out
+
+
+def model_changed_attribution(records: list[KPIRecord], *, by: str = "sign", tol: float = 1e-9,
+                              n_boot: int = 2000, ci: float = 0.95, seed: int = 0) -> dict[str, Any]:
+    """P&L of the decisions the model changed versus the rule decision (v0.17 R1.5).
+
+    Plain idea: where the model and the rules agree, the model added nothing; all of its value
+    (or damage) sits in the decisions it changed. Formal: a record is *changed* when
+    ``sign(model_signal) != sign(rule_signal)`` (``by="sign"``, a different direction or a
+    flat-vs-directional call) or when ``|model_weight - control_weight| > tol``
+    (``by="weight"``). On the changed subset: count, share of all records, hit rate of the
+    model and of the rules, and the P&L delta ``sum (mw - cw) * outcome_return``. The CI is a
+    percentile bootstrap over *dates* (all changed records of a date move together, since
+    names on one date share a market move): ``n_boot`` resamples of the dates that have a
+    changed record, giving intervals for the total delta and the mean delta per changed
+    decision. Worked example: changed records +1 vs -1 on a +2% outcome and 0 vs +1 on a -1%
+    outcome give delta 2 x 0.02 + (-1) x (-0.01) = 0.05 over 2 decisions (0.025 each).
+    """
+    if by not in ("sign", "weight"):
+        raise ValueError("by must be 'sign' or 'weight'")
+    if not 0 < ci < 1:
+        raise ValueError("ci must lie in (0, 1)")
+
+    def mw(r: KPIRecord) -> float:
+        return r.model_signal if r.model_weight is None else r.model_weight
+
+    def cw(r: KPIRecord) -> float:
+        return r.rule_signal if r.control_weight is None else r.control_weight
+
+    if by == "sign":
+        changed = [r for r in records if _sign(r.model_signal) != _sign(r.rule_signal)]
+    else:
+        changed = [r for r in records if abs(mw(r) - cw(r)) > tol]
+    out: dict[str, Any] = {"by": by, "n_records": len(records), "n_changed": len(changed),
+                           "share_changed": len(changed) / len(records) if records else None}
+    if not changed:
+        out.update(hit_rate_model=None, hit_rate_rules=None, hit_n=0, pnl_delta_total=0.0,
+                   pnl_delta_mean=None, ci_total=(None, None), ci_mean=(None, None), n_dates=0)
+        return out
+    outs = [r.outcome_return for r in changed]
+    m_hit, m_n = hit_rate([r.model_signal for r in changed], outs)
+    c_hit, _ = hit_rate([r.rule_signal for r in changed], outs)
+    per_date: dict[str, list[float]] = defaultdict(list)
+    for r in changed:
+        per_date[r.as_of].append((mw(r) - cw(r)) * r.outcome_return)
+    dates = sorted(per_date)
+    sums = [sum(per_date[d]) for d in dates]
+    counts = [len(per_date[d]) for d in dates]
+    total = sum(sums)
+    rng = random.Random(seed)
+    tot_bs, mean_bs = [], []
+    k = len(dates)
+    for _ in range(n_boot):
+        idx = [rng.randrange(k) for _ in range(k)]
+        t = sum(sums[i] for i in idx)
+        c = sum(counts[i] for i in idx)
+        tot_bs.append(t)
+        mean_bs.append(t / c)
+    tot_bs.sort()
+    mean_bs.sort()
+    a = (1 - ci) / 2
+
+    def q(xs: list[float], p: float) -> float:
+        return xs[min(len(xs) - 1, max(0, int(round(p * (len(xs) - 1)))))]
+    out.update(hit_rate_model=m_hit, hit_rate_rules=c_hit, hit_n=m_n,
+               pnl_delta_total=total, pnl_delta_mean=total / len(changed),
+               ci_total=(q(tot_bs, a), q(tot_bs, 1 - a)) if k >= 2 else (None, None),
+               ci_mean=(q(mean_bs, a), q(mean_bs, 1 - a)) if k >= 2 else (None, None),
+               n_dates=k)
     return out
 
 

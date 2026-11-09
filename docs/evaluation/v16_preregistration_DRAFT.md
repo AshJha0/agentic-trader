@@ -39,19 +39,36 @@ A cell is a candidate for the holdout look only if **all** of these hold on the 
 4. **Beats the rules desk** by the same paired test, so the gain comes from the model and not
    from the desk structure the rules cell also has.
 5. **Survives selection**: deflated Sharpe probability > 0.95 with the trial count equal to
-   `len(evaluation.TRIALS)` at the time of signing (72 at writing).
+   `len(evaluation.TRIALS)` read from the code at the time of signing (not copied here; the count
+   grows as cells are registered), and also at that count plus `evaluation.PRE_REGISTRY_TRIALS_ESTIMATE`
+   and at the effective number of trials (`stats.effective_trials`), all three reported.
 
 If more than one cell passes, the one with the larger lower bound in (3) goes forward; the
 other is reported but not looked at on the holdout. If none passes, the study is closed as a
 null on the design period and no holdout run is made.
 
-## The holdout look (run once, only if a cell passes)
+## Precondition: the 2.4 recall audit must pass (added v0.17, R1.4)
+
+No holdout look of any kind is run until the 2.4 anonymisation recall audit
+(`scripts/v16_local_study.py recall`) has been run on the model build that will make the holdout
+decisions and has **passed**. Pass means, for each of ticker, month and month within one month,
+hit rate <= chance + 2 standard errors, `p0 + 2 sqrt(p0 (1 - p0) / n)`, on at least 100 items
+with at most 10% unparsed replies. With 200 items the ticker bar is 0.102 (chance 1/15). If the
+audit fails, the anonymisation is not a guard against training-window memory, the holdout is not
+looked at, and the study closes as "holdout not interpretable".
+
+This is enforced in code, not only here: `evaluation.require_recall_pass(path)` raises
+`HoldoutLocked` unless the JSON at `path` passes `evaluation.recall_audit_verdict`, and
+`evaluation.evaluate` calls it for any local-model run whose periods overlap the holdout
+(default path `results/v16_local/recall.json`, override with config `recall_audit_path`).
+Evidence class: design rule (decided before any recall result).
+
 
 - **Period**: 2022-01-03 to 2026-06-30 (`evaluation.PERIODS["holdout"]`). The rules desk has
   been reported on it (v0.8), so it is spent for rule choices; no LLM cell has ever been run on
   it, so it is unseen for this question. The model's training data covers these years; the
   anonymisation (prices rebased, names and dates scrubbed) is the only guard, and the 2.4
-  recall audit must have reported its hit rate before signing.
+  recall audit must have **passed** (precondition above) before signing and before the look.
 - **Design**: same 15 names, dates spaced as on the design pass (about 15 dates over the
   period), 1 seed, the chosen cell and the rules cell and the control on the same dates.
 - **Statistic**: Sharpe(cell) - Sharpe(vol-target control), paired circular block bootstrap,

@@ -5,9 +5,12 @@ bar's close. The library covers the classic time-series signals for a single
 instrument; ``alpha_report`` measures each one the way a research desk would:
 
 * **IC**: Spearman correlation between the signal and the forward return over
-  the horizon, estimated fold by fold on purged walk-forward folds
-  (``leakage.ic_purged``): consecutive h-bar forward returns share h-1 bars, so
-  the t-statistic comes from the dispersion of non-overlapping fold ICs;
+  the horizon, estimated fold by fold on blocked walk-forward folds
+  (``leakage.ic_blocked_folds``; the signals are fixed, so nothing is fitted and
+  nothing is purged): consecutive h-bar forward returns share h-1 bars, so the gate
+  t-statistic comes from the dispersion of non-overlapping fold ICs. Each row also
+  carries a Newey-West t on every scored pair (``t_NW``) and the minimum detectable
+  IC at 80% power (``MDE_IC``);
 * **decay**: IC across horizons;
 * **hit rate** next to the **base rate** (share of up-moves), and the
   **tercile spread** on rank-assigned, disjoint terciles: does the sign predict
@@ -300,7 +303,7 @@ def tercile_spread(s: np.ndarray, fwd: np.ndarray) -> float:
 
 
 def _alpha_diagnostics(s: np.ndarray, fwd: np.ndarray, horizon: int = 1) -> dict[str, float]:
-    """Purged walk-forward IC (``leakage.ic_purged``: fold-mean IC, fold-dispersion t-statistic,
+    """Blocked-fold IC (``leakage.ic_blocked_folds``: fold-mean IC, fold-dispersion t-statistic,
     pairs scored), hit rate and the base rate to
     read it against, tercile spread, autocorrelation and coverage of one signal series against
     forward returns -- the row every column of ``alpha_report``'s table gets, factored out so
