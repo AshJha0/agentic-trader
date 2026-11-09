@@ -7,6 +7,18 @@ floor for a small local model, not a measurement of Claude.
     python scripts/v16_local_study.py recall      --out results/v16_local/recall.json
     python scripts/v16_local_study.py calibration --out results/v16_local/calibration_a.json
     python scripts/v16_local_study.py drift --a results/v16_local/calibration_a.json --b results/v16_local/calibration_b.json --out results/v16_local/drift.json
+    python scripts/v16_local_study.py recall2     --out results/v17_local/recall2.json
+    python scripts/v16_local_study.py design --cell decisive_ta --out results/v17_local/decisive_ta.jsonl
+
+**v0.17 (review 2026-11-09 N1, N3, N5, N9).** ``recall`` is the v0.16 audit, kept only to
+reproduce the void v0.16 rows: its fixed candidate order makes it a position-bias measure
+(N1). ``recall2`` is the replacement (``agentic_trader.recall_audit``): interleaved items,
+per-item shuffled candidates with recorded seeds, ranked top 3 scored by MRR against a label
+permutation null, a synthetic placebo arm, a position-bias diagnostic and a real vs
+date-shifted forward-return test. ``design`` runs the powered cells of
+``agentic_trader.study_design`` (``decisive_ta``, ``postcutoff_ta``). Both write a run header
+(``study_lineage``: git SHA, prompt hash, Ollama version, model digest, options) and refuse to
+resume on a mismatch unless ``--allow-version-change`` (recorded in the header file).
 
 Each model subcommand appends one row per item to ``<out>.rows.jsonl`` as soon as it is
 answered (raw reply kept), resumes from that file on a rerun, prints per-row progress and
@@ -63,6 +75,9 @@ from agentic_trader.config import make_config  # noqa: E402
 from agentic_trader.evaluation import CORE_UNIVERSE  # noqa: E402
 from agentic_trader.graph import TradingGraph  # noqa: E402
 from agentic_trader.llm import extract_json  # noqa: E402
+from agentic_trader import recall_audit as ra  # noqa: E402
+from agentic_trader import study_design as design  # noqa: E402
+from agentic_trader import study_lineage as lineage  # noqa: E402
 from agentic_trader.local_llm import LocalLLM, reachable  # noqa: E402
 
 NAMES: list[str] = CORE_UNIVERSE["equity"] + CORE_UNIVERSE["fx"]        # 15 names
@@ -86,9 +101,11 @@ def design_dates(n: int) -> list[date]:
 class FrozenState:
     """One anonymised analyst input: the real state, its facts and its anonymiser."""
 
-    def __init__(self, graph: TradingGraph, symbol: str, as_of: date):
+    def __init__(self, graph: TradingGraph, symbol: str, as_of: date, placebo_seed: int | None = None):
         self.symbol, self.as_of = symbol, as_of
         self.state = graph.prepare(symbol, as_of)
+        if placebo_seed is not None:       # N1 placebo arm: drift/vol-matched synthetic bars
+            self.state.history = ra.placebo_ohlc(self.state.history, placebo_seed)
         self.state.anon = Anonymizer(self.state.instrument, self.state.as_of, self.state.last_price)
         self.analyst = TechnicalAnalyst(None, graph.config)
         self.facts = self.analyst.gather(self.state, graph.provider)
@@ -450,10 +467,87 @@ def drift(a: dict, b: dict) -> dict[str, Any]:
             "per_state": {k: [p, q] for k, p, q in zip(common, xa, xb)}}
 
 
+# ------------------------------------------------------------------ v0.17 recall audit v2 (N1)
+RECALL2_SEED, RECALL2_DATES, PLACEBO_N, SHIFT_BARS, LEAK_HORIZON = 20261109, 14, 60, 63, 5
+
+
+def _fwd(graph: TradingGraph, st: FrozenState, offset: int, horizon: int) -> float | None:
+    """Forward close-to-close return over ``horizon`` bars starting ``offset`` bars after the
+    decision bar (scoring only, never shown to the model)."""
+    import pandas as pd
+    from datetime import timedelta
+    h = graph.provider.history(st.state.instrument, st.bar_date,
+                               st.bar_date + timedelta(days=int(2 * (offset + horizon)) + 15))
+    c = h["Close"].astype(float)
+    c = c[c.index >= pd.Timestamp(st.bar_date)]
+    if len(c) <= offset + horizon:
+        return None
+    return float(c.iloc[offset + horizon] / c.iloc[offset] - 1.0)
+
+
+def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, Any], limit: int = 0,
+                placebo_n: int = PLACEBO_N, leak: bool = True, seed: int = RECALL2_SEED,
+                log: Callable[[str], None] = print) -> dict[str, Any]:
+    """N1 audit: real arm (all names x RECALL2_DATES dates, interleaved, shuffled candidates),
+    placebo arm (``placebo_n`` drift/vol-matched synthetic series), and the behavioural leak test
+    (analyst signal on each real state vs the real and the SHIFT_BARS-shifted forward return)."""
+    t0, ck = time.time(), Checkpoint(out)
+    dates = [d.isoformat() for d in design_dates(RECALL2_DATES)]
+    real = ra.build_items(NAMES, dates, seed=seed, limit=limit)
+    plc = ra.build_items(NAMES, dates, seed=seed, arm="placebo", limit=min(placebo_n, limit or placebo_n))
+    window = (f"{DESIGN_START:%Y-%m}", f"{DESIGN_END:%Y-%m}")
+
+    def ask(it: ra.AuditItem) -> None:
+        if it.id in ck.rows:
+            return
+        st = FrozenState(graph, it.truth, date.fromisoformat(it.as_of), placebo_seed=it.placebo_seed)
+        prompt = st.prompt() + ra.question(it, window)
+        reply = llm.complete(RECALL_SYSTEM, prompt, deep=False)
+        g = ra.parse_ranked(reply, it.candidates)
+        ck.add(lineage.stamp({"id": it.id, "kind": it.arm, "idx": it.idx, "symbol": it.truth, "as_of": it.as_of,
+                              "candidates": list(it.candidates), "candidate_seed": it.candidate_seed,
+                              "placebo_seed": it.placebo_seed, "raw": reply, "guess": g, "parsed": g is not None,
+                              "rr": ra.reciprocal_rank((g or {}).get("ranked"), it.truth),
+                              "prompt_sha256": lineage.prompt_sha256(RECALL_SYSTEM, prompt)}, header))
+
+    for i, it in enumerate(real + plc, 1):
+        ask(it)
+        log(f"recall2 {i}/{len(real) + len(plc)} {time.time() - t0:.0f}s")
+    leak_rows = []
+    if leak:
+        for i, it in enumerate(real, 1):
+            lid = f"leak:{it.truth}@{it.as_of}"
+            if lid not in ck.rows:
+                st = FrozenState(graph, it.truth, date.fromisoformat(it.as_of))
+                reply = llm.complete_json(st.system, st.prompt() + JSON_SUFFIX, deep=False, schema=contracts.ANALYST)
+                p = parse_analyst(reply)
+                ck.add(lineage.stamp({"id": lid, "kind": "leak", "symbol": it.truth, "as_of": it.as_of, "raw": reply,
+                                      "parsed": p is not None, "signal": (p or {}).get("signal"),
+                                      "fwd_real": _fwd(graph, st, 0, LEAK_HORIZON),
+                                      "fwd_shift": _fwd(graph, st, SHIFT_BARS, LEAK_HORIZON),
+                                      "horizon_days": LEAK_HORIZON, "shift_bars": SHIFT_BARS}, header))
+                log(f"leak {i}/{len(real)} {time.time() - t0:.0f}s")
+            leak_rows.append(ck.rows[lid])
+    real_ans = [ck.rows[i.id]["guess"] for i in real]
+    plc_ans = [ck.rows[i.id]["guess"] for i in plc]
+    res = ra.summarise(real, real_ans, plc, plc_ans, leak_rows)
+    return {"study": "N1 recall audit v2", **res.as_dict(), "seed": seed, "header_id": header.get("header_id"),
+            "rows": [ck.rows[i.id] for i in real + plc], "ablation_rows": [], "leak_rows": leak_rows,
+            "meta": _meta(llm, t0, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub; recall_audit v2")}
+
+
+def _header(a: argparse.Namespace, llm: Any, graph: TradingGraph, extra: dict[str, Any]) -> dict[str, Any]:
+    opts = {"num_ctx": getattr(llm, "num_ctx", None), "num_predict": getattr(llm, "max_tokens", None),
+            "temperature": getattr(llm, "temperature", 0.0), "seed": getattr(llm, "seed", None)}
+    return lineage.build_header(model=getattr(llm, "model", None), url=getattr(llm, "url", None), options=opts,
+                                config=graph.config, extra={"cmd": a.cmd, **extra})
+
+
 # ------------------------------------------------------------------ CLI
 def _llm(a: argparse.Namespace) -> LocalLLM:
     cfg = {"llm_provider": "local", "local_llm_model": a.model, "local_llm_timeout_s": a.timeout,
-           "local_llm_seed": CAL_SEED, "max_tokens": a.max_tokens}
+           "local_llm_seed": CAL_SEED, "max_tokens": a.max_tokens,
+           "local_llm_num_ctx": getattr(a, "num_ctx", None)}
     llm = SampledLocalLLM(cfg)
     if not reachable(llm.url):
         raise SystemExit(f"no Ollama server at {llm.url}")
@@ -477,7 +571,7 @@ def _smoke_exit(rows: list[dict]) -> int:
 def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespace], Any] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("recall", "calibration"):
+    for name in ("recall", "calibration", "recall2", "design"):
         s = sub.add_parser(name)
         s.add_argument("--model", default="qwen2.5:7b-instruct")
         s.add_argument("--out", required=True)
@@ -486,7 +580,16 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
         s.add_argument("--max-tokens", type=int, default=512)
         s.add_argument("--limit", type=int, default=0)
         s.add_argument("--smoke", action="store_true", help="3 items; exit 1 if any reply fails to parse")
-        if name == "recall":
+        s.add_argument("--num-ctx", type=int, default=8192, help="Ollama context window (N4)")
+        s.add_argument("--allow-version-change", action="store_true",
+                       help="resume despite a changed git SHA / prompt hash / server / digest (recorded)")
+        if name == "recall2":
+            s.add_argument("--placebo", type=int, default=PLACEBO_N)
+            s.add_argument("--no-leak", action="store_true")
+        elif name == "design":
+            s.add_argument("--cell", choices=[c.name for c in design.DESIGN_CELLS], required=True)
+            s.add_argument("--no-futility", action="store_true")
+        elif name == "recall":
             s.add_argument("--no-ablation", action="store_true")
         else:
             s.add_argument("--repeats", type=int, default=5)
@@ -510,7 +613,32 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
     llm = (llm_factory or _llm)(a)
     graph = make_graph(a.data)
     out = _out(a)
-    if a.cmd == "recall":
+    if a.cmd in ("recall2", "design"):
+        hdr = _header(a, llm, graph, {"data": a.data, "limit": limit})
+        rows_path = out if a.cmd == "design" else out.with_suffix(".rows.jsonl")
+        try:
+            hdr = lineage.check_resume(rows_path, hdr, allow_version_change=a.allow_version_change)
+        except lineage.LineageMismatch as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        if a.cmd == "design":
+            cell = next(c for c in design.DESIGN_CELLS if c.name == a.cell)
+            drows = design.run_cell(cell, NAMES, graph, llm, out, header=hdr, limit=limit,
+                                futility_check=not a.no_futility)
+            rep = design.report(cell, drows, NAMES)
+            _write(out.with_suffix(".report.json"), rep)
+            print(json.dumps({k: v for k, v in rep.items() if k != "planned"}, indent=1, default=str)[:4000])
+            if a.smoke:
+                bad = [f"{r['symbol']}@{r['as_of']}" for r in drows if r.get("signal_model") is None]
+                if bad:
+                    print(f"SMOKE FAILED: {len(bad)} model calls fell back: {bad}", file=sys.stderr)
+                    return 1
+                print(f"smoke ok: {len(drows)} decisions")
+            return 0
+        res = run_recall2(llm, graph, out, header=hdr, limit=limit, placebo_n=1 if a.smoke else a.placebo,
+                          leak=not (a.no_leak or a.smoke))
+        rows = res["rows"]
+    elif a.cmd == "recall":
         res = run_recall(llm, graph, out, limit=limit, ablate=not (a.no_ablation or a.smoke))
         rows = res["rows"] + res["ablation_rows"]
     else:

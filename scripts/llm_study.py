@@ -61,6 +61,7 @@ from agentic_trader.evaluation import CORE_UNIVERSE, TRIALS
 from agentic_trader.graph import TradingGraph
 from agentic_trader.llm import LLM, estimate_tokens, price_for
 from agentic_trader.local_llm import reachable
+from agentic_trader.study_lineage import call_lineage, check_resume, market_lineage, stamp
 
 # Every desk role a cell can hand to the model.
 ROLES = ("analysts", "bull", "bear", "facilitator", "trader", "risk", "pm")
@@ -266,7 +267,8 @@ class StudyLLM:
         self.calls.append({"deep": deep, "schema": schema is not None, "status": status,
                            "seconds": round(seconds, 3), "in_tok_est": estimate_tokens(system, prompt),
                            "out_tok_est": estimate_tokens("", reply or ""), "reply": reply,
-                           "model_served": ev.get("model_served"), "stop_reason": ev.get("stop_reason")})
+                           "model_served": ev.get("model_served"), "stop_reason": ev.get("stop_reason"),
+                           **call_lineage(system, prompt, ev)})
         return reply
 
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
@@ -332,7 +334,8 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
 
 def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[Cell], config: dict,
               out: Path, llm_factory: Callable[[dict], Any] | None = None,
-              echo: Callable[[str], None] = print) -> list[dict[str, Any]]:
+              echo: Callable[[str], None] = print, header: dict[str, Any] | None = None,
+              allow_version_change: bool = False) -> list[dict[str, Any]]:
     """Run ``cells`` on the design, one checkpointed JSON line per decision.
 
     Resume: decisions already in ``out`` are skipped, so a killed run restarts where it
@@ -347,6 +350,8 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
         raw = out.read_bytes()
         if raw and not raw.endswith(b"\n"):
             out.write_bytes(raw[:raw.rfind(b"\n") + 1])
+    if header is not None:                 # N5: refuse to mix code / prompts / weights on resume
+        header = check_resume(out, header, allow_version_change=allow_version_change)
     done = {_key(r) for r in load_rows(out)}
     cells = list(cells)
     total = len(cells) * seeds * len(names) * len(dates)
@@ -369,7 +374,10 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
                         row = {"cell": cell.name, "seed": seed, "symbol": name, "as_of": d.isoformat(),
                                "action": dec.action.value, "target_weight": float(dec.target_weight),
                                "source": dec.source, "sources": _sources(state), **_market(state),
-                               "seconds": round(time.perf_counter() - t, 3), "calls": calls}
+                               "seconds": round(time.perf_counter() - t, 3), "calls": calls,
+                               **market_lineage(state.history, state.proposal)}
+                        if header is not None:
+                            stamp(row, header)
                         fh.write(json.dumps(row, default=str) + "\n")
                         fh.flush()
                         bad = sum(c["status"] != "ok" for c in calls)
@@ -593,6 +601,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", help="Ollama model name (--live, --smoke)")
     ap.add_argument("--url", help="Ollama URL (default config local_llm_url)")
     ap.add_argument("--out", default="results/llm_study.jsonl")
+    ap.add_argument("--allow-version-change", action="store_true",
+                    help="resume although git SHA / prompt hash / Ollama / model digest changed (recorded)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING)
     names = [n.strip() for n in args.names.split(",") if n.strip()]
@@ -621,6 +631,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         rows = load_rows(Path(args.out))
         print(render_metrics(cell_metrics(rows, config), fallback_bias(rows)))
+        from agentic_trader.study_lineage import LEGACY_ROW_POLICY, row_vintage_status
+        legacy = sum(row_vintage_status(r) == "legacy" for r in rows)
+        print(f"\nRow vintage (N6): {legacy} of {len(rows)} rows legacy. {LEGACY_ROW_POLICY}")
         return 0
     if not args.model:
         ap.error("--live and --smoke need --model (an Ollama model name)")
@@ -637,7 +650,16 @@ def main(argv: list[str] | None = None) -> int:
     if unregistered:
         print(f"refusing --live: cells not registered in evaluation.TRIALS: {unregistered}", file=sys.stderr)
         return 2
-    run_study(names, design_dates(args.dates), args.seeds, cells, config, Path(args.out))
+    from agentic_trader.study_lineage import LineageMismatch, build_header
+    hdr = build_header(model=args.model, url=config["local_llm_url"], config=config,
+                       options={k: config.get(k) for k in ("max_tokens", "local_llm_num_ctx", "local_llm_timeout_s")},
+                       extra={"cells": [c.name for c in cells], "data": args.data})
+    try:
+        run_study(names, design_dates(args.dates), args.seeds, cells, config, Path(args.out), header=hdr,
+                  allow_version_change=args.allow_version_change)
+    except LineageMismatch as e:
+        print(str(e), file=sys.stderr)
+        return 2
     return 0
 
 
