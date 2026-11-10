@@ -79,6 +79,7 @@ from agentic_trader import recall_audit as ra  # noqa: E402
 from agentic_trader import study_design as design  # noqa: E402
 from agentic_trader import study_lineage as lineage  # noqa: E402
 from agentic_trader.local_llm import LocalLLM, reachable  # noqa: E402
+from agentic_trader.study_robust import PROVIDER_TRIES, ProviderMiss, retry_provider, skip_row  # noqa: E402
 
 NAMES: list[str] = CORE_UNIVERSE["equity"] + CORE_UNIVERSE["fx"]        # 15 names
 DESIGN_START, DESIGN_END = date(2016, 1, 1), date(2021, 12, 31)
@@ -487,20 +488,44 @@ def _fwd(graph: TradingGraph, st: FrozenState, offset: int, horizon: int) -> flo
 
 def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, Any], limit: int = 0,
                 placebo_n: int = PLACEBO_N, leak: bool = True, seed: int = RECALL2_SEED,
-                log: Callable[[str], None] = print) -> dict[str, Any]:
+                log: Callable[[str], None] = print, provider_tries: int = PROVIDER_TRIES,
+                sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
     """N1 audit: real arm (all names x RECALL2_DATES dates, interleaved, shuffled candidates),
     placebo arm (``placebo_n`` drift/vol-matched synthetic series), and the behavioural leak test
-    (analyst signal on each real state vs the real and the SHIFT_BARS-shifted forward return)."""
+    (analyst signal on each real state vs the real and the SHIFT_BARS-shifted forward return).
+
+    A provider miss on one unit is retried ``provider_tries`` times, then recorded as a skipped
+    row (``study_robust``); the result's ``skipped`` block counts them. Progress prints
+    ``k/N`` over all units (real + placebo + leak)."""
     t0, ck = time.time(), Checkpoint(out)
     dates = [d.isoformat() for d in design_dates(RECALL2_DATES)]
     real = ra.build_items(NAMES, dates, seed=seed, limit=limit)
     plc = ra.build_items(NAMES, dates, seed=seed, arm="placebo", limit=min(placebo_n, limit or placebo_n))
     window = (f"{DESIGN_START:%Y-%m}", f"{DESIGN_END:%Y-%m}")
 
+    total = len(real) + len(plc) + (len(real) if leak else 0)   # every unit, for the k/N log
+    k = 0
+
+    def done(rid: str) -> bool:
+        return rid in ck.rows and not ck.rows[rid].get("skipped")
+
+    def frozen(it: ra.AuditItem, rid: str, kind: str, placebo_seed: int | None) -> FrozenState | None:
+        try:
+            return retry_provider(lambda: FrozenState(graph, it.truth, date.fromisoformat(it.as_of),
+                                                      placebo_seed=placebo_seed),
+                                  label=rid, tries=provider_tries, sleep=sleep)
+        except ProviderMiss as e:
+            ck.add(lineage.stamp(skip_row(rid, e.reason, e.tries, kind=kind, symbol=it.truth,
+                                          as_of=it.as_of), header))
+            log(f"skip {rid}: {e.reason}")
+            return None
+
     def ask(it: ra.AuditItem) -> None:
-        if it.id in ck.rows:
+        if done(it.id):
             return
-        st = FrozenState(graph, it.truth, date.fromisoformat(it.as_of), placebo_seed=it.placebo_seed)
+        st = frozen(it, it.id, it.arm, it.placebo_seed)
+        if st is None:
+            return
         prompt = st.prompt() + ra.question(it, window)
         reply = llm.complete(RECALL_SYSTEM, prompt, deep=False)
         g = ra.parse_ranked(reply, it.candidates)
@@ -510,28 +535,43 @@ def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, A
                               "rr": ra.reciprocal_rank((g or {}).get("ranked"), it.truth),
                               "prompt_sha256": lineage.prompt_sha256(RECALL_SYSTEM, prompt)}, header))
 
-    for i, it in enumerate(real + plc, 1):
+    for it in real + plc:
+        k += 1
         ask(it)
-        log(f"recall2 {i}/{len(real) + len(plc)} {time.time() - t0:.0f}s")
+        log(f"recall2 {k}/{total} {time.time() - t0:.0f}s")
     leak_rows = []
     if leak:
-        for i, it in enumerate(real, 1):
+        for it in real:
+            k += 1
             lid = f"leak:{it.truth}@{it.as_of}"
-            if lid not in ck.rows:
-                st = FrozenState(graph, it.truth, date.fromisoformat(it.as_of))
-                reply = llm.complete_json(st.system, st.prompt() + JSON_SUFFIX, deep=False, schema=contracts.ANALYST)
-                p = parse_analyst(reply)
-                ck.add(lineage.stamp({"id": lid, "kind": "leak", "symbol": it.truth, "as_of": it.as_of, "raw": reply,
-                                      "parsed": p is not None, "signal": (p or {}).get("signal"),
-                                      "fwd_real": _fwd(graph, st, 0, LEAK_HORIZON),
-                                      "fwd_shift": _fwd(graph, st, SHIFT_BARS, LEAK_HORIZON),
-                                      "horizon_days": LEAK_HORIZON, "shift_bars": SHIFT_BARS}, header))
-                log(f"leak {i}/{len(real)} {time.time() - t0:.0f}s")
-            leak_rows.append(ck.rows[lid])
+            if not done(lid):
+                st = frozen(it, lid, "leak", None)
+                if st is not None:
+                    reply = llm.complete_json(st.system, st.prompt() + JSON_SUFFIX, deep=False,
+                                              schema=contracts.ANALYST)
+                    p = parse_analyst(reply)
+                    ck.add(lineage.stamp({"id": lid, "kind": "leak", "symbol": it.truth, "as_of": it.as_of,
+                                          "raw": reply, "parsed": p is not None, "signal": (p or {}).get("signal"),
+                                          "fwd_real": _fwd(graph, st, 0, LEAK_HORIZON),
+                                          "fwd_shift": _fwd(graph, st, SHIFT_BARS, LEAK_HORIZON),
+                                          "horizon_days": LEAK_HORIZON, "shift_bars": SHIFT_BARS}, header))
+                log(f"leak {k}/{total} {time.time() - t0:.0f}s")
+            if done(lid):
+                leak_rows.append(ck.rows[lid])
+    # Skipped items (provider miss after retries) leave the analysis but are reported: the
+    # pre-registered summary carries their count, ids and reasons (never a silent drop).
+    skipped = [ck.rows[r] for r in [i.id for i in real + plc] + [f"leak:{i.truth}@{i.as_of}" for i in (real if leak else [])]
+               if r in ck.rows and ck.rows[r].get("skipped")]
+    real = [i for i in real if done(i.id)]
+    plc = [i for i in plc if done(i.id)]
     real_ans = [ck.rows[i.id]["guess"] for i in real]
     plc_ans = [ck.rows[i.id]["guess"] for i in plc]
     res = ra.summarise(real, real_ans, plc, plc_ans, leak_rows)
-    return {"study": "N1 recall audit v2", **res.as_dict(), "seed": seed, "header_id": header.get("header_id"),
+    skips = {"n": len(skipped), "units": total, "by_kind": {kd: sum(r.get("kind") == kd for r in skipped)
+                                                             for kd in ("real", "placebo", "leak")},
+             "rows": [{"id": r["id"], "kind": r.get("kind"), "reason": r.get("skip_reason")} for r in skipped]}
+    return {"study": "N1 recall audit v2", **res.as_dict(), "skipped": skips, "seed": seed,
+            "header_id": header.get("header_id"),
             "rows": [ck.rows[i.id] for i in real + plc], "ablation_rows": [], "leak_rows": leak_rows,
             "meta": _meta(llm, t0, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub; recall_audit v2")}
 
@@ -544,10 +584,14 @@ def _header(a: argparse.Namespace, llm: Any, graph: TradingGraph, extra: dict[st
 
 
 # ------------------------------------------------------------------ CLI
+RETRY_BUDGET_S = 600.0     # v0.19: ride out an Ollama hang of up to ~10 min, then stop loudly
+
+
 def _llm(a: argparse.Namespace) -> LocalLLM:
     cfg = {"llm_provider": "local", "local_llm_model": a.model, "local_llm_timeout_s": a.timeout,
            "local_llm_seed": CAL_SEED, "max_tokens": a.max_tokens,
-           "local_llm_num_ctx": getattr(a, "num_ctx", None)}
+           "local_llm_num_ctx": getattr(a, "num_ctx", None),
+           "local_llm_retry_budget_s": getattr(a, "retry_budget", RETRY_BUDGET_S)}
     llm = SampledLocalLLM(cfg)
     if not reachable(llm.url):
         raise SystemExit(f"no Ollama server at {llm.url}")
@@ -577,6 +621,8 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
         s.add_argument("--out", required=True)
         s.add_argument("--data", default="yahoo", help="price provider for the real states (yahoo | csv | synthetic)")
         s.add_argument("--timeout", type=float, default=300)
+        s.add_argument("--retry-budget", type=float, default=RETRY_BUDGET_S,
+                       help="seconds of backoff retries on a hung/unreachable Ollama (0 = no retry)")
         s.add_argument("--max-tokens", type=int, default=512)
         s.add_argument("--limit", type=int, default=0)
         s.add_argument("--smoke", action="store_true", help="3 items; exit 1 if any reply fails to parse")
