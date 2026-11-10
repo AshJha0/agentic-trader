@@ -63,6 +63,7 @@ from agentic_trader.graph import TradingGraph
 from agentic_trader.llm import LLM, estimate_tokens, price_for
 from agentic_trader.local_llm import reachable
 from agentic_trader.study_lineage import call_lineage, check_resume, market_lineage, stamp, swapped_digest
+from agentic_trader.study_robust import PROVIDER_TRIES, ProviderMiss, retry_provider
 
 # Every desk role a cell can hand to the model.
 ROLES = ("analysts", "bull", "bear", "facilitator", "trader", "risk", "pm")
@@ -239,7 +240,8 @@ FIRST_PASS: _FirstPass = {"dates": 20, "seeds": 1, "cells": ("rules", "local_ana
 # the timeout covers ~1,300 prompt tokens plus 384 generated with margin. Replies to schema
 # calls are grammar-constrained (Ollama ``format``), so a truncated reply is the main way a
 # schema call can still fail the contract.
-LOCAL_BUDGET: dict[str, Any] = {"max_tokens": 384, "local_llm_timeout_s": 300}
+LOCAL_BUDGET: dict[str, Any] = {"max_tokens": 384, "local_llm_timeout_s": 300,
+                                 "local_llm_retry_budget_s": 600}   # v0.19: ride out an Ollama hang
 SECONDS_PER_CALL = (50.0, 100.0)          # the wall-clock planning range per call on this machine
 
 # The admissible fallback share per cell (2.5): when more than this share of a cell's model
@@ -354,9 +356,28 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if "symbol" in row:
+            if "symbol" in row and not row.get("skipped"):
                 rows.append(row)
     return rows
+
+
+def load_skips(path: Path) -> list[dict[str, Any]]:
+    """Skipped units (provider miss after retries) not later completed by a resume."""
+    if not path.exists():
+        return []
+    skips: dict[tuple, dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "symbol" not in row:
+            continue
+        if row.get("skipped"):
+            skips[_key(row)] = row
+        else:
+            skips.pop(_key(row), None)
+    return list(skips.values())
 
 
 def check_seeds(seeds: int, temperature: float) -> None:
@@ -381,7 +402,9 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
               out: Path, llm_factory: Callable[[dict], Any] | None = None,
               echo: Callable[[str], None] = print, header: dict[str, Any] | None = None,
               allow_version_change: bool = False, swap_check_every: int = SWAP_CHECK_EVERY,
-              digest_fn: Callable[[str, str], dict[str, Any] | None] | None = None) -> list[dict[str, Any]]:
+              digest_fn: Callable[[str, str], dict[str, Any] | None] | None = None,
+              provider_tries: int = PROVIDER_TRIES,
+              sleep: Callable[[float], None] = time.sleep) -> list[dict[str, Any]]:
     """Run ``cells`` on the design, one checkpointed JSON line per decision.
 
     Model swap (L10): with a ``header`` naming a model, the digest now served is checked before
@@ -391,7 +414,12 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
 
     Resume: decisions already in ``out`` are skipped, so a killed run restarts where it
     stopped. Each line carries the decision, the market facts for the metrics, the source of
-    every desk output and every model call with its raw reply. ``llm_factory(config)`` builds
+    every desk output and every model call with its raw reply.
+
+    Provider miss (v0.19): a ``ValueError`` from ``propagate`` (no data for a name/date) is
+    retried ``provider_tries`` times, then a ``skipped`` row with the reason is written and
+    the run goes on; ``load_rows`` leaves skipped rows out, ``load_skips`` lists them, the
+    report prints the count, and a resume retries them. ``llm_factory(config)`` builds
     the backend (default ``get_llm``); the study wraps it in ``StudyLLM``.
     """
     from agentic_trader.llm import get_llm
@@ -432,7 +460,20 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
                         if swap_check_every > 0 and written % swap_check_every == 0:
                             check_swap()
                         t = time.perf_counter()
-                        state, dec = graph.propagate(name, d)
+                        try:
+                            state, dec = retry_provider(lambda: graph.propagate(name, d),
+                                                        label=f"{name}@{d}", tries=provider_tries, sleep=sleep)
+                        except ProviderMiss as e:
+                            if llm is not None:
+                                llm.take()
+                            srow = {"cell": cell.name, "seed": seed, "symbol": name, "as_of": d.isoformat(),
+                                    "skipped": True, "skip_reason": e.reason, "skip_tries": e.tries}
+                            if header is not None:
+                                stamp(srow, header)
+                            fh.write(json.dumps(srow, default=str) + "\n")
+                            fh.flush()
+                            echo(f"[{k}/{total}] {cell.name} s{seed} {d} {name}: SKIPPED ({e.reason})")
+                            continue
                         calls = llm.take() if llm is not None else []
                         row = {"cell": cell.name, "seed": seed, "symbol": name, "as_of": d.isoformat(),
                                "action": dec.action.value, "target_weight": float(dec.target_weight),
@@ -902,6 +943,10 @@ def main(argv: list[str] | None = None) -> int:
         from agentic_trader.study_lineage import LEGACY_ROW_POLICY, row_vintage_status
         legacy = sum(row_vintage_status(r) == "legacy" for r in rows)
         print(f"\nRow vintage (N6): {legacy} of {len(rows)} rows legacy. {LEGACY_ROW_POLICY}")
+        skips = load_skips(Path(args.out))       # v0.19: reported, never silently dropped
+        print(f"\nSkipped units (provider miss after retries): {len(skips)}")
+        for r in skips:
+            print(f"- {r['cell']} s{r['seed']} {r['as_of']} {r['symbol']}: {r.get('skip_reason')}")
         return 0
     if not args.model:
         ap.error("--live and --smoke need --model (an Ollama model name)")
