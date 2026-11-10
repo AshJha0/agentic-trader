@@ -118,6 +118,22 @@ When the process is alive and the port is dead: stop the chain, stop every `olla
 start Ollama again, confirm `/api/tags` answers, and relaunch the chain. Resume keeps the
 finished rows; at most the unit in flight is repeated.
 
+### Is a Python job alive? Check the worker, not the launcher
+
+On Windows, `<venv>\Scripts\python.exe` is a small launcher. It starts the real interpreter as
+a child process and then waits, using no CPU. A job whose launcher shows 0 CPU may be working
+normally. Before calling a job hung, find the child (`Get-CimInstance Win32_Process -Filter
+"ParentProcessId=<launcher pid>"`) and measure its CPU over a few seconds, and look at its
+network connections: a data download shows established connections to the provider.
+
+Worked example (2026-11-10): an `exec_lag` unit ran for 79 minutes with its launcher at 0 CPU
+while the child used about one core and held connections to the data provider. Stopping it
+lost that unit's progress; the checkpoint kept the 56 finished units.
+
+A long gap between rows does not by itself mean a hang either: one chain step finishing and
+the next starting (for example recall2 handing over to calibration) also stops the row count
+of the first file. Read the chain log before restarting anything.
+
 ## 5. Red-team v2: two passes, not one grid
 
 Running the red-team v2 grid end to end through the desk on all 1,500 units was estimated at
