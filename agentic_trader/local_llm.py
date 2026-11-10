@@ -20,8 +20,14 @@ What carries over from ``AnthropicLLM`` unchanged:
 * failure semantics -- a timeout, a refused connection, an HTTP error or an unreadable body
   returns ``None`` (the agent's rules apply) and is counted in ``usage``.
 
-There are no retries: a local server that times out once is overloaded or down, and the rules
-answer is the documented fallback. Requests use ``urllib`` from the standard library, so the
+Retries (v0.19): off by default, so a desk call that fails returns ``None`` at once and the
+rules answer is the documented fallback. A long study run sets ``local_llm_retry_budget_s``
+(e.g. 600): a transient failure (timeout, refused or reset connection, HTTP 5xx) is then retried
+with bounded exponential backoff until the budget is spent, each retry logged, and an exhausted
+budget raises ``LocalLLMUnavailable`` so a hung server stops the run loudly instead of silently
+turning every later row into a rules fallback. A 4xx or an unreadable body is never retried.
+The request body is built once per call, so a retry sends the same bytes (seed, options and
+the recorded request digest are unchanged). Requests use ``urllib`` from the standard library, so the
 backend adds no dependency.
 """
 from __future__ import annotations
@@ -31,11 +37,12 @@ import json
 import logging
 import socket
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 from .llm import UsageTracker
 
@@ -54,6 +61,39 @@ DEFAULT_NUM_CTX = 8192
 # deliberately conservative (x1.35) for budgets and must not be used here: it would flag
 # every call. Heuristic, not a tokeniser; the window-full test is exact.
 TRUNCATION_RATIO = 0.9
+# Backoff for transient failures when ``local_llm_retry_budget_s`` > 0: base, doubling, capped.
+RETRY_BASE_S = 2.0
+RETRY_MAX_DELAY_S = 60.0
+
+
+class LocalLLMUnavailable(ConnectionError):
+    """The local server stayed unreachable for the whole retry budget."""
+
+
+def is_transient(exc: BaseException) -> bool:
+    """True for failures worth retrying: timeouts, refused/reset connections, HTTP 5xx.
+    A 4xx (bad request, unknown model) and an unreadable body (``ValueError``) are not."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    if isinstance(exc, (TimeoutError, socket.timeout, urllib.error.URLError, ConnectionError)):
+        return True
+    if isinstance(exc, ValueError):
+        return False
+    return isinstance(exc, OSError)
+
+
+def backoff_delays(budget_s: float, base_s: float = RETRY_BASE_S,
+                   max_delay_s: float = RETRY_MAX_DELAY_S) -> list[float]:
+    """The sleep before each retry: base, 2*base, ... capped at ``max_delay_s``, the sum
+    bounded by ``budget_s`` (the last delay is trimmed to fit). Empty when the budget is 0."""
+    out: list[float] = []
+    d, left = base_s, float(budget_s)
+    while left > 1e-9 and base_s > 0:
+        step = min(d, max_delay_s, left)
+        out.append(step)
+        left -= step
+        d *= 2
+    return out
 NEUTRAL_CHARS_PER_TOKEN = 4.0
 
 
@@ -82,6 +122,7 @@ class LocalUsageTracker(UsageTracker):
     counts replies flagged by ``truncation_flag`` (review N4)."""
 
     truncated = 0
+    retries = 0
 
     def _cost_usd(self) -> float:
         return 0.0
@@ -94,6 +135,7 @@ class LocalUsageTracker(UsageTracker):
         for row in out["by_model"].values():
             row["cost_usd"] = 0.0
         out["truncated"] = self.truncated
+        out["retries"] = self.retries
         return out
 
 
@@ -161,6 +203,11 @@ class LocalLLM:
         if self.num_ctx <= 0:
             raise ValueError("local_llm_num_ctx must be > 0")
         self.digest = config.get("local_llm_digest") or None
+        self.retry_budget_s = float(config.get("local_llm_retry_budget_s") or 0.0)
+        if self.retry_budget_s < 0:
+            raise ValueError("local_llm_retry_budget_s must be >= 0")
+        self.retry_base_s = float(config.get("local_llm_retry_base_s") or RETRY_BASE_S)
+        self._sleep: Callable[[float], None] = time.sleep
         self.usage = LocalUsageTracker()
         self._tls = threading.local()
 
@@ -213,8 +260,12 @@ class LocalLLM:
 
     def _run(self, system: str, prompt: str, schema: dict[str, Any] | None) -> str | None:
         self._tls.last = None
+        body = self.build_request(system, prompt, schema)    # built once: retries resend it
         try:
-            data = self._post(self.build_request(system, prompt, schema))
+            data = self._post_with_retry(body)
+        except LocalLLMUnavailable:
+            self.usage.count("errors")
+            raise
         except (TimeoutError, socket.timeout) as e:
             self._fail("timeouts", f"local model timed out after {self.timeout_s:g} s: {e}")
             return None
@@ -228,6 +279,25 @@ class LocalLLM:
             self._fail(None, f"local model reply unusable: {e}")
             return None
         return self.read_response(data, prompt_estimate=neutral_token_estimate(system, prompt))
+
+    def _post_with_retry(self, body: dict[str, Any]) -> dict[str, Any]:
+        """``_post`` with bounded backoff on transient errors (only when a budget is set)."""
+        delays = backoff_delays(self.retry_budget_s, self.retry_base_s)
+        for attempt in range(len(delays) + 1):
+            try:
+                return self._post(body)
+            except Exception as e:
+                if not delays or not is_transient(e):
+                    raise
+                if attempt == len(delays):
+                    raise LocalLLMUnavailable(
+                        f"local model at {self.url} unreachable after {attempt + 1} attempts over "
+                        f"{self.retry_budget_s:g} s budget: {e}") from e
+                self.usage.count("retries")
+                log.warning("local model call failed (%s); retry %d/%d in %.1f s",
+                            e, attempt + 1, len(delays), delays[attempt])
+                self._sleep(delays[attempt])
+        raise AssertionError("unreachable")     # pragma: no cover
 
     def _fail(self, counter: str | None, problem: str) -> None:
         log.warning("%s; using rule-based fallback", problem)
