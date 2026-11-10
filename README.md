@@ -293,6 +293,11 @@ powershell -ExecutionPolicy Bypass -File scripts\build_cpp.ps1
 ./scripts/build_cpp.sh
 ```
 
+Both scripts use the project interpreter, `.venv\Scripts\python.exe` (or `.venv/bin/python`),
+when it exists, because a bare `python` on PATH is often another interpreter without
+pybind11. Without a `.venv` they fall back to `python` on PATH with a warning, and stop with
+a message naming the interpreter if pybind11 is missing from it.
+
 Without the build, everything runs on the numpy fallback, which uses identical formulas
 (cross-checked in CI). When the compiled core is missing, importing `agentic_trader.quant`
 emits one `RuntimeWarning` saying that every number will come from the numpy backend; set
@@ -423,6 +428,25 @@ of the last one.
   `quant/__init__.py` (which validates arguments so both backends refuse the same input), add
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
+
+## v0.18 (unreleased): leftovers closed
+
+Evidence class: code and offline tests; no model was run.
+
+- **Next-open fills with stops.** `backtest.fill = "next_open"` together with
+  `backtest.use_stops` used to raise; it now runs in both backends. A stop or take level
+  already through the next open exits at that open; otherwise the bar's range decides.
+- **Trial counts in `stats`.** `--pre-registry-trials N` and `--trial-returns CSV` report the
+  deflated Sharpe at the registered, registered plus pre-registry, and effective trial counts
+  (see [Usage](#usage) and the evaluation page).
+- **Paper OMS corporate actions are opt-in.** `scripts/paper_trade_v09.py --oms` applies
+  corporate actions to the OMS shadow book only with `--oms-corporate-actions` (default off).
+  The frozen forward record is unaffected; its current engine vintage is `v09-engine-3`
+  (`docs/evaluation/paper_freeze.json`, [how freezing works](docs/evaluation/paper_freeze.md)).
+- **Red-team v2 scope.** The end-to-end run on all 1,500 units is replaced by two passes:
+  analyst only on 1,500 units, then end to end on `--per-category 2` (100 units). Not run yet.
+  How the local-model queue is run and restarted:
+  [docs/operations/long_runs.md](docs/operations/long_runs.md).
 
 ## v0.16 (unreleased): the LLM study on a local model
 

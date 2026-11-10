@@ -2828,3 +2828,27 @@ reading the gold passages, so the wording overlaps the passages more than an ana
 question would. Most gold passages are distinctive 8-K events. Fifty questions give a
 recall@5 standard error of about 0.04 (tfidf) and 0.02 (hybrid). No local embedding ranker
 was used (the optional `[rag]` extra is not installed).
+
+## v0.18 changes that bear on evaluation
+
+Evidence class: code and offline tests. No number on this page changed, and no model was run.
+
+- **Next-open fills with stops.** Before v0.18, `backtest.fill = "next_open"` together with
+  `backtest.use_stops` raised in both backends, so the fill-timing sensitivity could not be
+  run with stops on. It now runs: a stop or take level already through the next open exits at
+  that open, otherwise the bar's high and low decide, as with same-close fills. Four
+  hand-worked tests and a C++ parity case pin it. The published numbers use `fill = "close"`
+  and `use_stops` off, so they do not move.
+- **Trial counts.** `--pre-registry-trials` and `--trial-returns` (described above under the
+  deflated Sharpe) are new in v0.18, and `scripts/render_v08_tables.py` now passes both the
+  registered count and the pre-registry estimate of 64.
+- **Paper record.** The forward paper books are on engine vintage `v09-engine-3`
+  ([paper_freeze.md](paper_freeze.md)); rows from earlier vintages keep their ids, and a
+  comparison across vintages has to say so. The OMS shadow record applies corporate actions
+  only with `--oms-corporate-actions` (default off); the frozen ledger is not affected.
+- **Red-team v2 scope.** The 4.4 row above is the v0.15 single-analyst measurement. The v2
+  harness will run in two passes, analyst only on 1,500 units and then end to end on
+  `--per-category 2` (100 units), with Wilson 95% intervals that understate the uncertainty
+  because snippets repeat across cells. Not run; see
+  [../operations/long_runs.md](../operations/long_runs.md) and
+  [../review/v018_notes/E_redteam_scope.md](../review/v018_notes/E_redteam_scope.md).
