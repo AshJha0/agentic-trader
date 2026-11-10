@@ -137,14 +137,18 @@ intervals; snippets repeat across cells, so those intervals understate the real 
 and are quoted with that caveat. Design detail:
 [../review/v018_notes/E_redteam_scope.md](../review/v018_notes/E_redteam_scope.md).
 
-## 6. `exec_lag` must run where it will not be interrupted
+## 6. `exec_lag` resumes from a checkpoint (since v0.19)
 
 `scripts/v17_exec_lag.py` (the registered rules trials at exec_lag 0 and 1; no model is
-called) does not resume. It keeps every result in memory and writes its JSON, Markdown and
-meta files only at the end, so a kill at any point loses the whole run, and a Yahoo run
-restarted later may read revised bars. Run it in one sitting on a machine that will not
-sleep, update or reboot for its duration (or on a CI runner), and not in the same chain as
-the multi-day model jobs on a laptop.
+called) appends one line per finished (trial, lag) to `<out>/checkpoint_<provider>.jsonl`
+and skips finished units on a rerun (`--resume`, the default; `--fresh` starts over). The
+checkpoint header fingerprints the script, `backtest.py`, the package version, provider,
+period and trial list; a mismatch is refused. The final files are built only from the
+checkpoint, so a resumed run writes the same bytes as an uninterrupted one.
+
+Two limits: the fingerprint does not cover the downloaded bars, so a Yahoo revision between
+sessions is not detected; and it hashes only the script and `backtest.py`, not every engine
+module. Before v0.19 the script wrote everything at the end and a kill lost the whole run.
 
 ## 7. Before calling a run finished
 

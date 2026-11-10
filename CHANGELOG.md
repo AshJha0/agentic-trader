@@ -9,6 +9,32 @@ offline tests** unless a line says otherwise; **simulation** and **synthetic fix
 nothing about markets; **arithmetic** numbers follow from registered inputs. The model and
 network re-runs are queued, not run, and are listed in `docs/review/PLAN.md` section 4 (v0.17).
 Tag plan: v0.16.0 is tagged first on its own section below, then v0.17.0.
+### Long-run robustness round (v0.19 notes, 2026-11-10)
+
+Lane notes in `docs/review/v019_notes/`. Evidence class: code + offline tests (fakes only); no
+model run. The study chains already running keep their start-of-run code.
+
+- **Resumable exec_lag**: new `agentic_trader/checkpoint.py` (append-only JSON lines, header
+  fingerprint, fsync per unit, torn last line cut). `scripts/v17_exec_lag.py` resumes by
+  default (`--fresh` to restart), prints `k/N`, and builds its final files from the checkpoint
+  so a resumed run is byte-identical. Output change: per-row `seconds` removed; timing moves to
+  `meta_*.json`.
+- **Local model retries**: `local_llm_retry_budget_s` (default 0 = old behaviour) retries
+  timeouts, refused connections and 5xx with capped exponential backoff and an unchanged request
+  body; 4xx and unreadable bodies are not retried; an exhausted budget raises
+  `LocalLLMUnavailable` instead of silently falling back to rules. Study drivers use 600 s.
+- **Provider misses become counted skips**: `agentic_trader/study_robust.py`; recall2 and
+  `llm_study` record a skipped row with its reason after 3 tries, report skips next to N, and
+  retry them on resume. recall2 prints one `k/N` counter.
+- **Operations guide** `docs/operations/long_runs.md`: detached launch, markers and resume,
+  restart order after a reboot, spotting a hung Ollama, red-team two-pass design.
+- **Build scripts** prefer the project venv's Python and pass it to CMake.
+- 27 hand-worked edge-case tests (NYSE calendar, evidence bounds, question overlap, output
+  guard); README and evaluation docs updated for the v0.18 changes.
+- Open: `measure_v08.py run_trials` non-atomic writes without fingerprint (needs its own review,
+  it feeds registered statistics); `run_recall`/`run_calibration`/`_fwd` provider retries; skip
+  reporting rule in the pre-registration text.
+
 ### Follow-up round (v0.18 notes, 2026-11-09): leftovers closed
 
 Lane notes in `docs/review/v018_notes/`. Evidence class: code + offline tests; no model run.
