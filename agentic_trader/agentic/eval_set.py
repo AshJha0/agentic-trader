@@ -238,9 +238,16 @@ def cohen_kappa(a: list[bool], b: list[bool]) -> float | None:
 
 
 # ------------------------------------------------------------------ item generation
-def _ledger_frame(path: Path):
+# The paper ledger grows every trading day (Actions paper job). The frozen set was built from the
+# ledger as of this date; reading past it would move the 30 real items and break the freeze.
+LEDGER_CUTOFF = "2026-11-06"
+
+
+def _ledger_frame(path: Path, cutoff: str | None = LEDGER_CUTOFF):
     import pandas as pd
     df = pd.read_csv(path, index_col=0, parse_dates=True)
+    if cutoff is not None:
+        df = df[df.index <= pd.Timestamp(cutoff)]
     return df.drop(columns=[c for c in df.columns if c == "rf"])
 
 

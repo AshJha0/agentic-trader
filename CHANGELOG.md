@@ -23,6 +23,9 @@ run. Running chains keep their start-of-run code.
   `os.replace`) and carry an input fingerprint in `meta.measurement`. A file from other inputs
   is re-measured; a file written before fingerprints existed is kept, so the registered trial
   statistics do not move. The fingerprint covers inputs, not code.
+- `agentic/eval_set.py`: the frozen analyst eval set reads the paper ledger only up to
+  `LEDGER_CUTOFF` (2026-11-06, the frozen set's last date). The daily paper job had grown the
+  ledger and moved the 30 real items, failing `test_frozen_set_matches_generator` on every job.
 
 ### Long-run robustness round (v0.19 notes, 2026-11-10)
 
