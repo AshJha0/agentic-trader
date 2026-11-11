@@ -14,6 +14,11 @@ Tag plan: v0.16.0 is tagged first on its own section below, then v0.17.0.
 Evidence class: code + offline tests (`tests/test_v019_open_items.py`, fakes only); no model
 run. Running chains keep their start-of-run code.
 
+- Pre-registration skip rule (`docs/evaluation/v16_preregistration_DRAFT.md`, "Skipped units"):
+  every N is quoted with its skip count; skips are counted apart from fallbacks; a cell with more
+  than 10 % of its units skipped is inadmissible. `llm_study.cell_metrics` enforces the cap
+  (`skipped`, `skip_share`) and `--report` passes the persistent skips in and shows a
+  `skipped` column. Test: `test_skip_cap_makes_a_cell_inadmissible`.
 - `scripts/v16_local_study.py`: `run_recall` and `run_calibration` retry a provider miss
   (`study_robust.retry_provider`), then record a skipped row instead of aborting; the result
   gains a `skipped` block (count, units, ids, reasons) and a skipped item is retried on resume.
