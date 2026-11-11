@@ -38,8 +38,8 @@ line is ignored and truncated. 4 passed. ruff and mypy clean on touched files.
   - `scripts/measure_v08.py run_trials`: already skips trials whose `trial_<slug>.json` exists,
     so it resumes. But the files are written non-atomically and carry no fingerprint, so a
     file from older code would be silently reused. Fix: write to a temp file and `os.replace`,
-    and check a fingerprint stored in `meta`. Not done here (that file feeds the registered
-    trial statistics; changing it needs its own review).
+    and check a fingerprint stored in `meta`. Done 2026-11-11 (inputs-only fingerprint;
+    legacy files without one are kept, so registered statistics do not move).
   - `scripts/v16_local_study.py`: has its own JSONL checkpoint already; could move to the
     shared helper later. No header fingerprint.
   - `scripts/v17_costs.py`: synthetic grid (4 spreads x 2 vols x seeds) plus a per-symbol,

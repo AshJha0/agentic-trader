@@ -251,7 +251,10 @@ def recall_items(limit: int = 0) -> list[tuple[str, date]]:
 
 
 def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, ablate: bool = True,
-               log: Callable[[str], None] = print) -> dict[str, Any]:
+               log: Callable[[str], None] = print, provider_tries: int = PROVIDER_TRIES,
+               sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+    """A provider miss on one item is retried ``provider_tries`` times, then recorded as a
+    skipped row (retried on the next resume) and reported in the result's ``skipped`` block."""
     t0, ck = time.time(), Checkpoint(out)
     items = recall_items(limit)
     q = recall_question(NAMES)
@@ -260,8 +263,12 @@ def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, abla
     def fs(sym: str, d: date) -> FrozenState:
         k = f"{sym}@{d.isoformat()}"
         if k not in frozen:
-            frozen[k] = FrozenState(graph, sym, d)
+            frozen[k] = retry_provider(lambda: FrozenState(graph, sym, d), label=k,
+                                       tries=provider_tries, sleep=sleep)
         return frozen[k]
+
+    def done(rid: str) -> bool:
+        return rid in ck.rows and not ck.rows[rid].get("skipped")
 
     def ask(st: FrozenState, drop: str | None) -> dict[str, Any]:
         reply = llm.complete(RECALL_SYSTEM, st.prompt(drop=drop) + q, deep=False)
@@ -270,12 +277,19 @@ def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, abla
 
     for i, (sym, d) in enumerate(items, 1):
         rid = f"{sym}@{d.isoformat()}"
-        if rid not in ck.rows:
-            st = fs(sym, d)
+        if not done(rid):
+            try:
+                st = fs(sym, d)
+            except ProviderMiss as e:
+                ck.add(skip_row(rid, e.reason, e.tries, kind="base", symbol=sym, as_of=d.isoformat()))
+                log(f"skip {rid}: {e.reason}")
+                continue
             ck.add({"id": rid, "kind": "base", "symbol": sym, "as_of": d.isoformat(),
                     "bar_date": st.bar_date.isoformat(), "keys": st.prompt_keys(), **ask(st, None)})
             log(f"recall {i}/{len(items)} {time.time() - t0:.0f}s")
-    base = [ck.rows[f"{s}@{d.isoformat()}"] for s, d in items]
+    ids = [f"{s}@{d.isoformat()}" for s, d in items]
+    skipped = [ck.rows[r] for r in ids if not done(r)]
+    base = [ck.rows[r] for r in ids if done(r)]
     if ablate:
         hits = [r for r in base if r["ticker_hit"] or r["month_hit"]]
         todo = [(r, k) for r in hits for k in r["keys"]]
@@ -285,8 +299,16 @@ def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, abla
                 st = fs(r["symbol"], date.fromisoformat(r["as_of"]))
                 ck.add({"id": aid, "kind": "ablation", "base_id": r["id"], "dropped": k, **ask(st, k)})
                 log(f"ablation {j}/{len(todo)} {time.time() - t0:.0f}s")
-    return summarise_recall(base, [r for r in ck.rows.values() if r.get("kind") == "ablation"],
-                            meta=_meta(llm, t0, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub"))
+    res = summarise_recall(base, [r for r in ck.rows.values() if r.get("kind") == "ablation"],
+                           meta=_meta(llm, t0, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub"))
+    res["skipped"] = _skips(skipped, len(items))
+    return res
+
+
+def _skips(skipped: list[dict], units: int) -> dict[str, Any]:
+    """The ``skipped`` block of a result: count, units, and each skipped id with its reason."""
+    return {"n": len(skipped), "units": units,
+            "rows": [{"id": r["id"], "kind": r.get("kind"), "reason": r.get("skip_reason")} for r in skipped]}
 
 
 def summarise_recall(base: list[dict], abl: list[dict], meta: dict | None = None) -> dict[str, Any]:
@@ -353,7 +375,11 @@ def _set(llm: Any, temperature: float, seed: int) -> None:
 def run_calibration(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, repeats: int = 5,
                     temperature: float = 0.7, seed: int = CAL_SEED, anchor_key: str = "rsi14",
                     anchor_values: tuple[float, ...] = (20.0, 40.0, 60.0, 80.0),
-                    log: Callable[[str], None] = print) -> dict[str, Any]:
+                    log: Callable[[str], None] = print, provider_tries: int = PROVIDER_TRIES,
+                    sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+    """A provider miss on one state is retried ``provider_tries`` times, then the state is
+    recorded as one skipped row (retried on the next resume), left out of the summary and
+    reported in the result's ``skipped`` block."""
     if anchor_key in PRICE_KEYS:
         raise ValueError("anchor_key must be a scale-free fact (price keys are rebased)")
     t0, ck = time.time(), Checkpoint(out)
@@ -365,12 +391,23 @@ def run_calibration(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0,
     total, done = len(states) * len(plan), 0
     for sym, d in states:
         st: FrozenState | None = None
+        key = f"{sym}@{d.isoformat()}"
+        skip_id = f"skip:{key}"
         for suffix, kind, temp, sd, override in plan:
-            rid = f"{sym}@{d.isoformat()}#{suffix}"
+            rid = f"{key}#{suffix}"
             done += 1
             if rid in ck.rows:
                 continue
-            st = st or FrozenState(graph, sym, d)
+            if st is None:
+                try:
+                    st = retry_provider(lambda: FrozenState(graph, sym, d), label=key,
+                                        tries=provider_tries, sleep=sleep)
+                except ProviderMiss as e:
+                    ck.add(skip_row(skip_id, e.reason, e.tries, kind="skipped", state=key))
+                    log(f"skip {key}: {e.reason}")
+                    break
+                if ck.rows.get(skip_id, {}).get("skipped"):   # recovered on resume
+                    ck.add({**ck.rows[skip_id], "skipped": False, "recovered": True})
             _set(llm, temp, sd)
             reply = llm.complete_json(st.system, st.prompt(override=override) + JSON_SUFFIX, deep=False,
                                       schema=contracts.ANALYST)
@@ -380,11 +417,16 @@ def run_calibration(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0,
                     "orig_anchor_value": st.facts.get(anchor_key),
                     "raw": reply, "parsed": p is not None, **(p or {"signal": None, "confidence": None})})
             log(f"calibration {done}/{total} {time.time() - t0:.0f}s")
-    keys = [f"{s}@{d.isoformat()}" for s, d in states]
-    rows = [r for r in ck.rows.values() if r["state"] in set(keys)]
-    return summarise_calibration(rows, keys, anchor_key=anchor_key, repeats=repeats, temperature=temperature,
-                                 meta=_meta(llm, t0, seed=seed, prompt_source="TechnicalAnalyst prompt, "
-                                            "Anonymizer + scrub, complete_json(contracts.ANALYST)"))
+    all_keys = [f"{s}@{d.isoformat()}" for s, d in states]
+    skipped = [ck.rows[f"skip:{k}"] for k in all_keys if ck.rows.get(f"skip:{k}", {}).get("skipped")]
+    keys = [k for k in all_keys if not ck.rows.get(f"skip:{k}", {}).get("skipped")]
+    kept = set(keys)
+    rows = [r for r in ck.rows.values() if r.get("state") in kept and r.get("kind") != "skipped"]
+    res = summarise_calibration(rows, keys, anchor_key=anchor_key, repeats=repeats, temperature=temperature,
+                                meta=_meta(llm, t0, seed=seed, prompt_source="TechnicalAnalyst prompt, "
+                                           "Anonymizer + scrub, complete_json(contracts.ANALYST)"))
+    res["skipped"] = _skips(skipped, len(all_keys))
+    return res
 
 
 def _std(xs: list[float]) -> float | None:
@@ -472,13 +514,16 @@ def drift(a: dict, b: dict) -> dict[str, Any]:
 RECALL2_SEED, RECALL2_DATES, PLACEBO_N, SHIFT_BARS, LEAK_HORIZON = 20261109, 14, 60, 63, 5
 
 
-def _fwd(graph: TradingGraph, st: FrozenState, offset: int, horizon: int) -> float | None:
+def _fwd(graph: TradingGraph, st: FrozenState, offset: int, horizon: int, *, tries: int = PROVIDER_TRIES,
+         sleep: Callable[[float], None] = time.sleep) -> float | None:
     """Forward close-to-close return over ``horizon`` bars starting ``offset`` bars after the
-    decision bar (scoring only, never shown to the model)."""
+    decision bar (scoring only, never shown to the model). Provider misses are retried; after
+    ``tries`` misses ``ProviderMiss`` propagates and the caller records a skipped row."""
     import pandas as pd
     from datetime import timedelta
-    h = graph.provider.history(st.state.instrument, st.bar_date,
-                               st.bar_date + timedelta(days=int(2 * (offset + horizon)) + 15))
+    end = st.bar_date + timedelta(days=int(2 * (offset + horizon)) + 15)
+    h = retry_provider(lambda: graph.provider.history(st.state.instrument, st.bar_date, end),
+                       label=f"fwd {st.key}", tries=tries, sleep=sleep)
     c = h["Close"].astype(float)
     c = c[c.index >= pd.Timestamp(st.bar_date)]
     if len(c) <= offset + horizon:
@@ -546,14 +591,22 @@ def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, A
             lid = f"leak:{it.truth}@{it.as_of}"
             if not done(lid):
                 st = frozen(it, lid, "leak", None)
+                fwd: tuple[float | None, float | None] | None = None
                 if st is not None:
+                    try:   # forward returns first: a miss here skips the unit before the model call
+                        fwd = (_fwd(graph, st, 0, LEAK_HORIZON, tries=provider_tries, sleep=sleep),
+                               _fwd(graph, st, SHIFT_BARS, LEAK_HORIZON, tries=provider_tries, sleep=sleep))
+                    except ProviderMiss as e:
+                        ck.add(lineage.stamp(skip_row(lid, e.reason, e.tries, kind="leak", symbol=it.truth,
+                                                      as_of=it.as_of), header))
+                        log(f"skip {lid}: {e.reason}")
+                if st is not None and fwd is not None:
                     reply = llm.complete_json(st.system, st.prompt() + JSON_SUFFIX, deep=False,
                                               schema=contracts.ANALYST)
                     p = parse_analyst(reply)
                     ck.add(lineage.stamp({"id": lid, "kind": "leak", "symbol": it.truth, "as_of": it.as_of,
                                           "raw": reply, "parsed": p is not None, "signal": (p or {}).get("signal"),
-                                          "fwd_real": _fwd(graph, st, 0, LEAK_HORIZON),
-                                          "fwd_shift": _fwd(graph, st, SHIFT_BARS, LEAK_HORIZON),
+                                          "fwd_real": fwd[0], "fwd_shift": fwd[1],
                                           "horizon_days": LEAK_HORIZON, "shift_bars": SHIFT_BARS}, header))
                 log(f"leak {k}/{total} {time.time() - t0:.0f}s")
             if done(lid):

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import asdict, is_dataclass
@@ -196,11 +197,23 @@ def run_trials(out: Path, provider) -> None:
     """Every variant ever judged on the design period (evaluation.TRIALS), re-measured on the core
     universe under the current engine, so the selection statistics count all of them."""
     from agentic_trader.evaluation import TRIALS, trial_slug
+    from agentic_trader.checkpoint import fingerprint
     design = {"design": PERIODS["design"]}
     for t in TRIALS:
         path = out / f"trial_{trial_slug(t.name)}.json"
-        if t.overrides is None or path.exists():
+        if t.overrides is None:
             continue
+        # inputs only (not code): a file from other inputs is re-measured; a file written before
+        # fingerprints existed is kept, so the registered trial statistics do not move
+        fp = fingerprint({"trial": t.name, "overrides": _jsonable(t.overrides), "rebalance_every": EVERY,
+                          "symbols": list(CORE), "design": list(design["design"])})
+        if path.exists():
+            old = json.load(open(path, encoding="utf-8")).get("meta", {}).get("measurement", {}).get("fingerprint")
+            if old is None or old == fp:
+                if old is None:
+                    log(f"trial {t.name!r}: kept (written before fingerprints)")
+                continue
+            log(f"trial {t.name!r}: fingerprint changed, re-measuring")
         log(f"trial {t.name!r} ...")
         t0 = time.time()
         cfg = base_config(**t.overrides)
@@ -212,8 +225,10 @@ def run_trials(out: Path, provider) -> None:
                                       provider=prov)
         res.meta["measurement"] = {"trial": t.name, "version": t.version, "overrides": _jsonable(t.overrides),
                                    "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1),
-                                   "portfolio_sharpe": float(port.metrics[AGENT].sharpe)}
-        res.to_json(path)
+                                   "portfolio_sharpe": float(port.metrics[AGENT].sharpe), "fingerprint": fp}
+        tmp = path.with_suffix(".json.tmp")   # atomic: a crash mid-write never leaves a half file
+        res.to_json(tmp)
+        os.replace(tmp, path)
         log(f"trial {t.name!r}: done in {time.time() - t0:.0f}s")
     rows = []
     for t in TRIALS:

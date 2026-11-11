@@ -48,7 +48,6 @@ block + `k/N` with N = 15 + resume completes the skip, llm_study skip row + `loa
 
 ## Open items
 
-- `run_recall` (v1) and `run_calibration` still abort on a provider miss; same pattern applies.
-- `_fwd` (leak forward returns) calls the provider without retry; a miss there still aborts.
+- Done 2026-11-11: `run_recall` (v1), `run_calibration` and `_fwd` now retry and record skipped rows.
 - Long chains already running in other checkouts use the old code; they pick this up only on
   restart, and the git SHA in the lineage header changes (use `--allow-version-change`).

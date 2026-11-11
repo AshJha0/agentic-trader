@@ -9,6 +9,21 @@ offline tests** unless a line says otherwise; **simulation** and **synthetic fix
 nothing about markets; **arithmetic** numbers follow from registered inputs. The model and
 network re-runs are queued, not run, and are listed in `docs/review/PLAN.md` section 4 (v0.17).
 Tag plan: v0.16.0 is tagged first on its own section below, then v0.17.0.
+### v0.19 open items (2026-11-11)
+
+Evidence class: code + offline tests (`tests/test_v019_open_items.py`, fakes only); no model
+run. Running chains keep their start-of-run code.
+
+- `scripts/v16_local_study.py`: `run_recall` and `run_calibration` retry a provider miss
+  (`study_robust.retry_provider`), then record a skipped row instead of aborting; the result
+  gains a `skipped` block (count, units, ids, reasons) and a skipped item is retried on resume.
+  `_fwd` (leak-test forward returns) retries too; a miss after retries skips that leak unit
+  before the model is called.
+- `scripts/measure_v08.py run_trials`: trial files are written atomically (temp file, then
+  `os.replace`) and carry an input fingerprint in `meta.measurement`. A file from other inputs
+  is re-measured; a file written before fingerprints existed is kept, so the registered trial
+  statistics do not move. The fingerprint covers inputs, not code.
+
 ### Long-run robustness round (v0.19 notes, 2026-11-10)
 
 Lane notes in `docs/review/v019_notes/`. Evidence class: code + offline tests (fakes only); no
