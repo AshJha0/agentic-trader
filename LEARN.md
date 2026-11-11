@@ -1,6 +1,6 @@
 # Learn agentic-trader
 
-This guide works through the 65 ideas behind the project in order. For each concept it gives
+This guide works through the 68 ideas behind the project in order. For each concept it gives
 the idea, where the repository implements it, the real numbers it produces, and questions to
 test your understanding. Two shorter pages give the whole picture first: [how the AI works](docs/ai/ai.md) and
 [how the quant works](docs/quant/quant.md). Recipes are in [COOKBOOK.md](COOKBOOK.md); component detail is in
@@ -120,6 +120,9 @@ evaluation is
 63. [Lineage: which code, prompt and model made this row](#63-lineage-which-code-prompt-and-model-made-this-row)
 64. [Conformal intervals when the data are not exchangeable](#64-conformal-intervals-when-the-data-are-not-exchangeable)
 65. [A red team needs a control arm](#65-a-red-team-needs-a-control-arm)
+66. [Long runs that survive a kill, and skips that are counted](#66-long-runs-that-survive-a-kill-and-skips-that-are-counted)
+67. [Classical ML in this repo: what is fitted, and when it is on](#67-classical-ml-in-this-repo-what-is-fitted-and-when-it-is-on)
+68. [LLM-as-judge: a judge must agree with labels first](#68-llm-as-judge-a-judge-must-agree-with-labels-first)
 
 ---
 
@@ -2385,3 +2388,105 @@ model run is queued.
 **Questions.**
 - Why must the control suffix match the payload's length?
 - Which number would a risk committee read first, and why?
+
+## 66. Long runs that survive a kill, and skips that are counted
+
+**The idea.** The local-model study runs for days on a laptop CPU. A reboot, a hung model
+server or a data provider that has no bars for one name on one day must not cost the finished
+work, and must not quietly shrink the sample either.
+
+**Formally.** Three mechanisms (v0.19, evidence class: code + offline tests).
+`agentic_trader/checkpoint.py` appends one JSON line per finished unit and fsyncs it; line 1 is
+a header whose SHA-256 fingerprint must match on resume (else `CheckpointMismatch`), and a torn
+last line is truncated so that unit simply runs again. `local_llm_retry_budget_s` (0 by default,
+600 s in the study drivers, `scripts/llm_study.py` `LOCAL_BUDGET`) retries timeouts, refused
+connections and HTTP 5xx with the same request body, and raises `LocalLLMUnavailable` when the
+budget is spent, so a dead server stops the run instead of turning every later row into a
+rules fallback. `study_robust.retry_provider` retries a provider miss three times and the
+runner then writes a skipped row with its reason. The pre-registration
+(`docs/evaluation/v16_preregistration_DRAFT.md`, "Skipped units") requires N to be quoted with
+its skip count, counts skips apart from fallbacks, and makes a cell with more than 10 % of its
+units skipped inadmissible (`llm_study.cell_metrics`: `skipped`, `skip_share`).
+
+**Worked example.** A cell of 300 decisions with 15 skips is reported "N = 285 (15 skipped)",
+skip share 5 %, admissible on this rule. With 31 skips the share is 31 / 300 = 10.3 % and the
+cell is not admissible, whatever its fallback share. A resume retries the skipped units; one
+that now succeeds leaves the skip list (`load_skips`). Recipe 131 runs the whole cycle on a
+toy file.
+
+**In the repo.** `agentic_trader/checkpoint.py`, `agentic_trader/study_robust.py`,
+`agentic_trader/local_llm.py`, `scripts/llm_study.py`, `scripts/v16_local_study.py`,
+[docs/operations/long_runs.md](docs/operations/long_runs.md). Test:
+`tests/test_v16_study.py::test_skip_cap_makes_a_cell_inadmissible`.
+
+**Questions.**
+- Why is a skip not counted as a fallback?
+- Why must a changed run header be refused rather than appended to?
+- What would go wrong if the retry budget were infinite?
+
+## 67. Classical ML in this repo: what is fitted, and when it is on
+
+**The idea.** Most of the "learning" here is classical statistics, not a neural network: a
+hidden Markov model labels volatility regimes, a shrunk IC-weighted combination turns signals
+into a forecast, a conformal interval sizes the tilt, and purged cross-validation with a leak
+canary checks that none of it saw the future. All of it is opt-in.
+
+**Formally.**
+- *Gaussian HMM* (`agentic_trader/regime.py`): 2 or 3 states, diagonal Gaussian emissions,
+  fitted by Baum-Welch on bars up to the as-of only; states sorted by mean log volatility.
+  Switch `regime.enabled` (off by default in `config.py`).
+- *IC-weighted combination* (`agentic_trader/combine.py`, `combination.method: "ic"`, default
+  `"rules"`): each signal's trailing purged IC is shrunk by the positive-part James-Stein factor
+  `max(0, 1 - (t_crit / t)^2)`, so a signal that does not clear its Student-t bar gets weight 0;
+  the forecast is sized by mean-variance with a Ledoit-Wolf covariance.
+- *Split conformal* (`combine.conformal_halfwidth`, `conformal.enabled`, off by default): the
+  `ceil((n + 1)(1 - alpha))`-th smallest absolute calibration residual; section 64 covers the
+  dependent-data version.
+- *Purged walk-forward and the leak canary* (`agentic_trader/leakage.py`):
+  `purged_walk_forward` drops training rows whose label window overlaps the test fold and adds
+  an embargo (section 52); `future_leak_canary` shocks prices after the as-of and checks that
+  the desk's outputs are byte-identical.
+
+**Worked example.** Recipe 132 fits the HMM on a synthetic series whose volatility quadruples
+half way: it labels 0 % of the calm half and 97 % of the stormy half high-volatility (synthetic
+fixture). The 80 % conformal half-width from 99 standard-normal residuals is 1.30, against 1.28
+from normal theory.
+
+**What is not here.** No model is trained on market returns to predict them end to end, and
+none of these switches is on in the frozen desk. The IC combination, regime conditioning and conformal sizing
+were registered as trials and run on design data (real prices, 15 core names, 2016-2021,
+`results/v14/`): mean Sharpe minus the control's -0.131, -0.179 and -0.079; none adopted
+(CHANGELOG v0.14).
+
+**Questions.**
+- Why sort HMM states after fitting?
+- What does a James-Stein factor of exactly zero mean for a signal?
+- Why must the canary compare outputs byte for byte rather than by tolerance?
+
+## 68. LLM-as-judge: a judge must agree with labels first
+
+**The idea.** Grading 150 analyst replies by hand for every prompt change is slow, so a second
+model grades them. A judge is itself a measurement instrument: it is used only after its
+verdicts are compared with human labels on a calibration set.
+
+**Formally.** `agentic_trader/agentic/judge_kit.py`. The default judge is
+`llama3.1:8b-instruct-q4_K_M` and the judged model `qwen2.5:7b-instruct`;
+`resolve_judge_model` refuses a judge from the judged model's family (self-preference bias)
+unless explicitly allowed. Agreement per criterion is Cohen's kappa,
+`kappa = (p_o - p_e) / (1 - p_e)`, with a row-resampling bootstrap interval
+(`kappa_bootstrap`). The rule-based checker of the eval set (`agentic/eval_set.py`) is
+calibrated the same way, so the judge is compared with a deterministic baseline.
+
+**Worked example.** Recipe 133: 23 of 30 verdicts agree with the labels (77 %), but because
+both raters say "yes" often, chance agreement is already high and kappa is 0.43 with a 95 %
+interval of about [0.07, 0.76] (invented labels, arithmetic). Thirty items cannot tell a fair
+judge from a good one.
+
+**Result.** The local calibration run of the judge (30 items) is pending as a published
+result: its output file is not committed to this repository yet, so no kappa is quoted here.
+Commands: recipe 117.
+
+**Questions.**
+- Why is 77 % raw agreement not evidence of a good judge?
+- Why refuse a judge from the same model family?
+- What would you do with a criterion whose kappa interval includes zero?

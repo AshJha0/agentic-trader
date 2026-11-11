@@ -8,8 +8,9 @@
 | Guide | For |
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
-| [LEARN.md](LEARN.md) | 65 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 130 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117) and the batched walk-forward (118) and the KPI table (119), and the v0.17 recipes for the second review's fixes (120-130); every offline one runs in CI |
+| [AI learning path](docs/learn/ai_learning_path.md) | Ten modules on the kinds of AI used here (agents, LLMs, local models, contracts, guardrails, tools, RAG, memory, classical ML, evaluation), each with an offline exercise |
+| [LEARN.md](LEARN.md) | 68 concepts: how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 133 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117) and the batched walk-forward (118) and the KPI table (119), and the v0.17 recipes for the second review's fixes (120-130), and the v0.19 recipes for resuming a run, the skip cap, classical ML and judge agreement (131-133); every offline one runs in CI |
 | [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 40 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
@@ -428,6 +429,30 @@ of the last one.
   `quant/__init__.py` (which validates arguments so both backends refuse the same input), add
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
+
+## v0.19 (unreleased): long runs that survive, skips that are counted
+
+Evidence class: code and offline tests (fakes only); no model was run. Running study chains
+keep their start-of-run code.
+
+- **Resumable runs.** `agentic_trader/checkpoint.py` (append-only JSON lines, fingerprinted
+  header, fsync per unit, torn last line cut); `scripts/v17_exec_lag.py` resumes by default
+  (`--fresh` to restart) and a resumed run writes byte-identical files.
+- **Local model retries.** `local_llm_retry_budget_s` (default 0; 600 s in the study drivers)
+  retries timeouts, refused connections and 5xx with the same request body and raises
+  `LocalLLMUnavailable` when spent, instead of silently falling back to rules.
+- **Provider misses become counted skips.** `agentic_trader/study_robust.py`: three tries, then a
+  skipped row with its reason, retried on resume. The pre-registration rule
+  ([v16 draft](docs/evaluation/v16_preregistration_DRAFT.md), "Skipped units"): N is quoted with
+  its skip count, skips are counted apart from fallbacks, and a cell with more than 10 % skipped
+  is inadmissible; `llm_study --report` shows a `skipped` column.
+- **Trial files.** `scripts/measure_v08.py run_trials` writes atomically and fingerprints its
+  inputs; files written before fingerprints existed are kept, so registered statistics do not move.
+- **Frozen eval set.** `agentic/eval_set.py` reads the paper ledger only up to `LEDGER_CUTOFF`
+  (2026-11-06).
+- Operations guide: [docs/operations/long_runs.md](docs/operations/long_runs.md). Recipes 131-133
+  in [COOKBOOK.md](COOKBOOK.md), lessons 66-68 in [LEARN.md](LEARN.md). Details in
+  [CHANGELOG.md](CHANGELOG.md).
 
 ## v0.18 (unreleased): leftovers closed
 

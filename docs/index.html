@@ -61,6 +61,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <nav>
       <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md">Learn (guide)</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md">Cookbook</a>
+      <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md">AI learning path</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md">How the AI works</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md">How the quant works</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/architecture/overview.md">Architecture</a>
@@ -76,6 +77,33 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 </header>
 
 <div class="wrap">
+<!-- AI learning path -->
+  <h2>AI learning path</h2>
+  <p>Ten short modules on the kinds of AI this project really uses, each with a plain idea, the
+     formal statement, a worked example from the repository, an offline exercise that runs in CI,
+     pitfalls and self-check questions. <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md">Start the path</a>.</p>
+  <ol><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#1-agents-and-the-harness">Agents and the harness</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#2-llms">LLMs</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#3-local-models">Local models</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#4-structured-outputs-and-the-contract-gate">Structured outputs and the contract gate</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#5-guardrails">Guardrails</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#6-tools-and-mcp">Tools and MCP</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#7-rag">RAG</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#8-memory-and-reflection">Memory and reflection</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#9-classical-ml">Classical ML</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#10-honest-ai-evaluation">Honest AI evaluation</a></li></ol>
+  <p class="caption">The shared modules match the AI track of the sibling project
+     <a href="https://ashjha0.github.io/AgenticAICashEquities/">AgenticAICashEquities</a>.</p>
+
+<!-- v0.19 strip -->
+  <h2>What changed recently (v0.14 to v0.19, unreleased)</h2>
+  <div class="grid">
+    <div class="card"><h3>v0.19: long runs</h3>
+      <p>Resumable checkpoints, bounded retries for the local model, provider misses recorded as
+         counted skips with a 10% cap per cell in the
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration_DRAFT.md">draft pre-registration</a>.
+         Code and offline tests; no model run.</p></div>
+    <div class="card"><h3>v0.16 to v0.18: the LLM study</h3>
+      <p>A study of what a local 7B model adds, cell by cell against the rules desk, with a recall
+         audit, calibration, an eval set and a judge from another family. The runs take days on CPU;
+         results are pending and none is quoted here.</p></div>
+    <div class="card"><h3>v0.14 and v0.15: risk, leakage, governance</h3>
+      <p>FHS and EWMA VaR, purged walk-forward with a Student-t gate and a leak canary, a paper OMS,
+         fenced filing text, gated retrieval, signed approvals and record/replay. Details in the
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a>.</p></div>
+  </div>
+
 <!-- v0.12 strip -->
   <h2>What changed in v0.12.0</h2>
   <div class="grid">
