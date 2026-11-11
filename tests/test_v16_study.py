@@ -203,3 +203,19 @@ def test_main_refuses_without_server_and_reports(tmp_path: Path, capsys: pytest.
     study.run_study(NAMES, study.design_dates(20)[1:4], 1, [_cell("rules")], _cfg(), out, None, lambda s: None)
     assert study.main(["--report", "--out", str(out)]) == 0
     assert "| rules |" in capsys.readouterr().out
+
+
+def test_skip_cap_makes_a_cell_inadmissible(tmp_path: Path) -> None:
+    """v0.19 skip rule (v16 prereg "Skipped units"): skips are counted apart from fallbacks and
+    a cell with more than MAX_FALLBACK_SHARE of its units skipped is not admissible."""
+    out = tmp_path / "s.jsonl"
+    dates = study.design_dates(20)[1:5]
+    rows = study.run_study(NAMES, dates, 1, [_cell("rules")], _cfg(), out, None, lambda s: None)
+    base = study.cell_metrics(rows, _cfg())[0]
+    assert base["skipped"] == 0 and base["skip_share"] == 0.0 and base["admissible"]
+    one = [{"cell": "rules", "skipped": True}]                       # 1 of 9 units: 11 % > 10 %
+    m = study.cell_metrics(rows, _cfg(), skips=one)[0]
+    assert m["skipped"] == 1 and m["skip_share"] == pytest.approx(1 / 9) and not m["admissible"]
+    other = [{"cell": "local_all", "skipped": True}]                 # another cell's skip: ignored
+    assert study.cell_metrics(rows, _cfg(), skips=other)[0]["admissible"]
+    assert "| skipped |" in study.render_metrics([m], [])

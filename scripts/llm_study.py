@@ -551,7 +551,8 @@ def _cost_per_decision(rows: list[dict[str, Any]], config: dict) -> float:
 
 
 def cell_metrics(rows: list[dict[str, Any]], config: dict,
-                 cap: float = MAX_FALLBACK_SHARE) -> list[dict[str, Any]]:
+                 cap: float = MAX_FALLBACK_SHARE,
+                 skips: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Per cell: portfolio Sharpe minus the vol-target control (block bootstrap CI and p),
     agent sources, contract rejection and fallback rates, admissibility under ``cap``,
     dispersion across seeds and the Claude list-price cost equivalent per decision.
@@ -600,6 +601,10 @@ def cell_metrics(rows: list[dict[str, Any]], config: dict,
         replays = len(seeds) > 1 and all(np.array_equal(A[0], x) for x in A[1:])
         calls = [c for r in cr for c in r["calls"]]
         n_calls = len(calls)
+        # v0.19 skip rule (v16 prereg, "Skipped units"): persistent provider misses are counted
+        # apart from fallbacks and carry the same cap, as a share of units (decisions + skips)
+        n_skip = sum(k.get("cell") == cell for k in (skips or []))
+        skip_share = n_skip / (len(cr) + n_skip) if (len(cr) + n_skip) else 0.0
         unparse = sum(c["status"] == "unparseable" for c in calls)
         fallback = sum(c["status"] == "fallback" for c in calls)
         share = (unparse + fallback) / n_calls if n_calls else 0.0
@@ -617,7 +622,8 @@ def cell_metrics(rows: list[dict[str, Any]], config: dict,
             "ci_lo": lo, "ci_hi": hi, "p": p, "per_seed": per_seed, "seed_replays": replays, "calls": n_calls, "calls_per_decision": n_calls / max(1, len(cr)),
             "contract_rejection_rate": unparse / n_calls if n_calls else 0.0,
             "fallback_rate": fallback / n_calls if n_calls else 0.0, "fallback_share": share,
-            "admissible": share <= cap, "agent_sources": dict(sorted(sources.items())),
+            "skipped": n_skip, "skip_share": skip_share,
+            "admissible": share <= cap and skip_share <= cap, "agent_sources": dict(sorted(sources.items())),
             "dispersion": float(np.mean(disp)) if disp else float("nan"),
             "cost_usd_per_decision": _cost_per_decision(cr, config),
             "seconds_per_call": float(np.mean([c["seconds"] for c in calls])) if calls else 0.0,
@@ -843,12 +849,12 @@ def _cap_note(cap: float) -> str:
 def render_metrics(metrics: list[dict[str, Any]], bias: list[dict[str, Any]],
                    cap: float = MAX_FALLBACK_SHARE) -> str:
     head = ("| cell | decisions | Sharpe | control | diff [95% CI] | p | calls/dec | rejected | "
-            "fallback | admissible | dispersion | $/decision (Claude list) |\n"
-            "|---|---:|---:|---:|---|---:|---:|---:|---:|---|---:|---:|")
+            "fallback | skipped | admissible | dispersion | $/decision (Claude list) |\n"
+            "|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---|---:|---:|")
     body = [f"| {m['cell']} | {m['decisions']} | {m['sharpe']:+.2f} | {m['control_sharpe']:+.2f} | "
             f"{m['sharpe_minus_control']:+.2f} [{m['ci_lo']:+.2f}, {m['ci_hi']:+.2f}] | {m['p']:.3f} | "
             f"{m['calls_per_decision']:.1f} | {m['contract_rejection_rate']:.1%} | {m['fallback_rate']:.1%} | "
-            f"{'yes' if m['admissible'] else 'NOT'} | {m['dispersion']:.3f} | {m['cost_usd_per_decision']:.4f} |"
+            f"{m.get('skipped', 0)} | {'yes' if m['admissible'] else 'NOT'} | {m['dispersion']:.3f} | {m['cost_usd_per_decision']:.4f} |"
             for m in metrics]
     src = [f"- {m['cell']}: " + ", ".join(f"{k} {v}" for k, v in m["agent_sources"].items()) for m in metrics]
     bh = ["| cell | by | groups | worst rate | chi2 | p |", "|---|---|---:|---:|---:|---:|"]
@@ -939,11 +945,11 @@ def main(argv: list[str] | None = None) -> int:
         fwd, problems = horizon_returns(rows, provider_prices(config), args.horizon)
         print(render_horizon(horizon_metrics(rows, fwd, args.horizon), problems))
         print("\nSecondary (each weight held to the next design date):\n")
-        print(render_metrics(cell_metrics(rows, config), fallback_bias(rows)))
+        skips = load_skips(Path(args.out))       # v0.19: reported, never silently dropped
+        print(render_metrics(cell_metrics(rows, config, skips=skips), fallback_bias(rows)))
         from agentic_trader.study_lineage import LEGACY_ROW_POLICY, row_vintage_status
         legacy = sum(row_vintage_status(r) == "legacy" for r in rows)
         print(f"\nRow vintage (N6): {legacy} of {len(rows)} rows legacy. {LEGACY_ROW_POLICY}")
-        skips = load_skips(Path(args.out))       # v0.19: reported, never silently dropped
         print(f"\nSkipped units (provider miss after retries): {len(skips)}")
         for r in skips:
             print(f"- {r['cell']} s{r['seed']} {r['as_of']} {r['symbol']}: {r.get('skip_reason')}")

@@ -158,6 +158,29 @@ pass the look less than one time in five. A null holdout result is therefore wea
 against a small effect, and the write-up must say so. The forward paper record remains the only
 unseen data after this look.
 
+## Skipped units (added 2026-11-11, v0.19 lane B)
+
+Plainly: sometimes the data provider has no prices for one name on one date, even after
+retries. That unit never reaches the model, so it is neither a model answer nor a fallback.
+It is skipped, and the skip has to be visible next to every count.
+
+The rule. Since v0.19 the runners (`run_study`, `run_recall`, `run_recall2`, `run_calibration`)
+retry a provider miss three times, then write a skipped row (`skipped`, `skip_reason`,
+`skip_tries`) and leave the unit out of the analysis. A resume retries skipped units. For every
+registered statistic built on these runners:
+
+1. N is quoted with the skip count beside it, as "N = 285 (15 skipped)", and `--report` lists
+   each skipped unit with its reason.
+2. Skips are counted separately from fallbacks. They do not enter `MAX_FALLBACK_SHARE`.
+3. A cell with more than 10 % of its units skipped at the end of the run is inadmissible, the
+   same cap as fallbacks: above it, which names and dates are missing could drive the result.
+4. Skips are rerun (a resume) before the design table is filled. Only skips that persist are
+   reported.
+
+Worked example: a first-pass cell has 15 names x 20 dates = 300 units. Yahoo has no data for
+one name on 3 dates; after the resume 2 still miss. The table shows N = 298 (2 skipped),
+0.7 % skipped, admissible on skips; its fallback share is computed on the 298.
+
 ## To fill at signing
 
 - design-pass results table (`python scripts/llm_study.py --report --out results/p2/first_pass.jsonl`),
@@ -169,4 +192,5 @@ unseen data after this look.
   void v0.16 hit rate;
 - the run header ids (`<rows>.header.json`: git SHA, prompt hash, Ollama version, model
   digest) of every run quoted, and any `allowed_change` entries;
-- the `decisive_ta` and `postcutoff_ta` results, or "not run".
+- the `decisive_ta` and `postcutoff_ta` results, or "not run";
+- the skip count beside every N, and each persistent skipped unit with its reason.

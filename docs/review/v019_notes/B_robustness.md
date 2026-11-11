@@ -31,7 +31,7 @@ For the CHANGELOG and PLAN owner to fold in; this lane did not edit either.
   excludes skipped rows, new `load_skips` lists those not later completed, and `--report`
   prints the count and each skipped unit.
 - Pre-registration: any registered analysis built on these drivers must quote the skip count
-  next to N. Not yet added to the prereg text (owner/lane with the prereg).
+  next to N. Added 2026-11-11 (v16 prereg "Skipped units"; cap enforced in `cell_metrics`).
 
 ## 3. Progress `k/N`
 
