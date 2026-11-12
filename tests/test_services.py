@@ -121,7 +121,7 @@ def test_mcp_stdio_round_trip_and_remote_registry():
     with pytest.raises(RuntimeError):
         call("market_data__news", {"symbol": "EUR/XYZ", "as_of": "2024-03-01", "lookback_days": 7})
 
-    reg = registry_from_stdio()
+    reg = registry_from_stdio(["--role", "trader", "--approval", "auto"])   # Round 1: trading is opt-in
     assert len(reg) == 16 and "quant.technical" in reg
     ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER)
     r = ex.call("quant.technical", symbol="AAPL", as_of="2024-03-01")

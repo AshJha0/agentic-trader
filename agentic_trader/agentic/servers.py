@@ -32,7 +32,7 @@ from __future__ import annotations
 import copy
 import threading
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 
 import numpy as np
@@ -107,10 +107,15 @@ class DeskTools:
 
     def __init__(self, provider: MarketDataProvider, config: dict, knowledge: KnowledgeBase | None = None,
                  positions: dict[str, float] | None = None, capital: float | None = None,
-                 memory: Any = None):
+                 memory: Any = None, session_as_of: date | None = None,
+                 clock: Callable[[], date] | None = None):
         self.provider = provider
         self._memory = memory                        # DecisionMemory for the memory.* tools (lazy)
-        self._memory_writes: dict[date, int] = {}    # as_of -> writes spent (MemoryTool budget per day)
+        # memory.remember (Round 1, B9/B14): writes are dated by the server, never by the caller,
+        # and the write budget is per session (this object, or one for_book view per harness run).
+        self.session_as_of = session_as_of
+        self._clock = clock or (lambda: datetime.now(timezone.utc).date())
+        self._session_writes = 0
         self.config = config
         self.knowledge = knowledge or default_knowledge_base()
         self.positions = {k.upper(): float(v) for k, v in (positions or {}).items()}
@@ -152,26 +157,36 @@ class DeskTools:
             self._memory = DecisionMemory(self.config.get("memory_path"),
                                           max_staleness_days=int(self.config.get("max_data_staleness_days", 7)))
         uni = self.config.get("agentic", {}).get("symbol_universe")
-        tool = MemoryTool(self._memory, as_of, getattr(self.provider, "name", ""),
+        return MemoryTool(self._memory, as_of, getattr(self.provider, "name", ""),
                           tuple(uni) if uni else None)
-        tool._writes = self._memory_writes.get(as_of, 0)
-        return tool
 
     def recall(self, symbol: str, as_of: date, k: int = 3) -> str:
         """Lessons and track record from decision memory, resolved on or before the as-of date
         only, fenced as untrusted (they quote earlier model-written reasoning)."""
         return self._memory_tool(_as_date(as_of)).recall(symbol, k)
 
+    def write_date(self) -> date:
+        """The date a memory write is stamped with: the session's bound date (a harness run's
+        task date) when set, else the server's own clock. Never a caller-supplied date."""
+        return self.session_as_of if self.session_as_of is not None else self._clock()
+
     def remember(self, symbol: str, as_of: date, action: str, weight: float, price: float, summary: str,
                  horizon_days: int = 10) -> dict:
-        """Append one decision to memory, dated the as-of day (append-only: an existing key is
-        refused, there is no update or delete; a small write budget per day)."""
-        d = _as_date(as_of)
+        """Append one decision to memory, dated by the server (append-only: an existing key is
+        refused, there is no update or delete). ``as_of`` must equal the server's write date
+        (the session's bound date, or today on the server's clock): a back-dated or
+        forward-dated write is refused. The write budget is per session, whatever dates the
+        caller names."""
+        d = self.write_date()
+        if _as_date(as_of) != d:
+            raise ValueError(f"memory writes are dated by the server ({d.isoformat()}); "
+                             f"a write dated {_as_date(as_of).isoformat()} is refused")
         with self._lock:
             tool = self._memory_tool(d)
+            tool._writes = self._session_writes
             key = tool.remember(symbol, action, weight, price, summary, horizon_days=horizon_days,
                                 price_basis=series_basis(self.provider))
-            self._memory_writes[d] = tool._writes
+            self._session_writes = tool._writes
         return {"recorded": key}
 
     # ------------------------------------------------------- market_data
@@ -330,6 +345,36 @@ class DeskTools:
         df = df[df.index > pd.Timestamp(as_of)] if len(df) else df
         return df.iloc[0] if len(df) else None
 
+    def guarded_weight(self, symbol: str, as_of: date, target: float, current: float) -> tuple[float, list[str]]:
+        """``target`` after the desk's PM guardrails (``PortfolioManager.guardrails``, the one
+        function the decision path uses): short ban, max short notional, max position,
+        position VaR cap, book VaR (when ``risk.max_book_var_95`` is set, over this desk's
+        book) and minimum trade size. Fails closed: too little history to measure risk is
+        refused, and a book whose VaR cannot be evaluated is flattened by the guardrail."""
+        from ..agents.risk import PortfolioManager, risk_facts
+        from ..state import Action, Book, TradeProposal, TradingState
+        d = _as_date(as_of)
+        ins, hist = self._history(symbol, d, None)
+        if len(hist) < 30:
+            raise ValueError(f"not enough history for {ins.display} to apply the desk's risk limits")
+        st = TradingState(ins, d, hist, current_weight=float(current))
+        st.proposal = TradeProposal(Action.HOLD, float(target), 0.0, st.last_price, None, None, 10, "")
+        book = None
+        if self.config["risk"].get("max_book_var_95"):
+            others = {s: float(w) for s, w in self.positions.items() if s != ins.symbol and w}
+            cols = {ins.symbol: hist["Close"].pct_change()}
+            for s in others:
+                try:
+                    _, h = self._history(s, d, None)
+                    cols[s] = h["Close"].pct_change()
+                except Exception:  # noqa: BLE001 - no history: book_var_scale fails closed on it
+                    cols[s] = pd.Series(dtype=float)
+            book = Book(others, pd.DataFrame(cols))
+            st.book = book
+        f = risk_facts(st, self.config)
+        w, notes = PortfolioManager(None, self.config).guardrails(float(target), f, ins.symbol, book)
+        return float(w), list(notes)
+
     def plan(self, symbol: str, as_of: date, target_weight: float, current_weight: float | None = None,
              algo: str | None = None) -> dict:
         """Size a weight change into an order and simulate working it (no order is sent).
@@ -343,7 +388,9 @@ class DeskTools:
         ``trade: false`` with the reason. Fills are simulated on the NEXT session's bars, the
         first a decision at the as-of close can trade in; when the provider has no such session
         yet the plan is returned with ``simulated: false`` instead of a fill on the as-of day.
-        ``plan_id`` is what ``submit_order`` requires; ``ticketable`` says whether the notional
+        The target first passes the desk's PM guardrails (``guarded_weight``); a target they
+        change is planned at the guarded weight, with ``requested_weight`` and
+        ``guardrail_notes`` in the result. ``plan_id`` is what ``submit_order`` requires; ``ticketable`` says whether the notional
         fits the desk's per-order cap (``order_cap``) -- a plan over it is returned with the cap
         and a note so the caller can reduce or split, and is not one ``submit_order`` accepts."""
         from ..algo import base_to_account_rate, plan_execution, simulate_execution, synthetic_intraday_bars
@@ -368,6 +415,18 @@ class DeskTools:
         if ins.is_fx and self.account_currency not in (ins.base, ins.quote):
             rate = base_to_account_rate(self.provider, ins.base, self.account_currency, d)
         target = float(target_weight)
+        if not math.isfinite(target):
+            raise ValueError("target_weight must be a finite number")
+        # Round 1 (A2): the same PM guardrail function the desk applies to every decision
+        # (short ban, max short notional, max position, position VaR cap, book VaR, minimum
+        # trade size) sizes the plan. A target the guardrails change is planned at the
+        # guarded weight and the notes say why; a long-only short is left to the truncation
+        # below so its message is unchanged.
+        guard_notes: list[str] = []
+        base = target if (allow_short or target >= 0) else 0.0
+        guarded, notes = self.guarded_weight(symbol, d, base, cw)
+        if abs(guarded - base) > 1e-12:
+            target, guard_notes = guarded, notes
         lot = float(self.config.get("execution", {}).get("fx_lot_size", 1000.0) or 1.0)
         dec = FinalDecision(ins.symbol, d, Action.HOLD, target, 0.0, None, None, "")
         plan = plan_execution(dec, ins, cw, self.capital, last, adv, algo,  # type: ignore[arg-type]
@@ -378,13 +437,18 @@ class DeskTools:
         effective = target if (allow_short or target >= 0) else 0.0
         truncated = "" if effective == target else \
             f" (target {target:+.2f} truncated to flat: shorting {ins.display} is not allowed)"
+        guard = (f" (risk guardrails: {float(target_weight):+.4f} -> {target:+.4f}: {'; '.join(guard_notes)})"
+                 if guard_notes else "")
         if plan is None:
             if abs(effective - cw) < 1e-9:
                 reason = "target equals current position"
             else:
                 unit = f"one lot of {lot:g} {ins.base}" if ins.is_fx else "one share"
                 reason = f"weight change {cw:+.4f} -> {effective:+.4f} is below {unit}; nothing to trade"
-            return {"trade": False, "reason": reason + truncated}
+            out0: dict[str, Any] = {"trade": False, "reason": reason + truncated + guard}
+            if guard_notes:
+                out0.update(requested_weight=float(target_weight), guardrail_notes=guard_notes)
+            return out0
         cap = self.order_cap
         ticketable = plan.notional <= cap
         if ticketable:
@@ -392,6 +456,9 @@ class DeskTools:
         out: dict[str, Any] = {"trade": True, **plan.to_dict(), "as_of": d.isoformat(), "ticketable": ticketable,
                                "order_cap": cap}
         notes = []
+        if guard_notes:
+            out.update(requested_weight=float(target_weight), guardrail_notes=guard_notes)
+            notes.append(guard.strip(" ()"))
         if not ticketable:
             notes.append(f"notional {plan.notional:,.0f} {self.account_currency} exceeds the per-order cap "
                          f"{cap:,.0f}: not ticketable as one order; reduce the change or split it")
@@ -422,8 +489,11 @@ class DeskTools:
         and the ``plan_id`` that binds those fields together. The ticket is refused when the
         fields do not match the plan reference, the notional exceeds the per-order cap, it
         would take a long-only book short, or the plan is not one this desk produced with these
-        exact fields (``execution.allow_external_plans`` admits tickets planned elsewhere);
-        ``intent`` records reduce vs short against the book. The book is then moved to
+        exact fields (``execution.allow_external_plans`` admits tickets planned elsewhere).
+        Under the desk's lock the book is read again: a plan sized from a position the book no
+        longer holds is refused as stale, and so is any ticket that would leave the book past
+        ``risk.max_position`` or ``risk.max_short_notional``; ``intent`` records reduce vs
+        short against the book. The book is then moved to
         ``position_after`` (pending the fill), so a following ``plan`` sizes the next leg of a
         split order from it and ``position`` reports the ticket behind the weight."""
         from ..algo import plan_reference, trade_intent
@@ -484,14 +554,35 @@ class DeskTools:
                      "notional": notional, "notional_currency": str(notional_currency).upper(), "price": price}
             if planned != given:
                 raise ValueError(f"ticket fields differ from plan {plan_id}: submit the plan's ticket unchanged")
-        ticket: dict[str, Any] = {"id": f"ORD-{len(self.orders) + 1:05d}", "plan_id": plan_id, "symbol": ins.symbol,
-                  "side": side, "intent": trade_intent(before, after, tol=one_lot), "quantity": quantity,
-                  "quantity_unit": quantity_unit, "notional": notional, "notional_currency": self.account_currency,
-                  "price": price, "position_before": before, "position_after": round(after, 6),
-                  "plan_known": known is not None, "note": note, "status": "ticketed"}
         with self._lock:
             if plan_id in self.ticketed:
                 raise ValueError(f"plan {plan_id} was already ticketed as {self.ticketed[plan_id]}")
+            # Round 1 (E-1): re-read the book under the lock. A plan sized from a book that has
+            # since moved (another plan ticketed first) is stale, and no ticket may leave the
+            # book past the firm position or short-notional limits, however it was planned.
+            before = self.positions.get(ins.symbol, 0.0)
+            after = before + (1.0 if side == "buy" else -1.0) * notional / self.capital
+            if known is not None and abs(before - float(known.get("current_weight", before))) > max(one_lot, 1e-6):
+                raise ValueError(f"plan {plan_id} is stale: it was sized from {ins.symbol} at "
+                                 f"{float(known['current_weight']):+.4f} and the book now holds {before:+.4f}; "
+                                 "plan again")
+            mx = float(risk.get("max_position", 1.0))
+            if abs(after) > mx + 1e-6:
+                raise ValueError(f"a {side} of {notional:,.0f} {self.account_currency} would leave {ins.symbol} at "
+                                 f"{after:+.4f}, beyond max_position {mx:.2f}")
+            short_cap = risk.get("max_short_notional")
+            if short_cap is not None and after < -float(short_cap) - 1e-6:
+                raise ValueError(f"a {side} of {notional:,.0f} {self.account_currency} would leave {ins.symbol} at "
+                                 f"{after:+.4f}, beyond max_short_notional {float(short_cap):.2f}")
+            if not allow_short and after < -1e-9:
+                raise ValueError(f"{ins.display} is long-only and the book holds {before:+.4f}: a {side} would "
+                                 f"leave it at {after:+.4f} (short)")
+            ticket: dict[str, Any] = {
+                "id": f"ORD-{len(self.orders) + 1:05d}", "plan_id": plan_id, "symbol": ins.symbol,
+                "side": side, "intent": trade_intent(before, after, tol=one_lot), "quantity": quantity,
+                "quantity_unit": quantity_unit, "notional": notional, "notional_currency": self.account_currency,
+                "price": price, "position_before": before, "position_after": round(after, 6),
+                "plan_known": known is not None, "note": note, "status": "ticketed"}
             self.ticketed[plan_id] = ticket["id"]
             self.plans.pop(plan_id, None)
             self.orders.append(ticket)
