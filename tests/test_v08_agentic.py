@@ -1073,7 +1073,7 @@ def test_mcp_server_default_executor_caps_notional_and_refuses_a_queued_gateway(
     # the documented CLI can now choose the role and the gateway, and forwards them
     args = build_parser().parse_args(["mcp", "--role", "viewer", "--approval", "deny", "--data", "synthetic"])
     assert args.func.__name__ == "cmd_mcp" and args.role == "viewer" and args.approval == "deny"
-    assert build_parser().parse_args(["mcp"]).role == "trader" and build_parser().parse_args(["mcp"]).approval is None
+    assert build_parser().parse_args(["mcp"]).role == "analyst" and build_parser().parse_args(["mcp"]).approval is None
     seen = {}
     with monkeypatch.context() as m:
         m.setattr(ms, "main", lambda argv=None: seen.setdefault("argv", argv) and 0)

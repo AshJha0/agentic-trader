@@ -248,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     mc = sub.add_parser("mcp", help="MCP server over stdio (needs the [mcp] extra)")
     common(mc, symbol_required=None)
-    mc.add_argument("--role", choices=["viewer", "analyst", "trader", "risk", "admin"], default="trader",
+    mc.add_argument("--role", choices=["viewer", "analyst", "trader", "risk", "admin"], default="analyst",
                     help="the role every call is evaluated for (stdio carries no identity)")
     mc.add_argument("--approval", choices=["auto", "queued", "deny", "signed"], default=None,
                     help="gateway for tools that need approval (default: config agentic.approval); "
