@@ -1,6 +1,7 @@
 """Risk-management team (aggressive / neutral / conservative) and Portfolio Manager."""
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
@@ -12,6 +13,8 @@ from ..state import Book, FinalDecision, RiskView, TradingState
 from .base import Agent, clip, fmt_facts
 from ..validate import cap_short_notional
 from .trader import action_for, allow_short, atr14, policy_passages, protective_levels, sane_levels
+
+log = logging.getLogger(__name__)
 
 
 def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
@@ -213,6 +216,7 @@ class PortfolioManager(Agent):
                          f"signal(s)" + (f", interval sizing x{scale:.2f}" if fc.interval is not None else "")
                          + f" -> {w:+.2f}.")
         source = "rules"
+        rule_w, model_w = float(w), None
 
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}, last "
@@ -227,13 +231,16 @@ class PortfolioManager(Agent):
         )
         data = self.ask_json(prompt, ("target_weight", "rationale"), state=state,
                              numeric=("target_weight", "confidence"), schema=contracts.PORTFOLIO_MANAGER)
+        override_notes: list[str] = []
         if data:
-            w = clip(data["target_weight"], -1, 1)
+            model_w = clip(data["target_weight"], -1, 1)
+            w, override_notes = self.bound_model_weight(model_w, rule_w, state)
             conf = clip(data.get("confidence"), 0, 1, conf)
             rationale, source = str(data["rationale"]), "llm"
 
         sym = state.instrument.symbol
         w, notes = self.guardrails(w, f, sym, state.book)
+        notes = override_notes + notes
         w, band_note = self.no_trade_band(w, state.current_weight, f, sym, state.book)
         if band_note:
             notes.append(band_note)
@@ -253,9 +260,33 @@ class PortfolioManager(Agent):
                           stop, take, rationale, bool(approved), notes, source,
                           kept=band_note is not None,
                           models_served=tuple(sorted({c["model_served"] for c in state.llm_calls
-                                                      if c.get("model_served")})))
+                                                      if c.get("model_served")})),
+                          rule_weight=round(rule_w, 6),
+                          model_weight=None if model_w is None else round(model_w, 6))
         state.decision = d
         return d
+
+    def bound_model_weight(self, model_w: float, rule_w: float,
+                           state: TradingState | None = None) -> tuple[float, list[str]]:
+        """Round 1 (A3, owner decision D4): the model PM may move the weight at most
+        ``risk.pm_model_band`` (default 0.25) away from the rules weight computed on the same
+        inputs, and every gap above ``risk.pm_model_flag`` (default 0.10) is logged and noted on
+        the decision. Returns ``(bounded weight, notes)``; the guardrails run afterwards."""
+        rcfg = self.config.get("risk", {})
+        band = float(rcfg.get("pm_model_band", 0.25))
+        flag = float(rcfg.get("pm_model_flag", 0.10))
+        if not (math.isfinite(band) and band >= 0) or not (math.isfinite(flag) and flag >= 0):
+            raise ValueError(f"risk.pm_model_band {band} and risk.pm_model_flag {flag} must be finite and >= 0")
+        gap = model_w - rule_w
+        bounded = min(rule_w + band, max(rule_w - band, model_w))
+        notes: list[str] = []
+        if abs(gap) > flag + 1e-12:
+            where = f"{state.instrument.symbol} {state.as_of}" if state is not None else "decision"
+            note = (f"PM model weight {model_w:+.2f} vs rules {rule_w:+.2f} (gap {abs(gap):.2f} > flag {flag:.2f})"
+                    + (f"; bounded to {bounded:+.2f} (band {band:.2f})" if abs(bounded - model_w) > 1e-12 else ""))
+            log.warning("%s: %s", where, note)
+            notes.append(note)
+        return bounded, notes
 
     def no_trade_band(self, w: float, current: float | None, f: dict[str, Any],
                       symbol: str | None = None, book: Book | None = None) -> tuple[float, str | None]:

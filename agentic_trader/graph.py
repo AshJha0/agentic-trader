@@ -358,7 +358,7 @@ class TradingGraph:
         """v0.17 R2.1: the agentic critic on the plain graph path (the backtest and the P2
         study use ``propagate``), switched on by ``agentic.critic_in_graph`` (default off, so
         results produced before v0.17 are unchanged). The deterministic checks run on the
-        state alone (no findings, no evidence store, no risk facts); the model critique runs
+        state and its risk facts (no findings, no evidence store); the model critique runs
         only when ``agentic.critic_graph_llm`` is on. A flagged model/rules divergence acts
         on ``target_weight`` through ``critic.apply_weight_rule``; the confidence takes the
         critic's multiplier as in the harness. Returns the ``CriticReport``."""
@@ -367,8 +367,11 @@ class TradingGraph:
         acfg = self.config.get("agentic", {})
         llm = self.llm if acfg.get("critic_graph_llm", False) else None
         critic = Critic({**self.config, "agentic": {**acfg, "llm_critic": llm is not None}}, llm)
-        rep = critic.review(state, [], EvidenceStore())
-        act = apply_weight_rule(state, rep, self.config)
+        # Round 1 (A6): the critic gets the same risk facts as the PM, so its VaR limit check runs.
+        from .agents.risk import risk_facts
+        facts = risk_facts(state, self.config) if state.decision is not None else None
+        rep = critic.review(state, [], EvidenceStore(), facts)
+        act = apply_weight_rule(state, rep, self.config, facts)
         dec = state.decision
         if dec is not None:
             dec.confidence = round(dec.confidence * rep.multiplier, 4)

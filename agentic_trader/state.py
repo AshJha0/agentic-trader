@@ -183,6 +183,10 @@ class FinalDecision:
     evidence_ids: tuple[str, ...] = ()
     kept: bool = False   # the desk held its current position (the no-trade band): not a target
     models_served: tuple[str, ...] = ()   # distinct model ids that served this decision's calls
+    # Round 1 (A3): the PM's rules weight is computed on every decision, and a model PM's raw
+    # weight is kept beside it (both before the guardrails), so every override is auditable.
+    rule_weight: float | None = None
+    model_weight: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

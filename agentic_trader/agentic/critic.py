@@ -22,12 +22,19 @@ v0.17 (R2.1): confidence alone never reached a position, because order sizing re
 (a model view diverged from its rules): ``scale`` (the default) shrinks the decision's tilt
 away from the strategic neutral weight by ``agentic.critic_weight_scale`` (0.5), ``veto``
 sets it to the neutral weight, ``off`` keeps the v0.16 behaviour. The action taken is stored
-on the report (``weight_action``) and in the evidence store by the harness. The rule moves
-the weight toward neutral, never away from it, and then re-runs the portfolio manager's
-guardrails, because the neutral weight need not be admissible (equities default to 1.0).
+on the report (``weight_action``) and in the evidence store by the harness.
+
+Round 1 (review A4/A5/A6, owner decision D4): the rule no longer moves toward the strategic
+neutral weight (equity neutral 1.0 turned an alarm into a larger long). It moves toward the PM's
+rules weight when a model PM overrode it, otherwise toward flat, and never leaves more gross
+exposure than the PM decided (|after| <= |before|, veto included). A failed "error" check
+(firm limits, protective levels, unresolved evidence) now acts on the decision through
+``enforce_errors`` instead of only being noted, and the firm-limit check says "VaR not checked"
+when it was given no risk facts instead of reporting the VaR as within limits.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -107,67 +114,154 @@ class CriticReport:
                 "llm_multiplier": self.llm_multiplier, "weight_action": self.weight_action}
 
 
+def _anchor(d: Any) -> tuple[float, str]:
+    """Where a flagged decision is pulled: the PM's rules weight when a model PM moved away from
+    it, otherwise flat. A rules decision already is the rules answer, so the only rules-consistent
+    de-risking left is toward flat. The strategic neutral weight is never used (A4: equity neutral
+    is 1.0, so "toward neutral" added risk on an alarm)."""
+    rw = getattr(d, "rule_weight", None)
+    if d.source == "llm" and rw is not None and abs(float(rw) - float(d.target_weight)) > 1e-9:
+        return float(rw), "rules"
+    return 0.0, "flat"
+
+
+def _set_weight(state: TradingState, new: float) -> None:
+    """Move the decision to ``new``: the action follows the sign and a protective level left on
+    the wrong side (or any level on a flat decision) is cleared."""
+    d = state.decision
+    assert d is not None  # callers check
+    d.target_weight = new
+    if new > 0:
+        d.action = Action.BUY
+    elif new < 0:
+        d.action = Action.SELL
+    elif d.action is Action.BUY:
+        d.action = Action.HOLD
+    px = state.last_price
+    if d.stop_loss is not None and ((new > 0 and d.stop_loss >= px) or (new < 0 and d.stop_loss <= px) or new == 0):
+        d.stop_loss = None
+    if d.take_profit is not None and ((new > 0 and d.take_profit <= px) or (new < 0 and d.take_profit >= px)
+                                      or new == 0):
+        d.take_profit = None
+    d.kept = False
+
+
+def _guard(state: TradingState, w: float, config: dict[str, Any],
+           risk_facts: dict[str, Any] | None) -> tuple[float, list[str]]:
+    """``w`` through ``PortfolioManager.guardrails`` (the PM step's own function)."""
+    from ..agents.risk import PortfolioManager
+    from ..agents.risk import risk_facts as compute_facts
+    f = risk_facts if risk_facts and "max_position" in risk_facts else compute_facts(state, config)
+    guarded, notes = PortfolioManager(None, config).guardrails(w, f, state.instrument.symbol, state.book)
+    return round(float(guarded), 6), notes
+
+
+def _shrink_only(new: float, old: float) -> float:
+    """Never more gross exposure than ``old``: keep the sign of ``new``, cap its size at |old|."""
+    return math.copysign(min(abs(new), abs(old)), new) if new != 0 else 0.0
+
+
+def enforce_errors(state: TradingState, report: CriticReport, config: dict[str, Any],
+                   risk_facts: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Round 1 (A5): a failed "error" check acts on the decision instead of only being noted.
+
+    ``firm_limits`` re-applies the PM guardrails to the weight (never to a larger size; a weight
+    they still leave above ``max_position`` goes flat); ``protective_levels`` clears the level on
+    the wrong side of the entry; any other failed error check (an unresolved evidence id) caps
+    the confidence multiplier at 0.5. Exposure is never increased. Returns the record, or None
+    when no error check failed."""
+    d = state.decision
+    failed = [c for c in report.checks if c.severity == "error" and not c.passed]
+    if d is None or not failed:
+        return None
+    names = sorted({c.name for c in failed})
+    old = float(d.target_weight)
+    new, notes = old, []
+    if "firm_limits" in names:
+        new, notes = _guard(state, old, config, risk_facts)
+        new = _shrink_only(new, old)
+        if abs(new) > config["risk"]["max_position"] + 1e-9:
+            new, notes = 0.0, notes + ["still outside the firm limits -> flat"]
+    if abs(new - old) > 1e-12:
+        _set_weight(state, new)
+        d.adjustments.append(f"critic error block ({', '.join(names)}): weight {old:+.2f} -> {new:+.2f}"
+                             + (f" ({'; '.join(notes)})" if notes else ""))
+    cleared: list[str] = []
+    if "protective_levels" in names:
+        px, w = state.last_price, d.target_weight
+        if d.stop_loss is not None and ((w > 0 and d.stop_loss >= px) or (w < 0 and d.stop_loss <= px)):
+            d.stop_loss = None
+            cleared.append("stop_loss")
+        if d.take_profit is not None and ((w > 0 and d.take_profit <= px) or (w < 0 and d.take_profit >= px)):
+            d.take_profit = None
+            cleared.append("take_profit")
+        if cleared:
+            d.adjustments.append(f"critic error block: cleared {', '.join(cleared)} on the wrong side of the entry")
+    if set(names) - {"firm_limits", "protective_levels"}:
+        report.multiplier = min(report.multiplier, 0.5)
+    return {"checks": names, "from": old, "to": float(d.target_weight),
+            "changed": abs(float(d.target_weight) - old) > 1e-12, "cleared_levels": cleared,
+            "guardrail_notes": list(notes)}
+
+
 def apply_weight_rule(state: TradingState, report: CriticReport, config: dict[str, Any],
                       risk_facts: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """Act on ``state.decision.target_weight`` when the critic flagged a model/rules divergence.
+    """Act on ``state.decision`` when the critic failed an error check or flagged a model/rules
+    divergence.
 
-    ``agentic.critic_weight_rule``: ``scale`` (default) moves the weight to
-    ``neutral + critic_weight_scale * (weight - neutral)``; ``veto`` sets it to ``neutral``;
-    ``off`` does nothing. ``neutral`` is ``risk.neutral_weight`` for the asset class (0 when
-    unset), so the rule moves the position toward the strategic weight. That weight is not
-    always admissible: ``risk.neutral_weight.equity`` defaults to 1.0, so "toward neutral" can
-    enlarge a long past ``max_position`` or the VaR cap. When the rule changes the weight, the
-    result therefore goes through ``PortfolioManager.guardrails`` (the same function the PM
-    step applies) with ``risk_facts`` (computed from the state when not given); the record says
-    whether they clipped it (``guardrail_clipped``, ``guardrail_notes``, ``pre_guardrail``). A
-    weight that is already admissible comes through unchanged. When the weight changes, the
-    action follows the new sign, a protective level left on the wrong side is cleared, and an
-    adjustment line is appended. Returns the action record (also stored on
-    ``report.weight_action``), or None.
+    First ``enforce_errors`` (A5): failed error checks block or downgrade, whatever the weight
+    rule. Then, on a flagged divergence, ``agentic.critic_weight_rule``: ``scale`` (default)
+    moves the weight to ``anchor + critic_weight_scale * (weight - anchor)``; ``veto`` sets it
+    to ``anchor``; ``off`` does nothing. Round 1 (A4, owner decision D4): the anchor is the PM's
+    rules weight (``FinalDecision.rule_weight``) when a model PM moved away from it, otherwise
+    flat (0). The strategic neutral weight is no longer used, and the result never carries more
+    gross exposure than the PM's weight (|after| <= |before|), for ``veto`` as for ``scale``.
+    A changed weight still goes through ``PortfolioManager.guardrails`` with ``risk_facts``
+    (computed from the state when not given), because a sign change can meet a long-only or
+    minimum-size limit; the record says whether they clipped it (``guardrail_clipped``,
+    ``guardrail_notes``, ``pre_guardrail``). When the weight changes, the action follows the new
+    sign, a protective level left on the wrong side is cleared, and an adjustment line is
+    appended. Returns the action record (also stored on ``report.weight_action``), or None when
+    nothing acted.
     """
     d = state.decision
     acfg = config.get("agentic", {})
     rule = str(acfg.get("critic_weight_rule", "scale"))
     if rule not in WEIGHT_RULES:
         raise ValueError(f"agentic.critic_weight_rule {rule!r}: choose from {WEIGHT_RULES}")
-    if d is None or rule == "off" or not report.divergence_flagged:
-        return None
     scale = float(acfg.get("critic_weight_scale", 0.5))
     if not 0.0 <= scale <= 1.0:
         raise ValueError(f"agentic.critic_weight_scale {scale} must lie in [0, 1]")
-    neutral = float(config.get("risk", {}).get("neutral_weight", {}).get(state.instrument.asset_class, 0.0))
+    errors = enforce_errors(state, report, config, risk_facts)
+    if d is None or rule == "off" or not report.divergence_flagged:
+        if errors is None:
+            return None
+        record = {"rule": "error_block", "scale": None, "anchor": None, "anchor_source": None,
+                  "from": errors["from"], "to": errors["to"], "changed": errors["changed"], "divergences": [],
+                  "pre_guardrail": errors["to"], "guardrail_clipped": False,
+                  "guardrail_notes": errors["guardrail_notes"], "errors": errors}
+        report.weight_action = record
+        return record
+    anchor, anchor_source = _anchor(d)
     old = float(d.target_weight)
-    new = neutral if rule == "veto" else neutral + scale * (old - neutral)
-    new = round(new, 6)
+    first = errors["from"] if errors else old
+    new = anchor if rule == "veto" else anchor + scale * (old - anchor)
+    new = round(_shrink_only(new, old), 6)
     pre_guardrail = new
     notes: list[str] = []
     if abs(new - old) > 1e-12:
-        from ..agents.risk import PortfolioManager
-        from ..agents.risk import risk_facts as compute_facts
-        f = risk_facts if risk_facts and "max_position" in risk_facts else compute_facts(state, config)
-        guarded, notes = PortfolioManager(None, config).guardrails(new, f, state.instrument.symbol, state.book)
-        new = round(float(guarded), 6)
+        new, notes = _guard(state, new, config, risk_facts)
+        new = _shrink_only(new, old)
     flagged = [c.detail for c in report.checks if c.name == "model_rule_divergence" and not c.passed]
-    record = {"rule": rule, "scale": None if rule == "veto" else scale, "neutral": neutral,
-              "from": old, "to": new, "changed": abs(new - old) > 1e-12, "divergences": flagged,
-              "pre_guardrail": pre_guardrail, "guardrail_clipped": abs(new - pre_guardrail) > 1e-12,
-              "guardrail_notes": list(notes)}
-    if record["changed"]:
-        d.target_weight = new
-        if new > 0:
-            d.action = Action.BUY
-        elif new < 0:
-            d.action = Action.SELL
-        elif d.action is Action.BUY:
-            d.action = Action.HOLD
-        px = state.last_price
-        if d.stop_loss is not None and ((new > 0 and d.stop_loss >= px) or (new < 0 and d.stop_loss <= px) or new == 0):
-            d.stop_loss = None
-        if d.take_profit is not None and ((new > 0 and d.take_profit <= px) or (new < 0 and d.take_profit >= px)
-                                          or new == 0):
-            d.take_profit = None
-        d.kept = False
-        d.adjustments.append(f"critic {rule}: model/rules divergence, weight {old:+.2f} -> {new:+.2f}"
+    record = {"rule": rule, "scale": None if rule == "veto" else scale, "anchor": anchor,
+              "anchor_source": anchor_source, "from": first, "to": new, "changed": abs(new - first) > 1e-12,
+              "divergences": flagged, "pre_guardrail": pre_guardrail,
+              "guardrail_clipped": abs(new - pre_guardrail) > 1e-12, "guardrail_notes": list(notes),
+              "errors": errors}
+    if abs(new - old) > 1e-12:
+        _set_weight(state, new)
+        d.adjustments.append(f"critic {rule} toward {anchor_source} {anchor:+.2f}: model/rules divergence, "
+                             f"weight {old:+.2f} -> {new:+.2f}"
                              + (f" (guardrails: {'; '.join(notes)})" if record["guardrail_clipped"] else ""))
     report.weight_action = record
     return record
@@ -237,9 +331,11 @@ class Critic:
                 var = facts["var_95_1d_short"]   # the short's loss tail; the long tail when a partial dict lacks it
             if var and risk_cfg["max_var_95"] > 0 and var * abs(d.target_weight) > risk_cfg["max_var_95"] + 1e-9:
                 problems.append(f"VaR {var * abs(d.target_weight):.2%} > cap {risk_cfg['max_var_95']:.2%}")
-            rep.checks.append(Check("firm_limits", not problems,
-                                    "; ".join(problems) or "size, shorting and VaR within limits",
-                                    "error"))
+            # A6: without risk facts the VaR limit was never evaluated; say so instead of passing it.
+            var_checked = var is not None or risk_cfg["max_var_95"] <= 0 or d.target_weight == 0
+            ok_text = ("size, shorting and VaR within limits" if var_checked
+                       else "size and shorting within limits; VaR not checked (no risk facts)")
+            rep.checks.append(Check("firm_limits", not problems, "; ".join(problems) or ok_text, "error"))
             # 5. protective levels
             px, ok = state.last_price, True
             if d.target_weight > 0:
