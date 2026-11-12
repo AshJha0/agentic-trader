@@ -31,12 +31,17 @@ def _history(n=60, wiggle=True):
     return pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": 1e6}, index=idx)
 
 
-def _state(weight=0.3, model=0.9, rules=-0.1, symbol="AAPL", stop=None, take=None, action=None):
+def _state(weight=0.3, model=0.9, rules=-0.1, symbol="AAPL", stop=None, take=None, action=None,
+           pm_rule_weight=None):
+    """``pm_rule_weight`` set: the decision comes from a model PM whose rules weight was that."""
     st = TradingState(Instrument.parse(symbol), AS_OF, _history())
     if model is not None:
         st.reports["news"] = AnalystReport("news", model, 0.6, "s", source="llm", rule_signal=rules)
     act = action or (Action.BUY if weight > 0 else Action.SELL if weight < 0 else Action.HOLD)
-    st.decision = FinalDecision(symbol, AS_OF, act, weight, 0.7, stop, take, "r")
+    st.decision = FinalDecision(symbol, AS_OF, act, weight, 0.7, stop, take, "r",
+                                source="rules" if pm_rule_weight is None else "llm",
+                                rule_weight=weight if pm_rule_weight is None else pm_rule_weight,
+                                model_weight=None if pm_rule_weight is None else weight)
     return st
 
 
@@ -253,25 +258,27 @@ def test_scale_zero_moves_to_neutral_and_scale_one_keeps_the_weight():
     assert act["scale"] == 1.0
 
 
-def test_veto_records_no_scale_and_short_neutral_sets_sell():
-    st = _state(weight=0.3, symbol="EURUSD")
-    act = apply_weight_rule(st, _review(st, _cfg()), _cfg("veto", fx=-0.2))
+def test_veto_records_no_scale_and_short_rules_anchor_sets_sell():
+    # Round 1 (D4): the anchor is the model PM's rules weight (-0.2), not the neutral weight.
+    st = _state(weight=0.3, symbol="EURUSD", pm_rule_weight=-0.2)
+    act = apply_weight_rule(st, _review(st, _cfg()), _cfg("veto", fx=0.9))
     assert act["scale"] is None and act["to"] == pytest.approx(-0.2) and st.decision.action is Action.SELL
+    assert act["anchor_source"] == "rules"
 
 
 def test_sign_flip_follows_new_sign_and_clears_wrong_side_levels():
-    # FX short -0.4, strategic +0.5, scale 0.2: 0.5 + 0.2 * (-0.9) = +0.32, now a long;
+    # FX model-PM short -0.4, rules +0.5, scale 0.2: 0.5 + 0.2 * (-0.9) = +0.32, now a long;
     # the short's stop (above) and target (below) are both on the wrong side for a long.
-    st = _state(weight=-0.4, symbol="EURUSD", stop=200.0, take=120.0)
-    act = apply_weight_rule(st, _review(st, _cfg()), _cfg("scale", 0.2, fx=0.5, max_var_95=0.0))
+    st = _state(weight=-0.4, symbol="EURUSD", stop=200.0, take=120.0, pm_rule_weight=0.5)
+    act = apply_weight_rule(st, _review(st, _cfg()), _cfg("scale", 0.2, max_var_95=0.0))
     d = st.decision
     assert act["to"] == pytest.approx(0.32) and d.action is Action.BUY
     assert d.stop_loss is None and d.take_profit is None and d.kept is False
 
 
 def test_long_to_short_clears_long_levels_and_right_side_levels_survive():
-    st = _state(weight=0.3, symbol="EURUSD", stop=150.0, take=170.0)
-    apply_weight_rule(st, _review(st, _cfg()), _cfg("veto", fx=-0.3, max_var_95=0.0))
+    st = _state(weight=0.3, symbol="EURUSD", stop=150.0, take=170.0, pm_rule_weight=-0.3)
+    apply_weight_rule(st, _review(st, _cfg()), _cfg("veto", max_var_95=0.0))
     assert st.decision.action is Action.SELL and st.decision.stop_loss is None and st.decision.take_profit is None
     st = _state(weight=0.6, symbol="EURUSD", stop=150.0, take=170.0)
     apply_weight_rule(st, _review(st, _cfg()), _cfg("scale", 0.5, max_var_95=0.0))
@@ -284,23 +291,24 @@ def test_flat_from_sell_keeps_sell_action_label():
     assert st.decision.target_weight == 0.0 and st.decision.stop_loss is None and st.decision.take_profit is None
 
 
-def test_fx_neutral_zero_vs_equity_neutral_one_on_default_neutrals():
+def test_equity_and_fx_both_scale_toward_flat_on_default_neutrals():
+    """Round 1 (A4): before, equity (neutral 1.0) went 0.3 -> 0.65 on an alarm; now both go to 0.15."""
     cfg = make_config(BASE, agentic={"llm_critic": False}, risk={"max_var_95": 0.0})
     fx = _state(weight=0.3, symbol="EURUSD")
     eq = _state(weight=0.3, symbol="AAPL")
     a_fx = apply_weight_rule(fx, _review(fx, cfg), cfg)
     a_eq = apply_weight_rule(eq, _review(eq, cfg), cfg)
-    assert a_fx["neutral"] == 0.0 and a_fx["to"] == pytest.approx(0.15)
-    assert a_eq["neutral"] == 1.0 and a_eq["to"] == pytest.approx(0.65)
+    assert a_fx["anchor"] == 0.0 and a_fx["to"] == pytest.approx(0.15)
+    assert a_eq["anchor"] == 0.0 and a_eq["to"] == pytest.approx(0.15)
 
 
 def test_var_cap_clips_an_equity_long_and_uses_given_facts():
-    cfg = _cfg("veto", max_var_95=0.01)
-    st = _state(weight=0.3)
+    cfg = _cfg("veto", max_var_95=0.001)
+    st = _state(weight=0.3, pm_rule_weight=0.25)
     f = risk_facts(st, cfg)
     act = apply_weight_rule(st, _review(st, cfg), cfg, f)
-    assert act["guardrail_clipped"] and any("VaR" in n for n in act["guardrail_notes"])
-    assert position_var(f, act["to"]) * abs(act["to"]) <= 0.01 + 1e-9
+    assert any("VaR" in n for n in act["guardrail_notes"])
+    assert position_var(f, act["to"]) * abs(act["to"]) <= 0.001 + 1e-9
 
 
 def test_report_to_dict_carries_the_action():
@@ -312,15 +320,17 @@ def test_report_to_dict_carries_the_action():
 @settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(w=st_.floats(-1.0, 1.0), neutral=st_.floats(-1.0, 1.5), scale=st_.floats(0.0, 1.0),
        rule=st_.sampled_from(["scale", "veto"]), symbol=st_.sampled_from(["AAPL", "EURUSD"]),
-       mx=st_.floats(0.1, 1.0), var_cap=st_.sampled_from([0.0, 0.005, 0.02]))
-def test_post_rule_weight_respects_the_guardrails(w, neutral, scale, rule, symbol, mx, var_cap):
+       mx=st_.floats(0.1, 1.0), var_cap=st_.sampled_from([0.0, 0.005, 0.02]),
+       rw=st_.one_of(st_.none(), st_.floats(-1.0, 1.0)))
+def test_post_rule_weight_respects_the_guardrails(w, neutral, scale, rule, symbol, mx, var_cap, rw):
     cfg = _cfg(rule, scale, equity=neutral, fx=neutral, max_position=mx, max_var_95=var_cap)
-    st = _state(weight=w, symbol=symbol)
+    st = _state(weight=w, symbol=symbol, pm_rule_weight=rw)
     act = apply_weight_rule(st, _review(st, cfg), cfg)
     if not act["changed"]:
         return                                  # the rule left the PM's (already guarded) weight alone
     to = st.decision.target_weight
     f = risk_facts(st, cfg)
+    assert abs(to) <= abs(w) + 1e-9             # Round 1 (D4): an alarm never adds gross exposure
     assert abs(to) <= mx + 1e-6
     if not f["short_selling_allowed"]:
         assert to >= 0

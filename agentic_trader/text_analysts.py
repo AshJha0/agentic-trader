@@ -6,9 +6,11 @@ Two analysts, both structured-output and both fenced:
   returns claims, each citing the accession and section it came from and quoting the words
   that support it. A claim whose quote is not found verbatim in the cited section is dropped
   (a model cannot cite what it was not shown), and a claim citing a section it was not given
-  is dropped too.
+  is dropped too. Since Round 1 (A7) a quote must also have at least three words, twelve
+  characters and one content word; a repeated quote is dropped and at most twelve claims count.
 * ``MacroTextAnalyst`` reads central-bank or macro text and returns a hawkish/dovish stance
-  and a shift in [-1, 1] against the previous text, with cited quotes checked the same way.
+  and a shift in [-1, 1] against the previous text, with cited quotes checked the same way. A
+  shift that is not a finite number in [-1, 1] is rejected, not clipped (A8).
 
 The model never computes a number the rules can compute: it reads and cites. Every input text
 is third-party and goes into the prompt inside an ``<untrusted_data>`` block.
@@ -23,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -100,14 +103,44 @@ class FixtureLLM:
         return self.complete(system, prompt, deep=deep)
 
 
+def _reject_constant(name: str) -> Any:
+    raise ValueError(f"non-finite JSON constant {name}")
+
+
 def _parse(reply: str | None) -> dict[str, Any] | None:
+    """The reply as a dict, or None. ``NaN``/``Infinity`` constants are a rejection (A8):
+    plain ``json.loads`` accepts them, and ``max(-1, min(1, nan))`` is 1.0 in Python."""
     if not reply:
         return None
     try:
-        d = json.loads(reply)
-    except json.JSONDecodeError:
+        d = json.loads(reply, parse_constant=_reject_constant)
+    except ValueError:      # JSONDecodeError is a ValueError
         return None
     return d if isinstance(d, dict) else None
+
+
+# Round 1 (A7): what a cited quote must be before it counts. Twenty claims each quoting "the"
+# used to pass the substring check and drive the signal to +1.
+MIN_QUOTE_WORDS = 3
+MIN_QUOTE_CHARS = 12
+MAX_CLAIMS = 12
+_STOPWORDS = frozenset("""
+a an the of to and or is are was were be been being this that these those it its on in at for with by
+as from has have had not no but if then than so such can may might will would should could do does did
+we our us you your they their them he she his her which who whom what when where while there here
+""".split())
+
+
+def quote_problem(quote: str) -> str | None:
+    """Why a normalised quote cannot support a claim, or None when it can: at least
+    ``MIN_QUOTE_WORDS`` words and ``MIN_QUOTE_CHARS`` characters, and one content token (a word
+    of four or more letters that is not a stop word)."""
+    words = re.findall(r"[a-z0-9%$.'-]+", quote)
+    if len(words) < MIN_QUOTE_WORDS or len(quote) < MIN_QUOTE_CHARS:
+        return f"quote shorter than {MIN_QUOTE_WORDS} words / {MIN_QUOTE_CHARS} characters"
+    if not any(len(re.sub(r"[^a-z]", "", w)) >= 4 and w not in _STOPWORDS for w in words):
+        return "quote has no content word"
+    return None
 
 
 class FundamentalsTextAnalyst:
@@ -146,16 +179,25 @@ class FundamentalsTextAnalyst:
             reply["claims"] = [{**c, "accession": self.anon.accession_real(str(c.get("accession")))}
                                if isinstance(c, dict) else c for c in reply["claims"]]
         kept, dropped = [], []
+        seen: set[tuple[str, str, str]] = set()
         for c in reply["claims"]:
             if not isinstance(c, dict):
                 continue
-            text = by_key.get((str(c.get("accession")), str(c.get("section"))))
+            key = (str(c.get("accession")), str(c.get("section")))
+            text = by_key.get(key)
             quote = _norm(str(c.get("quote", "")))
             if text is None:
                 dropped.append({**c, "reason": "cites a section it was not given"})
             elif not quote or quote not in text:
                 dropped.append({**c, "reason": "quote not found in the cited section"})
+            elif (why := quote_problem(quote)) is not None:
+                dropped.append({**c, "reason": why})
+            elif (*key, quote) in seen:
+                dropped.append({**c, "reason": "duplicate quote"})
+            elif len(kept) >= MAX_CLAIMS:
+                dropped.append({**c, "reason": f"over the {MAX_CLAIMS}-claim cap"})
             else:
+                seen.add((*key, quote))
                 kept.append(c)
         directions: dict[Any, int] = {"positive": 1, "negative": -1}
         score = sum(directions.get(c.get("direction"), 0) for c in kept)
@@ -186,14 +228,29 @@ class MacroTextAnalyst:
         current, previous = self._t(current) or "", self._t(previous)   # quotes are checked against what it saw
         if reply is None or reply.get("stance") not in ("hawkish", "dovish", "neutral"):
             return TextAnalysis(self.name, False, problem="no usable reply")
-        try:
-            shift = max(-1.0, min(1.0, float(reply.get("shift", 0.0))))
-        except (TypeError, ValueError):
-            return TextAnalysis(self.name, False, problem="shift not a number")
+        raw = reply.get("shift")
+        # A8: a finite JSON number in [-1, 1] or a rejection; never clipped, never a NaN that
+        # max/min would turn into +1.0, never a bool or a numeric string.
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool) or not math.isfinite(raw):
+            return TextAnalysis(self.name, False, problem="shift not a finite number")
+        if not -1.0 <= raw <= 1.0:
+            return TextAnalysis(self.name, False, problem=f"shift {raw} outside [-1, 1]")
+        shift = float(raw)
         src = _norm(current + " " + (previous or ""))
-        quotes = [q for q in reply.get("quotes", []) if isinstance(q, str)]
-        kept = [q for q in quotes if _norm(q) and _norm(q) in src]
-        dropped = [{"quote": q, "reason": "quote not found in the text"} for q in quotes if q not in kept]
+        quotes = [q for q in reply.get("quotes", []) if isinstance(q, str)] \
+            if isinstance(reply.get("quotes"), list) else []
+        kept, dropped, seen = [], [], set()
+        for q in quotes:
+            n = _norm(q)
+            why = ("quote not found in the text" if not n or n not in src
+                   else quote_problem(n) or ("duplicate quote" if n in seen else None))
+            if why is None and len(kept) >= MAX_CLAIMS:
+                why = f"over the {MAX_CLAIMS}-quote cap"
+            if why is None:
+                seen.add(n)
+                kept.append(q)
+            else:
+                dropped.append({"quote": q, "reason": why})
         if not kept:   # an uncited stance is not evidence
             return TextAnalysis(self.name, False, {"stance": reply["stance"], "shift": shift}, dropped,
                                 problem="no verifiable quote")

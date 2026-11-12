@@ -10,7 +10,10 @@ structured facts). Afterwards two audits run:
   a finding must resolve in the store.
 
 Discrepancies are attached as warnings, never silently accepted, and the
-markdown rendering lists them.
+markdown rendering lists them. Since Round 1 (A12) the number audit compares
+signed values, and a model narrative that fails either audit or the output guard
+is not shipped: the template narrative replaces it and the model text is kept in
+``Report.rejected_narrative`` for the audit trail.
 """
 from __future__ import annotations
 
@@ -41,11 +44,12 @@ class Report:
     narrative: str
     warnings: list[str] = field(default_factory=list)
     narrative_source: str = "template"
+    rejected_narrative: str | None = None   # a model narrative that failed an audit (audit trail only)
 
     def to_dict(self) -> dict[str, Any]:
         return {"task_id": self.task_id, "symbol": self.symbol, "as_of": self.as_of, "facts": self.facts,
                 "sections": self.sections, "narrative": self.narrative, "warnings": self.warnings,
-                "narrative_source": self.narrative_source}
+                "narrative_source": self.narrative_source, "rejected_narrative": self.rejected_narrative}
 
     def to_markdown(self) -> str:
         s = self.sections
@@ -84,7 +88,7 @@ class Report:
 # ---------------------------------------------------------------- audits
 def _number_variants(v: float) -> set[float]:
     out = set()
-    for x in (v, v * 100.0, abs(v), abs(v) * 100.0):
+    for x in (v, v * 100.0):
         if math.isfinite(x):
             out.add(x)
     return out
@@ -96,6 +100,8 @@ def number_audit(narrative: str, facts: dict[str, float], rel_tol: float = 1e-6)
     A token matches a fact when the fact, rounded to the token's displayed
     precision, equals the token ("0.54" matches 0.5354, "223" matches 223.219,
     "53.5%" matches 0.5354). The relative tolerance only absorbs float noise.
+    Signs count (Round 1, A12): "+0.60" or "0.60" does not match a fact of -0.60, and
+    "-0.60" does not match +0.60; an unsigned token is a non-negative number.
     """
     values: list[float] = []
     for v in facts.values():
@@ -114,12 +120,14 @@ def number_audit(narrative: str, facts: dict[str, float], rel_tol: float = 1e-6)
         shown = len(raw.split(".")[1]) if "." in raw else 0
         half_ulp = 0.5 * 10 ** -shown                      # rounding tolerance in the token's units
         # (candidate value, tolerance in the candidate's units)
-        cands = [(abs(num), half_ulp)]
+        cands = [(num, half_ulp)]
         if token.endswith("%"):
-            cands.append((abs(num) / 100.0, half_ulp / 100.0))
+            cands.append((num / 100.0, half_ulp / 100.0))
         ok = False
         for c, tol in cands:
             for v in values:
+                if (v < 0) != (c < 0) and v != 0 and c != 0:
+                    continue                        # opposite signs never match, however close
                 if abs(v - c) <= max(abs(v) * rel_tol, tol + 1e-12):
                     ok = True
                     break
@@ -223,9 +231,21 @@ def build_report(task: Task, state: TradingState, findings: list[Finding], criti
         raise ValueError("cannot report without a decision")
     facts = collect_facts(state, critic)
     narrative, source = None, "template"
+    rejected: str | None = None
+    model_warnings: list[str] = []
     if llm is not None:
-        narrative = llm_narrative(llm, state, facts, findings)
-        source = "llm" if narrative else "template"
+        text = llm_narrative(llm, state, facts, findings)
+        if text:
+            # Round 1 (A12): a model narrative that fails an audit or the output guard does not
+            # ship; the template replaces it and the model text is kept only for the audit trail.
+            model_warnings = [f"number not traceable to the facts: {t}" for t in number_audit(text, facts)]
+            model_warnings += [f"evidence id does not resolve: {i}" for i in evidence_audit(text, findings, evidence)]
+            model_warnings += [f"output guard: {r}" for r in narrative_guard(state, text)]
+            if model_warnings:
+                rejected = text
+                model_warnings.append("model narrative rejected; the template narrative replaces it")
+            else:
+                narrative, source = text, "llm"
     if not narrative:
         narrative = template_narrative(state, facts, findings, critic)
     d = state.decision
@@ -241,7 +261,19 @@ def build_report(task: Task, state: TradingState, findings: list[Finding], criti
         "knowledge": list(state.knowledge),
         "evidence": evidence.summary_rows(),
     }
-    warnings = [f"number not traceable to the facts: {t}" for t in number_audit(narrative, facts)]
-    warnings += [f"evidence id does not resolve: {i}" for i in evidence_audit(narrative, findings, evidence)]
+    warnings = list(model_warnings)
+    if source != "llm":     # the template's own audit (a passing model narrative was audited above)
+        warnings += [f"number not traceable to the facts: {t}" for t in number_audit(narrative, facts)]
+        warnings += [f"evidence id does not resolve: {i}" for i in evidence_audit(narrative, findings, evidence)]
     return Report(task.id, state.instrument.symbol, state.as_of.isoformat(), facts, sections, narrative,
-                  warnings, source)
+                  warnings, source, rejected)
+
+
+def narrative_guard(state: TradingState, text: str) -> list[str]:
+    """``output_guard.check_output`` reasons for a model narrative (empty when it passes): a URL,
+    a ticker other than this instrument's, instruction-like or poison-like text."""
+    from .output_guard import check_output
+    ins = state.instrument
+    allowed = {ins.symbol, getattr(ins, "display", ins.symbol)}
+    allowed.update(str(x) for x in (getattr(ins, "base", None), getattr(ins, "quote", None)) if x)
+    return list(check_output(text, allowed).reasons)
