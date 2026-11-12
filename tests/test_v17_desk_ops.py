@@ -24,6 +24,16 @@ def _load(name: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    if name == "paper_trade_v09":
+        # Round 2: the committed freeze trips (by design) on every engine change until the owner
+        # re-freezes; these tests run against a copy re-frozen on the current engine.
+        import shutil
+        import tempfile
+        copy = Path(tempfile.mkdtemp()) / "paper_freeze.json"
+        shutil.copy(mod.FREEZE_FILE, copy)
+        mod.refreeze(copy, make_config(data_provider="synthetic", memory_path=None), "tests-current-engine",
+                     "tests", date.today())
+        mod.FREEZE_FILE = copy
     return mod
 
 
@@ -146,7 +156,7 @@ def test_same_day_revision_is_flagged_in_the_report(tmp_path, monkeypatch):
     first = pd.read_csv(out / "ledger.csv", index_col=0, parse_dates=True)
     real = mod.recompute
 
-    def restated_last(as_of, cfg, provider, freeze, exposure=None):
+    def restated_last(as_of, cfg, provider, freeze, exposure=None, coverage=None):
         f = real(as_of, cfg, provider, freeze)
         f.loc[first.index[-1], f.columns[0]] += 0.002            # the session the previous run recorded
         return f
