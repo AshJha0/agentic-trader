@@ -22,16 +22,37 @@ import numpy as np
 from . import pycore
 from .pycore import ZERO_VARIANCE_TOL, BacktestConfig, BacktestResult, Metrics, Trade
 
+def stale_fields(module: object) -> list[str]:
+    """Fields of the Python ``BacktestConfig`` that a compiled core's ``BacktestConfig`` lacks.
+    Empty for a current build. A non-empty list means the binary predates the source."""
+    try:
+        compiled = module.BacktestConfig()          # type: ignore[attr-defined]
+    except Exception:
+        return ["BacktestConfig"]
+    return [f for f in BacktestConfig.__dataclass_fields__ if not hasattr(compiled, f)]
+
+
 try:  # pragma: no cover - depends on the local build
     if os.environ.get("AGENTIC_TRADER_BACKEND", "").lower() == "python":
         raise ImportError("forced python backend")
     from . import _atcore as _cpp  # type: ignore[attr-defined]
 
+    _missing = stale_fields(_cpp)
+    if _missing:
+        # A compiled core left over from an older checkout. Using it would fail later with an
+        # AttributeError deep inside a backtest; the numpy backend computes the same numbers.
+        import warnings
+
+        warnings.warn(
+            "agentic_trader.quant: the compiled C++ core (_atcore) was built from older source "
+            f"(its BacktestConfig lacks {_missing}); using the numpy backend instead. Rebuild it "
+            "with CMake (see README).", RuntimeWarning, stacklevel=2)
+        raise ImportError("stale compiled core")
     BACKEND = "cpp"
 except ImportError:  # pragma: no cover
     _cpp = None
     BACKEND = "python"
-    if os.environ.get("AGENTIC_TRADER_BACKEND", "").lower() != "python":
+    if os.environ.get("AGENTIC_TRADER_BACKEND", "").lower() != "python" and not locals().get("_missing"):
         import warnings
 
         warnings.warn(

@@ -439,3 +439,22 @@ def test_c7_defaults_are_unchanged_for_published_studies():
             return {}
     bt = backtest_config_for(Instrument.parse("AAPL"), make_config(), np.array([1.0, 2.0]), P(), date(2026, 1, 2))
     assert bt.exec_lag == 0 and bt.fill_next_open is False
+
+
+def test_a_stale_compiled_core_is_detected() -> None:
+    """Integration finding: a _atcore built before `quote_inverse` existed failed 146 tests with
+    an AttributeError inside run_backtest. A binary whose BacktestConfig lacks a field of the
+    Python one is now reported at import and the numpy backend is used."""
+    from types import SimpleNamespace
+
+    from agentic_trader import quant
+    from agentic_trader.quant import pycore
+
+    class Old:                                          # a config object without the new fields
+        initial_capital = 0.0
+
+    assert "quote_inverse" in quant.stale_fields(SimpleNamespace(BacktestConfig=Old))
+    assert quant.stale_fields(SimpleNamespace(BacktestConfig=pycore.BacktestConfig)) == []
+    assert quant.stale_fields(SimpleNamespace()) == ["BacktestConfig"]
+    if quant.BACKEND == "cpp":
+        assert quant.stale_fields(quant._cpp) == []
