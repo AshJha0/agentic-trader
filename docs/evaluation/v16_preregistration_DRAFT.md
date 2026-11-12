@@ -131,10 +131,13 @@ minus rule, return) = Spearman(-0.5 x rule, return) = +0.06, a "pass" for a mode
 nothing. Under this version the fit is exact, the residual is zero and the score is 0. The
 first version is still computed and printed as `legacy_model_minus_rule`; it decides nothing.
 
-Checked by simulation before signing (313 dates, 10 + 5 names; test file
-`tests/test_study_repair_round0.py`): scaled, flipped, clipped and rounded copies of a rule
-with IC 0.30, and pure noise, pass at about the nominal 2.5 % or less; a model with real added
-signal passes. A per-date rank residual was tried first and rejected the same day: a model that
+Checked by simulation before signing (313 dates, 10 + 5 names, 40 seeds per case;
+`scripts/round0_metric_size.py`, output in `docs/results/v17/round0_metric_size.md`): nine
+models with no added information (scaled, flipped, clipped, rounded and cubed copies of the
+rule, and noise), at two rule strengths and with normal and heavy-tailed returns, passed in
+0 to 3 of 40 runs each, against a nominal 1 in 40; the highest, 3 of 40, was noise with
+heavy-tailed returns. The first version of the statistic passed several of the same models in
+85 to 100 % of runs. Models with real added signal passed in 40 of 40. A per-date rank residual was tried first and rejected the same day: a model that
 rounds the rule passed in about two runs in three, because ranks discard the spacing between
 names and the rounded copy keeps some of it. Evidence class: simulation and unit tests.
 
