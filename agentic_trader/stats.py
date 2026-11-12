@@ -142,7 +142,8 @@ DEFLATED_SHARPE_CAVEAT = (
 ABSOLUTE_SELECTION_STATISTIC = (
     "absolute Sharpe against the dispersion of absolute trial Sharpes: NOT a selection test when "
     "the trials share a common mean (review C1); read deflated_sharpe_prob_differential")
-DIFFERENTIAL_SELECTION_STATISTIC = "Sharpe of chosen-minus-control daily returns (differential DSR)"
+DIFFERENTIAL_SELECTION_STATISTIC = ("Sharpe of chosen minus control daily returns, control levered to the "
+                                    "chosen volatility unless match_vol=False (differential DSR)")
 
 
 def null_trial_sharpe_variance(n: int, sr: float = 0.0, skew: float = 0.0, kurt: float = 3.0) -> float:
@@ -162,14 +163,18 @@ def null_trial_sharpe_variance(n: int, sr: float = 0.0, skew: float = 0.0, kurt:
 
 def deflated_sharpe_differential(chosen_returns, control_returns, n_trials: int,
                                  periods_per_year: float = 252.0, trial_returns=None,
-                                 trial_sharpes_vs_control_annual=None) -> dict:
+                                 trial_sharpes_vs_control_annual=None, match_vol: bool = True) -> dict:
     """Deflated Sharpe of the chosen variant's *excess over a control* (review C1).
 
     Plain idea: every trial here is a long-biased book on the same names, so their absolute
     Sharpe ratios share a common mean (the equity premium of the window). Selection skill is
     what the chosen variant adds over a control that took no decisions (the vol-target core),
-    so the statistic is the Sharpe of ``d_t = chosen_t - control_t`` and the trials must be
-    measured the same way, ``Sharpe(trial_t - control_t)``.
+    so the statistic is the Sharpe of ``d_t = chosen_t - k * control_t`` and the trials must be
+    measured the same way, ``Sharpe(trial_t - k_trial * control_t)``. With ``match_vol`` (the
+    default) ``k = sd(chosen) / sd(control)`` over the sample, the control levered to the
+    chosen book's volatility, so the mean of ``d`` is positive exactly when the chosen Sharpe
+    exceeds the control's (a book that holds less risk is not penalised for its lower mean);
+    ``match_vol=False`` gives the raw difference ``k = 1``. Pass excess returns (over cash).
 
     Formal: ``SR_d`` (per period) is tested with ``probabilistic_sharpe`` against
     ``SR0 = expected_max_sharpe(n_trials, V)``. ``V`` is, in order of preference: the variance
@@ -188,7 +193,16 @@ def deflated_sharpe_differential(chosen_returns, control_returns, n_trials: int,
         raise ValueError("chosen_returns and control_returns must be aligned (same length)")
     if n_trials < 1:
         raise ValueError("n_trials must be >= 1")
-    d = a - c
+
+    def scale(x: np.ndarray) -> float:
+        if not match_vol:
+            return 1.0
+        ok = np.isfinite(x) & np.isfinite(c)
+        sc = float(np.std(c[ok], ddof=1)) if ok.sum() > 2 else 0.0
+        return float(np.std(x[ok], ddof=1)) / sc if sc > 0 else 1.0
+
+    k_chosen = scale(a)
+    d = a - k_chosen * c
     s = sharpe_stats(d, periods_per_year)
     source = "null sampling variance (trials independent, zero differential skill)"
     diff_trials: np.ndarray | None = None
@@ -196,7 +210,8 @@ def deflated_sharpe_differential(chosen_returns, control_returns, n_trials: int,
         t = np.asarray(trial_returns, dtype=float)
         if t.ndim != 2 or t.shape[0] != c.size:
             raise ValueError("trial_returns must be (periods x trials) on the control's days")
-        diff_trials = np.array([sharpe_stats(t[:, k] - c, periods_per_year).sharpe for k in range(t.shape[1])])
+        diff_trials = np.array([sharpe_stats(t[:, j] - scale(t[:, j]) * c, periods_per_year).sharpe
+                                for j in range(t.shape[1])])
         source = "variance of the trials' differential Sharpes (from trial_returns)"
     elif trial_sharpes_vs_control_annual is not None:
         diff_trials = np.asarray(trial_sharpes_vs_control_annual, dtype=float) / math.sqrt(periods_per_year)
@@ -213,6 +228,7 @@ def deflated_sharpe_differential(chosen_returns, control_returns, n_trials: int,
     dsr = probabilistic_sharpe(s.sharpe, s.n, s.skew, s.kurt, sr0) if math.isfinite(sr0) else float("nan")
     mtr = min_track_record(s.sharpe, sr0, s.skew, s.kurt) if math.isfinite(sr0) else float("inf")
     return {"selection_statistic": DIFFERENTIAL_SELECTION_STATISTIC, "n": s.n, "trials": n_used,
+            "control_scale": k_chosen, "match_vol": match_vol,
             "sharpe_annual": s.sharpe_annual, "skew": s.skew, "kurtosis": s.kurt,
             "benchmark_variance_source": source,
             "expected_max_sharpe_annual": sr0 * math.sqrt(periods_per_year),
