@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.19.0): long runs, the critic fix, coverage, docs refresh and the first interim LLM result
+## v0.19.0rc1 — 2026-11-12 (release candidate; final v0.19.0 follows with the full v0.17 study results): long runs, the critic fix, coverage, docs refresh and the first interim LLM result
 
 Evidence class for each entry is stated in it. Nothing here was released; v0.16.0 and v0.17.0
 are tagged first, in that order. Branch `docs/site-refresh-v019`, PR #35.
@@ -111,7 +111,7 @@ modules); LEARN lessons 66-68; COOKBOOK recipes 131-135 (134: the critic's guard
 fixture; 135: the policy gate deciding five requests). README's test and coverage lines now
 quote the CI run above instead of the v0.8.0 line-only figure.
 
-## Unreleased (0.17.0): the second review's fixes (review 2026-11-09, R0-R4 and N1-N11)
+## 0.17.0 — not released on its own; shipped in v0.19.0rc1: the second review's fixes (review 2026-11-09, R0-R4 and N1-N11)
 
 Everything the two reviews of 2026-11-09 asked for (`docs/review/2026-11-09_review_and_plan.md`
 sections 3 and 5), built in eleven lanes; the lane notes are in `docs/review/v017_notes/`.
@@ -407,7 +407,7 @@ Lane notes in `docs/review/v018_notes/`. Evidence class: code + offline tests; n
 - **`--seeds` default 1**, and `--seeds > 1` needs `--temperature > 0`.
 - **Study resume refuses a changed run header** (exit 2) unless `--allow-version-change`.
 
-## Unreleased (0.16.0): the LLM study on a local model (PLAN P2 items 2.3 to 2.8)
+## v0.16.0 — 2026-11-09: the LLM study on a local model (PLAN P2 items 2.3 to 2.8)
 
 - **Paper runner schedule.** `paper.yml` now runs at 21:30 UTC on weekdays (was 22:30), still after the New York close in both EST and EDT; the session recorded is unchanged because the script records the last complete New York session.
 
