@@ -405,6 +405,11 @@ class AppendOnlyApprovalLog:
         return True
 
 
+def _valid_price(px: float | None) -> bool:
+    """A price the re-pricing check can use: present, finite and positive."""
+    return px is not None and math.isfinite(px) and px > 0
+
+
 class SignedApprovalGateway(QueuedApprovalGateway):
     """A queued gateway whose decisions are signed by named approvers (opt-in).
 
@@ -423,7 +428,9 @@ class SignedApprovalGateway(QueuedApprovalGateway):
       rejected as expired;
     * **re-pricing** -- with ``price_fn(request) -> float | None`` the price is captured when
       the quorum is reached and read again at execution; a relative move beyond
-      ``price_tolerance`` (or no price) rejects the stale approval;
+      ``price_tolerance`` rejects the stale approval, and so does a missing, non-finite or
+      non-positive price at either point (the check fails closed: a data outage at quorum
+      time or at execution can never switch it off);
     * **second store** -- every signature, decision and execution-time check is also written
       to ``store`` (an ``AppendOnlyApprovalLog``) when given.
     """
@@ -460,6 +467,15 @@ class SignedApprovalGateway(QueuedApprovalGateway):
 
     def needed(self, tool: str) -> int:
         return self.quorum.get(tool, self.default_quorum)
+
+    def _price(self, request: ToolRequest) -> float | None:
+        """``price_fn(request)``; an exception is no price (which the check treats as a failure)."""
+        assert self.price_fn is not None
+        try:
+            px = self.price_fn(request)
+            return None if px is None else float(px)
+        except Exception:  # noqa: BLE001 - a failed price lookup is "no price", which rejects
+            return None
 
     def signatures(self, approval_id: str) -> dict[str, str]:
         with self._lock:
@@ -501,7 +517,7 @@ class SignedApprovalGateway(QueuedApprovalGateway):
             elif len(sigs) >= need:
                 a.decided, a.approved, a.decided_by, a.note = True, True, ",".join(sorted(sigs)), note
                 self._approved_at[approval_id] = self.clock()
-                self._price_at[approval_id] = self.price_fn(a.request) if self.price_fn else None
+                self._price_at[approval_id] = self._price(a.request) if self.price_fn else None
             else:
                 a.note = f"{len(sigs)} of {need} signatures"
         self._log(kind="signature", approval=approval_id, approver=decided_by, approve=bool(approve),
@@ -524,11 +540,20 @@ class SignedApprovalGateway(QueuedApprovalGateway):
         now = self.clock()
         if self.ttl_s is not None and approved_at is not None and now - approved_at > self.ttl_s:
             problem = f"approval expired ({now - approved_at:.0f}s > ttl {self.ttl_s:.0f}s)"
-        elif self.price_fn is not None and price_at:
-            px = self.price_fn(request)
-            if px is None or not math.isfinite(px) or abs(px / price_at - 1.0) > self.price_tolerance:
-                problem = (f"price moved since approval ({price_at:g} -> {px}); tolerance "
-                           f"{self.price_tolerance:.2%}")
+        elif self.price_fn is not None:
+            # Round 1 (A9/E-2): fail closed. No valid price at quorum time, or none now, means
+            # the re-pricing check cannot run, so the approval is treated as stale.
+            if not _valid_price(price_at):
+                problem = (f"no valid price was captured when the quorum was reached ({price_at!r}): "
+                           "the re-pricing check cannot run, so the approval is refused")
+            else:
+                assert price_at is not None
+                px = self._price(request)
+                if not _valid_price(px):
+                    problem = f"no valid price at execution ({px!r}): the re-pricing check cannot run"
+                elif abs(px / price_at - 1.0) > self.price_tolerance:   # type: ignore[operator]
+                    problem = (f"price moved since approval ({price_at:g} -> {px}); tolerance "
+                               f"{self.price_tolerance:.2%}")
         if problem is not None:
             with self._lock:
                 a.approved, a.note = False, problem

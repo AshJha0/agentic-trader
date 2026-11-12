@@ -974,7 +974,7 @@ def test_remote_registry_keeps_one_server_session():
     # when the order citing it arrives (a fresh process per call would refuse every ticket).
     pytest.importorskip("mcp")
     from agentic_trader.agentic.mcp_server import registry_from_stdio
-    reg = registry_from_stdio()
+    reg = registry_from_stdio(["--role", "trader", "--approval", "auto"])   # Round 1: trading is opt-in
     try:
         ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER)
         plan = ex.call("execution.plan", symbol="AAPL", as_of="2024-03-01", target_weight=0.1)
@@ -1022,15 +1022,15 @@ def test_mcp_server_routes_every_call_through_policy_approval_and_evidence():
     _, err = call_local(viewer, "execution__submit_order", ticket)
     assert err and "lacks propose_trades" in err and tools.orders == []
     # auto gateway: the approval is recorded as evidence before the ticket is written
-    auto = build_mcp_server(reg, executor=governed_executor(reg, make_config(CFG, agentic={"approval": "auto"}),
-                                                           Role.TRADER, order_cap=tools.order_cap))
+    auto = build_mcp_server(reg, executor=governed_executor(reg, CFG, Role.TRADER, order_cap=tools.order_cap,
+                                                           approval="auto"))   # Round 1: auto is explicit
     res, err = call_local(auto, "execution__submit_order", ticket)
     assert err is None and len(tools.orders) == 1
     kinds = [e.type for e in auto.executor.evidence]
     assert kinds == [EvidenceType.APPROVAL, EvidenceType.DECISION]
     # and the same over a real stdio round trip: the server's own flags decide
     with pytest.raises(RuntimeError, match="approval rejected"):
-        call("execution__submit_order", ticket, ["--approval", "deny"])
+        call("execution__submit_order", ticket, ["--role", "trader", "--approval", "deny"])
     with pytest.raises(RuntimeError, match="lacks propose_trades"):
         call("execution__submit_order", ticket, ["--role", "viewer"])
 
@@ -1064,7 +1064,7 @@ def test_mcp_server_default_executor_caps_notional_and_refuses_a_queued_gateway(
     assert governed_executor(reg, frozen).policy.config["max_order_notional"] == 0.0
     # nothing can drain a queue on a stdio server: queued is refused with a clear error
     with pytest.raises(ValueError, match="queued"):
-        build_mcp_server(reg, config=make_config(cfg, agentic={"approval": "queued"}))
+        build_mcp_server(reg, config=cfg, approval="queued")   # Round 1: agentic.approval is not read
     with pytest.raises(SystemExit) as exc:
         main(["--approval", "queued"])
     assert exc.value.code == 2 and "cannot work on a stdio server" in capsys.readouterr().err

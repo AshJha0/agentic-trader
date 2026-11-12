@@ -392,10 +392,29 @@ read-only research steps. It cannot skip the critic, reach another symbol or rem
 
 ### Approvals
 
-A tool that changes state (submitting an order ticket) is never read-only and is rated high
-risk, so policy returns REQUIRE_APPROVAL. The harness parks the run in AWAITING_APPROVAL and
-resumes from the same step when a person decides. A plan is single-use, a state-changing
-tool is never retried, and one approval permits at most one side effect. The framework never
+A tool that changes state (an order ticket, a memory write) is never read-only, and the order
+tool is rated high risk, so policy returns REQUIRE_APPROVAL for both (`read_only_rule` and
+`risk_level_rule` in `agentic/policy.py`). What happens next depends on the caller:
+
+- *Harness and HTTP API.* No shipped plan reaches the approval step. The plan validator drops
+  every state-changing step ("a plan may not schedule it", `agentic/planner.py`), the
+  canonical plan has none, and the HTTP API has no tool-call endpoint. The park-and-resume
+  machinery (AWAITING_APPROVAL, then the same step once a person decides) exists and is
+  covered by unit tests that build plans by hand, but a real task never enters it today.
+- *MCP server.* This is the only shipped path that can call `execution.submit_order`. Since
+  Round 1 it starts locked down: role `analyst` (no `propose_trades`) and `--approval deny`,
+  whatever `agentic.approval` says (`agentic/mcp_server.py`). An operator who wants tickets
+  passes `--role trader --approval auto`, and the server prints a warning to stderr; with
+  `auto` nobody reviews the ticket. `queued` and `signed` are refused, because nothing on a
+  stdio server can decide a parked request. (The `agentic-trader mcp` CLI still forwards
+  `--role trader` by default; with the `deny` default, tickets are refused there too.)
+
+Every ticket, however it was approved, is sized through the same PM guardrails the desk uses
+(`PortfolioManager.guardrails`: short ban, max short notional, max position, position VaR
+cap, book VaR, minimum trade size), and `submit_order` re-reads the book under the desk's lock:
+a plan sized from a book that has since moved is refused as stale, and no ticket may leave the
+book past `max_position` or `max_short_notional`. A plan is single-use, a state-changing tool
+is never retried, and one approval permits at most one side effect. The framework never
 connects to a broker: the "order" is a ticket.
 
 ### The critic can only lower confidence
