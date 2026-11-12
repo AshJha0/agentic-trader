@@ -2,6 +2,8 @@
 
 ## Unreleased (0.17.0): the second review's fixes (review 2026-11-09, R0-R4 and N1-N11)
 
+- **Coverage (v0.19 test lane).** Property-based tests for the firm-limit guardrails, the six default policy rules in order, the output contract and execution-realism edges; coverage now measures branches and CI enforces a 90% floor. Baseline before this lane: 95.9% of lines in `agentic_trader` (15,895 of 16,574, full local suite, numpy backend). `PolicyEngine(role_capabilities={})` now grants nothing instead of falling back to the default role map.
+
 Everything the two reviews of 2026-11-09 asked for (`docs/review/2026-11-09_review_and_plan.md`
 sections 3 and 5), built in eleven lanes; the lane notes are in `docs/review/v017_notes/`.
 $0, no model was called and nothing was downloaded while building it. Evidence classes: **code +

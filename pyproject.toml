@@ -68,3 +68,10 @@ follow_imports = "silent"
 source = ["agentic_trader"]
 # Coverage is collected on the AGENTIC_TRADER_BACKEND=python CI job, so quant/pycore.py (the
 # numpy twin of the C++ core) is exercised there like everything else; nothing to omit.
+branch = true
+
+[tool.coverage.report]
+# A floor CI enforces (every matrix leg runs --cov). Line+branch coverage measured locally
+# on the full suite at v0.19 is reported in the CHANGELOG; the floor sits a few points below
+# it because CI skips the slow-marked tests.
+fail_under = 90
