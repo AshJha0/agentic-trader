@@ -85,6 +85,40 @@ class ComparisonReport:
         return pd.DataFrame({k: r.returns for k, r in self.results.items()}, index=self.dates)
 
 
+ACCOUNT_CCY = "USD"
+# Currencies conventionally quoted against the dollar as CCYUSD (one unit is worth the close);
+# every other currency is quoted USDCCY (one unit is worth 1 / close).
+_USD_QUOTED = frozenset({"EUR", "GBP", "AUD", "NZD"})
+
+
+def fx_account_currency(config: dict) -> bool:
+    """Whether FX P&L is converted to the USD account (default True since round 2, review D5)."""
+    return bool((config.get("backtest", {}) or {}).get("fx_account_currency", True))
+
+
+def quote_fx_series(ins: Instrument, provider: MarketDataProvider, index: pd.DatetimeIndex,
+                    start: date, end: date) -> np.ndarray | None:
+    """USD value of one unit of ``ins``'s quote currency at each date of ``index`` (review D5).
+
+    None when no conversion is needed: equities, XXXUSD pairs (the quote is the account
+    currency) and USD-base pairs (converted in the engine at 1/price, ``quote_inverse``). For a
+    cross (EURGBP, EURJPY) it is read from the quote currency's dollar pair (GBPUSD close, or
+    1 / USDJPY close), carried forward over a date the dollar pair has no bar for. A date
+    before the dollar pair's first bar is an error, not a guess."""
+    if not ins.is_fx or ACCOUNT_CCY in (ins.base, ins.quote):
+        return None
+    q = str(ins.quote)
+    usd_quoted = q in _USD_QUOTED
+    pair = Instrument.parse(f"{q}{ACCOUNT_CCY}" if usd_quoted else f"{ACCOUNT_CCY}{q}")
+    close = provider.history(pair, start, end)["Close"].astype(float)
+    close = close[~close.index.duplicated(keep="last")].sort_index()
+    aligned = close.reindex(close.index.union(index)).ffill().reindex(index).to_numpy(dtype=float)
+    if np.isnan(aligned).any() or (aligned <= 0).any():
+        raise ValueError(f"{ins.display}: no {pair.display} close on or before every bar; "
+                         f"cannot convert the {q} P&L to {ACCOUNT_CCY}")
+    return aligned if usd_quoted else 1.0 / aligned
+
+
 def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
                         provider: MarketDataProvider, start: date) -> quant.BacktestConfig:
     """Cost, carry and shorting model for an instrument.
@@ -120,6 +154,11 @@ def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
     if fill not in ("close", "next_open"):
         raise ValueError(f"backtest.fill must be 'close' or 'next_open', got {fill!r}")
     cfg.fill_next_open = fill == "next_open"
+    # Account-currency FX P&L (round 2, review D5): the account is in USD. A USD-base pair
+    # (USDJPY) converts the quote-currency P&L at 1/price in the engine; a cross gets a
+    # quote_fx series in run_agent_backtest. config["backtest"]["fx_account_currency"] = False
+    # reproduces the pre-round-2 numbers (P&L booked in the quote currency as if it were USD).
+    cfg.quote_inverse = bool(ins.is_fx and ins.base == ACCOUNT_CCY and fx_account_currency(config))
     # Financing and stop slippage (v0.17, review A5/C1), opt-in, read with defaults of 0 so
     # published numbers and config hashes do not move: costs.funding_spread_bps (over rf on
     # borrowed notional), costs.cash_spread_bps (under rf on idle cash), costs.stop_half_spread_bps
@@ -132,13 +171,19 @@ def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
 
 
 def participation_capper(full: pd.DataFrame, mask, ins: Instrument, config: dict,
-                         capital: float) -> Callable[[np.ndarray], np.ndarray]:
+                         capital: float, capital_share: np.ndarray | None = None
+                         ) -> Callable[[np.ndarray], np.ndarray]:
     """Weight-path transform for ``costs.backtest_participation_cap`` (v0.17, review C1).
 
     None (default) returns the identity, so every published number is unchanged. A fraction
     (0.1 = 10 % of ADV) limits each bar's weight change to ``cap * ADV20 * price / capital``
     via ``execution_realism.cap_participation``; ADV is the trailing 20-bar mean volume known
-    at the bar (shares). FX (no exchange volume) and bars without volume are uncapped."""
+    at the bar (shares). FX (no exchange volume) and bars without volume are uncapped.
+
+    ``capital_share`` (per window bar, round 2, review D8): the sleeve's share of the account.
+    The cap then sizes the sleeve with ``capital * share_t``, the same capital its market
+    impact is charged for; before, a 1/15 sleeve was capped as if it held the whole account,
+    15 times too tight."""
     cap = (config.get("costs", {}) or {}).get("backtest_participation_cap")
     if cap is None or ins.is_fx or "Volume" not in full:
         return lambda w: w
@@ -146,10 +191,12 @@ def participation_capper(full: pd.DataFrame, mask, ins: Instrument, config: dict
     m = np.asarray(mask, dtype=bool)
     adv = pd.Series(full["Volume"].to_numpy(dtype=float)).rolling(20).mean().to_numpy()[m]
     px = full["Close"].to_numpy(dtype=float)[m]
+    sleeve = None if capital_share is None else float(capital) * np.asarray(capital_share, dtype=float)
 
     def apply(w: np.ndarray) -> np.ndarray:
         n = len(w)
-        return cap_participation(w, px[:n], adv[:n], capital, float(cap))
+        return cap_participation(w, px[:n], adv[:n], capital, float(cap),
+                                 equity=None if sleeve is None else sleeve[:n])
     return apply
 
 
@@ -353,15 +400,19 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     atc = getattr(provider, "as_traded_closes", None)
     k_full = impact_coefficients(full, ins, cfg, as_traded_close=atc(ins, full.index) if callable(atc) else None)
     impact = None if k_full is None else k_full[np.asarray(mask, dtype=bool)]
-    if impact is not None and capital_share is not None:
+    share = None
+    if capital_share is not None:
         share = capital_share.reindex(window.index).to_numpy(dtype=float)
         if np.isnan(share).any() or (share < 0).any():
             raise ValueError("capital_share must be a non-negative fraction on every bar of the window")
+    if impact is not None and share is not None:
         impact = impact * np.sqrt(share)
+    qfx = quote_fx_series(ins, provider, window.index, start - timedelta(days=cfg["lookback_days"]), end) \
+        if fx_account_currency(cfg) else None
 
     results: dict[str, quant.BacktestResult] = {}
     decisions: list[FinalDecision] = []
-    capw = participation_capper(full, mask, ins, cfg, float(cfg["initial_capital"]))
+    capw = participation_capper(full, mask, ins, cfg, float(cfg["initial_capital"]), share)
     if include_agent:
         graph = TradingGraph(cfg, provider=provider,
                              llm=llm if llm is not None else get_llm(cfg),
@@ -370,7 +421,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
         w = np.zeros(n)
         stop, take = np.full(n, np.nan), np.full(n, np.nan)
         reb = np.zeros(n)
-        extras = dict(carry=carry, rebalance=reb, impact=impact, cash_rate=cash)
+        keep = np.zeros(n)
+        extras = dict(carry=carry, rebalance=reb, impact=impact, cash_rate=cash, keep=keep, quote_fx=qfx)
         if cfg.get("backtest", {}).get("use_stops"):
             extras.update(ohlc, stop=stop, take=take)
         elif bt.fill_next_open:
@@ -391,12 +443,16 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                 raise PassPending(f"{ins.display} {window.index[i].date()}")
             for s in _sources(st):
                 sources[s] = sources.get(s, 0) + 1
-            # Hold each decision (weight and its protective levels) until the next one. Only a
-            # keep (the PM's no-trade band held the current position: dec.kept) passes the held
-            # weight unchanged, which the engine executes as no trade rather than a trade to the
-            # rounded weight. Every other decision is a target the engine clamps to the cap and
-            # trades, including one equal to the cap while the held weight has drifted past it.
+            # Hold each decision (weight and its protective levels) until the next one. A keep
+            # (the PM's no-trade band held the current position: dec.kept) is passed to the
+            # engine as a flag (round 2, review D4), so it is executed as no trade at whatever
+            # weight is held when it is executed: at exec_lag >= 1 the weight has drifted since
+            # bar i, and the old way (passing the held weight as a number) traded back to it at
+            # a cost. The number is still the held weight, for the participation cap. Every
+            # other decision is a target the engine clamps to the cap and trades, including one
+            # equal to the cap while the held weight has drifted past it.
             w[i:] = held if dec.kept else dec.target_weight
+            keep[i:] = 1.0 if dec.kept else 0.0
             stop[i:] = np.nan if dec.stop_loss is None else dec.stop_loss
             take[i:] = np.nan if dec.take_profit is None else dec.take_profit
             reb[i] = 1.0
@@ -412,7 +468,8 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                                           carry_cap=float(cfg["risk"].get("fx_carry_neutral_cap", 0.5))).items():
         bt_name = dc_replace(bt, allow_short=True) if name in LONG_SHORT_STREAMS else bt
         results[name] = quant.run_backtest(prices, capw(weights[mask]), bt_name, carry=carry, impact=impact,
-                                           cash_rate=cash, open=ohlc["open"] if bt.fill_next_open else None)
+                                           cash_rate=cash, open=ohlc["open"] if bt.fill_next_open else None,
+                                           quote_fx=qfx)
     return ComparisonReport(ins, window.index, results, decisions, bt, carry,
                             sources if include_agent else {}, prices, rf)
 

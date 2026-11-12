@@ -228,7 +228,8 @@ def compute_metrics(equity, positions, periods_per_year: float,
 
 def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *,
                  carry=None, open=None, high=None, low=None, stop=None, take=None,
-                 rebalance=None, impact=None, cash_rate=None) -> BacktestResult:
+                 rebalance=None, impact=None, cash_rate=None, keep=None,
+                 quote_fx=None) -> BacktestResult:
     """Backtest a target-weight path (conventions in cpp/include/at/backtest.hpp).
 
     A target is executed on a decision bar (the target changes, or ``rebalance`` is set);
@@ -252,6 +253,14 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
       cash_rate  annual risk-free rate credited on idle cash: (1 - |w|) of the account when
                  ``config.funded`` (equities), the whole account otherwise (FX forwards);
                  NaN = nothing credited. The metrics then use it as the per-bar rf.
+      keep       non-zero where the decision is a keep (round 2, review D4): the engine holds
+                 whatever it holds when the decision is executed (no trade, no cost), whatever
+                 number ``target_weights`` carries there. Needed with ``exec_lag >= 1``, where
+                 the weight held at the decision bar has drifted by the execution bar.
+      quote_fx   account-currency value of one unit of the quote currency at each close, for
+                 an FX cross (round 2, review D5): the price leg's return is converted at
+                 quote_fx[t+1] / quote_fx[t]. For a pair quoted per unit of account currency
+                 (USDJPY in a USD account) set ``config.quote_inverse`` instead.
 
     The result carries ``positions`` (weight held over (t, t+1]), ``traded`` (|dw| per bar),
     ``exits`` (1 where a protective level filled) and ``ruined_at``.
@@ -259,7 +268,8 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
     config = config or BacktestConfig()
     prices, target_weights, extras = pycore.validate_backtest_inputs(
         prices, target_weights, config, carry=carry, open=open, high=high, low=low, stop=stop,
-        take=take, rebalance=rebalance, impact=impact, cash_rate=cash_rate)
+        take=take, rebalance=rebalance, impact=impact, cash_rate=cash_rate, keep=keep,
+        quote_fx=quote_fx)
     if _cpp is None:
         return pycore.run_backtest_ex(prices, target_weights, config, **extras)
     c = _cpp.BacktestConfig()

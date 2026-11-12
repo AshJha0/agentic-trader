@@ -83,6 +83,11 @@ struct BacktestConfig {
     // stop-to-extreme distance lost on a triggered stop. 0, 0 = the historical fill.
     double stop_half_spread = 0.0;
     double stop_range_frac = 0.0;
+    // Account-currency FX P&L (round 2, review D5). true: the instrument is quoted in quote
+    // currency per unit of account currency (USDJPY for a USD account), so a leg from price a
+    // to b returns (b/a - 1) * a/b. For a cross pass BacktestInputs::quote_fx instead.
+    // false and no series = the historical behaviour. Mirrors pycore.BacktestConfig.
+    bool quote_inverse = false;
 };
 
 struct Trade {
@@ -127,6 +132,10 @@ struct BacktestInputs {
                        // NaN or empty = no impact.
     Series cash_rate;  // annual risk-free rate per bar credited on idle cash (see header); the
                        // metrics then use it as the per-bar rf. NaN -> 0; empty = none.
+    Series keep;       // non-zero where the decision is a keep (round 2, review D4): hold what is
+                       // held when it is executed, whatever the target carries; empty = none.
+    Series quote_fx;   // account-currency value of one quote unit at each close (FX cross,
+                       // review D5); positive and finite; empty = no conversion.
 };
 
 struct BacktestResult {

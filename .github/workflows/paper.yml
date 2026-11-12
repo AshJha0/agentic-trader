@@ -15,7 +15,7 @@ name: Paper record
 # Jobs, each with only the permissions it needs:
 #   session    reads Yahoo/FRED (the only job with live web data), writes results/paper as an artifact
 #   publish    commits the artifact to main as the bot, only when the files changed
-#   freshness  fails if the last recorded session is more than 2 business days old
+#   freshness  fails if the last ledger row (not the as-of a run asked for) is more than 2 business days old
 #   report     opens (or comments on) one issue when any of the above fails
 on:
   schedule:
@@ -69,18 +69,11 @@ jobs:
             results/paper/
             !results/paper/bars/
           retention-days: 30
-      # The session's raw Yahoo bars and corporate actions, never committed, because Yahoo data
-      # may not be redistributed (DATA_LICENSING.md); their SHA-256 is in runs.jsonl. Uploaded
-      # as an artifact (90-day retention) only when the repository variable PAPER_BARS_ARTIFACT
-      # is "true": on a public repository artifacts are downloadable by others, so it is off by
-      # default and the laptop's git-ignored copy is the archive.
-      - if: vars.PAPER_BARS_ARTIFACT == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: paper-bars
-          path: results/paper/bars/
-          retention-days: 90
-          if-no-files-found: ignore
+      # The session's raw Yahoo bars and corporate actions (results/paper/bars/) are not uploaded
+      # anywhere (round 2, owner decision D6): Yahoo data may not be redistributed
+      # (DATA_LICENSING.md) and a public repository's Actions artifacts are downloadable by
+      # others. Only their SHA-256 is published, in runs.jsonl; the laptop's git-ignored copy is
+      # the archive.
 
   publish:
     needs: session
@@ -100,6 +93,13 @@ jobs:
         with:
           name: paper-record
           path: results/paper/
+      # Round 2 (review D6): the artifact was built from an earlier checkout than this one. Refuse
+      # to commit unless every append-only file (ledger, vintages, revisions, runs.jsonl) keeps
+      # every committed line, in order, and the ledger's rows match the hash chain recorded in
+      # runs.jsonl. A commit to results/paper between the two checkouts fails here instead of
+      # being reverted silently. Standard library only.
+      - name: Append-only check against main
+        run: python scripts/paper_ledger_check.py --base HEAD
       # Same files, message and branch as the laptop task; commits only when they changed,
       # and a push that loses a race with another commit rebases and retries, up to 5 pushes
       # with 5/10/20/40 s backoff. The raw bars are not in this artifact and not committed.

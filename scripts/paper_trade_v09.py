@@ -54,7 +54,8 @@ from agentic_trader.provenance import provenance  # noqa: E402
 from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_stats  # noqa: E402
 from agentic_trader.validate import read_ledger_csv, write_ledger_csv  # noqa: E402
 from agentic_trader.nyse_calendar import last_session_on_or_before  # noqa: E402
-from scripts.paper_ops import VintageRecorder, engine_fingerprint, store_session_bars, vintage_hash  # noqa: E402
+from scripts.paper_ops import (VintageRecorder, engine_fingerprint, engine_patterns, ledger_chain,  # noqa: E402
+                               store_session_bars, vintage_hash)
 
 FREEZE = date(2026, 9, 29)          # the first session of the forward record (v0.9 pre-registration)
 PPY = 260.0
@@ -76,15 +77,25 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure: dict | None = None) -> pd.DataFrame:
+def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure: dict | None = None,
+              coverage: dict | None = None) -> pd.DataFrame:
     """The whole forward record, freeze -> as_of, one column per ``book/stream`` plus ``rf``.
 
     When ``exposure`` is a dict it receives one frame with, per ``book/stream``, the gross
     exposure held over each bar (sum of |weight| x allocation), the turnover traded on it and
     the trading cost charged for it (turnover x (cost_bps + slippage_bps) of each sleeve), all
-    as fractions of book capital."""
+    as fractions of book capital.
+
+    Only complete sessions are returned (round 2, review D2): the frame stops at the earliest
+    last bar of any sleeve of any book. Before, a sleeve whose provider lagged by a day (Yahoo
+    serving AAPL through T-1 while the rest ran to T) was filled with a 0 return on T, and that
+    0 went into the append-only ledger for good. The held-back sessions are listed in
+    ``coverage["skipped"]`` (date and reason) and recorded by the next run once complete; a
+    sleeve more than 7 days behind is still an error. ``coverage["last_bar"]`` is the last
+    complete session."""
     cols, rf = {}, None
     exp_cols = {}
+    last_bars: dict[str, pd.Timestamp] = {}
     for book, (syms, weighting, streams, _) in BOOKS.items():
         rep = run_portfolio_backtest(syms, freeze, as_of, cfg, rebalance_every=5, provider=provider,
                                      weighting=weighting, cov_window=120)
@@ -95,6 +106,7 @@ def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure:
             if (last - pd.Timestamp(sleeve.dates[-1])).days > 7:
                 raise ValueError(f"{sym}: history stops at {sleeve.dates[-1].date()} while the book runs to "
                                  f"{last.date()}; refusing to record a sleeve with missing sessions")
+            last_bars[f"{book}:{sym}"] = pd.Timestamp(sleeve.dates[-1])
         for s in streams:
             cols[f"{book}/{s}"] = rep.returns[s]
             if exposure is not None:
@@ -117,6 +129,17 @@ def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure:
         rf = r if rf is None else pd.concat([rf, r], axis=1, sort=True).max(axis=1)
     frame = pd.DataFrame(cols).sort_index().fillna(0.0)
     frame["rf"] = rf.reindex(frame.index).ffill()
+    complete = min(last_bars.values()) if last_bars else (frame.index[-1] if len(frame) else None)
+    skipped = []
+    if complete is not None:
+        for d in frame.index[frame.index > complete]:
+            behind = sorted(k for k, v in last_bars.items() if v < d)
+            skipped.append({"date": d.date().isoformat(),
+                            "reason": f"incomplete session: no bar yet for {', '.join(behind)}"})
+        frame = frame.loc[frame.index <= complete]
+    if coverage is not None:
+        coverage["skipped"] = skipped
+        coverage["last_bar"] = None if complete is None else complete.date().isoformat()
     if exposure is not None:
         exposure["frame"] = pd.DataFrame(exp_cols).reindex(frame.index).fillna(0.0)
     return frame
@@ -150,14 +173,15 @@ FREEZE_FILE = ROOT / "docs" / "evaluation" / "paper_freeze.json"
 def check_freeze(freeze_file: Path, cfg: dict) -> str:
     """The vintage id of the frozen engine, after checking that the engine about to run is it.
 
-    ``freeze_file`` names the engine files (globs), the config blocks and a SHA-256 of both
+    ``freeze_file`` names the engine files (globs; since round 2 always widened by
+    ``paper_ops.REQUIRED_ENGINE_FILES``: the whole package, cpp/ and the lock), the config blocks and a SHA-256 of both
     plus ``BOOKS`` (``paper_ops.engine_fingerprint``). A different hash means the code or
     config that computes the frozen books has changed since the freeze, and the run is
     refused: recording it would mix two engines in one append-only ledger. A deliberate
     change is a re-freeze (``--refreeze NEW_ID --reason ...``), which starts a new vintage
     id carried by every row recorded after it (``ledger_vintage.csv``); it is never silent."""
     spec = json.loads(freeze_file.read_text(encoding="utf-8"))
-    have = engine_fingerprint(ROOT, spec["engine_files"], cfg, spec["config_keys"], BOOKS)
+    have = engine_fingerprint(ROOT, engine_patterns(spec["engine_files"]), cfg, spec["config_keys"], BOOKS)
     if have != spec["engine_hash"]:
         raise SystemExit(f"engine changed since freeze vintage {spec['vintage_id']} ({freeze_file.name}: "
                          f"{spec['engine_hash'][:12]}, now {have[:12]}); refusing to record. A deliberate change "
@@ -173,9 +197,10 @@ def refreeze(freeze_file: Path, cfg: dict, vintage_id: str, reason: str, today: 
     if vintage_id in used or not reason.strip():
         raise SystemExit(f"re-freeze needs a new vintage id (used: {sorted(used)}) and a reason")
     old = {k: spec[k] for k in ("vintage_id", "engine_hash", "frozen_on", "reason") if k in spec}
+    patterns = engine_patterns(spec["engine_files"])
     spec.update(history=[*spec.get("history", []), old], vintage_id=vintage_id, frozen_on=today.isoformat(),
-                reason=reason,
-                engine_hash=engine_fingerprint(ROOT, spec["engine_files"], cfg, spec["config_keys"], BOOKS))
+                reason=reason, engine_files=patterns,
+                engine_hash=engine_fingerprint(ROOT, patterns, cfg, spec["config_keys"], BOOKS))
     freeze_file.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
     return spec
 
@@ -290,7 +315,13 @@ def main(argv=None) -> int:
         return 0
     log(f"recomputing {freeze} -> {as_of} on {a.data}")
     exp: dict = {}
-    frame = recompute(as_of, cfg, provider, freeze, exposure=exp)
+    cov: dict = {}
+    frame = recompute(as_of, cfg, provider, freeze, exposure=exp, coverage=cov)
+    for s in cov.get("skipped", []):
+        log(f"WARNING: session {s['date']} not recorded: {s['reason']}; the next run records it once complete")
+    if cov.get("last_bar") and date.fromisoformat(cov["last_bar"]) < as_of:
+        log(f"WARNING: the last complete session is {cov['last_bar']}, before the as-of {as_of}: "
+            f"the provider has not served every bar yet (review D7)")
     ledger = out / "ledger.csv"
     old = read_ledger_csv(ledger) if ledger.exists() else None
     if old is not None and len(old) and frame.index[-1] < old.index[-1] and not a.allow_shrink:
@@ -327,6 +358,7 @@ def main(argv=None) -> int:
                  f"The bar was probably not final when it was fetched; the ledger keeps the first value, see revisions.csv.\n")
     (out / "summary.md").write_text(text, encoding="utf-8")
     bars = store_session_bars(provider, out / "bars", as_of)
+    heads = ledger_chain(ledger.read_text(encoding="utf-8"))
     with open(out / "runs.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps({"run_at": time.strftime("%Y-%m-%d %H:%M:%S"), "as_of": as_of.isoformat(),
                             "fetched_at_utc": pd.Timestamp.now("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -336,6 +368,10 @@ def main(argv=None) -> int:
                             "data": a.data, "seconds": round(time.time() - t0, 1),
                             "price_vintage": vintage_hash(provider.frames),
                             "revisions": rev["changed"], "dropped": rev["dropped"],
+                            # round 2: the last complete session the recomputation reached (D7),
+                            # sessions held back as incomplete (D2), the ledger's hash chain (D6)
+                            "last_bar": cov.get("last_bar"), "skipped": cov.get("skipped", []),
+                            "ledger_rows": len(heads) - 1, "ledger_chain": heads[-1] if heads else None,
                             "last": {c: float(merged[c].iloc[-1]) for c in merged.columns},
                             "provenance": provenance()}, default=float) + "\n")
     if a.oms:   # plan item 4.7; never reads or writes the frozen ledger

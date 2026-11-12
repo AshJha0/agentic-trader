@@ -174,6 +174,15 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
     check_len(in.rebalance, T, "rebalance");
     check_len(in.impact, T, "impact");
     check_len(in.cash_rate, T, "cash_rate");
+    check_len(in.keep, T, "keep");
+    check_len(in.quote_fx, T, "quote_fx");
+    for (double v : in.keep)
+        if (!std::isfinite(v)) throw std::invalid_argument("run_backtest: keep must be finite");
+    for (double v : in.quote_fx)
+        if (!(v > 0.0) || std::isinf(v))
+            throw std::invalid_argument("run_backtest: quote_fx must be positive and finite");
+    if (cfg.quote_inverse && !in.quote_fx.empty())
+        throw std::invalid_argument("run_backtest: quote_inverse and a quote_fx series are mutually exclusive");
     const bool has_levels = !in.stop.empty() || !in.take.empty();
     const bool has_ohlc = !in.open.empty() && !in.high.empty() && !in.low.empty();
     if (has_levels && !has_ohlc)
@@ -220,6 +229,8 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         const std::size_t jj = have ? static_cast<std::size_t>(j) : 0;
         double raw = have ? target_weights[jj] : 0.0;
         if (std::isnan(raw)) raw = 0.0;
+        // A keep (round 2, review D4) is a no-op flag, not a weight: hold what is held now.
+        if (have && !in.keep.empty() && in.keep[jj] != 0.0) raw = prev;
         const double clamped = std::clamp(raw, lo, hi);
         const double target = raw == prev ? raw : clamped;  // a keep is not trimmed to the cap
 
@@ -235,9 +246,12 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         if (next_open) {
             // The held position carries the overnight move close[t] -> open[t+1]; the new target
             // fills at the open. A keep (w == prev) holds the units: no trade at the open.
+            // Account currency: an inverse quote converts at 1/price exactly; a cross's quote_fx
+            // is known at closes only, so its whole move is put on the open -> close leg.
             const double on = in.open[t + 1] / prices[t];
-            f_on = 1.0 + prev * (on - 1.0);
-            const double held_on = (prev == 0.0 || f_on <= 0.0) ? 0.0 : prev * on / f_on;
+            const double q_on = cfg.quote_inverse ? prices[t] / in.open[t + 1] : 1.0;
+            f_on = 1.0 + prev * (on - 1.0) * q_on;
+            const double held_on = (prev == 0.0 || f_on <= 0.0) ? 0.0 : prev * on * q_on / f_on;
             if (w == prev) w = held_on;
             trade = w - held_on;
         } else {
@@ -268,8 +282,13 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         // Costs come out of equity before the position is put on, so w is a fraction of
         // post-cost equity: E_{t+1} = E_t (1 - k_in) (1 + g) (1 - k_out), with g the gross return
         // of the book and k the fee + impact fractions. A 100% book therefore stays at 100%.
-        const double gross = px_end / (next_open ? in.open[t + 1] : prices[t]);  // kept as a ratio: 1 + (gross - 1) loses digits on a huge move
-        const double price_ret = gross - 1.0;
+        const double px_start = next_open ? in.open[t + 1] : prices[t];
+        const double gross = px_end / px_start;  // kept as a ratio: 1 + (gross - 1) loses digits on a huge move
+        // qr: account-currency value of one quote unit at the end of the leg over the start
+        // (1.0 for an account-currency quote: bit-identical to the historical engine).
+        const double qr = cfg.quote_inverse ? px_start / px_end
+                          : (in.quote_fx.empty() ? 1.0 : in.quote_fx[t + 1] / in.quote_fx[t]);
+        const double price_ret = (gross - 1.0) * qr;
         const double carry = w * carry_rate / ppy;
         double cash = (cfg.funded ? 1.0 - std::fabs(w) : 1.0) * cash_rate / ppy;
         // Financing spreads (v0.17, review A5; agentic_trader/financing.py), 0 by default.
@@ -314,7 +333,7 @@ BacktestResult run_backtest_ex(const Series& prices, const Series& target_weight
         res.positions[t] = w;
         res.returns[t + 1] = ret;
         res.equity[t + 1] = next;
-        prev = (exited || ruined || w == 0.0) ? 0.0 : w * gross / (1.0 + g);
+        prev = (exited || ruined || w == 0.0) ? 0.0 : w * gross * qr / (1.0 + g);
     }
     res.positions[T - 1] = prev;  // no new trade on the final bar
     res.metrics = in.cash_rate.empty()
