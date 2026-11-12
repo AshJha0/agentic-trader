@@ -118,7 +118,7 @@ def test_version_falls_back_to_distribution_metadata(tmp_path, monkeypatch):
 
 def test_changelog_top_heading_matches_version():
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    heading = re.search(r"^## v(\d+\.\d+\.\d+)", text, re.M).group(1)
+    heading = re.search(r"^## v(\d+\.\d+\.\d+(?:rc\d+)?)", text, re.M).group(1)
     assert heading == agentic_trader.__version__
 
 
