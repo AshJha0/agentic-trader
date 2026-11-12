@@ -443,7 +443,7 @@ keep their start-of-run code.
   `LocalLLMUnavailable` when spent, instead of silently falling back to rules.
 - **Provider misses become counted skips.** `agentic_trader/study_robust.py`: three tries, then a
   skipped row with its reason, retried on resume. The pre-registration rule
-  ([v16 draft](docs/evaluation/v16_preregistration_DRAFT.md), "Skipped units"): N is quoted with
+  ([v16 draft](docs/evaluation/v16_preregistration.md), "Skipped units"): N is quoted with
   its skip count, skips are counted apart from fallbacks, and a cell with more than 10 % skipped
   is inadmissible; `llm_study --report` shows a `skipped` column.
 - **Trial files.** `scripts/measure_v08.py run_trials` writes atomically and fingerprints its

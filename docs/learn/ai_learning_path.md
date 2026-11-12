@@ -449,7 +449,7 @@ model is not just remembering, and check the judge before trusting its grades.
 ### Formal statement
 
 Pre-registration: `docs/evaluation/v09_preregistration.md` and the draft
-[v16 pre-registration](../evaluation/v16_preregistration_DRAFT.md) (including the skip rule).
+[v16 pre-registration](../evaluation/v16_preregistration.md) (including the skip rule).
 Every cell is a trial in `evaluation.TRIALS`, counted in the deflated Sharpe. The recall audit
 (`scripts/v16_local_study.py recall2`) scores the model against a label-permutation null and a
 placebo arm. LLM-as-judge: `agentic/judge_kit.py`, Cohen's kappa against human labels, judge

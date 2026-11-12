@@ -1,13 +1,13 @@
-# v0.16 pre-registration (DRAFT): the one holdout look for the LLM study
+# v0.16 pre-registration: the one holdout look for the LLM study
 
-**Status: draft, not signed, not executed.** Written 2026-11-08, before any LLM study cell had
+**Status: signed by Ashish Jha on 2026-11-12; binding from the commit that adds this file.** Written 2026-11-08, before any LLM study cell had
 run on any date. Amended 2026-11-12 after an outside review, when the first pass was partly run
 and no `decisive_ta` or `postcutoff_ta` row existed; what had been seen by then is listed in
 "Amendment of 2026-11-12" below, and the record of each change is in
 [v16_prereg_amendment_2026-11-12.md](v16_prereg_amendment_2026-11-12.md). No holdout decision has
 been made by any LLM cell.
 
-This draft becomes binding only when the owner signs it: `python scripts/sign_prereg.py` renames
+It was a draft until the owner signed it: `python scripts/sign_prereg.py` renames
 the file to `v16_preregistration.md`, removes "DRAFT" from the title and fills the signing block,
 and the owner commits the result. Until that file exists the runner refuses to start a registered
 cell (`study_design.prereg_gate`), and every run header then carries the signed file's SHA-256.
@@ -292,13 +292,13 @@ one name on 3 dates; after the resume 2 still miss. The table shows N = 298 (2 s
 
 ## Signing block
 
-Filled by `python scripts/sign_prereg.py` when the owner signs; empty in the draft.
+Filled by `python scripts/sign_prereg.py` at signing.
 
-- Signed by: (not signed)
-- Signed on: (not signed)
-- Model: `qwen2.5:7b-instruct`, Q4_K_M, digest (filled at signing from the first-pass run header)
-- Runner code at signing: (git commit, filled at signing)
-- Registered trials at signing, `len(evaluation.TRIALS)`: (filled at signing)
+- Signed by: Ashish Jha
+- Signed on: 2026-11-12
+- Model: `qwen2.5:7b-instruct`, Q4_K_M, digest `845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e`
+- Runner code at signing: `9ba366bcb49a336c92c92e4a5f8bb4e9f91af2f8`
+- Registered trials at signing, `len(evaluation.TRIALS)`: 81
 - Seen before signing: as listed in "Amendment of 2026-11-12"; no `decisive_ta` or
   `postcutoff_ta` row.
 
