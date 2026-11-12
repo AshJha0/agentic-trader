@@ -451,9 +451,12 @@ bull/bear contradiction without a balanced verdict; firm limits (size, shorting,
 and targets on the correct side (error); the trader's tilt agrees with the verdict and the PM
 did not flip direction without an adjustment; single-evidence findings capped at 0.6. The
 decision's confidence is scaled by the multiplier at finalisation. When a model signal diverges,
-`apply_weight_rule` also moves the weight toward neutral and, since v0.19, runs the PM
-guardrails on the result: with neutral 1.0, `max_position` 0.5 and a weight of 0.30, the rule
-gives 0.65 and the cap brings it to 0.50 (`guardrail_clipped` true; COOKBOOK recipe 134).
+`apply_weight_rule` also cuts the weight: toward the PM's rules weight when a model PM
+overrode it, toward flat otherwise, and never to a larger absolute exposure; the PM guardrails
+then run on the result. With a weight of 0.30 and scale 0.5 the rule gives 0.15 (COOKBOOK
+recipe 134). Until 2026-11-12 the rule moved toward the neutral weight, which is 1.0 for
+equities, so the same alarm turned 0.30 into 0.65: an alarm that added risk (review A4). So
+the title holds for confidence, which is only ever lowered; the weight can be cut as well.
 
 **Numbers.** 6 checks per task; in the injected-headline test the divergence check fails and the
 multiplier drops to 0.7.

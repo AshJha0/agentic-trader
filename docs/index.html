@@ -165,7 +165,7 @@ flowchart TD
     PM --> G["guardrails: shorting, caps,<br/>VaR, book VaR, minimum size"]
     G --> B["no-trade band"]
     B --> CR{"critic: model vs rules<br/>diverge by more than 0.6?"}
-    CR -- yes --> S["weight moved halfway<br/>toward neutral"]
+    CR -- yes --> S["weight cut halfway toward<br/>the rules weight or flat"]
     CR -- no --> D["final decision"]
     S --> G2["guardrails again<br/>(v0.19 fix)"]
     G2 --> D
@@ -286,7 +286,7 @@ flowchart TB
       <p>Deterministic checks first: cited evidence must resolve; a model view must not diverge
          from its own rules by more than 0.6; strong contradictions need a balanced verdict;
          limits, stop sides and direction-vs-verdict must hold; single-evidence findings are
-         capped. A model critique may then run and can only lower confidence.</p></div>
+         capped. A model critique may then run and can only lower confidence; a flagged divergence also cuts the weight toward the rules weight or flat, never to a larger exposure.</p></div>
     <div class="card"><h3>Reporter with audits</h3>
       <p>Structured facts go to the model; the narrative comes back. A number audit checks every
          figure against the facts (rounding and percentage forms allowed, counts included) and an

@@ -192,7 +192,7 @@ the historical sections keep their earlier-engine numbers under a banner saying 
                                                  ▼
     Portfolio manager → firm limits (size, VaR, shorting, min trade) → no-trade band
                                                  ▼
-        Critic (deterministic checks; model may only lower confidence) → evidence validation
+        Critic (deterministic checks; a flag cuts the weight, never adds) → evidence validation
                                                  ▼
         Audited report (number audit · evidence-id audit) → decision memory → HTTP API / CLI
 ```
@@ -245,7 +245,7 @@ agentic_trader/
     policy.py              rules -> ALLOW / DENY / REQUIRE_APPROVAL; roles; auto / queued / deny gateways
     planner.py             canonical plan, model-proposed plan, validator (strip, pin, repair, append governance)
     harness.py             AgentHarness state machine: batching, approvals, cancellation, governance steps
-    critic.py              deterministic checks + model critique that can only lower confidence
+    critic.py              deterministic checks + model critique; lowers confidence, a flag cuts the weight
     reporter.py            structured report, narrative, number audit, evidence-id audit
     rag.py + knowledge/    hashed TF-IDF retrieval over 11 runbooks and policies
     tracing.py             spans, JSON-lines logs, Prometheus text metrics
