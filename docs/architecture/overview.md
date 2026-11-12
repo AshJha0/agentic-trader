@@ -19,6 +19,31 @@ extension points. Diagrams are in [../DIAGRAMS.md](../DIAGRAMS.md).
 
 ## Components
 
+The map below is diagram 45 in [../DIAGRAMS.md](../DIAGRAMS.md). Each box names the module
+that holds it; arrows are calls.
+
+```mermaid
+flowchart TB
+    subgraph ENTRY["entry points"]
+        CLI["CLI<br/>cli/"]
+        API["FastAPI gateway<br/>agentic/api.py"]
+        MCP["MCP stdio server<br/>agentic/mcp_server.py"]
+    end
+    ENTRY --> H["harness: 11-state machine<br/>agentic/harness.py"]
+    H --> PL["planner and plan validator<br/>agentic/planner.py"]
+    H --> PE["policy engine, 6 ordered rules<br/>agentic/policy.py"]
+    PE --> TS["tools on 5 servers:<br/>market_data, quant, knowledge,<br/>portfolio, execution<br/>agentic/servers.py"]
+    TS --> EV["evidence store,<br/>SHA-256 digest per record<br/>agentic/evidence.py"]
+    H --> DESK["the desk: analysts, debate, trader,<br/>risk team, PM<br/>graph.py, agents/"]
+    DESK --> LLM["optional model:<br/>Claude (llm.py) or<br/>Ollama (local_llm.py)"]
+    DESK --> QC["quant facade<br/>C++ _atcore or numpy twin<br/>quant/"]
+    H --> CR["critic<br/>agentic/critic.py"]
+    H --> RP["reporter: number and<br/>evidence-id audits<br/>agentic/reporter.py"]
+    CR --> EV
+    RP --> EV
+    H --> ST["task store (SQLite)<br/>agentic/store.py"]
+```
+
 ### The desk
 
 | Module | Responsibility |
@@ -118,6 +143,22 @@ The desk's own logic is unchanged by the harness. In brief (details in the v0.3 
 - **Portfolio manager** blends 25/50/25, applies shorting policy, max position, VaR cap and
   minimum trade, then the no-trade band, and rebuilds the protective levels if the direction
   changed.
+
+Where the model fits into those steps (diagram 41; the worked example with numbers is in
+[how the AI works](../ai/ai.md#one-decision-step-by-step-diagrams-41-and-44-with-a-worked-example)):
+
+```mermaid
+flowchart LR
+    RU["rules output"] --> CK{"model reply passes<br/>the contract?"}
+    CK -- "no, or no model" --> USE1["rules value used"]
+    CK -- yes --> USE2["model value used"]
+    USE1 --> PMG["PM blend 25/50/25,<br/>then guardrails,<br/>then no-trade band"]
+    USE2 --> PMG
+    PMG --> CRT{"critic: divergence<br/>above 0.6?"}
+    CRT -- yes --> HALF["halfway to neutral"]
+    CRT -- no --> FIN["decision"]
+    HALF --> FIN
+```
 
 ## Backtesting, research and evaluation
 

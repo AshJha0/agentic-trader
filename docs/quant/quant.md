@@ -6,7 +6,7 @@ The agents, the language model and the agentic layer have their own page:
 [How the AI works](../ai/ai.md).
 
 Related pages: [architecture](../architecture/overview.md), [diagrams](../DIAGRAMS.md)
-(17 to 38), [API](../api/api.md), [evaluation](../evaluation/evaluation.md), and concepts
+(17 to 38, plus 42 and 43 below), [API](../api/api.md), [evaluation](../evaluation/evaluation.md), and concepts
 18 to 50 of [LEARN.md](../../LEARN.md). No number on this page is a result; the measured
 results are on the evaluation pages.
 
@@ -24,6 +24,72 @@ results are on the evaluation pages.
 | Statistics | `stats.py` | Sharpe inference, bootstraps, deflated Sharpe, false discovery control, VaR coverage tests |
 | Evaluation | `evaluation.py`, `scripts/` | Periods, universes, the trials registry, the measurement and rendering scripts |
 | Data | `data/` | Synthetic, Yahoo and CSV prices; FRED (rates, inflation, vintages); SEC EDGAR (filings) |
+
+## One backtest, step by step (diagrams 42 and 43, with a worked example)
+
+**The plain idea.** A backtest walks through history one bar at a time, asks the desk for a
+target weight only at its rebalance dates, charges what the trade would have cost, and books
+the next bar's return on the new position. The result only counts once it has been compared
+with a fair control and corrected for how many variants were tried.
+
+**The formal statement.** `run_agent_backtest` (`agentic_trader/backtest.py`) runs the full
+desk at bars `i = offset, offset + rebalance_every, ...` (default every 5 bars) with the held
+position as the current weight. The engine (`run_backtest_ex` in `agentic_trader/quant/pycore.py`, the
+same operations in C++) fills the target at the close of the decision bar by default
+(`backtest.fill = "close"`, `exec_lag = 0`; `"next_open"` and a lag are options). With `w` the
+new weight and `trade` its change, one bar's equity growth is
+
+`E(t+1) / E(t) = (1 - k_in) x (1 + g) x (1 - k_out)`
+
+where `k_in = |trade| x (cost_bps + slippage_bps) / 1e4 + |trade|^1.5 x K(t) x sqrt(E(t)/E0)`
+(the second term only with impact on), `g = w x price return + carry + (1 - |w|) x cash rate /
+252 - borrow`, and `k_out` is non-zero only when a stop or take level exits the position
+during the bar. Every baseline goes through the same engine. The statistics in
+`agentic_trader/stats.py` then compare paired daily returns (`paired_sharpe_block_bootstrap`)
+and deflate the Sharpe for the number of registered trials (`deflated_sharpe`, with the count
+from `evaluation.registered_trial_count()`).
+
+```mermaid
+flowchart LR
+    D["bars, point in time<br/>synthetic / Yahoo / CSV<br/>+ FRED, EDGAR"] --> W["walk forward:<br/>desk decides every<br/>rebalance_every bars"]
+    W --> T["target weight w"]
+    T --> FILL["fill: close of bar t<br/>(or open t+1, or t+lag)"]
+    FILL --> K["k_in: linear cost<br/>+ sqrt impact if on"]
+    K --> G["bar return g:<br/>w x price move + carry<br/>+ cash on 1-|w| - borrow"]
+    G --> X{"stop or take<br/>hit in bar t+1?"}
+    X -- yes --> KO["k_out: exit cost"]
+    X -- no --> E["equity E(t+1)"]
+    KO --> E
+    E --> W
+```
+
+```mermaid
+flowchart TD
+    R1["desk daily returns"] --> PB["paired block bootstrap<br/>desk minus control"]
+    R2["control: buy and hold<br/>scaled to the same vol"] --> PB
+    REG["evaluation.TRIALS<br/>every variant registered"] --> DSR["deflated Sharpe at the<br/>registered trial count"]
+    R1 --> DSR
+    PB --> Q{"interval excludes zero<br/>and DSR high enough?"}
+    DSR --> Q
+    Q -- no --> NA["not adopted<br/>(every round so far)"]
+    Q -- yes --> AD["candidate; the forward<br/>paper record decides"]
+```
+
+**A worked example.** Invented numbers for the arithmetic; not a result. An equity sleeve with
+the default costs (`costs.equity_cost_bps` 1.0 and `equity_slippage_bps` 1.0, so 2 bp per unit
+traded), impact off, no stops, and a cash rate of 4% a year.
+
+1. At the close of bar t the desk moves from flat to `w = 0.60`. The entry cost is
+   `k_in = 0.60 x 0.0002 = 0.00012` of equity.
+2. Over bar t+1 the price rises 1%. The position earns 0.60 x 1% = 0.6%; the idle 40% earns
+   0.40 x 4% / 252 = 0.0063%. So `g = 0.0060635`.
+3. Growth over the bar: (1 - 0.00012) x (1 + 0.0060635) = 1.0059428, a return of about 0.594%
+   against 0.606% before costs.
+4. The same day for the vol-targeted control is computed with its own weight and its own trade
+   cost, in the same function, which is what makes the paired comparison fair.
+
+The cost formula is tested on both backends by the engine tests (for example
+`tests/test_v08_engine.py`), and the two backends are fuzzed against each other.
 
 ## 1. One core in two languages
 
