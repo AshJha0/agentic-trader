@@ -2139,8 +2139,9 @@ ablation and drop whichever fact key carries it. (Illustrative numbers, not a re
 `docs/evaluation/v16_preregistration.md`; recipes 114-117. Model: `qwen2.5:7b-instruct`,
 4-bit, CPU. Interim result (2026-11-12, `docs/results/v17/llm_study_interim_report.md`): the IC
 difference local_analysts minus rules is -0.046 [95% CI -0.185, +0.067], hit rate 54.6% against
-55.1%, fallback 0%, both cells admissible; no evidence the model analysts help. `local_all` and
-`critic_on` are still running. The minimum detectable effect on the holdout is 0.59 to 1.32 annual
+55.1%, no failed model call; no evidence the model analysts help (descriptive; 404 of 1,200
+analyst outputs in the model cell came from the model). The study was stopped on 2026-11-12 and
+its pre-registered decisive test was not run (`docs/evaluation/v16_prereg_status_2026-11-12.md`). The minimum detectable effect on the holdout is 0.59 to 1.32 annual
 Sharpe (pre-registration, iid approximation), so a null there is weak evidence against a small gain.
 
 **Questions.**

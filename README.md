@@ -3,8 +3,9 @@
 [![CI](https://github.com/AshJha0/agentic-trader/actions/workflows/ci.yml/badge.svg)](https://github.com/AshJha0/agentic-trader/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-ashjha0.github.io%2Fagentic--trader-16697a)](https://ashjha0.github.io/agentic-trader/)
 
-**AgenticTrader** is a research harness for trading agents under hard governance, and a
-measured study of what a language model adds to a rules-based desk for equities and FX. The
+**AgenticTrader** is a research harness for trading agents under hard governance, with a
+rules-based desk for equities and FX measured against simple controls, and a designed but
+not yet run test of what a language model adds. The
 short version of what it has found: nothing has beaten a simple control, and the project says
 so with intervals.
 
@@ -19,7 +20,7 @@ so with intervals.
   ([selection statistic](docs/results/round2/selection_stat.md)).
 - **A local language model has added nothing measurable so far.** With `qwen2.5:7b-instruct`
   in the analyst seats, the 20-bar IC was 0.046 below the rules desk (95 % interval
-  [-0.185, +0.067]; interim, two of four cells, descriptive only). In that cell 404 of 1,200
+  [-0.185, +0.067]; two complete cells of a first pass that was then stopped, descriptive only). In that cell 404 of 1,200
   analyst outputs came from the model and the rest from rules, so the result is about the
   technical analyst and the FX macro analyst, not about text-reading analysts
   ([interim report](docs/results/v17/llm_study_interim_report.md)).
@@ -33,7 +34,10 @@ with no desk beside every claim).
 
 - Whether the model adds information beyond the rules. That is one
   [pre-registered](docs/evaluation/v16_preregistration.md) test, signed on 2026-11-12 before
-  any of its rows existed; it has not run yet.
+  any of its rows existed. It has **not been run**: the queue needed about 227 hours of model
+  time on one laptop and the owner stopped the study the same day
+  ([status](docs/evaluation/v16_prereg_status_2026-11-12.md)). There is no pre-registered
+  finding about the model, only a signed design.
 - Results at a one-bar execution lag. Every published Sharpe fills at the close the signal
   saw; the lag comparison is written and not yet run.
 - Corrected FX tables. FX P&L was converted to the USD account on 2026-11-12 and the
@@ -537,7 +541,8 @@ decisive test and the single holdout look, amended and signed on 2026-11-12
 ([document](docs/evaluation/v16_preregistration.md), [amendment record](docs/evaluation/v16_prereg_amendment_2026-11-12.md)). Recipes 114-117 in [COOKBOOK.md](COOKBOOK.md), lesson 56 in
 [LEARN.md](LEARN.md).
 
-**Interim result (2026-11-12, two of four cells): no evidence that the model analysts help.**
+**First-pass result (2026-11-12, two complete cells; the study was then stopped): no evidence
+that the model analysts help.**
 Source: [`docs/results/v17/llm_study_interim_report.md`](docs/results/v17/llm_study_interim_report.md)
 (`scripts/llm_study.py --report`, 300 decisions per cell, 15 names x 20 dates; evidence class:
 measured on real prices, design period, one local model).
@@ -565,11 +570,13 @@ ranking of names. The Sharpe ratios are noisier still (local_analysts minus cont
   left-out decisions ("without 20 forward bars") was wrong. From 2026-11-12 the report ranks
   within asset class and drops closed dates for every name. The re-scored table follows when
   the remaining cells finish.
-- **INTERIM.** `local_all` and `critic_on` are still running, and they run on the code from
-  before the 2026-11-12 critic and weight-bound fixes, so they measure the desk as it was.
+- **The study was stopped on 2026-11-12.** `local_all` reached 59 of 300 decisions and
+  `critic_on` never started; both would have measured the desk as it was before that day's
+  critic and weight-bound fixes ([status](docs/evaluation/v16_prereg_status_2026-11-12.md)).
 - **This is not the decisive test.** The pre-registered question is whether the model's signal
   carries information the rule's signal does not (the residual IC, on 313 weekly dates, with a
-  replication on dates after the model's release). It has not started. The holdout is untouched.
+  replication on dates after the model's release). It has not been run and is not scheduled.
+  The holdout is untouched.
 
 **Judge calibration (n = 30, [`agreement.json`](docs/results/v17/agreement.json)).** Cohen's
 kappa against hand labels, `llama3.1` judge versus the deterministic rule checker:

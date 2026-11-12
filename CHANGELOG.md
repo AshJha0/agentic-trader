@@ -28,7 +28,7 @@ before this section.
 - **Model weights bounded against the rules** (A3; **changes results** for cells with a model
   trader or PM): the trader's model weight is held within `risk.trader_model_band` of the
   trader's rules weight and the PM's within `risk.pm_model_band` (both 0.25); a gap above
-  `risk.pm_model_flag` (0.10) is logged and written on the decision, with both figures stored.
+  `risk.pm_model_flag` (0.10) is logged, with both figures stored on the proposal and the decision.
   Limit, stated plainly: the bounds are per stage, so a model in both roles can move the final
   weight by up to 0.5 from an all-rules desk, and the debate score that feeds the trader's
   rules can itself be model-written. A full rules twin of the desk is not built.
@@ -84,6 +84,15 @@ before this section.
   uploaded as a public artifact (F6, owner decision D6).
 - `scripts/v17_exec_lag.py` produces a lag 0, lag 1 and next-open table. It has not been run:
   it needs Yahoo data and hours of CPU, after the LLM study.
+
+### The LLM study was stopped
+
+- The owner stopped the v0.17 study on 2026-11-12. The pre-registered decisive test
+  (`decisive_ta`, `postcutoff_ta`) was **not run**; `local_all` ended at 59 of 300 decisions
+  and `critic_on` never started. The signed pre-registration stays in force for a later run.
+  Record: `docs/evaluation/v16_prereg_status_2026-11-12.md`. README, the site, the AI guide,
+  LEARN and the interim report now say this; the v0.19.0rc1 heading below, which promised
+  "the full v0.17 study results", is history and no longer the plan.
 
 ### Not done here
 

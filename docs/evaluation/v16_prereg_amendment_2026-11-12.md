@@ -65,6 +65,12 @@ spacing included. This is recorded because a statistic chosen after trying anoth
 choice a reader should know about. It was made on simulated data only; no study row was scored
 with either version before the choice.
 
+## What happened next
+
+The study was stopped later the same day and the decisive test was not run; see
+[the status page](v16_prereg_status_2026-11-12.md). The section below records the plan as it
+stood when the amendment was written.
+
 ## What happens to the study that is running
 
 Owner decision D1 (2026-11-12): no restart. The 627 first-pass rows are kept and the remaining

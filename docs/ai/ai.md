@@ -557,7 +557,9 @@ does not answer.
 15.6 GB machine is acceptable. The model in use is `qwen2.5:7b-instruct` on CPU through Ollama. It has
 answered desk prompts in v0.15 (text analysts, injection compliance); the v0.16 study cells
 (`local_analysts`, then `local_all`, plus `rules`) have an interim result for two cells (section
-10.1); `local_all` and `critic_on` are still running. An eighth cell, `local_analysts`,
+10.1). The study was stopped on 2026-11-12: `local_all` reached 59 of 300 decisions, `critic_on`
+never started, and the decisive test was not run
+([status](../evaluation/v16_prereg_status_2026-11-12.md)). An eighth cell, `local_analysts`,
 was added in v0.16 and registered in `evaluation.TRIALS` before any run.
 
 **Example: what the study would cost on Claude.** The dry run for 15 names x 40 dates x 2
@@ -597,8 +599,10 @@ decisions per cell on 15 names and 20 design dates, `qwen2.5:7b-instruct` at the
 
 The vol-target control's Sharpe is +1.93. No model call fell back or failed the contract, so
 both cells are admissible. Read plainly: the difference is centred below zero and its interval
-includes zero, so there is no evidence the model analysts help. It is interim: `local_all` and
-`critic_on` are still running, and `critic_on` uses the critic code from before the v0.19 fix.
+includes zero, so there is no evidence the model analysts help. It is descriptive and it is all
+there is: the study was stopped on 2026-11-12 before `local_all` finished, and the
+pre-registered decisive test has no rows. In the model cell 404 of 1,200 analyst outputs came
+from the model; the table also predates the scoring correction of the same day.
 
 **Judge calibration.** `docs/results/v17/agreement.json`, 30 hand-labelled items. The `llama3.1`
 judge agrees with the labels moderately on no_invented_numbers (kappa 0.68, 26/30) and weakly on

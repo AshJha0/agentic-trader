@@ -437,7 +437,8 @@ def test_trader_model_weight_is_bounded_to_the_rules_weight(caplog: pytest.LogCa
         tr.atr14, tr.allow_short, tr.policy_passages = orig_atr, orig_short, orig_pp
     assert far.rule_weight == pytest.approx(neutral) and far.model_weight == pytest.approx(neutral - 0.9)
     assert far.target_weight == pytest.approx(neutral - band) and far.source == "llm"
-    assert "bounded to" in far.rationale and "trader model weight" in caplog.text
+    assert "bounded to" in caplog.text and "trader model weight" in caplog.text
+    assert far.rationale == "strong conviction"                 # the model's text is not rewritten
     assert isinstance(far.action, Action)
-    assert near.target_weight == pytest.approx(neutral - flag / 2) and "trader model weight" not in near.rationale
+    assert near.target_weight == pytest.approx(neutral - flag / 2)
     assert near.rule_weight == pytest.approx(neutral)

@@ -147,8 +147,8 @@ class Trader(Agent):
         if data:
             # Round 1 (review A3): the model may move the trader's weight at most
             # risk.trader_model_band (default: risk.pm_model_band, 0.25) from the rules weight
-            # computed above on the same inputs; a gap above risk.pm_model_flag is logged and
-            # written into the rationale. Both figures stay on the proposal.
+            # computed above on the same inputs; a gap above risk.pm_model_flag is logged. Both
+            # figures stay on the proposal; the model's rationale text is left as written.
             rule_w = w
             model_w = clip(data["target_weight"], -1, 1)
             band = float(risk.get("trader_model_band", risk.get("pm_model_band", 0.25)))
@@ -156,7 +156,6 @@ class Trader(Agent):
             if not (math.isfinite(band) and band >= 0 and math.isfinite(flag) and flag >= 0):
                 raise ValueError(f"risk.trader_model_band {band} and risk.pm_model_flag {flag} must be finite and >= 0")
             w = min(rule_w + band, max(rule_w - band, model_w))
-            gap_note = ""
             if abs(model_w - rule_w) > flag + 1e-12:
                 gap_note = (f" [trader model weight {model_w:+.2f} vs rules {rule_w:+.2f}"
                             + (f"; bounded to {w:+.2f} (band {band:.2f})" if abs(w - model_w) > 1e-12 else "") + "]")
@@ -172,7 +171,7 @@ class Trader(Agent):
             proposal = TradeProposal(
                 Action(act) if act in Action.__members__ else action_for(w, score, thr),
                 w, clip(data.get("confidence"), 0, 1, debate.conviction), price, stop, tp,
-                int(clip(data.get("horizon_days"), 1, 90, 10)), str(data["rationale"]) + gap_note,
+                int(clip(data.get("horizon_days"), 1, 90, 10)), str(data["rationale"]),
                 source="llm", untrusted=untrusted, rule_weight=round(rule_w, 6), model_weight=round(model_w, 6))
         state.proposal = proposal
         return proposal

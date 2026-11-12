@@ -1,4 +1,6 @@
-﻿Primary (per decision, 20-bar forward return): IC and hit rate with 95% date-bootstrap intervals
+> **Read this first (added 2026-11-12).** This table is descriptive, not the pre-registered test. The study was stopped the same day; the decisive test was not run ([status](../../evaluation/v16_prereg_status_2026-11-12.md)). The word "Primary" below is the runner's label at the time and was wrong: the pre-registration calls the first pass descriptive. The scoring has since been corrected (ranking within asset class; the two design dates that are NYSE closures dropped for every name) and this table has not been re-scored. The 20 left-out decisions are the ten equities on those two closed dates, not decisions "without 20 forward bars". In the `local_analysts` cell 404 of 1,200 analyst outputs came from the model.
+
+Primary (per decision, 20-bar forward return): IC and hit rate with 95% date-bootstrap intervals
 
 | cell | dates | scored | active | IC [95% CI] | hit rate [95% CI] | IC - rules [95% CI] | Sharpe at 20d (secondary) |
 |---|---:|---:|---:|---|---|---|---:|

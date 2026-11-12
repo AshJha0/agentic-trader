@@ -106,7 +106,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
        makes long local-model runs survivable: resumable checkpoints, bounded retries, and provider misses
        recorded as counted skips, with a cell that skips more than 10% of its units ruled inadmissible by the
        <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration.md">pre-registration</a>, which the owner signed on 2026-11-12 before any row of its decisive test existed. A flagged critic alarm now cuts the weight and never adds exposure.
-       The first interim study result is in (below, and in
+       The study was stopped on 2026-11-12 with its decisive test not run (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_prereg_status_2026-11-12.md">status</a>); the first-pass result from its two complete cells is below, and in
        <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">the interim report</a>).</p>
   </div>
 
@@ -132,7 +132,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
       <li><strong>The model's contribution is not yet measured at scale.</strong> The one LLM run (v0.5.1, five
           stocks, one quarter, $4) had the same Sharpe as the rules with half the exposure, under an engine
           since replaced.</li>
-      <li><strong>Interim: no evidence the local model's analysts help.</strong> With <code>qwen2.5:7b-instruct</code>
+      <li><strong>First pass, two cells: no evidence the local model's analysts help; the decisive test was not run.</strong> With <code>qwen2.5:7b-instruct</code>
           at the analysts, 300 decisions on 15 names and 20 design dates, the IC difference against the rules
           desk is −0.046 [95% CI −0.185, +0.067]; hit rate 54.6% against 55.1%; Sharpe 1.77 against
           2.28 for the rules and 1.93 for the vol-target control. This first pass is descriptive only. In the
@@ -140,8 +140,8 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
           on 100); the rest came from rules, so the result is about those two analysts. No model call failed.
           The table predates the 2026-11-12 scoring correction (ranking within asset class, two closed dates
           dropped) and has not been re-scored.
-          INTERIM: <code>local_all</code> and <code>critic_on</code> are still running, and <code>critic_on</code>
-          uses the critic from before the v0.19 fix
+          The study was stopped on 2026-11-12: <code>local_all</code> reached 59 of 300 decisions, <code>critic_on</code>
+          never started, and the pre-registered decisive test has no rows. There is a signed design, not a finding
           (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">report</a>).</li>
       <li><strong>The local judge is weak.</strong> Against 30 hand labels the <code>llama3.1</code> judge's kappa is
           0.28 (used facts), 0.68 (no invented numbers) and 0.30 (respected fence); the deterministic rule checker
@@ -231,8 +231,8 @@ flowchart TB
          Code and offline tests; no model run.</p></div>
     <div class="card"><h3>v0.16 to v0.18: the LLM study</h3>
       <p>A study of what a local 7B model adds, cell by cell against the rules desk, with a recall
-         audit, calibration, an eval set and a judge from another family. Interim: the model analysts
-         show no IC gain over the rules (−0.046 [−0.185, +0.067]); two cells are still running.</p></div>
+         audit, calibration, an eval set and a judge from another family. First pass, two complete cells: the model analysts
+         show no IC gain over the rules (−0.046 [−0.185, +0.067], descriptive). The study was stopped on 2026-11-12 and its decisive test was not run.</p></div>
     <div class="card"><h3>v0.14 and v0.15: risk, leakage, governance</h3>
       <p>FHS and EWMA VaR, purged walk-forward with a Student-t gate and a leak canary, a paper OMS,
          fenced filing text, gated retrieval, signed approvals and record/replay. Details in the
