@@ -22,8 +22,9 @@ v0.17 (R2.1): confidence alone never reached a position, because order sizing re
 (a model view diverged from its rules): ``scale`` (the default) shrinks the decision's tilt
 away from the strategic neutral weight by ``agentic.critic_weight_scale`` (0.5), ``veto``
 sets it to the neutral weight, ``off`` keeps the v0.16 behaviour. The action taken is stored
-on the report (``weight_action``) and in the evidence store by the harness. The rule can only
-move the weight toward neutral, never away from it.
+on the report (``weight_action``) and in the evidence store by the harness. The rule moves
+the weight toward neutral, never away from it, and then re-runs the portfolio manager's
+guardrails, because the neutral weight need not be admissible (equities default to 1.0).
 """
 from __future__ import annotations
 
@@ -106,16 +107,23 @@ class CriticReport:
                 "llm_multiplier": self.llm_multiplier, "weight_action": self.weight_action}
 
 
-def apply_weight_rule(state: TradingState, report: CriticReport, config: dict[str, Any]) -> dict[str, Any] | None:
+def apply_weight_rule(state: TradingState, report: CriticReport, config: dict[str, Any],
+                      risk_facts: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Act on ``state.decision.target_weight`` when the critic flagged a model/rules divergence.
 
     ``agentic.critic_weight_rule``: ``scale`` (default) moves the weight to
     ``neutral + critic_weight_scale * (weight - neutral)``; ``veto`` sets it to ``neutral``;
     ``off`` does nothing. ``neutral`` is ``risk.neutral_weight`` for the asset class (0 when
-    unset), so the rule only ever moves the position toward the strategic weight, which the
-    firm limits already admit. When the weight changes, the action follows the new sign, a
-    protective level left on the wrong side is cleared, and an adjustment line is appended.
-    Returns the action record (also stored on ``report.weight_action``), or None.
+    unset), so the rule moves the position toward the strategic weight. That weight is not
+    always admissible: ``risk.neutral_weight.equity`` defaults to 1.0, so "toward neutral" can
+    enlarge a long past ``max_position`` or the VaR cap. When the rule changes the weight, the
+    result therefore goes through ``PortfolioManager.guardrails`` (the same function the PM
+    step applies) with ``risk_facts`` (computed from the state when not given); the record says
+    whether they clipped it (``guardrail_clipped``, ``guardrail_notes``, ``pre_guardrail``). A
+    weight that is already admissible comes through unchanged. When the weight changes, the
+    action follows the new sign, a protective level left on the wrong side is cleared, and an
+    adjustment line is appended. Returns the action record (also stored on
+    ``report.weight_action``), or None.
     """
     d = state.decision
     acfg = config.get("agentic", {})
@@ -131,9 +139,19 @@ def apply_weight_rule(state: TradingState, report: CriticReport, config: dict[st
     old = float(d.target_weight)
     new = neutral if rule == "veto" else neutral + scale * (old - neutral)
     new = round(new, 6)
+    pre_guardrail = new
+    notes: list[str] = []
+    if abs(new - old) > 1e-12:
+        from ..agents.risk import PortfolioManager
+        from ..agents.risk import risk_facts as compute_facts
+        f = risk_facts if risk_facts and "max_position" in risk_facts else compute_facts(state, config)
+        guarded, notes = PortfolioManager(None, config).guardrails(new, f, state.instrument.symbol, state.book)
+        new = round(float(guarded), 6)
     flagged = [c.detail for c in report.checks if c.name == "model_rule_divergence" and not c.passed]
     record = {"rule": rule, "scale": None if rule == "veto" else scale, "neutral": neutral,
-              "from": old, "to": new, "changed": abs(new - old) > 1e-12, "divergences": flagged}
+              "from": old, "to": new, "changed": abs(new - old) > 1e-12, "divergences": flagged,
+              "pre_guardrail": pre_guardrail, "guardrail_clipped": abs(new - pre_guardrail) > 1e-12,
+              "guardrail_notes": list(notes)}
     if record["changed"]:
         d.target_weight = new
         if new > 0:
@@ -149,7 +167,8 @@ def apply_weight_rule(state: TradingState, report: CriticReport, config: dict[st
                                           or new == 0):
             d.take_profit = None
         d.kept = False
-        d.adjustments.append(f"critic {rule}: model/rules divergence, weight {old:+.2f} -> {new:+.2f}")
+        d.adjustments.append(f"critic {rule}: model/rules divergence, weight {old:+.2f} -> {new:+.2f}"
+                             + (f" (guardrails: {'; '.join(notes)})" if record["guardrail_clipped"] else ""))
     report.weight_action = record
     return record
 

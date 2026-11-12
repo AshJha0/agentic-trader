@@ -9,6 +9,20 @@ offline tests** unless a line says otherwise; **simulation** and **synthetic fix
 nothing about markets; **arithmetic** numbers follow from registered inputs. The model and
 network re-runs are queued, not run, and are listed in `docs/review/PLAN.md` section 4 (v0.17).
 Tag plan: v0.16.0 is tagged first on its own section below, then v0.17.0.
+### Fixed: the critic's weight rule re-applies the guardrails (2026-11-12)
+
+Evidence class: code + offline tests (`tests/test_v17_governance.py`,
+`tests/test_critic_coverage.py`, no model). The new module takes `agentic/critic.py` to 100 %
+line and branch coverage, including a hypothesis property test that a weight the rule changed
+always satisfies `max_position`, the long-only rule, the VaR cap and `min_trade_weight`.
+`critic.apply_weight_rule` moved the weight toward the strategic neutral weight but never
+re-ran the firm limits; with `risk.neutral_weight.equity` at 1.0 a scaled or vetoed equity long
+could exceed `max_position` or the VaR cap. A changed weight now goes through
+`PortfolioManager.guardrails`, and the action record gains `pre_guardrail`,
+`guardrail_clipped` and `guardrail_notes`. Admissible weights are unchanged. The v0.17 LLM
+study runs on the pre-fix code at the runs checkout, so its `critic_on` cell reflects the old
+rule.
+
 ### v0.19 open items (2026-11-11)
 
 Evidence class: code + offline tests (`tests/test_v019_open_items.py`, fakes only); no model
