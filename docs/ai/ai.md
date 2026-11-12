@@ -580,7 +580,7 @@ facts it was given. Then compare desks, and look at the holdout once.
 | 2.4 | `scripts/v16_local_study.py recall` | ticker hit rate vs 1/15, month vs 1/72; leaking keys by ablation | pending: filled when the run finishes |
 | 2.6 | `scripts/v16_local_study.py calibration`, `drift` | dispersion (n=5, temperature 0.7), anchoring slope on `rsi14`, drift on 20 states | pending: filled when the run finishes |
 | 2.7 | `scripts/v16_eval.py run/check/judge/agreement` | used facts, invented no numbers, respected fence; judge kappa vs human labels | n=30: `llama3.1` judge kappa 0.28 / 0.68 / 0.30; rule checker 1.00 / 0.81 / 1.00 (`docs/results/v17/agreement.json`) |
-| 2.8 | `docs/evaluation/v16_preregistration.md` | design bar and one holdout look | draft, unsigned |
+| 2.8 | `docs/evaluation/v16_preregistration.md` | decisive test, replication rule, design bar and one holdout look | amended and signed 2026-11-12, before any decisive row |
 
 Evidence class for every row: tool built and tested offline against fakes and fixtures
 (`tests/test_v16_*.py`). Rows 2.3/2.5 and 2.7 now carry measured results from the local model

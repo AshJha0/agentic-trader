@@ -105,7 +105,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
        <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a> under v0.16 to v0.19, all marked unreleased. The current round
        makes long local-model runs survivable: resumable checkpoints, bounded retries, and provider misses
        recorded as counted skips, with a cell that skips more than 10% of its units ruled inadmissible by the
-       <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration.md">draft pre-registration</a>. The round also makes the critic's weight rule re-apply the firm limits.
+       <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration.md">pre-registration</a>, which the owner signed on 2026-11-12 before any row of its decisive test existed. A flagged critic alarm now cuts the weight and never adds exposure.
        The first interim study result is in (below, and in
        <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">the interim report</a>).</p>
   </div>
@@ -134,8 +134,12 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
           since replaced.</li>
       <li><strong>Interim: no evidence the local model's analysts help.</strong> With <code>qwen2.5:7b-instruct</code>
           at the analysts, 300 decisions on 15 names and 20 design dates, the IC difference against the rules
-          desk is −0.046 [95% CI −0.185, +0.067]; hit rate 54.6% against 55.1%; secondary Sharpe 1.77 against
-          2.28 for the rules and 1.93 for the vol-target control; 0% fallback, so the cell is admissible.
+          desk is −0.046 [95% CI −0.185, +0.067]; hit rate 54.6% against 55.1%; Sharpe 1.77 against
+          2.28 for the rules and 1.93 for the vol-target control. This first pass is descriptive only. In the
+          model cell 404 of 1,200 analyst outputs came from the model (technical on every decision, FX macro
+          on 100); the rest came from rules, so the result is about those two analysts. No model call failed.
+          The table predates the 2026-11-12 scoring correction (ranking within asset class, two closed dates
+          dropped) and has not been re-scored.
           INTERIM: <code>local_all</code> and <code>critic_on</code> are still running, and <code>critic_on</code>
           uses the critic from before the v0.19 fix
           (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">report</a>).</li>
@@ -412,8 +416,8 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
          are published and updated after each run; the job missed 2026-10-31 to 11-06, filled in afterwards and marked. It is the only
          unseen data, and a Sharpe near 1 needs years before its interval excludes zero.</p></div>
     <div class="card"><h3>v0.15 (v0.15.1, 2026-11-08): text, retrieval, an auditable agent</h3>
-      <p>Filing sections from EDGAR, fenced as untrusted text; a filing tone-change feature and a GDELT
-         headline feed, both registered as trials and not yet run. Point-in-time research retrieval with a
+      <p>Filing sections from EDGAR, fenced as untrusted text; a filing tone-change feature, run on the design period (9 names, 201 filings) and not supported (mean IC negative at every horizon), and a GDELT
+         headline feed, registered as a trial with its design run pending. Point-in-time research retrieval with a
          recall gate: on 100 questions over a 34-passage invented corpus, recall@5 0.990 (TF-IDF and hybrid),
          which says nothing about real filings. A 150-snippet injection corpus: 150/150 fenced. Signed N-of-M
          approvals (opt-in), deferred tool loading, record and replay, stage SLOs. Paper trading unchanged.</p></div>
@@ -422,10 +426,13 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
          agent does, when the model is called, what it may decide and what stops it.
          <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md">How the quant works</a>: the
          two-backend core, the backtester's conventions, risk, alphas, portfolios and the statistics.
-         At v0.17 the guide has 65 concepts, the cookbook 130 recipes, and there are 40 diagrams.</p></div>
+         The concept guide, the cookbook and the diagrams page follow the same rule: every number names its source.</p></div>
     <div class="card"><h3>Engineering</h3>
-      <p>879 tests collected on both backends (C++ 879 passed; numpy 839 passed, 40 C++-only skipped) and
-         26 C++ test functions. Every function the quant facade exports is fuzzed on both backends; that
+      <p>The pull-request gate runs about 2,100 tests on the numpy backend with line and branch coverage
+         above the 90% floor that CI enforces (94.0% in the run of 2026-11-12); a separate job builds the
+         C++ core on Linux, macOS and Windows and runs the parity tests. Exact counts are in the CI log,
+         not on this page.
+         Every function the quant facade exports is fuzzed on both backends; that
          fuzzing found and fixed a threshold in an old baseline that rounding noise decided differently
          on one platform. The trend signal <code>strat_tsmom</code> is in the C++ core with a numpy twin.</p></div>
   </div>
@@ -473,15 +480,15 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
 
   <h2>Measured, not claimed</h2>
   <div class="numbers">
-    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 879 pytest tests collected on both backends at v0.12.0 (C++ backend 879 passed; numpy fallback 839 passed, 40 C++-only skipped; the breakdown that follows is the v0.8.0 one, 832 tests) · 95% line coverage on the numpy backend (weakest file <code>data/yahoo.py</code> 75%) — 105 v0.8 fixes + 17 CLI · 68 v0.8 agents · 59 hypothesis fuzz properties on the C++ boundary + 7 on the agentic layer · 57 v0.8 engine · 57 v0.8 data · 41 v0.8 execution · 41 v0.8 agentic · 38 quant edge cases · 37 v0.7 · 35 agent · 30 v0.8 portfolio · 30 agentic · 21 v0.8 CLI · 20 v0.6 · 20 quant research · 19 v0.5 · 19 pipeline · 17 workflow · 15 adversarial · 13 data · 12 v0.8 stats · 11 LLM-eval · 11 EDGAR · 10 v0.8 protocol · 8 v0.8 alpha · 7 services (FastAPI client + a real MCP stdio round trip) · 7 quant · 25 C++ test functions (one ctest test)<br>
+    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; about 2,100 pytest tests in the pull-request gate on the numpy backend, with line and branch coverage above the enforced 90% floor (94.0% in the CI run of 2026-11-12) · the C++ core is built and parity-tested on Linux, macOS and Windows · a nightly job runs the slow tests · exact counts are in the CI log, which is the source, not this page<br>
     One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans · every transition written to SQLite when a task store is configured<br>
     Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 16 tools on 5 servers (market_data · quant incl. cross-sectional alphas · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
-    Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → argument guards → read-only → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API · a bounded task pool per process (503 + Retry-After when full) and multi-process serving over the task store<br>
+    Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → argument guards → read-only → risk level → allow) · approvals deny by default on the MCP server (auto is an explicit opt-in) · order tickets pass the desk's limits · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API · a bounded task pool per process (503 + Retry-After when full) and multi-process serving over the task store<br>
     Knowledge (RAG)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 runbooks and policies · 76 chunks · dependency-free hashed TF-IDF · served as DOCUMENT evidence and shown to the trader and PM<br>
     Quant research&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 9 alphas, time-series and cross-sectional (per-date IC, quantile spreads, breadth) · 4 execution algorithms + intraday simulator · square-root impact inside the backtester · 5 weighting schemes with Ledoit-Wolf covariance, cross-asset risk budgets and attribution · bootstrap, probabilistic and deflated Sharpe · a paired bootstrap across instruments · ALFRED vintages · SEC EDGAR point-in-time fundamentals and filing news<br>
     Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every rule choice) + 45 extended (no rule tuned on them) · design 2016–21 · holdout 2022–26 · reserve 2026-07 → 2026-09, spent: it and the extended universe were consulted for the v0.5.1 and v0.6 decisions, and v0.8 re-measured every period, so the next unseen data is the future · 26-trial registry (24 re-measured under the v0.8 engine) · alpha and cross-sectional analysts measured on the design period and kept off · impact sweep at $100k / $10M / $1B, equity-scaled · first LLM run: 5 stocks × Q1 2024, 271 Claude calls, $4 (pre-v0.8 engine, not re-derived) · EDGAR on/off, the carry rule, the track-record cut and the cross-sectional analyst re-checked on all 60 names × 4 periods (cluster-bootstrap intervals on the all-60 rows, instrument bootstrap on the core and extended rows); the v0.2 rules and the alpha analyst re-checked on the 15 core names × 4 periods (instrument-bootstrap intervals) · VaR coverage of the desk's own forecast · prompt hashes and provenance in every result · a calibration harness · the multi-year LLM run staged (not yet executed) with a dollar cap per stage<br>
-    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; v0.8 (cash leg on, Sharpe on excess returns): 15-sleeve portfolio holdout Sharpe 0.80 vs 0.86 plain buy &amp; hold vs 0.99 vol-targeted B&amp;H (desk − B&amp;H −0.06 [−0.41, +0.30] p 0.748; desk − vol-target −0.19 [−0.53, +0.16] p 0.297, block bootstrap over days), max drawdown 7.80% vs 20.43% vs 9.17% · extended 45 names: median Sharpe 0.25 vs 0.39 B&amp;H (mean difference −0.07 [−0.12, −0.02] p 0.01, BH-significant, bootstrap over instruments) vs 0.27 vol-target (−0.03 [−0.09, +0.02] p 0.19, not BH-significant); mean max drawdown 15.46% vs 26.39% vs 19.79% · v0.5.1 FX carry rule: chosen on the core design period; on minus off positive on every slice, small, with intervals touching zero on most<br>
-    Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈13.7k non-empty lines of Python in <code>agentic_trader</code> (57 files; 3.9k in the agentic layer, 2.0k research, 1.1k EDGAR / prompts / calibration) · ≈1.7k lines of C++17 incl. its tests · ≈10.9k lines of tests · MSVC /W4 and GCC -Wall -Wextra clean · CI on Linux, Windows, macOS, Python 3.10–3.14
+    Out of sample&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; v0.11 re-measurement (cash leg on, Sharpe on excess returns): 15-sleeve portfolio holdout Sharpe 0.91 vs 0.86 plain buy &amp; hold vs 0.99 vol-targeted B&amp;H (desk − vol-target −0.08 [−0.46, +0.30], block bootstrap over days): no measurable edge over the control · selection statistic, deflated Sharpe of desk minus vol-matched control on the design period: 0.009 at 81 registered trials · not yet re-run after the 2026-11-12 FX accounting correction or at a one-bar execution lag<br>
+    Code&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈25.9k non-empty lines of Python in <code>agentic_trader</code> (97 files; 7.7k in the agentic layer), counted on 2026-11-12 · a C++17 core with its own tests · MSVC /W4 and GCC -Wall -Wextra clean · CI on Linux, Windows, macOS, Python 3.10–3.14
   </div>
 
   <div class="honest">
