@@ -837,7 +837,7 @@ of sections 26 and 35 print 1.40 for the same daily series because portfolio met
 annualise at 260, the FX sleeves' count: 1.375 × √(260/252) ≈ 1.40), t 3.42, skew −0.635,
 kurtosis 8.41, bootstrap 95% interval [0.593, 2.17], PSR against zero 1.00; with 26 trials
 the expected maximum Sharpe of that many null trials is 0.161, the deflated Sharpe
-probability 0.998 and the minimum track record 496 periods. The table's caveat, verbatim:
+probability 0.998 and the minimum track record 496 periods. (Corrected 2026-11-12: 0.998 was withdrawn; it and its v0.11 successor are an absolute deflated Sharpe, which is not a selection test (the no-desk vol-target control scores 0.921 on it at 81 trials). The selection statistic is the deflated Sharpe of desk minus vol-matched control: 0.009 at the registry's 81 trials (`docs/results/round2/selection_stat.md`).) The table's caveat, verbatim:
 "an upper bound on the true significance: the benchmark is built from the dispersion of
 trial_sharpes_annual, which is usually narrower than the dispersion of the full return
 series each trial would have produced, so the true search space is wider than this reports
@@ -1875,6 +1875,7 @@ the deflated Sharpe uses each trial's portfolio Sharpe.
 
 **The numbers.** The v0.11 measurement reports a deflated Sharpe probability of 0.949 for
 the frozen rules. It is below the usual 0.95 line, and the page says it is an upper bound.
+Corrected 2026-11-12: this figure is an absolute deflated Sharpe, which is not a selection test (the no-desk vol-target control scores 0.921 on it at 81 trials). The selection statistic is the deflated Sharpe of desk minus vol-matched control: 0.009 at the registry's 81 trials (`docs/results/round2/selection_stat.md`).
 
 **Questions.**
 - Why does mixing mean-of-instrument Sharpes with portfolio Sharpes across trials break the

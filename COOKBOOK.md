@@ -1320,6 +1320,7 @@ That report (`results/v08/tables.md`, "selection statistics for the frozen rules
 from `results/v08/trials.json` and `portfolio_design.csv`) gives, for 26 trials, an expected
 maximum null Sharpe of 0.161 and a deflated Sharpe probability of 0.998 — an upper bound, as
 the report's own caveat says, because the trial Sharpes' dispersion understates the search.
+Corrected 2026-11-12: 0.998 compared two different statistics and was withdrawn; the absolute deflated Sharpe that replaced it is not a selection test (the no-desk vol-target control scores 0.921 on it at 81 trials). The selection statistic is the deflated Sharpe of desk minus vol-matched control: 0.009 at the registry's 81 trials (`docs/results/round2/selection_stat.md`). To reproduce: `python scripts/selection_stat.py --results results/v11`.
 
 ## v0.5: execution-aware evaluation, cross-sectional research, operations
 

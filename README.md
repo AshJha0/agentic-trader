@@ -142,11 +142,18 @@ volatility-targeted control achieves too.**
   (AAPL breach rate 0.0657, p 0.0207; AUDUSD 0.0634, p 0.0432), breach rates run
   0.0523–0.0657 (every one above 0.05), and the Christoffersen independence test rejects on
   6 of 15 — breaches cluster; book-level VaR was off in every published run and is untested.
-- **Selection statistics:** 26 trials judged on the design period (24 re-measured under the
-  v0.8 engine, 2 historical); the frozen rules' design-period portfolio: annual Sharpe 1.375,
-  bootstrap 95% CI [0.593, 2.17], expected maximum Sharpe of 26 null trials 0.161, deflated
-  Sharpe probability 0.998, minimum track record 496 periods — an upper bound on the true
-  significance, as the report itself says.
+- **Selection statistics:** the selection test is a deflated Sharpe on desk-minus-control
+  returns (the vol-target control levered to the desk's volatility) at the registry's trial
+  count. On the design period it is **0.009** at 81 registered trials (0.005 at 145, adding the
+  estimate of unregistered early trials). The differential Sharpe is 0.040 a year, against 1.00
+  expected from the best of 81 zero-skill trials. There is no evidence that the rules select
+  better than a vol-targeted hold. Evidence class: measured, design period, stored v0.11 files;
+  source [selection_stat.md](docs/results/round2/selection_stat.md), from
+  `scripts/selection_stat.py`. The figure printed here before, 0.998 at 26 trials, compared two
+  different statistics and had already been withdrawn in the evaluation document. The absolute
+  deflated Sharpe (0.925 at 81 trials) is not a selection test either: the control, which takes
+  no decisions, scores 0.921 on it. The frozen rules' design-period portfolio itself: annual
+  Sharpe 1.375, bootstrap 95% CI [0.593, 2.17].
 - **LLM desk:** measured once (v0.5.1: five stocks, Q1 2024, Claude Opus, anonymised prompts,
   $4): the same Sharpe as the rules with less than half the exposure — produced under the
   v0.7-and-earlier engine and **not re-derived under v0.8**. The multi-year harness — Opus,

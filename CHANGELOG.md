@@ -1,5 +1,100 @@
 # Changelog
 
+## Unreleased: model-to-weight safety and quant correctness after the 2026-11-12 review (Rounds 1 and 2)
+
+Evidence class: code and offline tests unless a line says otherwise. Behaviour changes are
+marked **changes results**. The registered LLM study runs on a pinned earlier commit and is
+not affected; its `local_all` and `critic_on` cells therefore measure the desk as it was
+before this section.
+
+### Model-to-weight path (review A1 to A12, E-1 to E-6)
+
+- **MCP server locked down by default** (A1, owner decision D3): role analyst and
+  `--approval deny`; `--approval auto` is an explicit opt-in that prints a warning. The
+  `agentic-trader mcp` command defaults to the same role. The approvals section of
+  `docs/ai/ai.md` now says what exists: no shipped plan reaches the approval state, and the
+  MCP server is the only path to an order ticket.
+- **Order tickets go through the desk's limits** (A2, E-1): `execution.plan` runs the PM
+  guardrails; `submit_order` re-reads the book under the lock and refuses a stale plan or a
+  post-trade breach of `max_position` or `max_short_notional`.
+- **Signed-approval re-pricing fails closed** (A9, E-2): the price lookup read `close` where
+  providers return `Close`, so no price was ever captured and the check passed. It now reads
+  the right column and refuses when the price is missing or not finite.
+- **Critic never raises exposure** (A4, owner decision D4; **changes results** when the critic
+  is on): a flagged divergence moves the weight toward the PM's rules weight, or toward flat,
+  and absolute exposure cannot increase, veto included. Before, an equity weight of 0.2 moved
+  toward the neutral weight of 1.0 and became 0.6. Failed error checks now block or downgrade,
+  and a critic with no risk facts reports "VaR not checked" (A5, A6).
+- **Model weights bounded against the rules** (A3; **changes results** for cells with a model
+  trader or PM): the trader's model weight is held within `risk.trader_model_band` of the
+  trader's rules weight and the PM's within `risk.pm_model_band` (both 0.25); a gap above
+  `risk.pm_model_flag` (0.10) is logged and written on the decision, with both figures stored.
+  Limit, stated plainly: the bounds are per stage, so a model in both roles can move the final
+  weight by up to 0.5 from an all-rules desk, and the debate score that feeds the trader's
+  rules can itself be model-written. A full rules twin of the desk is not built.
+- **Text analysts reject, never clip** (A7, A8): NaN, Infinity and out-of-range shifts are
+  rejected (a NaN used to become +1.0); a quote needs three words, twelve characters and a
+  content word; duplicates are dropped and at most twelve claims count.
+- **Reporter** (A12): the number audit compares signs, and a model narrative that fails an
+  audit or the output guard is replaced by the template.
+- Also: `memory.remember` is dated by the server with a per-session budget (B9); news and
+  social results returned over MCP are fenced as untrusted (A10); a pinned `local_llm_digest`
+  is enforced before the first call (A17); repeated task-store failures stop state-changing
+  calls (E-6); new `approval` extra declares `cryptography` (E-5); boundary tests for the six
+  mutants that survived the review's spot check.
+- The one test that calls the Anthropic API now needs `AGENTIC_TRADER_LIVE_API=1` as well as a
+  key: a key in the environment is not consent to call the network from a test run.
+
+### Statistics (review C1 to C12)
+
+- **Selection statistic replaced** (C1, C2; measured, design period, stored v0.11 files): the
+  deflated Sharpe is now computed on desk minus vol-matched control. It is **0.009** at the
+  registry's 81 trials (differential Sharpe 0.040 a year; `docs/results/round2/selection_stat.md`,
+  `scripts/selection_stat.py`). The absolute deflated Sharpe published before (0.998 at 26
+  trials, then 0.949 at 42) is not a selection test: the no-desk control scores 0.921 on it.
+  README, LEARN, COOKBOOK and the evaluation document are corrected.
+- **Forward-record horizon at stated power** (C3): 3,574 sessions was 50 % power; 80 % power
+  for a 0.2 Sharpe difference needs 7,303 sessions (about 29 years). The pre-registered look
+  is unchanged; `docs/evaluation/live_readiness.md` now says the record cannot decide an
+  effect of that size.
+- **Bootstrap p-values null-centred everywhere** (C12; **changes results**: BH flags in
+  `paired_table` and the daily paper summary can change); the old value is kept as
+  `p_value_percentile`. New `stats.paired_time_block_table` makes the time-block interval the
+  primary (C8); `evaluation.paired_table` holds only per-instrument summaries and is not yet
+  rewired to it.
+- KPI Sharpe is annualised by decision frequency (C10). The recall audit reports its power
+  (C11): 0.59 at 100 real and 100 placebo items for a 10 % recognised share, 0.95 at 300. Its
+  pass rule is unchanged and still passes on absence of evidence.
+
+### Engine and paper record (review D2 to D8, C7, F6)
+
+- **A PM keep is an engine flag** (D4; **changes results** at exec lag 1 or more, identical at
+  lag 0): a keep was replayed as a costed trade back to a stale weight. numpy and C++; the C++
+  build was checked on Windows only before CI.
+- **FX P&L converted to the USD account** (D5; **changes results** for every book holding a
+  USD-base pair or a cross): the old engine booked r where r / (1 + r) is due, about +1 % a
+  year on a full-weight long USD-base pair at 10 % volatility. `backtest.fx_account_currency:
+  false` reproduces the old numbers. Published FX tables have not been re-run; the affected
+  pages under `docs/results/v09` and `docs/results/v12` carry a correction notice.
+- Participation cap uses sleeve capital (D8).
+- **Paper record**: a session with any missing bar is held back and logged, not filled with
+  zero (D2); the freeze hash covers the whole package, C++ and the lock files (D3); ledger rows
+  are hash-chained and `scripts/paper_ledger_check.py` refuses any rewrite of the append-only
+  files (D6); freshness is judged on the ledger's last row (D7); raw Yahoo bars are no longer
+  uploaded as a public artifact (F6, owner decision D6).
+- `scripts/v17_exec_lag.py` produces a lag 0, lag 1 and next-open table. It has not been run:
+  it needs Yahoo data and hours of CPU, after the LLM study.
+
+### Not done here
+
+- The paper engine must be re-frozen before the paper job runs again (D3, D4 and D5 all change
+  the engine); the job refuses until then.
+- No published backtest number has been re-run. Lag-1 results, re-run FX tables and the
+  first-pass report with corrected scoring are still owed.
+- Review item A11 (prompt token budget) waits for the registered study to finish, because it
+  changes prompts. D11 (`Checkpoint._load`) is open.
+- The README first screen, generated counts and the remaining docs findings (F2 to F8).
+
 ## Unreleased: study repair after the 2026-11-12 review (Round 0)
 
 Evidence class: code, offline tests and simulation. No model was run and no study row was

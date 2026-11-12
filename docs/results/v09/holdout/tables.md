@@ -1,3 +1,10 @@
+> **Correction notice, 2026-11-12 (review D5).** The FX figures on this page were produced before the
+> engine converted FX P&L to the USD account. For USD-base pairs (USDJPY, USDCAD) the old engine booked
+> the pair's return r where r / (1 + r) is due, and crosses were not converted; the bias is about
+> +1 % a year on a full-weight long USD-base pair at 10 % volatility. Every FX sleeve with such a pair,
+> and every portfolio that holds one, is affected. The numbers below have not been re-run; read them as
+> slightly optimistic for long USD-base positions until they are.
+
 ### portfolio table, etf11_rp: 11 sleeves, risk_parity, 2022-01-03 -> 2026-06-30, provenance 0ea08b1 clean
 
 | index | CR% | AR% | Vol% | Sharpe | t(SR) | MDD% | Calmar | Exp% |
