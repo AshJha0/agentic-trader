@@ -130,7 +130,11 @@ def engine_fingerprint(root: Path, patterns: list[str], config: dict, config_key
     ``pyproject.toml`` left out (a release bump is not an engine change), the ``config_keys`` subset of the run's
     config (the numbers-driving blocks, not paths or LLM settings) and ``repr(books)``."""
     h = hashlib.sha256()
-    files = sorted({p for pat in patterns for p in root.glob(pat) if p.is_file()})
+    # Ordered by the POSIX form of the relative path, compared as plain strings. Sorting the Path
+    # objects themselves is case-insensitive on Windows and case-sensitive elsewhere, which put
+    # CMakeLists.txt in a different place and gave each platform its own hash.
+    files = sorted({p for pat in patterns for p in root.glob(pat) if p.is_file()},
+                   key=lambda p: p.relative_to(root).as_posix())
     for p in files:
         h.update(p.relative_to(root).as_posix().encode() + b"\n")
         data = p.read_bytes().replace(b"\r\n", b"\n")

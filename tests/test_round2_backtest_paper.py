@@ -473,18 +473,22 @@ def test_a_version_bump_does_not_trip_the_paper_freeze(tmp_path) -> None:
     def fp(text: str) -> str:
         (tmp_path / "pyproject.toml").write_text(text, encoding="utf-8")
         return po.engine_fingerprint(tmp_path, ["pyproject.toml"], {}, [], ())
-    base = fp('[project]
-name = "x"
-version = "1.0.0"
-dependencies = ["numpy>=1.24"]
-')
-    assert fp('[project]
-name = "x"
-version = "1.0.1"
-dependencies = ["numpy>=1.24"]
-') == base
-    assert fp('[project]
-name = "x"
-version = "1.0.0"
-dependencies = ["numpy>=2.0"]
-') != base
+    def toml(version: str, numpy: str) -> str:
+        lines = ["[project]", 'name = "x"', f'version = "{version}"', f'dependencies = ["numpy>={numpy}"]', ""]
+        return chr(10).join(lines)
+    # CI finding: the hash sorted Path objects, which is case-insensitive on Windows only, so
+    # Linux and macOS computed a different hash from the one recorded on Windows. Files are now
+    # ordered by their POSIX relative path as plain strings: uppercase before lowercase everywhere.
+    import hashlib
+    for name in ("CMakeLists.txt", "apple.py"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    want = hashlib.sha256()
+    for name in ("CMakeLists.txt", "apple.py"):                 # 'C' (67) sorts before 'a' (97)
+        want.update(name.encode() + b"\n")
+        want.update(name.encode())
+    want.update(b"{}")
+    want.update(repr(()).encode())
+    assert po.engine_fingerprint(tmp_path, ["CMakeLists.txt", "apple.py"], {}, [], ()) == want.hexdigest()
+    base = fp(toml("1.0.0", "1.24"))
+    assert fp(toml("1.0.1", "1.24")) == base
+    assert fp(toml("1.0.0", "2.0")) != base
