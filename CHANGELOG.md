@@ -1,16 +1,42 @@
 # Changelog
 
-## Unreleased (0.17.0): the second review's fixes (review 2026-11-09, R0-R4 and N1-N11)
+## Unreleased (0.19.0): long runs, the critic fix, coverage, docs refresh and the first interim LLM result
 
-- **Coverage (v0.19 test lane).** Property-based tests for the firm-limit guardrails, the six default policy rules in order, the output contract and execution-realism edges; coverage now measures branches and CI enforces a 90% floor. Baseline before this lane: 95.9% of lines in `agentic_trader` (15,895 of 16,574, full local suite, numpy backend). `PolicyEngine(role_capabilities={})` now grants nothing instead of falling back to the default role map.
+Evidence class for each entry is stated in it. Nothing here was released; v0.16.0 and v0.17.0
+are tagged first, in that order. Branch `docs/site-refresh-v019`, PR #35.
 
-Everything the two reviews of 2026-11-09 asked for (`docs/review/2026-11-09_review_and_plan.md`
-sections 3 and 5), built in eleven lanes; the lane notes are in `docs/review/v017_notes/`.
-$0, no model was called and nothing was downloaded while building it. Evidence classes: **code +
-offline tests** unless a line says otherwise; **simulation** and **synthetic fixture** numbers say
-nothing about markets; **arithmetic** numbers follow from registered inputs. The model and
-network re-runs are queued, not run, and are listed in `docs/review/PLAN.md` section 4 (v0.17).
-Tag plan: v0.16.0 is tagged first on its own section below, then v0.17.0.
+### Interim result: the v0.17 LLM study, two of four cells (2026-11-12)
+
+Evidence class: measured, real prices, design period, one local model (`qwen2.5:7b-instruct`
+at the analysts). Files: `docs/results/v17/llm_study_interim_report.md` (from
+`scripts/llm_study.py --report`, 600 rows, 300 decisions per cell) and
+`docs/results/v17/agreement.json`.
+
+- Primary: IC of the 20-bar forward return, local_analysts minus rules **-0.046 [95% CI
+  -0.185, +0.067]** (rules +0.005, local_analysts -0.042; 280 scored decisions each, 20 left out
+  for lack of forward bars). Hit rate 54.6% against 55.1%. No evidence the model analysts help.
+- Secondary: Sharpe 1.77 (local_analysts) against 2.28 (rules) and 1.93 (vol-target control).
+  Fallback 0.0% in both cells, so both are admissible.
+- INTERIM: `local_all` and `critic_on` are still running; `critic_on` runs on the code from
+  before the critic fix below, so it measures the old weight rule.
+- Judge calibration, n = 30: `llama3.1` judge kappa 0.28 (used_facts), 0.68
+  (no_invented_numbers), 0.30 (respected_fence); deterministic rule checker 1.00, 0.81, 1.00.
+  The judge is weak on two of three criteria and 30 items is a small sample.
+
+### Coverage and tests (v0.19 test lane)
+
+Evidence class: code + offline tests. Property-based tests for the firm-limit guardrails, the
+six default policy rules in order, the output contract and execution-realism edges
+(`tests/test_v019_guards_policy.py`, `tests/test_v019_execution_realism.py`), and
+`tests/test_critic_coverage.py`; 77 new tests. Coverage now measures branches
+(`[tool.coverage.run] branch = true`) and CI enforces `fail_under = 90`. Measured on CI (run
+43228695881, Python 3.12, numpy backend, slow tests deselected): **94.01% line+branch**
+(16,582 statements, 4,966 branches). Baseline before the lane: 95.9% of lines only (15,895 of
+16,574, full local suite), not comparable with the branch figure.
+
+- Policy fix: `PolicyEngine(role_capabilities={})` now grants nothing instead of falling back
+  to the default role map (an explicit empty map fails closed).
+
 ### Fixed: the critic's weight rule re-applies the guardrails (2026-11-12)
 
 Evidence class: code + offline tests (`tests/test_v17_governance.py`,
@@ -73,6 +99,27 @@ model run. The study chains already running keep their start-of-run code.
 - Open: `measure_v08.py run_trials` non-atomic writes without fingerprint (needs its own review,
   it feeds registered statistics); `run_recall`/`run_calibration`/`_fwd` provider retries; skip
   reporting rule in the pre-registration text.
+
+### Documentation refresh
+
+Evidence class: documentation. The docs site (`docs/index.html`) opens with the v0.19 state
+and the standing conclusions, including the interim result; diagrams 41-45 (one decision, one
+backtest bar, returns to an adoption decision, policy rule order, component map), with the
+decision-path diagrams (4, 6, 15, 41, the site and `docs/architecture/overview.md`) showing the
+critic's moved weight going through the guardrails again; `docs/learn/ai_learning_path.md` (ten
+modules); LEARN lessons 66-68; COOKBOOK recipes 131-135 (134: the critic's guardrail clip on a
+fixture; 135: the policy gate deciding five requests). README's test and coverage lines now
+quote the CI run above instead of the v0.8.0 line-only figure.
+
+## Unreleased (0.17.0): the second review's fixes (review 2026-11-09, R0-R4 and N1-N11)
+
+Everything the two reviews of 2026-11-09 asked for (`docs/review/2026-11-09_review_and_plan.md`
+sections 3 and 5), built in eleven lanes; the lane notes are in `docs/review/v017_notes/`.
+$0, no model was called and nothing was downloaded while building it. Evidence classes: **code +
+offline tests** unless a line says otherwise; **simulation** and **synthetic fixture** numbers say
+nothing about markets; **arithmetic** numbers follow from registered inputs. The model and
+network re-runs are queued, not run, and are listed in `docs/review/PLAN.md` section 4 (v0.17).
+Tag plan: v0.16.0 is tagged first on its own section below, then v0.17.0.
 
 ### Follow-up round (v0.18 notes, 2026-11-09): leftovers closed
 

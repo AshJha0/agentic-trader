@@ -450,7 +450,10 @@ a model-sourced analyst signal within 0.6 of its rule-based signal on the same f
 bull/bear contradiction without a balanced verdict; firm limits (size, shorting, VaR); stops
 and targets on the correct side (error); the trader's tilt agrees with the verdict and the PM
 did not flip direction without an adjustment; single-evidence findings capped at 0.6. The
-decision's confidence is scaled by the multiplier at finalisation.
+decision's confidence is scaled by the multiplier at finalisation. When a model signal diverges,
+`apply_weight_rule` also moves the weight toward neutral and, since v0.19, runs the PM
+guardrails on the result: with neutral 1.0, `max_position` 0.5 and a weight of 0.30, the rule
+gives 0.65 and the cap brings it to 0.50 (`guardrail_clipped` true; COOKBOOK recipe 134).
 
 **Numbers.** 6 checks per task; in the injected-headline test the divergence check fails and the
 multiplier drops to 0.7.
@@ -2130,7 +2133,10 @@ ablation and drop whichever fact key carries it. (Illustrative numbers, not a re
 
 **In the repo.** `scripts/v16_local_study.py`, `scripts/v16_eval.py`, `scripts/llm_study.py`,
 `docs/evaluation/v16_preregistration_DRAFT.md`; recipes 114-117. Model: `qwen2.5:7b-instruct`,
-4-bit, CPU. Results: pending: filled when the run finishes. The minimum detectable effect on the holdout is 0.59 to 1.32 annual
+4-bit, CPU. Interim result (2026-11-12, `docs/results/v17/llm_study_interim_report.md`): the IC
+difference local_analysts minus rules is -0.046 [95% CI -0.185, +0.067], hit rate 54.6% against
+55.1%, fallback 0%, both cells admissible; no evidence the model analysts help. `local_all` and
+`critic_on` are still running. The minimum detectable effect on the holdout is 0.59 to 1.32 annual
 Sharpe (pre-registration, iid approximation), so a null there is weak evidence against a small gain.
 
 **Questions.**
@@ -2482,9 +2488,11 @@ both raters say "yes" often, chance agreement is already high and kappa is 0.43 
 interval of about [0.07, 0.76] (invented labels, arithmetic). Thirty items cannot tell a fair
 judge from a good one.
 
-**Result.** The local calibration run of the judge (30 items) is pending as a published
-result: its output file is not committed to this repository yet, so no kappa is quoted here.
-Commands: recipe 117.
+**Result.** The local calibration run (`docs/results/v17/agreement.json`, n = 30): the
+`llama3.1` judge's kappa is 0.28 on used_facts, 0.68 on no_invented_numbers and 0.30 on
+respected_fence; the deterministic rule checker scores 1.00, 0.81 and 1.00. The judge is weak on
+two of three criteria, and with 30 items even 0.68 has a wide interval, so the rule checker is
+the instrument of record. Commands: recipe 117.
 
 **Questions.**
 - Why is 77 % raw agreement not evidence of a good judge?

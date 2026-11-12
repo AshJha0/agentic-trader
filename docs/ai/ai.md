@@ -46,7 +46,7 @@ book VaR scale, `min_trade_weight`) and the no-trade band. The critic
 (`agentic_trader/agentic/critic.py`) flags any model analyst whose signal differs from its
 `rule_signal` by more than `agentic.critic_divergence` (0.6); with the default
 `critic_weight_rule: "scale"`, `apply_weight_rule` moves the weight to
-`neutral + 0.5 * (weight - neutral)`.
+`neutral + 0.5 * (weight - neutral)` and then runs the same guardrails again on the new weight.
 
 ```mermaid
 flowchart TD
@@ -62,9 +62,10 @@ flowchart TD
     PM --> G["guardrails: shorting, short cap, max position,<br/>VaR cap, book VaR, minimum trade"]
     G --> B["no-trade band"]
     B --> CR{"critic: any model signal more than 0.6<br/>from its rule_signal?"}
-    CR -- yes --> S["weight = neutral + 0.5 x (weight - neutral)"]
+    CR -- yes --> S["weight = neutral + 0.5 x (weight - neutral)<br/>(veto: weight = neutral)"]
     CR -- no --> D["final decision"]
-    S --> D
+    S --> G2["guardrails again (PortfolioManager.guardrails)<br/>record: pre_guardrail, guardrail_clipped,<br/>guardrail_notes"]
+    G2 --> D
 ```
 
 Where this runs: in the harness the critic step always runs and `apply_weight_rule` acts on
@@ -109,7 +110,9 @@ position is flat, and the model is on.
 5. No-trade band: the move from 0 to 0.60 is larger than `rebalance_band` 0.10, so it trades.
 6. Critic: |0.80 - 0.10| = 0.70 > 0.6, so `model_rule_divergence` fails. The weight becomes
    0 + 0.5 x (0.60 - 0) = **+0.30**, the action is recorded as evidence
-   (`critic.weight_rule`), and confidence is multiplied down (`mult` at most 0.7).
+   (`critic.weight_rule`), and confidence is multiplied down (`mult` at most 0.7). The
+   guardrails run again on +0.30; it passes every limit, so `guardrail_clipped` is false and
+   `pre_guardrail` equals `to`.
 
 The rejection in step 3 is tested offline by `test_signal_999_is_rejected_not_clipped`
 (`tests/test_v17_r0_contracts.py`); the critic's weight rule in step 6 by
@@ -117,13 +120,16 @@ The rejection in step 3 is tested offline by `test_signal_999_is_rejected_not_cl
 
 One thing to know when reading `apply_weight_rule`: for equities the default neutral weight is
 1.0 (`risk.neutral_weight.equity`), so "toward neutral" can mean a larger long position. Until
-the fix on branch `fix/critic-guardrails` the rule did not re-run the guardrails afterwards, so
+the fix of 2026-11-12 (v0.19, this release) the rule did not re-run the guardrails afterwards, so
 a scaled or vetoed equity long could end above `max_position` or the VaR cap. It now passes the
 new weight through `PortfolioManager.guardrails`, the same function the PM step uses, and the
 action record says whether they clipped it (`guardrail_clipped`, `guardrail_notes`,
 `pre_guardrail`); a weight that was already admissible is unchanged. The v0.17 LLM study runs
 from the runs checkout on the code from before this fix, so its `critic_on` results reflect the
-old rule. Tests: the `critic_guardrail` cases in `tests/test_v17_governance.py`.
+old rule. Tests: the `critic_guardrail` cases in `tests/test_v17_governance.py` and
+`tests/test_critic_coverage.py` (100% line and branch coverage of `critic.py`, with a property
+test that any weight the rule changed satisfies `max_position`, long-only, the VaR cap and
+`min_trade_weight`). COOKBOOK recipe 134 runs the clip on a fixture.
 
 ## 1. The agents on the desk
 
@@ -480,7 +486,8 @@ does not answer.
 **Status (updated v0.16).** OD-6 was decided on 2026-11-08: a 7-8B 4-bit model on the
 15.6 GB machine is acceptable. The model in use is `qwen2.5:7b-instruct` on CPU through Ollama. It has
 answered desk prompts in v0.15 (text analysts, injection compliance); the v0.16 study cells
-(`local_analysts`, then `local_all`, plus `rules`) are pending: filled when the run finishes. An eighth cell, `local_analysts`,
+(`local_analysts`, then `local_all`, plus `rules`) have an interim result for two cells (section
+10.1); `local_all` and `critic_on` are still running. An eighth cell, `local_analysts`,
 was added in v0.16 and registered in `evaluation.TRIALS` before any run.
 
 **Example: what the study would cost on Claude.** The dry run for 15 names x 40 dates x 2
@@ -499,14 +506,35 @@ facts it was given. Then compare desks, and look at the holdout once.
 
 | Item | Tool | Measures | Result |
 |---|---|---|---|
-| 2.3, 2.5 | `scripts/llm_study.py --first-pass --live` / `--report` | Sharpe minus vol-target control (block bootstrap), fallback share vs 10% cap, fallback by regime and date (chi-square) | pending: filled when the run finishes |
+| 2.3, 2.5 | `scripts/llm_study.py --first-pass --live` / `--report` | Sharpe minus vol-target control (block bootstrap), fallback share vs 10% cap, fallback by regime and date (chi-square); IC and hit rate per decision | INTERIM (2 of 4 cells): IC local_analysts minus rules -0.046 [-0.185, +0.067]; hit rate 54.6% vs 55.1%; Sharpe 1.77 vs 2.28 (control 1.93); fallback 0%, admissible |
 | 2.4 | `scripts/v16_local_study.py recall` | ticker hit rate vs 1/15, month vs 1/72; leaking keys by ablation | pending: filled when the run finishes |
 | 2.6 | `scripts/v16_local_study.py calibration`, `drift` | dispersion (n=5, temperature 0.7), anchoring slope on `rsi14`, drift on 20 states | pending: filled when the run finishes |
-| 2.7 | `scripts/v16_eval.py run/check/judge/agreement` | used facts, invented no numbers, respected fence; judge kappa vs human labels | pending: filled when the run finishes |
+| 2.7 | `scripts/v16_eval.py run/check/judge/agreement` | used facts, invented no numbers, respected fence; judge kappa vs human labels | n=30: `llama3.1` judge kappa 0.28 / 0.68 / 0.30; rule checker 1.00 / 0.81 / 1.00 (`docs/results/v17/agreement.json`) |
 | 2.8 | `docs/evaluation/v16_preregistration_DRAFT.md` | design bar and one holdout look | draft, unsigned |
 
 Evidence class for every row: tool built and tested offline against fakes and fixtures
-(`tests/test_v16_*.py`); no model result yet.
+(`tests/test_v16_*.py`). Rows 2.3/2.5 and 2.7 now carry measured results from the local model
+(evidence class: measured, design period, one 7B model; files in `docs/results/v17/`); the
+others have no model result yet.
+
+**Interim study result (2026-11-12).** From `docs/results/v17/llm_study_interim_report.md`, 300
+decisions per cell on 15 names and 20 design dates, `qwen2.5:7b-instruct` at the analysts:
+
+| cell | IC [95% CI] | hit rate [95% CI] | IC minus rules [95% CI] | Sharpe (secondary) |
+|---|---|---|---|---:|
+| rules | +0.005 [-0.133, +0.146] | 55.1% [45.2%, 65.1%] | n/a | +2.28 |
+| local_analysts | -0.042 [-0.173, +0.101] | 54.6% [43.8%, 64.8%] | -0.046 [-0.185, +0.067] | +1.77 |
+
+The vol-target control's Sharpe is +1.93. No model call fell back or failed the contract, so
+both cells are admissible. Read plainly: the difference is centred below zero and its interval
+includes zero, so there is no evidence the model analysts help. It is interim: `local_all` and
+`critic_on` are still running, and `critic_on` uses the critic code from before the v0.19 fix.
+
+**Judge calibration.** `docs/results/v17/agreement.json`, 30 hand-labelled items. The `llama3.1`
+judge agrees with the labels moderately on no_invented_numbers (kappa 0.68, 26/30) and weakly on
+used_facts (0.28, 20/30) and respected_fence (0.30, 20/30); the deterministic rule checker
+scores 1.00, 0.81 and 1.00. Thirty items is a small sample, so all six figures have wide
+intervals; the judge is not trusted on the two weak criteria.
 
 Every one of the seven model cells in `scripts/llm_study.py` is registered in
 `evaluation.TRIALS` before it is run (PLAN 6.1), so the deflated Sharpe counts all of them;

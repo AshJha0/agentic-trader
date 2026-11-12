@@ -462,8 +462,12 @@ from another model family. LEARN [27](../../LEARN.md#27-a-holdout-is-spent-the-m
 
 The forward paper record (daily since 2026-09-29) is the only unseen data; its single
 pre-registered decision look is at 3,600 sessions, about 14 years
-([pre-registration](../evaluation/v09_preregistration.md)). The judge's calibration result is
-pending: its output file is not committed yet, so no kappa is quoted.
+([pre-registration](../evaluation/v09_preregistration.md)). The judge's calibration
+(`docs/results/v17/agreement.json`, n = 30) gives a `llama3.1` kappa of 0.28, 0.68 and 0.30 on
+used_facts, no_invented_numbers and respected_fence, against 1.00, 0.81 and 1.00 for the
+deterministic rule checker: weak on two criteria, from a small sample. The interim study report
+(`docs/results/v17/llm_study_interim_report.md`) puts the IC difference local_analysts minus
+rules at -0.046 [95% CI -0.185, +0.067]: no evidence the model analysts help.
 
 ### Offline exercise
 

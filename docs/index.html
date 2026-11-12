@@ -105,8 +105,9 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
        <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a> under v0.16 to v0.19, all marked unreleased. The current round
        makes long local-model runs survivable: resumable checkpoints, bounded retries, and provider misses
        recorded as counted skips, with a cell that skips more than 10% of its units ruled inadmissible by the
-       <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration_DRAFT.md">draft pre-registration</a>. That is code and
-       offline tests only; no model result from the v0.16 study is published yet, and none is quoted on this page.</p>
+       <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration_DRAFT.md">draft pre-registration</a>. The round also makes the critic's weight rule re-apply the firm limits.
+       The first interim study result is in (below, and in
+       <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">the interim report</a>).</p>
   </div>
 
   <h2 id="conclusions">Standing conclusions</h2>
@@ -130,8 +131,18 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
           A Sharpe near 1 needs years of it before an interval excludes zero.</li>
       <li><strong>The model's contribution is not yet measured at scale.</strong> The one LLM run (v0.5.1, five
           stocks, one quarter, $4) had the same Sharpe as the rules with half the exposure, under an engine
-          since replaced. The v0.16 local-model study was registered in the trials list before any run; its results
-          will be published from result files when they exist.</li>
+          since replaced.</li>
+      <li><strong>Interim: no evidence the local model's analysts help.</strong> With <code>qwen2.5:7b-instruct</code>
+          at the analysts, 300 decisions on 15 names and 20 design dates, the IC difference against the rules
+          desk is −0.046 [95% CI −0.185, +0.067]; hit rate 54.6% against 55.1%; secondary Sharpe 1.77 against
+          2.28 for the rules and 1.93 for the vol-target control; 0% fallback, so the cell is admissible.
+          INTERIM: <code>local_all</code> and <code>critic_on</code> are still running, and <code>critic_on</code>
+          uses the critic from before the v0.19 fix
+          (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">report</a>).</li>
+      <li><strong>The local judge is weak.</strong> Against 30 hand labels the <code>llama3.1</code> judge's kappa is
+          0.28 (used facts), 0.68 (no invented numbers) and 0.30 (respected fence); the deterministic rule checker
+          scores 1.00, 0.81 and 1.00. Thirty items is a small sample
+          (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/agreement.json">agreement.json</a>).</li>
     </ul>
   </div>
 
@@ -156,12 +167,15 @@ flowchart TD
     B --> CR{"critic: model vs rules<br/>diverge by more than 0.6?"}
     CR -- yes --> S["weight moved halfway<br/>toward neutral"]
     CR -- no --> D["final decision"]
-    S --> D
+    S --> G2["guardrails again<br/>(v0.19 fix)"]
+    G2 --> D
 </pre></div>
   <p class="caption">Code: <code>agents/analysts.py</code> (<code>Analyst.run</code>), <code>agents/base.py</code>
      (<code>ask_json</code>), <code>agents/risk.py</code> (<code>PortfolioManager</code>),
      <code>agentic/critic.py</code> (<code>apply_weight_rule</code>, default <code>scale</code> 0.5). The critic acts on
-     the weight in the harness, and on the plain graph path only with <code>agentic.critic_in_graph</code> on.</p>
+     the weight in the harness, and on the plain graph path only with <code>agentic.critic_in_graph</code> on.
+     Neutral is 1.0 for equities, so moving toward it can enlarge a long; since v0.19 the moved weight goes
+     through the same guardrails again and the record says whether they clipped it.</p>
 
   <h3>One backtest: from bars to a statistic you can trust</h3>
   <div class="diagram"><pre class="mermaid">
@@ -213,8 +227,8 @@ flowchart TB
          Code and offline tests; no model run.</p></div>
     <div class="card"><h3>v0.16 to v0.18: the LLM study</h3>
       <p>A study of what a local 7B model adds, cell by cell against the rules desk, with a recall
-         audit, calibration, an eval set and a judge from another family. The runs take days on CPU;
-         results are pending and none is quoted here.</p></div>
+         audit, calibration, an eval set and a judge from another family. Interim: the model analysts
+         show no IC gain over the rules (−0.046 [−0.185, +0.067]); two cells are still running.</p></div>
     <div class="card"><h3>v0.14 and v0.15: risk, leakage, governance</h3>
       <p>FHS and EWMA VaR, purged walk-forward with a Student-t gate and a leak canary, a paper OMS,
          fenced filing text, gated retrieval, signed approvals and record/replay. Details in the
