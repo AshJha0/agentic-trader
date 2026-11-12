@@ -116,9 +116,14 @@ The rejection in step 3 is tested offline by `test_signal_999_is_rejected_not_cl
 `tests/test_v17_governance.py`.
 
 One thing to know when reading `apply_weight_rule`: for equities the default neutral weight is
-1.0 (`risk.neutral_weight.equity`), so "toward neutral" can mean a larger long position, and the
-rule does not re-run the guardrails afterwards. Its docstring relies on the strategic weight
-being admissible under the firm limits.
+1.0 (`risk.neutral_weight.equity`), so "toward neutral" can mean a larger long position. Until
+the fix on branch `fix/critic-guardrails` the rule did not re-run the guardrails afterwards, so
+a scaled or vetoed equity long could end above `max_position` or the VaR cap. It now passes the
+new weight through `PortfolioManager.guardrails`, the same function the PM step uses, and the
+action record says whether they clipped it (`guardrail_clipped`, `guardrail_notes`,
+`pre_guardrail`); a weight that was already admissible is unchanged. The v0.17 LLM study runs
+from the runs checkout on the code from before this fix, so its `critic_on` results reflect the
+old rule. Tests: the `critic_guardrail` cases in `tests/test_v17_governance.py`.
 
 ## 1. The agents on the desk
 
