@@ -219,7 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
     kp = sub.add_parser("kpi", help="KPI table of model vs rules control from decision records (JSONL)")
     kp.add_argument("path", help="JSONL of decision records (see agentic_trader.kpi)")
     kp.add_argument("--bins", type=int, default=10, help="calibration bins on [0, 1]")
-    kp.add_argument("--ppy", type=float, default=252.0, help="periods per year for Sharpe")
+    kp.add_argument("--ppy", type=float, default=None,
+                    help="periods per year for Sharpe (default: inferred from the decision dates)")
     kp.add_argument("--json", action="store_true", help="print the full result as JSON")
     kp.set_defaults(func=cmd_kpi)
 
