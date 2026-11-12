@@ -2844,7 +2844,7 @@ reasoning. Check that the run evidence shows `anonymized: false` only on the con
 
 Recipes 131 to 135 run offline in CI. 131 is the v0.19 robustness round
 (`agentic_trader/checkpoint.py`, `agentic_trader/study_robust.py`, the skip rule in
-`docs/evaluation/v16_preregistration_DRAFT.md`); 132 and 133 are exercises for the
+`docs/evaluation/v16_preregistration.md`); 132 and 133 are exercises for the
 [AI learning path](docs/learn/ai_learning_path.md); 134 shows the critic fix and 135 the policy
 gate. Every number they print comes from a
 synthetic fixture or plain arithmetic.

@@ -2132,7 +2132,7 @@ chance 0.067, and P(X >= 20) under H0 is 0.046: weak evidence of leakage, enough
 ablation and drop whichever fact key carries it. (Illustrative numbers, not a result.)
 
 **In the repo.** `scripts/v16_local_study.py`, `scripts/v16_eval.py`, `scripts/llm_study.py`,
-`docs/evaluation/v16_preregistration_DRAFT.md`; recipes 114-117. Model: `qwen2.5:7b-instruct`,
+`docs/evaluation/v16_preregistration.md`; recipes 114-117. Model: `qwen2.5:7b-instruct`,
 4-bit, CPU. Interim result (2026-11-12, `docs/results/v17/llm_study_interim_report.md`): the IC
 difference local_analysts minus rules is -0.046 [95% CI -0.185, +0.067], hit rate 54.6% against
 55.1%, fallback 0%, both cells admissible; no evidence the model analysts help. `local_all` and
@@ -2410,7 +2410,7 @@ connections and HTTP 5xx with the same request body, and raises `LocalLLMUnavail
 budget is spent, so a dead server stops the run instead of turning every later row into a
 rules fallback. `study_robust.retry_provider` retries a provider miss three times and the
 runner then writes a skipped row with its reason. The pre-registration
-(`docs/evaluation/v16_preregistration_DRAFT.md`, "Skipped units") requires N to be quoted with
+(`docs/evaluation/v16_preregistration.md`, "Skipped units") requires N to be quoted with
 its skip count, counts skips apart from fallbacks, and makes a cell with more than 10 % of its
 units skipped inadmissible (`llm_study.cell_metrics`: `skipped`, `skip_share`).
 

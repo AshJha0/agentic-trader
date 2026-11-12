@@ -1,7 +1,7 @@
 # Amendment record for the v0.16 pre-registration, 2026-11-12
 
 This page records what was changed in
-[the pre-registration](v16_preregistration_DRAFT.md) on 2026-11-12, why, and what had already
+[the pre-registration](v16_preregistration.md) on 2026-11-12, why, and what had already
 been seen. It exists so that a reader can check the amendment was made before the cells it
 governs produced any data, and can see exactly what moved.
 
