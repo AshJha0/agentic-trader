@@ -80,8 +80,9 @@ def test_session_arithmetic():
 # ---------------------------------------------------------------- evidence_bounds
 
 def test_sessions_needed_scaling():
-    assert eb.sessions_needed(0.35) == pytest.approx(1167)            # effect equal to the half-width
-    assert math.ceil(eb.sessions_needed(0.2)) == 3574                  # the documented figure
+    # round 2 (C3): power=0.5 is the pre-round-2 rule (half-width equal to the effect)
+    assert eb.sessions_needed(0.35, power=0.5) == pytest.approx(1167)  # effect equal to the half-width
+    assert math.ceil(eb.sessions_needed(0.2, power=0.5)) == 3574       # the documented (50 % power) figure
     assert eb.sessions_needed(0.1) == pytest.approx(4 * eb.sessions_needed(0.2))  # 1/sqrt(n)
 
 
@@ -99,7 +100,7 @@ def test_nth_session_skips_holidays_and_weekends():
 
 
 def test_decision_horizon_fields():
-    h = eb.decision_horizon(0.35, start=date(2024, 12, 24))
+    h = eb.decision_horizon(0.35, start=date(2024, 12, 24), power=0.5)
     assert h["sessions"] == 1167
     assert h["years"] == pytest.approx(1167 / 252)
     assert date.fromisoformat(h["decision_date"]) > date(2029, 1, 1)

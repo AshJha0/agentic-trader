@@ -270,8 +270,9 @@ def test_rebalance_keeps_default_for_noise_and_half_life_edge_cases():
 
 # ---------------------------------------------------------------- B6 / B8 bounds
 def test_decision_horizon_from_prereg_numbers():
-    assert sessions_needed(0.2) == pytest.approx(1167 * (0.35 / 0.2) ** 2)
-    h = decision_horizon(0.2)
+    # round 2 (C3): the published 3,574 sessions is the 50 % power figure
+    assert sessions_needed(0.2, power=0.5) == pytest.approx(1167 * (0.35 / 0.2) ** 2)
+    h = decision_horizon(0.2, power=0.5)
     assert h["sessions"] == 3574 and 14.0 < h["years"] < 14.4
     assert h["decision_date"].startswith("2040-")
 
