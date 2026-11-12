@@ -15,7 +15,7 @@ This is one track of a series. The modules titled LLMs, Agents and the harness, 
 RAG, Classical ML, Honest AI evaluation and Local models share their titles and headings with
 the matching track of the sibling project AgenticAICashEquities
 ([lesson index](https://github.com/AshJha0/AgenticAICashEquities/blob/main/docs/learn/ai/README.md),
-being published at the time of writing). The other three modules are specific to this repo.
+coming: not live yet). The other three modules are specific to this repo.
 
 1. [Agents and the harness](#1-agents-and-the-harness)
 2. [LLMs](#2-llms)
@@ -148,12 +148,11 @@ calls fell back or failed the contract. The run header pins the model digest, an
 
 ### Worked example from this repo
 
-`SECONDS_PER_CALL = (50, 100)` is the planning range on this machine (planning estimate). The
-`decisive_ta` cell is 4,695 calls, so 65 to 130 CPU hours, 2.7 to 5.4 days
-(`docs/review/v017_notes/L10_study_rigour.md`, arithmetic on that estimate). Its dollar cost is
-0, and `--report` shows the Claude list-price equivalent per decision beside it. Measured
-seconds per call are written per run (`seconds_per_call` in the cell metrics) once a run
-finishes.
+The `decisive_ta` cell is 4,695 calls; on a CPU-only laptop a cell of that size is planned
+in days, not hours (`docs/review/v017_notes/L10_study_rigour.md`, planning estimate). Its dollar
+cost is 0, and `--report` shows the Claude list-price equivalent per decision beside it. No
+measured time per call is published yet: it is written per run (`seconds_per_call` in the cell
+metrics) and will be quoted from the committed result files once a run finishes.
 
 ### Offline exercise
 
@@ -234,7 +233,7 @@ approval, and a red team measures how often an injection still moves the answer.
 - Hard limits: `PortfolioManager.guardrails` (short policy, max position, VaR95 cap, book VaR,
   minimum trade) run after the PM's weight.
 - Policy and approvals: `agentic/policy.py`, six rules in order (deny list, capabilities,
-  read-only, argument guards, risk level, allow); a non-read-only or high-risk tool needs approval;
+  argument guards, read-only, risk level, allow; `DEFAULT_RULES`); a non-read-only or high-risk tool needs approval;
   signed N-of-M and Ed25519 approvals are opt-in.
 - Red team: `agentic/redteam_v2.py` with a benign control arm.
 
@@ -292,8 +291,13 @@ LEARN [9](../../LEARN.md#9-tools-as-the-only-way-to-reach-data) and
 
 ### Worked example from this repo
 
-A role without the `PROPOSE_TRADES` capability asking for a state-changing tool is denied by
-the read-only rule, which requires that capability and approval (`agentic/domain.py`, `agentic/policy.py`; code + tests).
+`execution.submit_order` is annotated as not read-only, HIGH risk, and requiring the
+`PROPOSE_TRADES` capability (`_ORDER` in `agentic/servers.py`). A viewer or analyst role that
+asks for it is denied by the second rule, `required_capabilities`, before the read-only rule is
+reached. A role that holds the capability passes that rule, and the read-only rule then returns
+REQUIRE_APPROVAL, so a person (or the configured approval gateway) decides. The six rules and
+their order are `DEFAULT_RULES` in `agentic/policy.py` (diagram 44 in
+[DIAGRAMS.md](../DIAGRAMS.md#44-policy-rule-order); code + tests).
 
 ### Offline exercise
 

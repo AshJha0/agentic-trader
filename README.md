@@ -11,7 +11,7 @@
 | [AI learning path](docs/learn/ai_learning_path.md) | Ten modules on the kinds of AI used here (agents, LLMs, local models, contracts, guardrails, tools, RAG, memory, classical ML, evaluation), each with an offline exercise |
 | [LEARN.md](LEARN.md) | 68 concepts: how the repo implements them, real numbers, questions |
 | [COOKBOOK.md](COOKBOOK.md) | 133 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117) and the batched walk-forward (118) and the KPI table (119), and the v0.17 recipes for the second review's fixes (120-130), and the v0.19 recipes for resuming a run, the skip cap, classical ML and judge agreement (131-133); every offline one runs in CI |
-| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 40 diagrams |
+| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 45 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
 
@@ -500,8 +500,9 @@ point in time and gated: on 100 questions over a 34-passage invented corpus, rec
 analysts are in the desk behind `text_analysts` (off by default, v0.15.1). A 150-snippet injection corpus is
 150/150 fenced; on the local qwen2.5:7b-instruct model 21/150 attacks (14%) moved the News analyst's signal (measured, a 7B floor, not Claude). Signed N-of-M approvals (opt-in), deferred tool
 loading, `task --record` / `replay`, and stage SLOs are new. Recipes 106-112 in
-[COOKBOOK.md](COOKBOOK.md); details in [CHANGELOG.md](CHANGELOG.md). Paper trading is unchanged:
-`paper.yml` has no runs yet, and the laptop task still produces the forward record.
+[COOKBOOK.md](COOKBOOK.md); details in [CHANGELOG.md](CHANGELOG.md). Paper trading is unchanged
+by v0.15. Since 2026-11-08 the forward record is produced by `paper.yml` on GitHub Actions
+(five runs to 2026-11-12, all green), and the laptop task is only the fallback.
 
 ## Operations (v0.14)
 
