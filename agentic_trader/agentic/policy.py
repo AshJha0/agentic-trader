@@ -188,7 +188,8 @@ class PolicyEngine:
                  role_capabilities: dict[Role, frozenset[Capability]] | None = None):
         self.config = dict(config or {})
         self.rules = rules
-        self.role_capabilities = role_capabilities or ROLE_CAPABILITIES
+        # ``is None``, not ``or``: an explicitly empty map grants nothing (fail closed).
+        self.role_capabilities = ROLE_CAPABILITIES if role_capabilities is None else role_capabilities
         self.decisions: deque[tuple[str, PolicyDecision]] = deque(maxlen=MAX_DECISIONS_KEPT)
         self._lock = threading.Lock()
 
