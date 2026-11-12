@@ -111,7 +111,10 @@ class StubLLM:
 
 def test_llm_branches_and_guardrails():
     llm = StubLLM(pm_weight=-0.8)  # PM tries to short an equity -> guardrail forces flat
-    g = TradingGraph(CFG, llm=llm, memory=DecisionMemory(None), on_event=lambda *_: None)
+    # Round 1 (A3): the default pm_model_band (0.25) would hold the model near the rules' +1.0;
+    # widen it so the short reaches the guardrail this test is about.
+    cfg = make_config(CFG, risk={"pm_model_band": 2.0})
+    g = TradingGraph(cfg, llm=llm, memory=DecisionMemory(None), on_event=lambda *_: None)
     state, dec = g.propagate("AAPL", "2024-03-01")
     assert all(r.source == "llm" and r.signal == 1.0 for r in state.reports.values())
     assert state.debate.source == "llm" and state.debate.winner == "bull"
