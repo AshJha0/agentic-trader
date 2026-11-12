@@ -211,7 +211,7 @@ flowchart TD
     BL --> LIM["firm limits (diagram 5)"]
     LIM --> BD["no-trade band vs current position"]
     BD --> FIN[/"final weight + ATR stop / target<br/>rebuilt if the direction flipped"/]
-    FIN --> CR["critic multiplier applied<br/>to the confidence (diagram 15)"]
+    FIN --> CR["critic multiplier applied<br/>to the confidence (diagram 15);<br/>a weight it moves is re-checked by the firm limits"]
 ```
 
 ## 5. Portfolio-manager guardrails and the no-trade band
@@ -254,8 +254,9 @@ flowchart LR
     LLM --> J["JSON reply"]
     J --> CLIP["clip / coerce<br/>inf, nan, strings, wrong-side stops"]
     CLIP --> LIM["firm limits after the model<br/>(cannot be overridden)"]
-    LIM --> CRIT["critic: model vs rules divergence<br/>lowers confidence"]
-    CRIT --> OK[bounded decision]
+    LIM --> CRIT["critic: model vs rules divergence<br/>lowers confidence, moves weight toward neutral"]
+    CRIT --> LIM2["firm limits re-applied to a weight<br/>the critic changed"]
+    LIM2 --> OK[bounded decision]
 ```
 
 ## 7. Agentic layer overview
@@ -524,6 +525,8 @@ flowchart TD
     LLM -- yes --> M["concerns + multiplier<br/>clipped to ≤ 1: can only lower"]
     LLM -- no --> OUT
     M --> OUT["CriticReport: checks, multiplier"]
+    OUT --> WR{"divergence flagged and<br/>critic_weight_rule not off?"}
+    WR -- yes --> WS["weight toward neutral (scale or veto),<br/>then PortfolioManager.guardrails again;<br/>weight_action records pre_guardrail,<br/>guardrail_clipped, guardrail_notes"]
     OUT --> VAL["validate_evidence:<br/>drop findings with unresolved ids"]
     VAL --> REP["report: narrative from facts"]
     REP --> NA["number audit:<br/>every figure ≈ a fact at displayed precision<br/>(percent forms, counts included)"]
@@ -1059,7 +1062,9 @@ The rules always answer; a model reply is used only if it passes the role's cont
 (`agents/base.py` `ask_json`, `contracts.py`), and out-of-range values are rejected, not
 clipped. The PM blends the risk views 25/50/25, then the guardrails and the no-trade band run;
 the critic moves the weight halfway toward neutral when a model signal is more than 0.6 from
-its rules (`agentic/critic.py`). Explained with a worked example in
+its rules (`agentic/critic.py`), and a weight the critic changed goes through the same
+guardrails again, because neutral (1.0 for equities by default) can sit above `max_position`
+or the VaR cap (fixed 2026-11-12; `tests/test_critic_coverage.py`). Explained with a worked example in
 [how the AI works](ai/ai.md#one-decision-step-by-step-diagrams-41-and-44-with-a-worked-example).
 
 ```mermaid
@@ -1076,9 +1081,10 @@ flowchart TD
     PM --> G["guardrails: shorting, short cap, max position,<br/>VaR cap, book VaR, minimum trade"]
     G --> B["no-trade band"]
     B --> CR{"critic: any model signal more than 0.6<br/>from its rule_signal?"}
-    CR -- yes --> S["weight = neutral + 0.5 x (weight - neutral)"]
+    CR -- yes --> S["weight = neutral + 0.5 x (weight - neutral)<br/>(veto: weight = neutral)"]
     CR -- no --> D["final decision"]
-    S --> D
+    S --> G2["guardrails again (PortfolioManager.guardrails)<br/>record: pre_guardrail, guardrail_clipped,<br/>guardrail_notes"]
+    G2 --> D
 ```
 
 ## 42. One backtest bar: fill, costs and the bar return

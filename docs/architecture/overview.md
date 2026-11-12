@@ -157,7 +157,8 @@ flowchart LR
     PMG --> CRT{"critic: divergence<br/>above 0.6?"}
     CRT -- yes --> HALF["halfway to neutral"]
     CRT -- no --> FIN["decision"]
-    HALF --> FIN
+    HALF --> G2["guardrails again<br/>(clip recorded)"]
+    G2 --> FIN
 ```
 
 ## Backtesting, research and evaluation
@@ -216,7 +217,9 @@ reachable. The governance steps are appended to any plan, including hand-built o
 cannot schedule state changes; only the executor, under policy, can perform them.
 
 **The critic can only lower confidence.** Deterministic checks are the review; a model may
-add concerns and a multiplier that is clipped to at most 1.
+add concerns and a multiplier that is clipped to at most 1. When it moves the weight toward
+neutral, the new weight passes the PM guardrails again (v0.19), because the equity neutral of
+1.0 can exceed `max_position` or the VaR cap.
 
 **Audits accept rounding, not invention.** A number in the narrative must match a fact when
 the fact is rounded to the number's displayed precision; counts are facts too, so nothing is
