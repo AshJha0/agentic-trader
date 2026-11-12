@@ -8,9 +8,10 @@
 | Guide | For |
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
-| [LEARN.md](LEARN.md) | 65 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 130 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117) and the batched walk-forward (118) and the KPI table (119), and the v0.17 recipes for the second review's fixes (120-130); every offline one runs in CI |
-| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 40 diagrams |
+| [AI learning path](docs/learn/ai_learning_path.md) | Ten modules on the kinds of AI used here (agents, LLMs, local models, contracts, guardrails, tools, RAG, memory, classical ML, evaluation), each with an offline exercise |
+| [LEARN.md](LEARN.md) | 68 concepts: how the repo implements them, real numbers, questions |
+| [COOKBOOK.md](COOKBOOK.md) | 135 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117) and the batched walk-forward (118) and the KPI table (119), and the v0.17 recipes for the second review's fixes (120-130), and the v0.19 recipes for resuming a run, the skip cap, classical ML and judge agreement (131-133), and the critic's guardrail clip and the policy gate (134-135); every offline one runs in CI |
+| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 45 diagrams |
 | [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
 | [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
 
@@ -429,6 +430,30 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
+## v0.19 (unreleased): long runs that survive, skips that are counted
+
+Evidence class: code and offline tests (fakes only); no model was run. Running study chains
+keep their start-of-run code.
+
+- **Resumable runs.** `agentic_trader/checkpoint.py` (append-only JSON lines, fingerprinted
+  header, fsync per unit, torn last line cut); `scripts/v17_exec_lag.py` resumes by default
+  (`--fresh` to restart) and a resumed run writes byte-identical files.
+- **Local model retries.** `local_llm_retry_budget_s` (default 0; 600 s in the study drivers)
+  retries timeouts, refused connections and 5xx with the same request body and raises
+  `LocalLLMUnavailable` when spent, instead of silently falling back to rules.
+- **Provider misses become counted skips.** `agentic_trader/study_robust.py`: three tries, then a
+  skipped row with its reason, retried on resume. The pre-registration rule
+  ([v16 draft](docs/evaluation/v16_preregistration_DRAFT.md), "Skipped units"): N is quoted with
+  its skip count, skips are counted apart from fallbacks, and a cell with more than 10 % skipped
+  is inadmissible; `llm_study --report` shows a `skipped` column.
+- **Trial files.** `scripts/measure_v08.py run_trials` writes atomically and fingerprints its
+  inputs; files written before fingerprints existed are kept, so registered statistics do not move.
+- **Frozen eval set.** `agentic/eval_set.py` reads the paper ledger only up to `LEDGER_CUTOFF`
+  (2026-11-06).
+- Operations guide: [docs/operations/long_runs.md](docs/operations/long_runs.md). Recipes 131-135
+  in [COOKBOOK.md](COOKBOOK.md), lessons 66-68 in [LEARN.md](LEARN.md). Details in
+  [CHANGELOG.md](CHANGELOG.md).
+
 ## v0.18 (unreleased): leftovers closed
 
 Evidence class: code and offline tests; no model was run.
@@ -463,8 +488,36 @@ analyst eval set with deterministic checks and a local judge; and a draft pre-re
 single holdout look. Recipes 114-117 in [COOKBOOK.md](COOKBOOK.md), lesson 56 in
 [LEARN.md](LEARN.md).
 
-**Results: pending: filled when the run finishes.** The runs take days on CPU; no number is reported until they end
-(source of record: `docs/review/PLAN.md` section 9).
+**Interim result (2026-11-12, two of four cells): no evidence that the model analysts help.**
+Source: [`docs/results/v17/llm_study_interim_report.md`](docs/results/v17/llm_study_interim_report.md)
+(`scripts/llm_study.py --report`, 300 decisions per cell, 15 names x 20 dates; evidence class:
+measured on real prices, design period, one local model).
+
+| cell | IC, 20-bar forward return [95% CI] | hit rate | Sharpe (secondary) | fallback | admissible |
+|---|---|---:|---:|---:|---|
+| rules | +0.005 [-0.133, +0.146] | 55.1% | +2.28 | 0.0% | yes |
+| local_analysts | -0.042 [-0.173, +0.101] | 54.6% | +1.77 | 0.0% | yes |
+| vol-target control | | | +1.93 | | |
+
+The primary measure is the difference in IC, local_analysts minus rules: **-0.046 [95% CI
+-0.185, +0.067]**. The interval includes zero and its centre is negative, so these data give no
+reason to think putting `qwen2.5:7b-instruct` at the analysts improves the desk's ranking of
+names. The Sharpe ratios are secondary and noisy (local_analysts minus control -0.16 [-0.85,
++0.30]). INTERIM: `local_all` and `critic_on` are still running, and `critic_on` runs on the code
+from before the v0.19 critic fix, so it measures the old weight rule. The holdout is not touched.
+Twenty decisions per cell without 20 forward bars are left out of the IC and listed in the report.
+
+**Judge calibration (n = 30, [`agreement.json`](docs/results/v17/agreement.json)).** Cohen's
+kappa against hand labels, `llama3.1` judge versus the deterministic rule checker:
+
+| criterion | judge kappa (agree) | rule checker kappa (agree) |
+|---|---:|---:|
+| used_facts | 0.28 (20/30) | 1.00 (30/30) |
+| no_invented_numbers | 0.68 (26/30) | 0.81 (28/30) |
+| respected_fence | 0.30 (20/30) | 1.00 (30/30) |
+
+The judge is weak on two of the three criteria, and 30 items give wide intervals, so its
+verdicts are not used where the rule checker exists.
 
 ## v0.15 (v0.15.1, 2026-11-08): text, retrieval and an auditable agent
 
@@ -475,8 +528,9 @@ point in time and gated: on 100 questions over a 34-passage invented corpus, rec
 analysts are in the desk behind `text_analysts` (off by default, v0.15.1). A 150-snippet injection corpus is
 150/150 fenced; on the local qwen2.5:7b-instruct model 21/150 attacks (14%) moved the News analyst's signal (measured, a 7B floor, not Claude). Signed N-of-M approvals (opt-in), deferred tool
 loading, `task --record` / `replay`, and stage SLOs are new. Recipes 106-112 in
-[COOKBOOK.md](COOKBOOK.md); details in [CHANGELOG.md](CHANGELOG.md). Paper trading is unchanged:
-`paper.yml` has no runs yet, and the laptop task still produces the forward record.
+[COOKBOOK.md](COOKBOOK.md); details in [CHANGELOG.md](CHANGELOG.md). Paper trading is unchanged
+by v0.15. Since 2026-11-08 the forward record is produced by `paper.yml` on GitHub Actions
+(five runs to 2026-11-12, all green), and the laptop task is only the fallback.
 
 ## Operations (v0.14)
 
@@ -504,8 +558,8 @@ Steps only the repository owner can take on GitHub:
 ## Tests
 
 ```bash
-pytest -q                                   # 1494 passed, 2 skipped on the numpy backend at the v0.15 round (879 at v0.12.0 on the C++ backend) incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
-pytest --cov=agentic_trader --cov-report=term-missing   # 95% line coverage on the numpy backend at v0.8.0 (a report, not a gate); weakest file data/yahoo.py at 75% (network branches); it counts the numpy backend (quant/pycore.py) only: the C++ core in cpp/ is checked by the parity tests, not measured by coverage
+pytest -q -m "not slow"                     # CI, Python 3.12, numpy backend, v0.19 branch (run 43228695881): 2073 passed, 53 skipped, 17 slow deselected; incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
+pytest --cov=agentic_trader --cov-report=term-missing   # 94.01% line+branch coverage in that CI run (16,582 statements, 4,966 branches; 744 lines and 457 branch arcs missed); CI fails below 90% ([tool.coverage.report] fail_under); it counts the numpy backend (quant/pycore.py) only: the C++ core in cpp/ is checked by the parity tests, not measured by coverage
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 839 passed, 40 skipped (C++-only tests)
 ctest --test-dir build -C Release           # 26 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests
 python scripts/run_cookbook.py --offline && python scripts/check_mermaid.py && python scripts/check_links.py   # the docs, as CI runs them

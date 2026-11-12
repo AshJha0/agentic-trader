@@ -681,7 +681,8 @@ class AgentHarness:
             run.critic = critic
             # v0.17 R2.1: a flagged divergence acts on the weight that sizing reads, not only
             # on confidence; the action is recorded as evidence beside the decision.
-            act = apply_weight_rule(run.trading_state, critic, self.config)
+            act = apply_weight_rule(run.trading_state, critic, self.config,
+                                    run.step_results.get("risk_facts"))
             if act is not None:
                 wev = run.evidence.record(EvidenceType.DECISION, "critic.weight_rule",
                                           f"critic {act['rule']}: weight {act['from']:+.2f} -> {act['to']:+.2f}",

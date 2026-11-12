@@ -2839,3 +2839,203 @@ Since v0.17 any run with a model is anonymised automatically (`llm_anonymize` is
 company, run the same cell twice: once as is, and once with
 `{"allow_deanonymized_llm": true, "llm_anonymize": false}`. A gap between the two is memory, not
 reasoning. Check that the run evidence shows `anonymized: false` only on the control.
+
+## v0.19: long runs, provider misses and the learning path
+
+Recipes 131 to 135 run offline in CI. 131 is the v0.19 robustness round
+(`agentic_trader/checkpoint.py`, `agentic_trader/study_robust.py`, the skip rule in
+`docs/evaluation/v16_preregistration_DRAFT.md`); 132 and 133 are exercises for the
+[AI learning path](docs/learn/ai_learning_path.md); 134 shows the critic fix and 135 the policy
+gate. Every number they print comes from a
+synthetic fixture or plain arithmetic.
+
+### 131. Resume a killed run and read the skipped block
+
+A study that dies half way should restart where it stopped, and a unit the data provider could
+not serve should be counted, not dropped. The checkpoint below loses its last line to a "kill"
+mid-write; reopening it cuts the torn line and keeps the finished units. A provider that fails
+on one unit three times produces a skipped row, and the skip share is checked against the 10 %
+cap of the pre-registration.
+
+```python
+import json
+from pathlib import Path
+from agentic_trader.checkpoint import Checkpoint, CheckpointMismatch
+from agentic_trader.study_robust import ProviderMiss, retry_provider, skip_row
+
+path = Path("run.jsonl")
+header = {"model": "fake", "names": ["AAA", "BBB", "CCC"]}
+ck = Checkpoint(path, header)
+ck.add("AAA", {"signal": 0.4})
+ck.add("BBB", {"signal": -0.1})
+with open(path, "ab") as f:                  # the process dies mid-write
+    f.write(b'{"key": "CCC", "row": {"sig')
+
+ck = Checkpoint(path, header)                # resume: torn line cut, two units kept
+print("done after resume:", len(ck), ck.done("AAA"), ck.done("CCC"))
+try:
+    Checkpoint(path, {**header, "model": "other"})
+except CheckpointMismatch:
+    print("a changed header is refused (rerun with --fresh or a new --out)")
+
+def fetch(name):                             # the provider has no bars for CCC
+    if name == "CCC":
+        raise ValueError("provider returned no bars for CCC")
+    return 100.0
+
+for name in ["CCC"]:
+    try:
+        retry_provider(lambda: fetch(name), label=name, tries=3, sleep=lambda s: None)
+    except ProviderMiss as miss:
+        ck.add(name, skip_row(name, miss.reason, miss.tries))
+
+rows = [json.loads(line)["row"] for line in path.read_text().splitlines()[1:]]
+skipped = [r for r in rows if r.get("skipped")]
+share = len(skipped) / len(rows)
+print(f"N = {len(rows) - len(skipped)} ({len(skipped)} skipped):", skipped[0]["skip_reason"])
+print(f"skip share {share:.0%} -> admissible: {share <= 0.10}")
+assert len(skipped) == 1 and share > 0.10
+```
+
+With three units one skip is 33 %, so this toy cell is inadmissible; in a real cell of 300
+decisions it takes 31 skips to cross the cap. On a study file, `scripts/llm_study.py --report`
+reads the persistent skips (`load_skips`: a skip later completed by a resume is dropped) and
+prints a `skipped` column beside `fallback` and `admissible`. Skips do not count toward the
+fallback share; they have their own cap. How to restart the real chains after a reboot is in
+[docs/operations/long_runs.md](docs/operations/long_runs.md).
+
+### 132. Classical ML used by the desk: an HMM regime and a conformal interval
+
+Two of the classical models behind the opt-in switches `regime` and `conformal` in
+`config.py` (both off by default). The HMM is fitted by Baum-Welch on a synthetic series whose
+volatility switches half way; the conformal half-width is the rank-`ceil((n+1)(1-alpha))`
+absolute residual of a calibration set.
+
+```python
+import numpy as np
+from agentic_trader.regime import fit_hmm
+from agentic_trader.combine import conformal_halfwidth
+
+rng = np.random.default_rng(0)
+calm, stormy = rng.normal(0, 0.5, 300), rng.normal(0, 2.0, 300)
+x = np.log(np.abs(np.concatenate([calm, stormy])) + 1e-3).reshape(-1, 1)
+hmm = fit_hmm(x, k=2)
+lab = hmm.labels(x)
+print("share labelled high-vol, first half:", round(float(lab[:300].mean()), 2),
+      "second half:", round(float(lab[300:].mean()), 2))
+assert lab[300:].mean() > lab[:300].mean()
+
+resid = rng.normal(0, 1, 99)
+hw = conformal_halfwidth(resid, alpha=0.2)
+print(f"80% conformal half-width from 99 residuals: {hw:.2f} (normal theory 1.28)")
+assert conformal_halfwidth(resid[:3], alpha=0.2) is None   # too few points for that rank
+```
+
+The labels are a filter on one noisy feature, so some days in each half are mislabelled; the
+desk uses several features (`regime.regime_features`) and refits only on bars up to the as-of.
+
+### 133. LLM-as-judge: agreement with labels before trusting the judge
+
+A judge is only useful if it agrees with human labels well beyond chance. Cohen's kappa
+corrects raw agreement for chance; the bootstrap interval shows how little 30 items pin it
+down. The labels here are invented for the exercise.
+
+```python
+from agentic_trader.agentic.judge_kit import kappa_bootstrap
+
+human = [True] * 20 + [False] * 10
+judge = [True] * 18 + [False] * 2 + [True] * 5 + [False] * 5   # 23 of 30 agree
+r = kappa_bootstrap(judge, human, n_boot=500)
+print(f"agree {r['agree']}/{r['n']}, kappa {r['kappa']:.2f}, "
+      f"95% interval [{r['ci_low']:.2f}, {r['ci_high']:.2f}]")
+assert 0.3 < r["kappa"] < 0.6
+```
+
+77 % raw agreement is a kappa of 0.43 here, because a judge that says "yes" two times in three
+would agree often by chance alone. The real calibration commands are in recipe 117.
+
+### 134. The critic's weight rule, then the guardrails again
+
+**Plain idea.** When a model analyst disagrees sharply with its own rules, the critic moves the
+position toward the strategic neutral weight. For equities that neutral is 1.0 by default
+(`risk.neutral_weight.equity`), so "toward neutral" can make a long larger, and the result must
+pass the firm limits again. **Precisely.** `critic.apply_weight_rule` computes
+`neutral + critic_weight_scale * (weight - neutral)` (or `neutral` under `veto`), then passes a
+changed weight through `PortfolioManager.guardrails`; the action record keeps the weight before
+that step (`pre_guardrail`), whether the guardrails changed it (`guardrail_clipped`) and why
+(`guardrail_notes`). Fixed in v0.19; tests in `tests/test_critic_coverage.py` and
+`tests/test_v17_governance.py`. **Worked example.** A synthetic AAPL fixture: the model analyst
+says +0.9, its rules say -0.1 (a gap of 1.0, above the 0.6 threshold), the PM weight is +0.30 and
+`max_position` is 0.5. The rule gives 1.0 + 0.5 x (0.30 - 1.0) = 0.65; the cap clips it to 0.50.
+
+```python
+from datetime import date
+import numpy as np
+import pandas as pd
+from agentic_trader import make_config
+from agentic_trader.agentic import critic
+from agentic_trader.agentic.critic import apply_weight_rule
+from agentic_trader.instruments import Instrument
+from agentic_trader.state import Action, AnalystReport, FinalDecision, TradingState
+
+as_of = date(2024, 3, 1)
+idx = pd.bdate_range(end=as_of, periods=60)
+c = 100 + np.arange(60.0)                                  # a synthetic rising price path
+bars = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": 1e6}, index=idx)
+state = TradingState(Instrument.parse("AAPL"), as_of, bars)
+state.reports["news"] = AnalystReport("news", 0.9, 0.6, "s", source="llm", rule_signal=-0.1)
+state.decision = FinalDecision("AAPL", as_of, Action.BUY, 0.30, 0.7, 150.0, 200.0, "fixture")
+
+cfg = make_config(memory_path=None,
+                  agentic={"critic_weight_rule": "scale", "critic_weight_scale": 0.5, "llm_critic": False},
+                  risk={"neutral_weight": {"equity": 1.0, "fx": 0.0}, "max_position": 0.5, "max_var_95": 0.0})
+report = critic.Critic(cfg).review(state, [], critic.EvidenceStore())
+act = apply_weight_rule(state, report, cfg)
+print(f"from {act['from']:.2f}  rule gives {act['pre_guardrail']:.2f}  after guardrails {act['to']:.2f}")
+print("clipped:", act["guardrail_clipped"], "|", act["guardrail_notes"])
+assert report.divergence_flagged
+assert abs(act["pre_guardrail"] - 0.65) < 1e-9 and abs(act["to"] - 0.5) < 1e-9
+assert act["guardrail_clipped"] and state.decision.target_weight == act["to"]
+```
+
+Before the fix the decision would have ended at 0.65, above the 0.5 cap. `max_var_95` is set to 0
+in this fixture to switch the VaR cap off, so only `max_position` binds.
+
+### 135. The policy gate deciding a tool request
+
+**Plain idea.** Every tool call an agent makes is checked by fixed rules before it runs, and
+the first rule that has an opinion decides. **Precisely.** `PolicyEngine.evaluate(request, tool,
+role)` runs `DEFAULT_RULES` in order: deny list, required capabilities, argument guards,
+read-only, risk level, then allow (`agentic_trader/agentic/policy.py`, diagram 44). Since v0.19
+an explicit empty `role_capabilities` map grants nothing rather than falling back to the
+defaults. **Worked example.** Five requests against one engine, one per deciding rule.
+
+```python
+from agentic_trader.agentic.domain import (Capability, PolicyOutcome, RiskLevel, Role, ToolAnnotations,
+                                           ToolDescriptor, ToolRequest)
+from agentic_trader.agentic.policy import PolicyEngine
+
+def tool(name, read_only=True, risk=RiskLevel.LOW, needs=frozenset({Capability.READ_MARKET_DATA})):
+    return ToolDescriptor(name, name.split(".")[0], "t", {}, ToolAnnotations(read_only, risk, needs))
+
+eng = PolicyEngine({"deny_tools": ["ops.wipe"], "symbol_universe": ["aapl", "msft"]})
+cases = [
+    (Role.ADMIN, tool("ops.wipe"), {}),                                          # deny list
+    (Role.VIEWER, tool("analytics.run", needs=frozenset({Capability.RUN_ANALYTICS})), {}),
+    (Role.ANALYST, tool("market_data.prices"), {"symbol": "ZZZZ"}),              # outside the universe
+    (Role.TRADER, tool("execution.submit_order", False, RiskLevel.HIGH), {"quantity": 5}),
+    (Role.ANALYST, tool("market_data.prices"), {"symbol": "AAPL"}),
+]
+got = []
+for role, t, args in cases:
+    d = eng.evaluate(ToolRequest(t.name, args, "corr-1"), t, role)
+    got.append((d.outcome, d.rule))
+    print(f"{role.value:8} {t.name:24} -> {d.outcome.value:16} by {d.rule}")
+assert got == [(PolicyOutcome.DENY, "deny_list"), (PolicyOutcome.DENY, "required_capabilities"),
+               (PolicyOutcome.DENY, "argument_guard"), (PolicyOutcome.REQUIRE_APPROVAL, "read_only"),
+               (PolicyOutcome.ALLOW, "default_allow")]
+assert PolicyEngine(role_capabilities={}).capabilities(Role.ADMIN) == frozenset()
+```
+
+The order request is parked for approval by the read-only rule, not the risk-level rule: the
+trader holds `PROPOSE_TRADES`, so the state-changing tool is allowed to ask, and a human decides.

@@ -7,9 +7,22 @@
 <!-- GitHub Pages landing page. If the repository is renamed, update the
      github.com/AshJha0/agentic-trader links below to match. -->
 <style>
-:root{--teal:#16697a;--green:#16a085;--ink:#1a1a2e;--muted:#556}
-body{font-family:'Segoe UI',Arial,sans-serif;margin:0;color:var(--ink);background:#f7f8fa}
-header{background:var(--teal);color:#fff;padding:3rem 2rem}
+:root{--teal:#16697a;--green:#16a085;--ink:#1a1a2e;--muted:#556;--bg:#f7f8fa;--surface:#fff;
+  --line:#e3e8ec;--row:#eef1f4;--th:#f3f7f8;--note:#fff8ec;--code-bg:#10222a;--code-ink:#d7e3ea;
+  --head-bg:#16697a;--head-ink:#fff;--link:#16697a;--shadow:rgba(0,0,0,.12)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--teal:#5fc4d6;--green:#3fbf9f;
+  --ink:#e4e8ee;--muted:#a3adb8;--bg:#11161c;--surface:#1a2129;--line:#2c3640;--row:#26303a;--th:#1f2932;
+  --note:#2a2418;--code-bg:#0b1419;--code-ink:#d7e3ea;--head-bg:#0f4c58;--head-ink:#f2f6f8;--link:#7fd3e2;
+  --shadow:rgba(0,0,0,.5)}}
+:root[data-theme="dark"]{--teal:#5fc4d6;--green:#3fbf9f;--ink:#e4e8ee;--muted:#a3adb8;--bg:#11161c;
+  --surface:#1a2129;--line:#2c3640;--row:#26303a;--th:#1f2932;--note:#2a2418;--code-bg:#0b1419;
+  --code-ink:#d7e3ea;--head-bg:#0f4c58;--head-ink:#f2f6f8;--link:#7fd3e2;--shadow:rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+html,body{overflow-x:hidden}
+body{font-family:'Segoe UI',Arial,sans-serif;margin:0;color:var(--ink);background:var(--bg);line-height:1.5}
+a{color:var(--link)}
+header{background:var(--head-bg);color:var(--head-ink);padding:2.5rem 0}
+header a{color:var(--head-ink)}
 header h1{margin:0 0 .5rem;font-size:2.2rem}
 header p{margin:0;max-width:52rem;opacity:.92;line-height:1.5}
 .wrap{max-width:64rem;margin:0 auto;padding:0 2rem}
@@ -17,32 +30,39 @@ nav{margin-top:1.2rem}
 nav a{display:inline-block;background:var(--green);color:#fff;text-decoration:none;
   padding:.55rem 1.1rem;margin:.25rem .6rem .25rem 0;border-radius:4px;font-weight:600}
 nav a.secondary{background:rgba(255,255,255,.15)}
-h2{color:var(--teal);border-bottom:2px solid #e3e8ec;padding-bottom:.3rem;margin-top:2.5rem}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(17rem,1fr));gap:1rem;margin:1.2rem 0}
-.card{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12);padding:1rem 1.2rem;border-radius:4px}
+h2{color:var(--teal);border-bottom:2px solid var(--line);padding-bottom:.3rem;margin-top:2.5rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(17rem,100%),1fr));gap:1rem;margin:1.2rem 0}
+.card{background:var(--surface);box-shadow:0 1px 3px var(--shadow);padding:1rem 1.2rem;border-radius:4px;min-width:0}
 .card h3{margin:.1rem 0 .5rem;font-size:1.02rem;color:var(--teal)}
 .card p{margin:0;font-size:.9rem;color:var(--muted);line-height:1.45}
-pre{background:#10222a;color:#d7e3ea;padding:1rem 1.2rem;border-radius:4px;overflow-x:auto;
-  font-size:.85rem;line-height:1.5}
-.numbers{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12);border-radius:4px;
+pre{background:var(--code-bg);color:var(--code-ink);padding:1rem 1.2rem;border-radius:4px;overflow-x:auto;
+  font-size:.85rem;line-height:1.5;max-width:100%}
+.numbers{background:var(--surface);box-shadow:0 1px 3px var(--shadow);border-radius:4px;overflow-wrap:anywhere;
   padding:1rem 1.4rem;font-family:Consolas,monospace;font-size:.88rem;line-height:1.7}
-.honest{background:#fff8ec;border-left:4px solid var(--green);padding:.8rem 1.2rem;
+.honest{background:var(--note);border-left:4px solid var(--green);padding:.8rem 1.2rem;
   border-radius:4px;font-size:.92rem;line-height:1.55;margin:1.2rem 0}
-.boundary{display:grid;grid-template-columns:repeat(auto-fill,minmax(13rem,1fr));gap:.6rem;margin:1rem 0}
-.boundary div{background:#fff;border-top:3px solid var(--green);box-shadow:0 1px 3px rgba(0,0,0,.12);
+.boundary{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(13rem,100%),1fr));gap:.6rem;margin:1rem 0}
+.boundary div{background:var(--surface);border-top:3px solid var(--green);box-shadow:0 1px 3px var(--shadow);
   border-radius:4px;padding:.7rem .9rem;font-size:.88rem;line-height:1.4}
 .boundary strong{display:block;color:var(--teal);margin-bottom:.2rem}
-.tablewrap{overflow-x:auto;margin:1rem 0}
-table.results{border-collapse:collapse;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12);
+.tablewrap{overflow-x:auto;margin:1rem 0;max-width:100%}
+table.results{border-collapse:collapse;background:var(--surface);box-shadow:0 1px 3px var(--shadow);
   border-radius:4px;font-size:.88rem;min-width:36rem;width:100%}
-table.results th,table.results td{padding:.45rem .7rem;text-align:right;border-bottom:1px solid #eef1f4}
+table.results th,table.results td{padding:.45rem .7rem;text-align:right;border-bottom:1px solid var(--row)}
 table.results th:first-child,table.results td:first-child{text-align:left}
-table.results th{color:var(--teal);font-weight:600;background:#f3f7f8}
+table.results th{color:var(--teal);font-weight:600;background:var(--th)}
 table.results tr.agent td{font-weight:600}
 .caption{font-size:.85rem;color:var(--muted);margin:.3rem 0 1rem}
+.state{background:var(--surface);box-shadow:0 1px 3px var(--shadow);border-radius:4px;padding:1rem 1.4rem;margin:1.2rem 0}
+.state ul{margin:.4rem 0;padding-left:1.2rem}
+.state li{margin:.35rem 0}
+.diagram{background:var(--surface);box-shadow:0 1px 3px var(--shadow);border-radius:4px;padding:1rem;margin:1rem 0;overflow-x:auto}
+.diagram pre.mermaid{background:transparent;color:var(--ink);padding:0;margin:0;text-align:center}
 details{margin:1.2rem 0}
 details summary{cursor:pointer;color:var(--teal);padding:.5rem 0}
 footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
+@media (max-width:640px){.wrap{padding:0 16px}header{padding:1.6rem 0}header h1{font-size:1.7rem}
+  nav a{padding:.45rem .8rem;margin:.2rem .3rem .2rem 0;font-size:.9rem}.numbers{padding:.8rem}}
 </style>
 </head>
 <body>
@@ -61,6 +81,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     <nav>
       <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md">Learn (guide)</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md">Cookbook</a>
+      <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md">AI learning path</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md">How the AI works</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md">How the quant works</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/architecture/overview.md">Architecture</a>
@@ -76,6 +97,294 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 </header>
 
 <div class="wrap">
+
+<!-- current state -->
+  <h2 id="now">Where the project stands (v0.19, unreleased)</h2>
+  <div class="state">
+    <p>The last released version is v0.15.1 (<code>pyproject.toml</code>); the work since then is in the
+       <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a> under v0.16 to v0.19, all marked unreleased. The current round
+       makes long local-model runs survivable: resumable checkpoints, bounded retries, and provider misses
+       recorded as counted skips, with a cell that skips more than 10% of its units ruled inadmissible by the
+       <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration_DRAFT.md">draft pre-registration</a>. The round also makes the critic's weight rule re-apply the firm limits.
+       The first interim study result is in (below, and in
+       <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">the interim report</a>).</p>
+  </div>
+
+  <h2 id="conclusions">Standing conclusions</h2>
+  <div class="state">
+    <ul>
+      <li><strong>No measurable edge over the fair control.</strong> The rules desk does not beat buy &amp; hold
+          scaled to the same volatility. At v0.11 the 15-sleeve holdout portfolio is at Sharpe 0.91 against 0.86
+          buy &amp; hold and 0.99 vol-target (desk minus vol-target −0.08 [−0.46, +0.30]);
+          <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v011_review.md">v0.11 page</a>.</li>
+      <li><strong>Four research rounds found nothing to adopt.</strong> A multi-asset base, trend and carry
+          streams (v0.9), the desk's tilt as an overlay (v0.10) and a longer design period with a long/short
+          trend stream (v0.12) were all tried on design data; none beat its control
+          (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v012_trend_core.md">v0.12 page</a>).</li>
+      <li><strong>What the desk does reliably is take less risk.</strong> It has about half of buy &amp; hold's
+          drawdown, and so does the vol-targeted control; the drawdown gap against that control is not
+          significant on the 15 core names (v0.8 table further down).</li>
+      <li><strong>Every historical period has been looked at.</strong> The only unseen data is the forward paper
+          record, frozen on 2026-09-29, <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v09_preregistration.md">pre-registered</a>,
+          and run on GitHub Actions each weekday since 2026-11-08
+          (<a href="https://github.com/AshJha0/agentic-trader/tree/main/results/paper">ledger and revision log</a>).
+          A Sharpe near 1 needs years of it before an interval excludes zero.</li>
+      <li><strong>The model's contribution is not yet measured at scale.</strong> The one LLM run (v0.5.1, five
+          stocks, one quarter, $4) had the same Sharpe as the rules with half the exposure, under an engine
+          since replaced.</li>
+      <li><strong>Interim: no evidence the local model's analysts help.</strong> With <code>qwen2.5:7b-instruct</code>
+          at the analysts, 300 decisions on 15 names and 20 design dates, the IC difference against the rules
+          desk is −0.046 [95% CI −0.185, +0.067]; hit rate 54.6% against 55.1%; secondary Sharpe 1.77 against
+          2.28 for the rules and 1.93 for the vol-target control; 0% fallback, so the cell is admissible.
+          INTERIM: <code>local_all</code> and <code>critic_on</code> are still running, and <code>critic_on</code>
+          uses the critic from before the v0.19 fix
+          (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">report</a>).</li>
+      <li><strong>The local judge is weak.</strong> Against 30 hand labels the <code>llama3.1</code> judge's kappa is
+          0.28 (used facts), 0.68 (no invented numbers) and 0.30 (respected fence); the deterministic rule checker
+          scores 1.00, 0.81 and 1.00. Thirty items is a small sample
+          (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/agreement.json">agreement.json</a>).</li>
+    </ul>
+  </div>
+
+<!-- diagrams -->
+  <h2 id="diagrams">How it fits together</h2>
+  <p>Three pictures, each checked against the code it names. More (45 in all) are in
+     <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md">DIAGRAMS.md</a>.</p>
+  <h3>One decision: rules first, then the model, then the limits</h3>
+  <div class="diagram"><pre class="mermaid">
+flowchart TD
+    F["facts from tools"] --> R["rules output<br/>(always computed)"]
+    R --> Q{"model on and<br/>analyst not abstaining?"}
+    Q -- no --> OUT["report: rules"]
+    Q -- yes --> M["model reply"]
+    M --> C{"contract check:<br/>keys, numbers, bounds"}
+    C -- fails --> OUT
+    C -- passes --> OUT2["report: model<br/>(rule signal kept beside it)"]
+    OUT --> PM["PM: risk views blended<br/>25 / 50 / 25"]
+    OUT2 --> PM
+    PM --> G["guardrails: shorting, caps,<br/>VaR, book VaR, minimum size"]
+    G --> B["no-trade band"]
+    B --> CR{"critic: model vs rules<br/>diverge by more than 0.6?"}
+    CR -- yes --> S["weight moved halfway<br/>toward neutral"]
+    CR -- no --> D["final decision"]
+    S --> G2["guardrails again<br/>(v0.19 fix)"]
+    G2 --> D
+</pre></div>
+  <p class="caption">Code: <code>agents/analysts.py</code> (<code>Analyst.run</code>), <code>agents/base.py</code>
+     (<code>ask_json</code>), <code>agents/risk.py</code> (<code>PortfolioManager</code>),
+     <code>agentic/critic.py</code> (<code>apply_weight_rule</code>, default <code>scale</code> 0.5). The critic acts on
+     the weight in the harness, and on the plain graph path only with <code>agentic.critic_in_graph</code> on.
+     Neutral is 1.0 for equities, so moving toward it can enlarge a long; since v0.19 the moved weight goes
+     through the same guardrails again and the record says whether they clipped it.</p>
+
+  <h3>One backtest: from bars to a statistic you can trust</h3>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    D["prices, point in time<br/>(synthetic, Yahoo, CSV;<br/>FRED, EDGAR)"] --> W["walk forward:<br/>a decision every 5 bars"]
+    W --> T["target weight"]
+    T --> X["fill at the close<br/>(or next open), costs<br/>and impact charged"]
+    X --> RET["daily returns<br/>desk and baselines"]
+    RET --> ST["paired bootstrap,<br/>deflated Sharpe over<br/>registered trials"]
+    ST --> V{"beats the<br/>vol-target control?"}
+</pre></div>
+  <p class="caption">Code: <code>backtest.py</code> (<code>run_agent_backtest</code>, <code>rebalance_every=5</code>,
+     <code>backtest.fill</code>), <code>stats.py</code> (<code>deflated_sharpe</code>, <code>paired_sharpe_block_bootstrap</code>),
+     <code>evaluation.py</code> (the trials registry).</p>
+
+  <h3>The pieces</h3>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    CLI["CLI / FastAPI / MCP"] --> H["harness: state machine,<br/>plan validation"]
+    H --> P["policy engine<br/>6 ordered rules"]
+    P --> TL["tools on 5 servers"]
+    TL --> EV["evidence store<br/>SHA-256 digests"]
+    H --> DESK["the desk: analysts, debate,<br/>trader, risk team, PM"]
+    DESK --> LLM["LLM (optional):<br/>Claude or local Ollama"]
+    DESK --> QC["quant core:<br/>C++ with numpy twin"]
+    H --> CRIT["critic and report audits"]
+    CRIT --> EV
+</pre></div>
+  <p class="caption">Code: <code>agentic/harness.py</code>, <code>agentic/policy.py</code> (<code>DEFAULT_RULES</code>),
+     <code>agentic/servers.py</code>, <code>agentic/evidence.py</code>, <code>graph.py</code>, <code>llm.py</code>,
+     <code>local_llm.py</code>, <code>quant/</code>.</p>
+
+<!-- AI learning path -->
+  <h2>AI learning path</h2>
+  <p>Ten short modules on the kinds of AI this project really uses, each with a plain idea, the
+     formal statement, a worked example from the repository, an offline exercise that runs in CI,
+     pitfalls and self-check questions. <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md">Start the path</a>.</p>
+  <ol><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#1-agents-and-the-harness">Agents and the harness</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#2-llms">LLMs</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#3-local-models">Local models</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#4-structured-outputs-and-the-contract-gate">Structured outputs and the contract gate</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#5-guardrails">Guardrails</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#6-tools-and-mcp">Tools and MCP</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#7-rag">RAG</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#8-memory-and-reflection">Memory and reflection</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#9-classical-ml">Classical ML</a></li><li><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#10-honest-ai-evaluation">Honest AI evaluation</a></li></ol>
+  <p class="caption">The shared modules match the AI track of the sibling project
+     <a href="https://ashjha0.github.io/AgenticAICashEquities/">AgenticAICashEquities</a> (its lesson pages are coming).</p>
+
+<!-- v0.19 strip -->
+  <h2>What changed recently (v0.14 to v0.19, unreleased)</h2>
+  <div class="grid">
+    <div class="card"><h3>v0.19: long runs</h3>
+      <p>Resumable checkpoints, bounded retries for the local model, provider misses recorded as
+         counted skips with a 10% cap per cell in the
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration_DRAFT.md">draft pre-registration</a>.
+         Code and offline tests; no model run.</p></div>
+    <div class="card"><h3>v0.16 to v0.18: the LLM study</h3>
+      <p>A study of what a local 7B model adds, cell by cell against the rules desk, with a recall
+         audit, calibration, an eval set and a judge from another family. Interim: the model analysts
+         show no IC gain over the rules (−0.046 [−0.185, +0.067]); two cells are still running.</p></div>
+    <div class="card"><h3>v0.14 and v0.15: risk, leakage, governance</h3>
+      <p>FHS and EWMA VaR, purged walk-forward with a Student-t gate and a leak canary, a paper OMS,
+         fenced filing text, gated retrieval, signed approvals and record/replay. Details in the
+         <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a>.</p></div>
+  </div>
+
+  <h2>The architectural boundary</h2>
+  <div class="boundary">
+    <div><strong>LLM (Claude)</strong>reasoning, debate, narrative, optional plans — never a metric, never an evidence id</div>
+    <div><strong>C++ quant core</strong>indicators, VaR/CVaR, backtests with stops and carry, Spearman, Almgren-Chriss — numpy twin</div>
+    <div><strong>Tools</strong>the only way to reach data — catalogued, policy-gated, evidenced; in-process or MCP</div>
+    <div><strong>Harness</strong>the control plane — an explicit state machine; agents never control the loop</div>
+    <div><strong>Policy engine</strong>authority: allow / deny / require approval, explained by the rule that fired</div>
+    <div><strong>Evidence &amp; audits</strong>every finding cites resolvable records; every reported number traces to a fact</div>
+  </div>
+
+  <h2>What's inside</h2>
+  <div class="grid">
+    <div class="card"><h3>Domain model</h3>
+      <p>Frozen dataclasses for the whole vocabulary — Task, Plan, PlanStep, ToolDescriptor,
+         ToolRequest/Result, Evidence (6 types), Finding, PolicyDecision, roles, capabilities and
+         the 11-state task machine with its legal transitions. Nothing here imports an LLM SDK,
+         MCP or a web framework.</p></div>
+    <div class="card"><h3>Tool servers &amp; executor</h3>
+      <p>16 tools on 5 servers with schemas derived from Python signatures and annotations for
+         read-only, risk level, capabilities and evidence type. The executor checks policy,
+         coerces arguments, retries transient errors, times out, traces, and writes an evidence
+         record for every call — including failures.</p></div>
+    <div class="card"><h3>MCP server &amp; client</h3>
+      <p>The same catalogue as a real MCP server over stdio (official SDK 2.x), callable from any
+         MCP client. The client side turns a remote server's tools into a local registry, so
+         policy, evidence and tracing apply to remote tools unchanged — tested with a real
+         subprocess round trip.</p></div>
+    <div class="card"><h3>Policy engine &amp; approvals</h3>
+      <p>Ordered rules — deny list, required capabilities, argument guards (symbol
+         universe, future dates, weight caps, lookback bounds), read-only, risk level — returning ALLOW /
+         DENY / REQUIRE_APPROVAL with the rule named. Roles viewer, analyst, trader, risk, admin.
+         Gateways: auto (dev), queued (a person decides via the API), deny.</p></div>
+    <div class="card"><h3>Planner</h3>
+      <p>A canonical plan per asset class, or a model-proposed one. The validator strips unknown
+         tools, stages and arguments, pins every tool call to the task's symbol and date, refuses
+         state-changing tools in plans, repairs stage order, and appends critic, validation and
+         finalisation whenever a plan omits them. Unusable output falls back to the canonical plan.</p></div>
+    <div class="card"><h3>Agent harness</h3>
+      <p>CREATED → PLANNING → VALIDATING_PLAN → EXECUTING ⇄ AWAITING_APPROVAL → CRITIQUING →
+         VALIDATING_EVIDENCE → FINALISING → COMPLETED. Parallel tool batches, pause and resume on
+         approvals, cooperative cancellation, per-run tracer, and governance steps that a
+         hand-built plan cannot skip.</p></div>
+    <div class="card"><h3>The desk</h3>
+      <p>Analysts (technical, fundamentals or FX macro, news, sentiment, optional alpha and cross-sectional alpha) that
+         abstain without data — fundamentals and news read SEC EDGAR filings point in time; a bull/bear debate with a facilitator; a trader with strategic
+         weight plus tilt and ATR stops; aggressive / neutral / conservative risk views; a
+         portfolio manager with limits that run after any model output and a no-trade band.</p></div>
+    <div class="card"><h3>Critic</h3>
+      <p>Deterministic checks first: cited evidence must resolve; a model view must not diverge
+         from its own rules by more than 0.6; strong contradictions need a balanced verdict;
+         limits, stop sides and direction-vs-verdict must hold; single-evidence findings are
+         capped. A model critique may then run and can only lower confidence.</p></div>
+    <div class="card"><h3>Reporter with audits</h3>
+      <p>Structured facts go to the model; the narrative comes back. A number audit checks every
+         figure against the facts (rounding and percentage forms allowed, counts included) and an
+         evidence-id audit checks every id; discrepancies are attached as warnings, not accepted.</p></div>
+    <div class="card"><h3>RAG knowledge base</h3>
+      <p>Eleven desk documents — risk limits, position sizing, stops, FX carry, execution,
+         point-in-time data, evaluation protocol, incident runbook, alpha research, portfolio
+         construction, agentic governance — chunked by heading, embedded with hashed TF-IDF,
+         retrieved as DOCUMENT evidence and shown to the trader and PM.</p></div>
+    <div class="card"><h3>Alpha library, time-series and cross-sectional</h3>
+      <p>12-1 momentum, vol-adjusted momentum, short-term reversal, 52-week high, Donchian
+         breakout, MACD, RSI, low-vol and FX carry — all in [-1, 1], point in time by
+         construction. Per name: IC with t-stat, decay, hit rate, tercile spread, turnover.
+         Across a universe (v0.5): daily z-scores or ranks within asset class, per-date IC with
+         a t-statistic from purged walk-forward folds (v0.14), top-minus-bottom quantile spreads, breadth.</p></div>
+    <div class="card"><h3>Execution, in the simulator and in the backtest</h3>
+      <p>TWAP, VWAP, participation-of-volume and Almgren-Chriss schedules; a simulator that
+         builds intraday bars from the daily bar, charges half the spread and square-root
+         impact, and reports implementation shortfall. v0.5 puts the same square-root model
+         inside the backtester: a trade of |dw| costs |dw|^1.5 · K<sub>t</sub> of equity, scaled by
+         account size, charged to the desk and every baseline alike.</p></div>
+    <div class="card"><h3>Portfolio construction with risk budgets</h3>
+      <p>EWMA and Ledoit-Wolf shrunk covariance; equal, inverse-vol, risk parity, minimum
+         variance and mean-variance weights with per-sleeve caps and a portfolio vol target;
+         marginal and component risk, diversification ratio. v0.5 adds cross-asset risk
+         budgets: allocate within each class, then risk parity with the budgets across classes
+         from the full covariance, with budget vs realised share reported.</p></div>
+    <div class="card"><h3>Operations</h3>
+      <p>A SQLite task store that writes every run at each state transition and serves old
+         records after a restart (in-flight runs are failed once their heartbeat lease expires, never
+         silently resumed); a dollar
+         LLM budget next to the call budget; TLS on the API and a refusal to bind a public
+         interface with the shipped development keys; ALFRED vintages so revised macro series
+         enter the backtest as first published.</p></div>
+    <div class="card"><h3>Backtest statistics</h3>
+      <p>Block-bootstrap Sharpe confidence intervals, the probabilistic Sharpe ratio, the
+         deflated Sharpe ratio for the number of variants tried, and the minimum track record
+         length — applied to the desk's own 26-trial registry of variants judged on the design period.</p></div>
+    <div class="card"><h3>HTTP API &amp; observability</h3>
+      <p>FastAPI gateway with API-key roles: 202-accepted tasks run in the background; reports as
+         JSON or markdown; traces; evidence; cancel; an approvals queue for the risk role; the tool
+         catalogue; health; Prometheus text metrics. Spans with parent ids and JSON-lines logs.</p></div>
+    <div class="card"><h3>Adversarial suite and fuzzing</h3>
+      <p>Injected headlines that try to close the untrusted block, rogue plans with orders and
+         shell commands, unparsable planner output, a critic that tries to raise confidence,
+         fabricated numbers and ids, unresolvable evidence, hostile arguments, role escalation,
+         a plan without governance — each mapped to a control in the threat model. Plus
+         hypothesis fuzzing of the Python ↔ C++ boundary on NaN, ±inf, empty and huge inputs,
+         which found and fixed five backend divergences on its first run.</p></div>
+    <div class="card"><h3>Offline by default</h3>
+      <p>No API key, no network: deterministic rule-based agents on synthetic data run the whole
+         harness, the API, the MCP server, the tests and the backtests out of the box.
+         <code>--data yahoo --llm anthropic</code> switches to real data and Claude, with a hard
+         call budget and anonymised prompts available.</p></div>
+  </div>
+
+  <h2>What a task looks like</h2>
+<pre>$ agentic-trader task EURUSD --date 2024-03-01 --position 0.2
+
+AgenticTrader | task EURUSD as of 2024-03-01 role=trader approval=auto | llm=offline data=synthetic quant=cpp
+state: COMPLETED  plan: canonical  steps: 12  evidence: 21  findings: 7
+
+# EURUSD decision — 2024-03-01
+
+## Executive summary
+EUR/USD: HOLD with a target weight of 0.00 (confidence 0.02). The debate verdict was balanced
+with a score of +0.02; 3 analysts leaned bullish and 1 bearish. The trader proposed 0.00; the
+risk team's views were aggressive 0.00, neutral 0.00, conservative 0.00. The critic's checks all passed.
+
+## Findings
+- **technical** (0.53): Technical picture is bullish (score +0.37). [CALC-896da157, DEC-98dabaa0]
+- **macro** (0.52): Macro backdrop score -0.42 (carry-led). [DATA-7c6d1339, CALC-31fb60a5, DEC-713fd845]
+...
+## Critic
+- PASS evidence_resolves: 7 findings, all evidence resolves
+- PASS firm_limits: size, shorting and VaR within limits
+...
+## Policy passages applied
+- FX carry and macro methodology / Introduction (fx_carry_methodology#0)
+## Evidence
+- DATA-... DATA market_data.history: market_data.history(symbol=EURUSD, as_of=2024-03-01, lookback_days=400) -> 6 fields
+- DOC-...  DOCUMENT knowledge.search: knowledge.search(query=..., k=3) -> 3 items
+- CALC-... CALCULATION quant.alpha: quant.alpha(symbol=EURUSD, as_of=2024-03-01, horizon=10) -> 4 fields
+
+trace: {'spans': 18, 'errors': 0, 'ms_by_kind': {'plan': 0.1, 'prepare': 8.7, 'tool': 12.4, 'agent': 4.9, ...}}</pre>
+
+  <h2>The same tools over MCP, and the API</h2>
+<pre>$ agentic-trader mcp --approval deny      # stdio server: 16 tools with read-only / risk / capability annotations; locked down (tools needing approval refused); --role picks the role every call is evaluated for
+$ agentic-trader serve --task-db results/tasks.sqlite      # http://127.0.0.1:8000/docs, records survive restarts
+$ curl -s -X POST http://127.0.0.1:8000/tasks -H "X-API-Key: dev-trader-key" \
+       -H "Content-Type: application/json" -d '{"symbol": "AAPL", "as_of": "2024-03-01", "current_weight": 0.1}'
+{"task_id": "TASK-67732293", "state": "EXECUTING"}
+$ curl -s http://127.0.0.1:8000/tasks/TASK-67732293/report?format=markdown -H "X-API-Key: dev-viewer-key"
+$ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # queued orders awaiting a person</pre>
+
+  <h2 id="record">The measured record, oldest conclusions last</h2>
+  <p class="caption">Everything below is history kept as it was published. Where a later measurement changed a conclusion, the later page says so; the standing conclusions at the top of this page are the current reading.</p>
+
 <!-- v0.12 strip -->
   <h2>What changed in v0.12.0</h2>
   <div class="grid">
@@ -167,7 +476,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 879 pytest tests collected on both backends at v0.12.0 (C++ backend 879 passed; numpy fallback 839 passed, 40 C++-only skipped; the breakdown that follows is the v0.8.0 one, 832 tests) · 95% line coverage on the numpy backend (weakest file <code>data/yahoo.py</code> 75%) — 105 v0.8 fixes + 17 CLI · 68 v0.8 agents · 59 hypothesis fuzz properties on the C++ boundary + 7 on the agentic layer · 57 v0.8 engine · 57 v0.8 data · 41 v0.8 execution · 41 v0.8 agentic · 38 quant edge cases · 37 v0.7 · 35 agent · 30 v0.8 portfolio · 30 agentic · 21 v0.8 CLI · 20 v0.6 · 20 quant research · 19 v0.5 · 19 pipeline · 17 workflow · 15 adversarial · 13 data · 12 v0.8 stats · 11 LLM-eval · 11 EDGAR · 10 v0.8 protocol · 8 v0.8 alpha · 7 services (FastAPI client + a real MCP stdio round trip) · 7 quant · 25 C++ test functions (one ctest test)<br>
     One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans · every transition written to SQLite when a task store is configured<br>
     Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 16 tools on 5 servers (market_data · quant incl. cross-sectional alphas · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
-    Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → read-only → argument guards → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API · a bounded task pool per process (503 + Retry-After when full) and multi-process serving over the task store<br>
+    Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → argument guards → read-only → risk level → allow) · auto / queued / deny approvals · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API · a bounded task pool per process (503 + Retry-After when full) and multi-process serving over the task store<br>
     Knowledge (RAG)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11 runbooks and policies · 76 chunks · dependency-free hashed TF-IDF · served as DOCUMENT evidence and shown to the trader and PM<br>
     Quant research&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 9 alphas, time-series and cross-sectional (per-date IC, quantile spreads, breadth) · 4 execution algorithms + intraday simulator · square-root impact inside the backtester · 5 weighting schemes with Ledoit-Wolf covariance, cross-asset risk budgets and attribution · bootstrap, probabilistic and deflated Sharpe · a paired bootstrap across instruments · ALFRED vintages · SEC EDGAR point-in-time fundamentals and filing news<br>
     Evaluation&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; real prices · 60 instruments: 15 core (every rule choice) + 45 extended (no rule tuned on them) · design 2016–21 · holdout 2022–26 · reserve 2026-07 → 2026-09, spent: it and the extended universe were consulted for the v0.5.1 and v0.6 decisions, and v0.8 re-measured every period, so the next unseen data is the future · 26-trial registry (24 re-measured under the v0.8 engine) · alpha and cross-sectional analysts measured on the design period and kept off · impact sweep at $100k / $10M / $1B, equity-scaled · first LLM run: 5 stocks × Q1 2024, 271 Claude calls, $4 (pre-v0.8 engine, not re-derived) · EDGAR on/off, the carry rule, the track-record cut and the cross-sectional analyst re-checked on all 60 names × 4 periods (cluster-bootstrap intervals on the all-60 rows, instrument bootstrap on the core and extended rows); the v0.2 rules and the alpha analyst re-checked on the 15 core names × 4 periods (instrument-bootstrap intervals) · VaR coverage of the desk's own forecast · prompt hashes and provenance in every result · a calibration harness · the multi-year LLM run staged (not yet executed) with a dollar cap per stage<br>
@@ -208,16 +517,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
     an edge; the multi-year run is staged, dollar-capped per stage, and has not been executed.
   </div>
 
-  <h2>The architectural boundary</h2>
-  <div class="boundary">
-    <div><strong>LLM (Claude)</strong>reasoning, debate, narrative, optional plans — never a metric, never an evidence id</div>
-    <div><strong>C++ quant core</strong>indicators, VaR/CVaR, backtests with stops and carry, Spearman, Almgren-Chriss — numpy twin</div>
-    <div><strong>Tools</strong>the only way to reach data — catalogued, policy-gated, evidenced; in-process or MCP</div>
-    <div><strong>Harness</strong>the control plane — an explicit state machine; agents never control the loop</div>
-    <div><strong>Policy engine</strong>authority: allow / deny / require approval, explained by the rule that fired</div>
-    <div><strong>Evidence &amp; audits</strong>every finding cites resolvable records; every reported number traces to a fact</div>
-  </div>
-
+  
 
   <h2>Real prices, out of sample (v0.8: every number re-measured; cash leg on, Sharpe on excess returns)</h2>
   <p class="caption">Holdout 2022-01-03 → 2026-06-30, Yahoo Finance total-return prices, SEC EDGAR point-in-time
@@ -367,142 +667,6 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 
   </details>
 
-  <h2>What's inside</h2>
-  <div class="grid">
-    <div class="card"><h3>Domain model</h3>
-      <p>Frozen dataclasses for the whole vocabulary — Task, Plan, PlanStep, ToolDescriptor,
-         ToolRequest/Result, Evidence (6 types), Finding, PolicyDecision, roles, capabilities and
-         the 11-state task machine with its legal transitions. Nothing here imports an LLM SDK,
-         MCP or a web framework.</p></div>
-    <div class="card"><h3>Tool servers &amp; executor</h3>
-      <p>16 tools on 5 servers with schemas derived from Python signatures and annotations for
-         read-only, risk level, capabilities and evidence type. The executor checks policy,
-         coerces arguments, retries transient errors, times out, traces, and writes an evidence
-         record for every call — including failures.</p></div>
-    <div class="card"><h3>MCP server &amp; client</h3>
-      <p>The same catalogue as a real MCP server over stdio (official SDK 2.x), callable from any
-         MCP client. The client side turns a remote server's tools into a local registry, so
-         policy, evidence and tracing apply to remote tools unchanged — tested with a real
-         subprocess round trip.</p></div>
-    <div class="card"><h3>Policy engine &amp; approvals</h3>
-      <p>Ordered rules — deny list, required capabilities, read-only, argument guards (symbol
-         universe, future dates, weight caps, lookback bounds), risk level — returning ALLOW /
-         DENY / REQUIRE_APPROVAL with the rule named. Roles viewer, analyst, trader, risk, admin.
-         Gateways: auto (dev), queued (a person decides via the API), deny.</p></div>
-    <div class="card"><h3>Planner</h3>
-      <p>A canonical plan per asset class, or a model-proposed one. The validator strips unknown
-         tools, stages and arguments, pins every tool call to the task's symbol and date, refuses
-         state-changing tools in plans, repairs stage order, and appends critic, validation and
-         finalisation whenever a plan omits them. Unusable output falls back to the canonical plan.</p></div>
-    <div class="card"><h3>Agent harness</h3>
-      <p>CREATED → PLANNING → VALIDATING_PLAN → EXECUTING ⇄ AWAITING_APPROVAL → CRITIQUING →
-         VALIDATING_EVIDENCE → FINALISING → COMPLETED. Parallel tool batches, pause and resume on
-         approvals, cooperative cancellation, per-run tracer, and governance steps that a
-         hand-built plan cannot skip.</p></div>
-    <div class="card"><h3>The desk</h3>
-      <p>Analysts (technical, fundamentals or FX macro, news, sentiment, optional alpha and cross-sectional alpha) that
-         abstain without data — fundamentals and news read SEC EDGAR filings point in time; a bull/bear debate with a facilitator; a trader with strategic
-         weight plus tilt and ATR stops; aggressive / neutral / conservative risk views; a
-         portfolio manager with limits that run after any model output and a no-trade band.</p></div>
-    <div class="card"><h3>Critic</h3>
-      <p>Deterministic checks first: cited evidence must resolve; a model view must not diverge
-         from its own rules by more than 0.6; strong contradictions need a balanced verdict;
-         limits, stop sides and direction-vs-verdict must hold; single-evidence findings are
-         capped. A model critique may then run and can only lower confidence.</p></div>
-    <div class="card"><h3>Reporter with audits</h3>
-      <p>Structured facts go to the model; the narrative comes back. A number audit checks every
-         figure against the facts (rounding and percentage forms allowed, counts included) and an
-         evidence-id audit checks every id; discrepancies are attached as warnings, not accepted.</p></div>
-    <div class="card"><h3>RAG knowledge base</h3>
-      <p>Eleven desk documents — risk limits, position sizing, stops, FX carry, execution,
-         point-in-time data, evaluation protocol, incident runbook, alpha research, portfolio
-         construction, agentic governance — chunked by heading, embedded with hashed TF-IDF,
-         retrieved as DOCUMENT evidence and shown to the trader and PM.</p></div>
-    <div class="card"><h3>Alpha library, time-series and cross-sectional</h3>
-      <p>12-1 momentum, vol-adjusted momentum, short-term reversal, 52-week high, Donchian
-         breakout, MACD, RSI, low-vol and FX carry — all in [-1, 1], point in time by
-         construction. Per name: IC with t-stat, decay, hit rate, tercile spread, turnover.
-         Across a universe (v0.5): daily z-scores or ranks within asset class, per-date IC with
-         a t-statistic from purged walk-forward folds (v0.14), top-minus-bottom quantile spreads, breadth.</p></div>
-    <div class="card"><h3>Execution, in the simulator and in the backtest</h3>
-      <p>TWAP, VWAP, participation-of-volume and Almgren-Chriss schedules; a simulator that
-         builds intraday bars from the daily bar, charges half the spread and square-root
-         impact, and reports implementation shortfall. v0.5 puts the same square-root model
-         inside the backtester: a trade of |dw| costs |dw|^1.5 · K<sub>t</sub> of equity, scaled by
-         account size, charged to the desk and every baseline alike.</p></div>
-    <div class="card"><h3>Portfolio construction with risk budgets</h3>
-      <p>EWMA and Ledoit-Wolf shrunk covariance; equal, inverse-vol, risk parity, minimum
-         variance and mean-variance weights with per-sleeve caps and a portfolio vol target;
-         marginal and component risk, diversification ratio. v0.5 adds cross-asset risk
-         budgets: allocate within each class, then risk parity with the budgets across classes
-         from the full covariance, with budget vs realised share reported.</p></div>
-    <div class="card"><h3>Operations</h3>
-      <p>A SQLite task store that writes every run at each state transition and serves old
-         records after a restart (in-flight runs are failed once their heartbeat lease expires, never
-         silently resumed); a dollar
-         LLM budget next to the call budget; TLS on the API and a refusal to bind a public
-         interface with the shipped development keys; ALFRED vintages so revised macro series
-         enter the backtest as first published.</p></div>
-    <div class="card"><h3>Backtest statistics</h3>
-      <p>Block-bootstrap Sharpe confidence intervals, the probabilistic Sharpe ratio, the
-         deflated Sharpe ratio for the number of variants tried, and the minimum track record
-         length — applied to the desk's own 26-trial registry of variants judged on the design period.</p></div>
-    <div class="card"><h3>HTTP API &amp; observability</h3>
-      <p>FastAPI gateway with API-key roles: 202-accepted tasks run in the background; reports as
-         JSON or markdown; traces; evidence; cancel; an approvals queue for the risk role; the tool
-         catalogue; health; Prometheus text metrics. Spans with parent ids and JSON-lines logs.</p></div>
-    <div class="card"><h3>Adversarial suite and fuzzing</h3>
-      <p>Injected headlines that try to close the untrusted block, rogue plans with orders and
-         shell commands, unparsable planner output, a critic that tries to raise confidence,
-         fabricated numbers and ids, unresolvable evidence, hostile arguments, role escalation,
-         a plan without governance — each mapped to a control in the threat model. Plus
-         hypothesis fuzzing of the Python ↔ C++ boundary on NaN, ±inf, empty and huge inputs,
-         which found and fixed five backend divergences on its first run.</p></div>
-    <div class="card"><h3>Offline by default</h3>
-      <p>No API key, no network: deterministic rule-based agents on synthetic data run the whole
-         harness, the API, the MCP server, the tests and the backtests out of the box.
-         <code>--data yahoo --llm anthropic</code> switches to real data and Claude, with a hard
-         call budget and anonymised prompts available.</p></div>
-  </div>
-
-  <h2>What a task looks like</h2>
-<pre>$ agentic-trader task EURUSD --date 2024-03-01 --position 0.2
-
-AgenticTrader | task EURUSD as of 2024-03-01 role=trader approval=auto | llm=offline data=synthetic quant=cpp
-state: COMPLETED  plan: canonical  steps: 12  evidence: 21  findings: 7
-
-# EURUSD decision — 2024-03-01
-
-## Executive summary
-EUR/USD: HOLD with a target weight of 0.00 (confidence 0.02). The debate verdict was balanced
-with a score of +0.02; 3 analysts leaned bullish and 1 bearish. The trader proposed 0.00; the
-risk team's views were aggressive 0.00, neutral 0.00, conservative 0.00. The critic's checks all passed.
-
-## Findings
-- **technical** (0.53): Technical picture is bullish (score +0.37). [CALC-896da157, DEC-98dabaa0]
-- **macro** (0.52): Macro backdrop score -0.42 (carry-led). [DATA-7c6d1339, CALC-31fb60a5, DEC-713fd845]
-...
-## Critic
-- PASS evidence_resolves: 7 findings, all evidence resolves
-- PASS firm_limits: size, shorting and VaR within limits
-...
-## Policy passages applied
-- FX carry and macro methodology / Introduction (fx_carry_methodology#0)
-## Evidence
-- DATA-... DATA market_data.history: market_data.history(symbol=EURUSD, as_of=2024-03-01, lookback_days=400) -> 6 fields
-- DOC-...  DOCUMENT knowledge.search: knowledge.search(query=..., k=3) -> 3 items
-- CALC-... CALCULATION quant.alpha: quant.alpha(symbol=EURUSD, as_of=2024-03-01, horizon=10) -> 4 fields
-
-trace: {'spans': 18, 'errors': 0, 'ms_by_kind': {'plan': 0.1, 'prepare': 8.7, 'tool': 12.4, 'agent': 4.9, ...}}</pre>
-
-  <h2>The same tools over MCP, and the API</h2>
-<pre>$ agentic-trader mcp --approval deny      # stdio server: 16 tools with read-only / risk / capability annotations; locked down (tools needing approval refused); --role picks the role every call is evaluated for
-$ agentic-trader serve --task-db results/tasks.sqlite      # http://127.0.0.1:8000/docs, records survive restarts
-$ curl -s -X POST http://127.0.0.1:8000/tasks -H "X-API-Key: dev-trader-key" \
-       -H "Content-Type: application/json" -d '{"symbol": "AAPL", "as_of": "2024-03-01", "current_weight": 0.1}'
-{"task_id": "TASK-67732293", "state": "EXECUTING"}
-$ curl -s http://127.0.0.1:8000/tasks/TASK-67732293/report?format=markdown -H "X-API-Key: dev-viewer-key"
-$ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # queued orders awaiting a person</pre>
 
   <h2>Part of a wider portfolio</h2>
   <div class="grid">
@@ -561,5 +725,11 @@ agentic-trader task MSFT --llm anthropic --data yahoo --max-llm-calls 50 --llm-p
     <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/SPECIFICATION.md">the specification</a> and
     <a href="https://github.com/AshJha0/agentic-trader/blob/main/README.md">README</a>.</footer>
 </div>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";
+const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+  && document.documentElement.getAttribute("data-theme") !== "light";
+mermaid.initialize({startOnLoad: true, theme: dark ? "dark" : "neutral", securityLevel: "strict"});
+</script>
 </body>
 </html>

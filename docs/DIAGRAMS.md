@@ -59,6 +59,14 @@ Mermaid 11 parser before release. The prose explanation is in
 
 40. [The LLM study: cells, trials and the rules control (v0.16)](#40-the-llm-study-cells-trials-and-the-rules-control-v016)
 
+**Walk-throughs** (41–45 are new in v0.19; each is also drawn on the page that explains it)
+
+41. [One decision: rules, model, contract, limits, critic](#41-one-decision-rules-model-contract-limits-critic)
+42. [One backtest bar: fill, costs and the bar return](#42-one-backtest-bar-fill-costs-and-the-bar-return)
+43. [From returns to a decision about adoption](#43-from-returns-to-a-decision-about-adoption)
+44. [Policy rule order](#44-policy-rule-order)
+45. [Component map with modules](#45-component-map-with-modules)
+
 ## 1. Decision pipeline
 
 ```mermaid
@@ -203,7 +211,7 @@ flowchart TD
     BL --> LIM["firm limits (diagram 5)"]
     LIM --> BD["no-trade band vs current position"]
     BD --> FIN[/"final weight + ATR stop / target<br/>rebuilt if the direction flipped"/]
-    FIN --> CR["critic multiplier applied<br/>to the confidence (diagram 15)"]
+    FIN --> CR["critic multiplier applied<br/>to the confidence (diagram 15);<br/>a weight it moves is re-checked by the firm limits"]
 ```
 
 ## 5. Portfolio-manager guardrails and the no-trade band
@@ -246,8 +254,9 @@ flowchart LR
     LLM --> J["JSON reply"]
     J --> CLIP["clip / coerce<br/>inf, nan, strings, wrong-side stops"]
     CLIP --> LIM["firm limits after the model<br/>(cannot be overridden)"]
-    LIM --> CRIT["critic: model vs rules divergence<br/>lowers confidence"]
-    CRIT --> OK[bounded decision]
+    LIM --> CRIT["critic: model vs rules divergence<br/>lowers confidence, moves weight toward neutral"]
+    CRIT --> LIM2["firm limits re-applied to a weight<br/>the critic changed"]
+    LIM2 --> OK[bounded decision]
 ```
 
 ## 7. Agentic layer overview
@@ -516,6 +525,8 @@ flowchart TD
     LLM -- yes --> M["concerns + multiplier<br/>clipped to ≤ 1: can only lower"]
     LLM -- no --> OUT
     M --> OUT["CriticReport: checks, multiplier"]
+    OUT --> WR{"divergence flagged and<br/>critic_weight_rule not off?"}
+    WR -- yes --> WS["weight toward neutral (scale or veto),<br/>then PortfolioManager.guardrails again;<br/>weight_action records pre_guardrail,<br/>guardrail_clipped, guardrail_notes"]
     OUT --> VAL["validate_evidence:<br/>drop findings with unresolved ids"]
     VAL --> REP["report: narrative from facts"]
     REP --> NA["number audit:<br/>every figure ≈ a fact at displayed precision<br/>(percent forms, counts included)"]
@@ -1043,4 +1054,122 @@ flowchart LR
     REC --> DSR["stats.selection_report<br/>n_trials = registered_trial_count()"]
     KPI --> WMA["what_the_model_adds.md"]
     DSR --> WMA
+```
+
+## 41. One decision: rules, model, contract, limits, critic
+
+The rules always answer; a model reply is used only if it passes the role's contract
+(`agents/base.py` `ask_json`, `contracts.py`), and out-of-range values are rejected, not
+clipped. The PM blends the risk views 25/50/25, then the guardrails and the no-trade band run;
+the critic moves the weight halfway toward neutral when a model signal is more than 0.6 from
+its rules (`agentic/critic.py`), and a weight the critic changed goes through the same
+guardrails again, because neutral (1.0 for equities by default) can sit above `max_position`
+or the VaR cap (fixed 2026-11-12; `tests/test_critic_coverage.py`). Explained with a worked example in
+[how the AI works](ai/ai.md#one-decision-step-by-step-diagrams-41-and-44-with-a-worked-example).
+
+```mermaid
+flowchart TD
+    F["facts from tools"] --> R["rules output (always computed)"]
+    R --> Q{"model configured and<br/>analyst not abstaining?"}
+    Q -- no --> RU["report: source rules"]
+    Q -- yes --> M["model reply"]
+    M --> C{"contract: keys present,<br/>finite numbers, inside bounds?"}
+    C -- no --> RU
+    C -- yes --> LL["report: source llm<br/>rule_signal kept"]
+    RU --> PM["PM: risk views blended 25 / 50 / 25<br/>or a model weight that passes the contract"]
+    LL --> PM
+    PM --> G["guardrails: shorting, short cap, max position,<br/>VaR cap, book VaR, minimum trade"]
+    G --> B["no-trade band"]
+    B --> CR{"critic: any model signal more than 0.6<br/>from its rule_signal?"}
+    CR -- yes --> S["weight = neutral + 0.5 x (weight - neutral)<br/>(veto: weight = neutral)"]
+    CR -- no --> D["final decision"]
+    S --> G2["guardrails again (PortfolioManager.guardrails)<br/>record: pre_guardrail, guardrail_clipped,<br/>guardrail_notes"]
+    G2 --> D
+```
+
+## 42. One backtest bar: fill, costs and the bar return
+
+`run_agent_backtest` asks the desk every `rebalance_every` bars; `run_backtest_ex`
+(`quant/pycore.py`, mirrored in C++) fills at the close by default, takes the linear cost and
+optional square-root impact out of equity first, then books the bar's return. Worked example in
+[how the quant works](quant/quant.md#one-backtest-step-by-step-diagrams-42-and-43-with-a-worked-example).
+
+```mermaid
+flowchart LR
+    D["bars, point in time<br/>synthetic / Yahoo / CSV<br/>+ FRED, EDGAR"] --> W["walk forward:<br/>desk decides every<br/>rebalance_every bars"]
+    W --> T["target weight w"]
+    T --> FILL["fill: close of bar t<br/>(or open t+1, or t+lag)"]
+    FILL --> K["k_in: linear cost<br/>+ sqrt impact if on"]
+    K --> G["bar return g:<br/>w x price move + carry<br/>+ cash on 1-|w| - borrow"]
+    G --> X{"stop or take<br/>hit in bar t+1?"}
+    X -- yes --> KO["k_out: exit cost"]
+    X -- no --> E["equity E(t+1)"]
+    KO --> E
+    E --> W
+```
+
+## 43. From returns to a decision about adoption
+
+A variant is compared with the vol-targeted control on paired daily returns and its Sharpe is
+deflated at the registered trial count (`stats.py`, `evaluation.TRIALS`). No research round
+has passed this so far ([evaluation](evaluation/evaluation.md)).
+
+```mermaid
+flowchart TD
+    R1["desk daily returns"] --> PB["paired block bootstrap<br/>desk minus control"]
+    R2["control: buy and hold<br/>scaled to the same vol"] --> PB
+    REG["evaluation.TRIALS<br/>every variant registered"] --> DSR["deflated Sharpe at the<br/>registered trial count"]
+    R1 --> DSR
+    PB --> Q{"interval excludes zero<br/>and DSR high enough?"}
+    DSR --> Q
+    Q -- no --> NA["not adopted<br/>(every round so far)"]
+    Q -- yes --> AD["candidate; the forward<br/>paper record decides"]
+```
+
+## 44. Policy rule order
+
+`DEFAULT_RULES` in `agentic/policy.py`: deny list, capabilities, argument guards, read-only,
+risk level, default allow. The first rule that returns a decision wins.
+
+```mermaid
+flowchart LR
+    REQ["tool request"] --> R1{"deny list"}
+    R1 -- listed --> DENY["DENY"]
+    R1 -- no --> R2{"capabilities<br/>held by role?"}
+    R2 -- missing --> DENY
+    R2 -- yes --> R3{"argument guards:<br/>universe, dates, caps"}
+    R3 -- violated --> DENY
+    R3 -- ok --> R4{"tool read-only?"}
+    R4 -- "no, role cannot<br/>propose trades" --> DENY
+    R4 -- "no, role can" --> APP
+    R4 -- yes --> R5{"risk level HIGH?"}
+    R5 -- yes --> APP["REQUIRE_APPROVAL"]
+    R5 -- no --> ALLOW["ALLOW (default_allow)"]
+```
+
+## 45. Component map with modules
+
+The same components as diagram 7, labelled with the module that holds each one. Prose in
+[architecture/overview.md](architecture/overview.md#components).
+
+```mermaid
+flowchart TB
+    subgraph ENTRY["entry points"]
+        CLI["CLI<br/>cli/"]
+        API["FastAPI gateway<br/>agentic/api.py"]
+        MCP["MCP stdio server<br/>agentic/mcp_server.py"]
+    end
+    ENTRY --> H["harness: 11-state machine<br/>agentic/harness.py"]
+    H --> PL["planner and plan validator<br/>agentic/planner.py"]
+    H --> PE["policy engine, 6 ordered rules<br/>agentic/policy.py"]
+    PE --> TS["tools on 5 servers:<br/>market_data, quant, knowledge,<br/>portfolio, execution<br/>agentic/servers.py"]
+    TS --> EV["evidence store,<br/>SHA-256 digest per record<br/>agentic/evidence.py"]
+    H --> DESK["the desk: analysts, debate, trader,<br/>risk team, PM<br/>graph.py, agents/"]
+    DESK --> LLM["optional model:<br/>Claude (llm.py) or<br/>Ollama (local_llm.py)"]
+    DESK --> QC["quant facade<br/>C++ _atcore or numpy twin<br/>quant/"]
+    H --> CR["critic<br/>agentic/critic.py"]
+    H --> RP["reporter: number and<br/>evidence-id audits<br/>agentic/reporter.py"]
+    CR --> EV
+    RP --> EV
+    H --> ST["task store (SQLite)<br/>agentic/store.py"]
 ```

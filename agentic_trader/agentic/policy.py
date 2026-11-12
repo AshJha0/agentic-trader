@@ -142,10 +142,10 @@ def argument_guard_rule(ctx: PolicyContext) -> PolicyDecision | None:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", f"{key} is not finite")
         if key == "current_weight":   # the position held: a fact to size from, whatever the cap
             continue
-        cap = float(ctx.config.get("max_position", 1.0))
-        if abs(fv) > cap:
+        wcap = float(ctx.config.get("max_position", 1.0))
+        if abs(fv) > wcap:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard",
-                                  f"{key} {fv:+.2f} exceeds the max position {cap:.2f}")
+                                  f"{key} {fv:+.2f} exceeds the max position {wcap:.2f}")
     lookback = args.get("lookback_days")
     if lookback is not None and (not isinstance(lookback, (int, float)) or not 0 < lookback <= 3660):
         return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "lookback_days must be in (0, 3660]")
@@ -188,7 +188,8 @@ class PolicyEngine:
                  role_capabilities: dict[Role, frozenset[Capability]] | None = None):
         self.config = dict(config or {})
         self.rules = rules
-        self.role_capabilities = role_capabilities or ROLE_CAPABILITIES
+        # ``is None``, not ``or``: an explicitly empty map grants nothing (fail closed).
+        self.role_capabilities = ROLE_CAPABILITIES if role_capabilities is None else role_capabilities
         self.decisions: deque[tuple[str, PolicyDecision]] = deque(maxlen=MAX_DECISIONS_KEPT)
         self._lock = threading.Lock()
 

@@ -288,3 +288,36 @@ def test_redteam_v2_json_mode_uses_the_desk_contract():
     sig, why = rt2.analyst_signal(CFG, rt2.StateProviders(CFG)("AAPL", "2024-03-01"), Broken(), "news",
                                   "AAPL", AS_OF, "Apple opens a store.")
     assert sig is None and "contract" in why
+
+
+
+# ------------------------------------------------------------------ critic_guardrail: the weight rule re-applies the PM guardrails
+def _cap_cfg(rule="scale", neutral=1.0, max_position=0.5):
+    return make_config(_cfg(rule, 0.5, neutral), risk={"max_position": max_position, "max_var_95": 0.0})
+
+
+def test_critic_guardrail_clips_scaled_equity_long_past_the_cap():
+    st, cfg = _state(weight=0.3), _cap_cfg("scale")
+    act = apply_weight_rule(st, _review(st, cfg), cfg)
+    # 1.0 + 0.5 * (0.3 - 1.0) = 0.65 before the guardrails; max_position 0.5 caps it
+    assert act["pre_guardrail"] == pytest.approx(0.65)
+    assert act["to"] == pytest.approx(0.5) and st.decision.target_weight == pytest.approx(0.5)
+    assert act["guardrail_clipped"] and any("max position" in n for n in act["guardrail_notes"])
+    assert "guardrails:" in st.decision.adjustments[-1]
+
+
+def test_critic_guardrail_clips_veto_to_an_inadmissible_neutral():
+    st, cfg = _state(weight=0.3), _cap_cfg("veto")
+    act = apply_weight_rule(st, _review(st, cfg), cfg)
+    assert act["pre_guardrail"] == pytest.approx(1.0) and act["to"] == pytest.approx(0.5)
+    assert act["guardrail_clipped"] and st.decision.action is Action.BUY
+
+
+def test_critic_guardrail_leaves_an_admissible_weight_alone():
+    st, cfg = _state(weight=0.3), _cfg()
+    rep = _review(st, cfg)
+    act = apply_weight_rule(st, rep, cfg)
+    assert act["to"] == act["pre_guardrail"] == pytest.approx(0.15)
+    assert act["guardrail_clipped"] is False and act["guardrail_notes"] == []
+    assert "guardrails:" not in st.decision.adjustments[-1]
+    assert rep.to_dict()["weight_action"]["guardrail_clipped"] is False
