@@ -1,0 +1,28 @@
+{
+ "n_calibration": 30,
+ "judge_unparseable": 0,
+ "criteria": {
+  "used_facts": {
+   "judge_kappa": 0.28229665071770327,
+   "judge_agree": 20,
+   "checker_kappa": 1.0,
+   "checker_agree": 30,
+   "n": 30
+  },
+  "no_invented_numbers": {
+   "judge_kappa": 0.6842105263157896,
+   "judge_agree": 26,
+   "checker_kappa": 0.8148148148148149,
+   "checker_agree": 28,
+   "n": 30
+  },
+  "respected_fence": {
+   "judge_kappa": 0.29906542056074753,
+   "judge_agree": 20,
+   "checker_kappa": 1.0,
+   "checker_agree": 30,
+   "n": 30
+  }
+ },
+ "n_scored": 30
+}
