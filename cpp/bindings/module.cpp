@@ -93,7 +93,8 @@ PYBIND11_MODULE(_atcore, m) {
         .def_readwrite("funding_spread", &BacktestConfig::funding_spread)
         .def_readwrite("cash_spread", &BacktestConfig::cash_spread)
         .def_readwrite("stop_half_spread", &BacktestConfig::stop_half_spread)
-        .def_readwrite("stop_range_frac", &BacktestConfig::stop_range_frac);
+        .def_readwrite("stop_range_frac", &BacktestConfig::stop_range_frac)
+        .def_readwrite("quote_inverse", &BacktestConfig::quote_inverse);
 
     py::class_<Metrics>(m, "Metrics")
         .def_readonly("cumulative_return", &Metrics::cumulative_return)
@@ -136,15 +137,17 @@ PYBIND11_MODULE(_atcore, m) {
         [](const Series& prices, const Series& weights, const BacktestConfig& cfg,
            const Series& carry, const Series& open, const Series& high, const Series& low,
            const Series& stop, const Series& take, const Series& rebalance, const Series& impact,
-           const Series& cash_rate) {
-            BacktestInputs in{carry, open, high, low, stop, take, rebalance, impact, cash_rate};
+           const Series& cash_rate, const Series& keep, const Series& quote_fx) {
+            BacktestInputs in{carry, open, high, low, stop, take, rebalance, impact, cash_rate,
+                              keep, quote_fx};
             return run_backtest_ex(prices, weights, cfg, in);
         },
         py::arg("prices"), py::arg("target_weights"), py::arg("config"),
         py::arg("carry") = Series{}, py::arg("open") = Series{}, py::arg("high") = Series{},
         py::arg("low") = Series{}, py::arg("stop") = Series{}, py::arg("take") = Series{},
         py::arg("rebalance") = Series{}, py::arg("impact") = Series{},
-        py::arg("cash_rate") = Series{});
+        py::arg("cash_rate") = Series{}, py::arg("keep") = Series{},
+        py::arg("quote_fx") = Series{});
     m.def("compute_metrics", &compute_metrics, py::arg("equity"), py::arg("positions"),
           py::arg("periods_per_year"), py::arg("risk_free_annual") = 0.0,
           py::arg("traded") = Series{});
