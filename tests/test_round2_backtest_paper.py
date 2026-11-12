@@ -458,3 +458,33 @@ def test_a_stale_compiled_core_is_detected() -> None:
     assert quant.stale_fields(SimpleNamespace()) == ["BacktestConfig"]
     if quant.BACKEND == "cpp":
         assert quant.stale_fields(quant._cpp) == []
+
+
+def test_a_version_bump_does_not_trip_the_paper_freeze(tmp_path) -> None:
+    """Integration finding: the freeze hash covered every byte of pyproject.toml, so cutting a
+    release (one changed version line) made the paper job refuse to run. The version line is
+    left out; a changed dependency still changes the hash."""
+    import importlib.util
+    from pathlib import Path as _P
+    spec = importlib.util.spec_from_file_location("paper_ops_ver", _P(__file__).resolve().parents[1] / "scripts" / "paper_ops.py")
+    po = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(po)
+
+    def fp(text: str) -> str:
+        (tmp_path / "pyproject.toml").write_text(text, encoding="utf-8")
+        return po.engine_fingerprint(tmp_path, ["pyproject.toml"], {}, [], ())
+    base = fp('[project]
+name = "x"
+version = "1.0.0"
+dependencies = ["numpy>=1.24"]
+')
+    assert fp('[project]
+name = "x"
+version = "1.0.1"
+dependencies = ["numpy>=1.24"]
+') == base
+    assert fp('[project]
+name = "x"
+version = "1.0.0"
+dependencies = ["numpy>=2.0"]
+') != base

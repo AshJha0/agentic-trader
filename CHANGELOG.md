@@ -1,11 +1,18 @@
 # Changelog
 
-## Unreleased: model-to-weight safety and quant correctness after the 2026-11-12 review (Rounds 1 and 2)
+## v0.19.0rc2 — 2026-11-12 (release candidate): the 2026-11-12 review's Rounds 0 to 2
+
+A second release candidate, not the final v0.19.0. It carries the study repair and the signed
+pre-registration (Round 0, further down), the model-to-weight safety fixes and the quant
+corrections (Rounds 1 and 2, this section), and the front-page corrections. Still owed before
+v0.19.0: published backtests re-run at a one-bar lag and with the corrected FX accounting, and
+the numbers that follow from them.
+
+### Model-to-weight safety and quant correctness (Rounds 1 and 2)
 
 Evidence class: code and offline tests unless a line says otherwise. Behaviour changes are
-marked **changes results**. The registered LLM study runs on a pinned earlier commit and is
-not affected; its `local_all` and `critic_on` cells therefore measure the desk as it was
-before this section.
+marked **changes results**. The first-pass rows of the LLM study were produced on a pinned
+earlier commit, so its model cells describe the desk as it was before this section.
 
 ### Model-to-weight path (review A1 to A12, E-1 to E-6)
 
@@ -78,7 +85,8 @@ before this section.
   pages under `docs/results/v09` and `docs/results/v12` carry a correction notice.
 - Participation cap uses sleeve capital (D8).
 - **Paper record**: a session with any missing bar is held back and logged, not filled with
-  zero (D2); the freeze hash covers the whole package, C++ and the lock files (D3); ledger rows
+  zero (D2); the freeze hash covers the whole package, C++ and the lock files, and ignores the
+  package version line so a release bump does not trip it (D3); ledger rows
   are hash-chained and `scripts/paper_ledger_check.py` refuses any rewrite of the append-only
   files (D6); freshness is judged on the ledger's last row (D7); raw Yahoo bars are no longer
   uploaded as a public artifact (F6, owner decision D6).
@@ -104,7 +112,7 @@ before this section.
   changes prompts. D11 (`Checkpoint._load`) is open.
 - The README first screen, generated counts and the remaining docs findings (F2 to F8).
 
-## Unreleased: study repair after the 2026-11-12 review (Round 0)
+## v0.19.0rc2, continued: study repair after the 2026-11-12 review (Round 0)
 
 Evidence class: code, offline tests and simulation. No model was run and no study row was
 scored for this section. Record of every change and of what had been seen beforehand:

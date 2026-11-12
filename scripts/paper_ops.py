@@ -126,13 +126,19 @@ def engine_fingerprint(root: Path, patterns: list[str], config: dict, config_key
                        books: object) -> str:
     """SHA-256 over the engine that computes the frozen record: the bytes of every file the
     ``patterns`` (globs relative to ``root``) match, in sorted path order with CRLF taken as
-    LF (a Windows checkout hashes like a Linux one), the ``config_keys`` subset of the run's
+    LF (a Windows checkout hashes like a Linux one) and the ``version = `` line of
+    ``pyproject.toml`` left out (a release bump is not an engine change), the ``config_keys`` subset of the run's
     config (the numbers-driving blocks, not paths or LLM settings) and ``repr(books)``."""
     h = hashlib.sha256()
     files = sorted({p for pat in patterns for p in root.glob(pat) if p.is_file()})
     for p in files:
         h.update(p.relative_to(root).as_posix().encode() + b"\n")
-        h.update(p.read_bytes().replace(b"\r\n", b"\n"))
+        data = p.read_bytes().replace(b"\r\n", b"\n")
+        if p.name == "pyproject.toml":
+            # The package version is a label, not part of the engine: a release bump must not
+            # trip the freeze. Dependencies and everything else in the file still count.
+            data = b"\n".join(ln for ln in data.split(b"\n") if not ln.startswith(b"version = "))
+        h.update(data)
     h.update(json.dumps({k: config.get(k) for k in sorted(config_keys)}, sort_keys=True, default=str).encode())
     h.update(repr(books).encode())
     return h.hexdigest()
