@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased: study repair after the 2026-11-12 review (Round 0)
+
+Evidence class: code, offline tests and simulation. No model was run and no study row was
+scored for this section. Record of every change and of what had been seen beforehand:
+`docs/evaluation/v16_prereg_amendment_2026-11-12.md`.
+
+- **Decisive metric replaced (review C4).** `study_design.incremental_ic` scored
+  Spearman(model signal minus rule signal, return). A model equal to half the rule beside a rule
+  with negative IC scored positive, so the decisive cell could pass with no added information.
+  The primary is now the residual IC: the model signal net of a pooled fit on the rule signal,
+  correlated with return ranks inside each asset class. A copy of the rule scores 0. The old
+  statistic is still printed as `legacy_model_minus_rule` and decides nothing.
+- **Ranking within asset class (C5)** in the decisive metric and in the first-pass IC of
+  `scripts/llm_study.py --report`, so equity-against-FX timing is not read as selection.
+- **Design dates on NYSE sessions (C6).** `study_design.weekly_dates` moves an anchor on a
+  closure to the next session (313 and 70 dates, unchanged counts). The first pass keeps its
+  grid, which was already running; its two closed dates (2016-01-01, 2017-11-23) are dropped at
+  scoring for every name and listed with the true reason. The interim line above that says 20
+  decisions were "left out for lack of forward bars" was wrong about the reason.
+- **Replication instead of a default (B2).** A pass on the design dates is adopted only if the
+  post-cutoff cell's one-sided 95 % lower bound is above zero (`study_design.replication_verdict`).
+- **Holdout lock reads the v2 audit (B3).** `evaluation.require_recall_pass` refused nothing that
+  the void v0.16 audit passed. It now needs a v2 result with `recall_flagged: false`, at least
+  100 items and a placebo arm; `scripts/llm_study.py --live` and the design runner call the lock.
+- **Signature gate (B4).** The design runner refuses a registered cell until
+  `docs/evaluation/v16_preregistration.md` exists, and refuses `--limit` on one. The owner signs
+  with `python scripts/sign_prereg.py` and a commit. The pre-registration is still a draft.
+- **Holdout look shortened (B6)** to 2022-01-03 to 2025-06-30 for LLM cells; the post-cutoff
+  cell reads the months after that.
+- **Planning MDE corrected (B10)**: 0.044 IC for the decisive cell, not 0.093.
+- **First-pass 20-bar IC relabelled (B7)** from "primary" to "descriptive".
+- Size and power of the new statistic by simulation: `scripts/round0_metric_size.py`, output in
+  `docs/results/v17/round0_metric_size.md`. Tests: `tests/test_study_repair_round0.py`.
+
+Not done here: the first-pass report has not been regenerated with the corrected scoring (the
+cells are not finished), and the README and site still describe the old metric (Round 3).
+
 ## v0.19.0rc1 — 2026-11-12 (release candidate; final v0.19.0 follows with the full v0.17 study results): long runs, the critic fix, coverage, docs refresh and the first interim LLM result
 
 Evidence class for each entry is stated in it. Nothing here was released; v0.16.0 and v0.17.0

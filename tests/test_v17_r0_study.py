@@ -121,10 +121,13 @@ def test_horizon_returns_use_the_decision_horizon_and_check_price_source() -> No
     paths = _paths()
     rows = _rows_on(paths, "rules", lambda p, n, ts: 0.0)
     fwd, problems = study.horizon_returns(rows, _prices_from(paths), 20)
-    assert not problems and len(fwd) == len(rows)
+    # Review C6: 3 of these 15 weekday design dates are NYSE closures (2016-01-01, 2017-04-14,
+    # 2019-01-01). They are dropped for every name and listed with the true reason.
+    assert len(problems) == 3 and all("not an NYSE session" in p for p in problems)
+    assert len(fwd) == len(rows) - 3 * len(NAMES)
     r = rows[7]
     assert fwd[(r["symbol"], r["as_of"])] == pytest.approx(_fwd(paths, r["symbol"], pd.Timestamp(r["as_of"])))
-    bad = [dict(rows[0], close=rows[0]["close"] * 1.01)]
+    bad = [dict(rows[5], close=rows[5]["close"] * 1.01)]
     fwd2, problems2 = study.horizon_returns(bad, _prices_from(paths), 20)
     assert not fwd2 and "stored close" in problems2[0]
 
@@ -153,4 +156,4 @@ def test_horizon_metrics_work_on_stored_first_pass_rows(tmp_path: Path, capsys: 
                     None, lambda s: None)
     assert study.main(["--report", "--out", str(out)]) == 0
     text = capsys.readouterr().out
-    assert "Primary (per decision, 20-bar forward return)" in text and "Left out" not in text
+    assert "Descriptive (per decision, 20-bar forward return" in text and "Left out" not in text

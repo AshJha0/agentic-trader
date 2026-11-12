@@ -309,7 +309,8 @@ def test_design_cells_registered_and_dry_run() -> None:
     assert 300 <= dec["dates"] <= 320 and 4500 <= dec["decisions"] <= 4800
     assert dec["calls"] == dec["decisions"] and dec["horizon_days"] == 5
     assert 60 < dec["cpu_hours"][0] < dec["cpu_hours"][1] < 140
-    assert dec["mde"]["mde"] == pytest.approx(0.093, abs=0.005)
+    assert dec["mde"]["mde"] == pytest.approx(0.044, abs=0.002)            # per-date null variance (B10)
+    assert dec["mde_legacy_pooled"]["mde"] == pytest.approx(0.093, abs=0.005)
     post = sd.dry_run(sd.POSTCUTOFF, NAMES)
     assert post["first_date"] >= "2025-07-01" and post["last_date"] <= "2026-10-30"
     fp = sd.first_pass_mde()
@@ -330,9 +331,9 @@ def _ic_rows(effect: float, dates: int = 60, names: int = 15, seed: int = 0) -> 
 
 def test_incremental_ic_and_futility() -> None:
     strong = sd.incremental_ic(_ic_rows(1.0))
-    assert strong["incremental"]["ic"] > 0.4 and strong["incremental"]["ci95"][0] > 0
+    assert strong["primary"]["ic"] > 0.4 and strong["primary"]["ci95"][0] > 0
     null = sd.incremental_ic(_ic_rows(0.0))
-    assert abs(null["incremental"]["ic"]) < 0.06
+    assert abs(null["primary"]["ic"]) < 0.06
     rows = _ic_rows(0.0) + [{"as_of": "x", "signal_rule": 0.1, "signal_model": None, "fwd_ret": 0.0}]
     assert sd.incremental_ic(rows)["excluded_rows"] == 1
     neg = _ic_rows(-0.5)
@@ -359,8 +360,8 @@ def test_run_design_cell_with_fake_model(graph: Any, tmp_path: Path) -> None:
 
 
 def test_prereg_draft_states_descriptive_first_pass() -> None:
-    text = (ROOT / "docs/evaluation/v16_preregistration_DRAFT.md").read_text(encoding="utf-8")
-    assert "DRAFT" in text and "descriptive" in text and "decisive_ta" in text and "postcutoff_ta" in text
+    text = sd.prereg_document(ROOT).read_text(encoding="utf-8")
+    assert "descriptive" in text and "decisive_ta" in text and "postcutoff_ta" in text
 
 
 # ---------------------------------------------------------------- llm_study call sites

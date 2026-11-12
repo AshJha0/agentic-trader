@@ -171,7 +171,12 @@ def _price(model: str) -> tuple[float, float]:
 
 
 def design_dates(n: int, start: date = DESIGN_START, end: date = DESIGN_END) -> list[date]:
-    """``n`` business days spread evenly over the design period (first and last included)."""
+    """``n`` business days spread evenly over the design period (first and last included).
+
+    Weekdays, not NYSE sessions: 2016-01-01 and 2017-11-23 of the 20 first-pass dates are
+    closures. The first pass was already running on these dates when that was found (review
+    C6), so the grid is frozen and the report drops non-session dates at scoring
+    (``horizon_returns``). New cells use ``study_design.weekly_dates``, which is on sessions."""
     days = pd.bdate_range(start, end)
     return [days[i].date() for i in np.linspace(0, len(days) - 1, n).round().astype(int)]
 
@@ -662,14 +667,26 @@ def horizon_returns(rows: list[dict[str, Any]], prices: PriceFn,
     Returns ({(symbol, as_of): return}, problems). A decision whose stored close disagrees with
     the provider's close on that date (relative 1e-6) is left out and listed in ``problems``:
     the report is then reading a different price source from the run, and says so."""
+    from agentic_trader.nyse_calendar import is_session
     out: dict[tuple[str, str], float] = {}
     problems: list[str] = []
     stored = {(r["symbol"], r["as_of"]): r["close"] for r in rows}
+    closed = sorted({d for _, d in stored if not is_session(date.fromisoformat(d))})
+    for d in closed:
+        # Every name is dropped, FX included: scoring FX alone would give that date a
+        # different cross-section from the rest (review C6, owner decision D1).
+        k = sum(1 for _, x in stored if x == d)
+        problems.append(f"{d}: not an NYSE session, design date dropped for all {k} names")
     for (sym, d), close in sorted(stored.items()):
+        if d in closed:
+            continue
         d0 = date.fromisoformat(d)
         px = prices(sym, d0, d0 + timedelta(days=int(horizon * 2 + 15)))
         px = px[px.index >= pd.Timestamp(d0)].dropna()
-        if len(px) <= horizon or px.index[0] != pd.Timestamp(d0):
+        if len(px) and px.index[0] != pd.Timestamp(d0):
+            problems.append(f"{sym} {d}: no bar on the decision date (first bar {px.index[0].date()})")
+            continue
+        if len(px) <= horizon:
             problems.append(f"{sym} {d}: fewer than {horizon} bars after the decision")
             continue
         if not close or abs(float(px.iloc[0]) / float(close) - 1.0) > 1e-6:
@@ -689,19 +706,40 @@ def _spearman(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.corrcoef(rx, ry)[0, 1])
 
 
+GROUP_MIN_NAMES = 3      # names an asset class needs on a date for its IC to count
+
+
+def _grouped_ic(symbols: list[str], w: np.ndarray, f: np.ndarray) -> float:
+    """Spearman IC inside each asset class, averaged with the classes' name counts as weights.
+    Ranking equities against FX pairs on raw returns reads asset-class timing as selection
+    (review C5). Symbols the instrument parser does not know form one class."""
+    from agentic_trader.study_design import asset_class_of
+    cls = np.array([asset_class_of(s) for s in symbols])
+    num = den = 0.0
+    for g in sorted(set(cls)):
+        sel = cls == g
+        if sel.sum() < GROUP_MIN_NAMES:
+            continue
+        v = _spearman(w[sel], f[sel])
+        if math.isfinite(v):
+            num += v * sel.sum()
+            den += sel.sum()
+    return num / den if den else float("nan")
+
+
 def _date_scores(cr: list[dict[str, Any]], fwd: dict[tuple[str, str], float]) -> dict[str, dict[str, float]]:
-    """Per design date: cross-sectional IC (seed-averaged), hits, active decisions, mean P&L."""
+    """Per design date: IC within asset class (seed-averaged), hits, active decisions, mean P&L."""
     out: dict[str, dict[str, float]] = {}
     for d in sorted({r["as_of"] for r in cr}):
         ics, pnl = [], []
         hits = active = 0
         for seed in sorted({int(r["seed"]) for r in cr}):
-            pts = [(r["target_weight"], fwd[(r["symbol"], d)]) for r in cr
-                   if r["as_of"] == d and int(r["seed"]) == seed and (r["symbol"], d) in fwd]
-            if not pts:
+            sel = [r for r in cr if r["as_of"] == d and int(r["seed"]) == seed and (r["symbol"], d) in fwd]
+            if not sel:
                 continue
-            w, f = np.array(pts, dtype=float).T
-            ics.append(_spearman(w, f))
+            w = np.array([r["target_weight"] for r in sel], dtype=float)
+            f = np.array([fwd[(r["symbol"], d)] for r in sel], dtype=float)
+            ics.append(_grouped_ic([r["symbol"] for r in sel], w, f))
             on = (np.abs(w) > 1e-9) & (f != 0)
             active += int(on.sum())
             hits += int((np.sign(w[on]) == np.sign(f[on])).sum())
@@ -744,7 +782,8 @@ def _boot_stats(ds: list[str], scores: dict[str, dict[str, float]], ref: dict[st
 
 def horizon_metrics(rows: list[dict[str, Any]], fwd: dict[tuple[str, str], float], horizon: int = HORIZON_DAYS,
                     n_boot: int = N_BOOT, seed: int = 0, reference: str = "rules") -> list[dict[str, Any]]:
-    """Primary P2 metrics per cell: mean cross-sectional Spearman IC of target weight against the
+    """Descriptive P2 metrics per cell (the first pass decides nothing; the decisive question is
+    ``study_design.incremental_ic``): mean Spearman IC, within asset class, of target weight against the
     ``horizon``-bar forward return, hit rate (sign of weight = sign of return, over decisions with
     a non-zero weight), each with a 95% bootstrap interval over dates, and IC minus the
     ``reference`` cell on paired dates. Secondary: the Sharpe of the per-date mean P&L
@@ -768,7 +807,8 @@ def render_horizon(hm: list[dict[str, Any]], problems: list[str], reference: str
     if not hm:
         return "Horizon metrics: no rows."
     h = hm[0]["horizon_days"]
-    head = (f"Primary (per decision, {h}-bar forward return): IC and hit rate with 95% date-bootstrap intervals\n\n"
+    head = (f"Descriptive (per decision, {h}-bar forward return; IC within asset class): IC and hit rate "
+            f"with 95% date-bootstrap intervals. Not a decision metric.\n\n"
             f"| cell | dates | scored | active | IC [95% CI] | hit rate [95% CI] | IC - {reference} [95% CI] | "
             f"Sharpe at {h}d (secondary) |\n|---|---:|---:|---:|---|---|---|---:|")
 
@@ -969,6 +1009,17 @@ def main(argv: list[str] | None = None) -> int:
     if unregistered:
         print(f"refusing --live: cells not registered in evaluation.TRIALS: {unregistered}", file=sys.stderr)
         return 2
+    # Review B3: this runner is locked out of the holdout like every other. The first-pass
+    # dates are all in the design period, so today this is a check that nothing drifted.
+    from agentic_trader.evaluation import (DEFAULT_RECALL_AUDIT_PATH, HoldoutLocked, require_recall_pass,
+                                           touches_holdout)
+    run_dates = design_dates(args.dates)
+    if touches_holdout({"run": (run_dates[0].isoformat(), run_dates[-1].isoformat())}):
+        try:
+            require_recall_pass(config.get("recall_audit_path") or DEFAULT_RECALL_AUDIT_PATH)
+        except HoldoutLocked as e:
+            print(f"refusing --live: the dates touch the holdout and {e}", file=sys.stderr)
+            return 2
     from agentic_trader.study_lineage import LineageMismatch, build_header
     hdr = build_header(model=args.model, url=config["local_llm_url"], config=config,
                        options={k: config.get(k) for k in ("max_tokens", "local_llm_num_ctx", "local_llm_timeout_s")},
