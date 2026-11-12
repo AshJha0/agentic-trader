@@ -28,8 +28,11 @@ after the model has spoken. The model's contribution is judgement over facts it 
 
 **The plain idea.** For every role, the rules answer first. The model, when it is switched on,
 answers the same question from the same facts, and its answer is used only if it passes a
-contract check. Whatever comes out, the portfolio manager's hard limits run afterwards, and
-the critic can only pull the weight back toward neutral.
+contract check, and a model's weight may sit only a set distance from the rules weight of the
+same stage. Whatever comes out, the portfolio manager's hard limits run afterwards. The critic
+lowers confidence and, when it flags a model view, cuts the weight: toward the portfolio
+manager's rules weight when a model PM overrode it, otherwise toward flat, never to a larger
+position.
 
 **The formal statement.** For an analyst, `Analyst.run` (`agentic_trader/agents/analysts.py`)
 always computes `report = self.rules(facts, state)`. If the analyst did not abstain and a model
@@ -40,13 +43,23 @@ rules report stands; an out-of-range value is a rejection, not a clip (`signal: 
 contract failure, not +1.0). A model report keeps the rules signal beside it (`rule_signal`).
 The portfolio manager (`PortfolioManager.run`, `agentic_trader/agents/risk.py`) blends the
 latest risk views 25% aggressive, 50% neutral, 25% conservative, may replace that with a model
-weight that passes the same kind of contract, and then always applies `guardrails` (no shorting
-where it is not allowed, the short-notional cap, `max_position`, the position VaR cap, the
-book VaR scale, `min_trade_weight`) and the no-trade band. The critic
+weight that passes the same kind of contract, bounds that model weight to within
+`risk.pm_model_band` (0.25) of the blend (`PortfolioManager.bound_model_weight`; a gap above
+`risk.pm_model_flag`, 0.10, is logged and noted on the decision, and both figures are stored as
+`FinalDecision.rule_weight` and `model_weight`), and then always applies `guardrails` (no
+shorting where it is not allowed, the short-notional cap, `max_position`, the position VaR cap,
+the book VaR scale, `min_trade_weight`) and the no-trade band. The trader does the same one
+stage earlier: a model target weight is bounded to within `risk.trader_model_band` (default
+`pm_model_band`) of the trader's rules weight, and both figures are stored on the
+`TradeProposal` (`agentic_trader/agents/trader.py`). The critic
 (`agentic_trader/agentic/critic.py`) flags any model analyst whose signal differs from its
-`rule_signal` by more than `agentic.critic_divergence` (0.6); with the default
-`critic_weight_rule: "scale"`, `apply_weight_rule` moves the weight to
-`neutral + 0.5 * (weight - neutral)` and then runs the same guardrails again on the new weight.
+`rule_signal` by more than `agentic.critic_divergence` (0.6). `apply_weight_rule` first calls
+`enforce_errors`, which acts on any failed "error" check; then, on a flagged divergence and with
+the default `critic_weight_rule: "scale"`, it moves the weight to
+`anchor + 0.5 * (weight - anchor)`, where the anchor (`_anchor`) is `FinalDecision.rule_weight`
+when a model PM moved away from it and 0 (flat) otherwise. The result never has a larger absolute
+size than the PM's weight (`_shrink_only`, `veto` included), and the same guardrails run again
+on the new weight.
 
 ```mermaid
 flowchart TD
@@ -57,12 +70,13 @@ flowchart TD
     M --> C{"contract: keys present,<br/>finite numbers, inside bounds?"}
     C -- no --> RU
     C -- yes --> LL["report: source llm<br/>rule_signal kept"]
-    RU --> PM["PM: risk views blended 25 / 50 / 25<br/>or a model weight that passes the contract"]
+    RU --> PM["PM: risk views blended 25 / 50 / 25<br/>or a model weight that passes the contract,<br/>bounded to blend ± pm_model_band (0.25)"]
     LL --> PM
     PM --> G["guardrails: shorting, short cap, max position,<br/>VaR cap, book VaR, minimum trade"]
     G --> B["no-trade band"]
-    B --> CR{"critic: any model signal more than 0.6<br/>from its rule_signal?"}
-    CR -- yes --> S["weight = neutral + 0.5 x (weight - neutral)<br/>(veto: weight = neutral)"]
+    B --> EE["critic checks; a failed error check<br/>blocks or downgrades (enforce_errors)"]
+    EE --> CR{"critic: any model signal more than 0.6<br/>from its rule_signal?"}
+    CR -- yes --> S["weight = anchor + 0.5 x (weight - anchor)<br/>anchor = rule_weight if a model PM overrode it, else 0<br/>(veto: weight = anchor); never a larger size"]
     CR -- no --> D["final decision"]
     S --> G2["guardrails again (PortfolioManager.guardrails)<br/>record: pre_guardrail, guardrail_clipped,<br/>guardrail_notes"]
     G2 --> D
@@ -101,35 +115,61 @@ position is flat, and the model is on.
    is the model's, with `rule_signal = +0.10` kept beside it.
 2. The risk team recommends +0.50 (aggressive), +0.40 (neutral) and +0.20 (conservative). The
    blend is 0.25 x 0.50 + 0.50 x 0.40 + 0.25 x 0.20 = **+0.375**.
-3. The portfolio manager's model replies `target_weight: 0.60`. It is inside [-1, 1], so the
-   weight becomes +0.60. Had it replied 1.7, the contract would have rejected the whole reply
-   and the blend of +0.375 would have stood; it would not have been clipped to 1.0.
+3. The portfolio manager's model replies `target_weight: 0.60`. It is inside [-1, 1], so it
+   passes the contract. The gap to the blend is 0.60 - 0.375 = 0.225: above `pm_model_flag`
+   0.10, so it is logged and noted on the decision, and inside `pm_model_band` 0.25, so
+   `bound_model_weight` leaves it: min(0.375 + 0.25, max(0.375 - 0.25, 0.60)) =
+   min(0.625, 0.60) = **+0.60**. The decision stores `rule_weight` +0.375 and `model_weight`
+   +0.60. Had it replied 0.90, the weight would have been bounded to +0.625. Had it replied
+   1.7, the contract would have rejected the whole reply and the blend of +0.375 would have
+   stood; it would not have been clipped to 1.0.
 4. Guardrails. Shorting is not involved; 0.60 is under `max_position` 1.0. Say the position's
    one-day 95% VaR per unit of weight is 0.9%: 0.60 x 0.9% = 0.54%, under the 2% cap
    (`risk.max_var_95`). 0.60 is above `min_trade_weight` 0.05. The weight stays +0.60.
 5. No-trade band: the move from 0 to 0.60 is larger than `rebalance_band` 0.10, so it trades.
-6. Critic: |0.80 - 0.10| = 0.70 > 0.6, so `model_rule_divergence` fails. The weight becomes
-   0 + 0.5 x (0.60 - 0) = **+0.30**, the action is recorded as evidence
-   (`critic.weight_rule`), and confidence is multiplied down (`mult` at most 0.7). The
-   guardrails run again on +0.30; it passes every limit, so `guardrail_clipped` is false and
-   `pre_guardrail` equals `to`.
+6. Critic: |0.80 - 0.10| = 0.70 > 0.6, so `model_rule_divergence` fails. No "error" check
+   failed, so `enforce_errors` changes nothing. The decision came from a model PM whose weight
+   (+0.60) differs from its `rule_weight` (+0.375), so the anchor is +0.375 (`_anchor`). The
+   weight becomes 0.375 + 0.5 x (0.60 - 0.375) = 0.375 + 0.1125 = **+0.4875**, which is smaller
+   than 0.60, so `_shrink_only` leaves it. The guardrails run again on +0.4875: VaR
+   0.4875 x 0.9% = 0.44%, under the 2% cap, and above `min_trade_weight`, so
+   `guardrail_clipped` is false and `pre_guardrail` equals `to`. The action is recorded as
+   evidence (`critic.weight_rule`), and confidence is multiplied down (`mult` at most 0.7).
+   Had the PM decided on its rules (no model weight), the anchor would have been flat and the
+   weight 0 + 0.5 x 0.375 = +0.1875.
 
 The rejection in step 3 is tested offline by `test_signal_999_is_rejected_not_clipped`
-(`tests/test_v17_r0_contracts.py`); the critic's weight rule in step 6 by
-`tests/test_v17_governance.py`.
+(`tests/test_v17_r0_contracts.py`); the band in step 3 and the anchor in step 6 by
+`test_a3_model_pm_weight_is_bounded_and_both_weights_are_recorded` and
+`test_a4_model_pm_is_pulled_toward_its_rules_weight` (`tests/test_round1_critic_weight.py`);
+the critic's weight rule in general by `tests/test_v17_governance.py`.
 
-One thing to know when reading `apply_weight_rule`: for equities the default neutral weight is
-1.0 (`risk.neutral_weight.equity`), so "toward neutral" can mean a larger long position. Until
-the fix of 2026-11-12 (v0.19, this release) the rule did not re-run the guardrails afterwards, so
-a scaled or vetoed equity long could end above `max_position` or the VaR cap. It now passes the
-new weight through `PortfolioManager.guardrails`, the same function the PM step uses, and the
-action record says whether they clipped it (`guardrail_clipped`, `guardrail_notes`,
-`pre_guardrail`); a weight that was already admissible is unchanged. The v0.17 LLM study runs
-from the runs checkout on the code from before this fix, so its `critic_on` results reflect the
-old rule. Tests: the `critic_guardrail` cases in `tests/test_v17_governance.py` and
-`tests/test_critic_coverage.py` (100% line and branch coverage of `critic.py`, with a property
-test that any weight the rule changed satisfies `max_position`, long-only, the VaR cap and
-`min_trade_weight`). COOKBOOK recipe 134 runs the clip on a fixture.
+One thing to know when reading the history of `apply_weight_rule`. Before Round 1
+(2026-11-12) it pulled the weight toward the strategic neutral weight, which for equities is 1.0
+(`risk.neutral_weight.equity`), so an alarm could turn into a larger long; an earlier v0.19 fix
+added the second guardrail pass. The rule now never uses the neutral weight: the anchor is the
+PM's rules weight or flat, `_shrink_only` keeps the absolute size at or below the PM's for
+`scale` and `veto` alike, and a changed weight goes through `PortfolioManager.guardrails`, the
+same function the PM step uses; the action record says whether they clipped it
+(`guardrail_clipped`, `guardrail_notes`, `pre_guardrail`). Failed "error" checks act as well
+(`enforce_errors`): a failed `firm_limits` re-applies the guardrails, never to a larger size, and
+a weight still above `max_position` goes flat; a failed `protective_levels` clears the level on
+the wrong side of the entry; any other failed error check (an unresolved evidence id) caps the
+confidence multiplier at 0.5. Given no risk facts, the firm-limit check says "VaR not checked"
+instead of reporting the VaR as within limits. The v0.17 LLM study runs from the runs checkout
+on the code from before these fixes, so its `critic_on` results reflect the old rule. Tests: the
+`critic_guardrail` cases in `tests/test_v17_governance.py`, the `a4`/`a5`/`a6` cases in
+`tests/test_round1_critic_weight.py`, and `tests/test_critic_coverage.py` (100% line and branch
+coverage of `critic.py`, with a property test that any weight the rule changed satisfies
+`max_position`, long-only, the VaR cap and `min_trade_weight`). COOKBOOK recipe 134 runs the
+clip on a fixture.
+
+What the bands do not cover. Each band is per stage and measured from that stage's own rules
+weight on the inputs it received. The PM's blend is sized from risk views that read the trader's
+proposal, so a model in both roles can move the final weight by up to 0.25 at the trader and
+0.25 at the PM, 0.5 in total. The debate score that feeds the trader's rules weight can itself
+be model-written (researchers and facilitator). There is no full rules twin of the desk run
+beside it, so `rule_weight` is not the answer an all-rules desk would have given.
 
 ## 1. The agents on the desk
 
@@ -245,9 +285,11 @@ API's schema rules and runs one recorded-shape reply per contract through both.
 - every numeric key must be a finite JSON number (not a string, not `NaN`, not a boolean).
 
 A reply that fails is **rejected as a whole** and the rules apply. A half-parsed reply is
-never coerced to zero and booked as the model's view. Values that pass are clipped to their
-legal range (a signal to [−1, 1], a weight to the position cap), and price levels the model
-proposes are kept only when they sit on the correct side of the entry.
+never coerced to zero and booked as the model's view. A value outside the schema's bounds is
+rejected the same way, not clipped (a signal of 999 fails the contract). A trader's or PM's
+model weight that passes is then bounded to within 0.25 of that stage's rules weight
+(`risk.trader_model_band`, `risk.pm_model_band`), the firm limits run after it, and price
+levels the model proposes are kept only when they sit on the correct side of the entry.
 
 `llm.complete` returns `None` on any failure (no key, network error, timeout, refusal,
 unparseable output). The agent then uses its rules. **A run never fails because of the model.**
@@ -406,8 +448,8 @@ tool is rated high risk, so policy returns REQUIRE_APPROVAL for both (`read_only
   whatever `agentic.approval` says (`agentic/mcp_server.py`). An operator who wants tickets
   passes `--role trader --approval auto`, and the server prints a warning to stderr; with
   `auto` nobody reviews the ticket. `queued` and `signed` are refused, because nothing on a
-  stdio server can decide a parked request. (The `agentic-trader mcp` CLI still forwards
-  `--role trader` by default; with the `deny` default, tickets are refused there too.)
+  stdio server can decide a parked request. (The `agentic-trader mcp` CLI defaults to
+  `--role analyst` as well, `cli/parser.py`.)
 
 Every ticket, however it was approved, is sized through the same PM guardrails the desk uses
 (`PortfolioManager.guardrails`: short ban, max short notional, max position, position VaR
@@ -417,21 +459,27 @@ book past `max_position` or `max_short_notional`. A plan is single-use, a state-
 is never retried, and one approval permits at most one side effect. The framework never
 connects to a broker: the "order" is a ticket.
 
-### The critic can only lower confidence
+### The critic lowers confidence and can cut the weight
 
 Seven deterministic checks run on every decision: cited evidence resolves; a model-written
 analyst signal does not diverge from the rule signal on the same facts beyond a threshold;
 analysts do not contradict each other without the verdict saying so; firm limits hold;
 protective levels are on the right side; the direction matches the debate unless an
 adjustment explains it; single-source findings are capped at 0.6 confidence. A failed check
-lowers confidence. Nothing in the critic, including its optional model critique, can raise it.
+lowers confidence. Nothing in the critic, including its optional model critique (its multiplier
+is clipped to at most 1), can raise it. Two kinds of failure also act on the weight, and only to
+make it smaller or leave it: a failed "error" check through `enforce_errors`, and a flagged
+model/rules divergence through `apply_weight_rule` (see "One decision, step by step" above).
 
 ### Audited reports
 
 The report's narrative is a template, or a model given only the structured facts. Then two
-audits run: every number in the narrative must match a fact (allowing rounding, sign and
-percentage forms), and every evidence id must resolve. A mismatch is attached to the report
-as a warning. A model-written report cannot quietly introduce a number.
+audits run: every number in the narrative must match a fact (allowing rounding and percentage
+forms; signs must agree, so "+0.60" does not match a fact of -0.60), and every evidence id must
+resolve. A model narrative that fails either audit or the output guard (`narrative_guard`) is
+not shipped: the template narrative replaces it, a warning is attached, and the model text is
+kept in `Report.rejected_narrative` for the audit trail. A model-written report cannot quietly
+introduce a number.
 
 ## 6. Retrieval (RAG)
 
@@ -495,7 +543,10 @@ off the host, which makes a full study of where a model helps the desk affordabl
 the contract's JSON schema in the request's `format` field, and the agent's contract check
 still runs afterwards. Anonymisation, evidence (`last_call`) and `max_llm_calls` apply as for
 Claude; `estimate_cost` is 0, so only the call cap binds. A timeout, refused connection, HTTP
-error or unreadable body returns `None` and the rules answer, with no retry.
+error or unreadable body returns `None` and the rules answer, with no retry. With
+`local_llm_digest` pinned, `LocalLLM.verify_digest` compares the served model's digest (Ollama
+`/api/tags`) with the pin before the first call and raises `ModelDigestMismatch` on a mismatch
+or a model the server does not list, so re-pulled weights under the same tag stop the run.
 
 `scripts/llm_study.py` defines eight cells (v0.16 added `local_analysts`): `rules`, `local_all`, `local_text`, `local_pm`, `local_analysts`,
 `no_debate`, `debate_1`, `neutral_risk`. `--describe` lists them, `--dry-run` counts calls
@@ -588,7 +639,10 @@ and each agent run can be recorded and replayed to check it gives the same decis
   `text_analysts: ["fundamentals_text", "macro_text"]` adds their reports before the debate,
   on both the graph and the agent-harness path. They read only text visible at the as-of day
   at 20:00 UTC, and research passages only through the 0.8 retrieval gate. The Claude variants
-  are dry-run only.
+  are dry-run only. A macro shift that is `NaN`, `Infinity` or outside [-1, 1] is rejected, not
+  clipped; a claim's quote needs at least 3 words, 12 characters and one content word (four
+  letters or more, not a stopword), a repeated quote is dropped, and at most 12 claims count
+  (`MIN_QUOTE_WORDS`, `MIN_QUOTE_CHARS`, `MAX_CLAIMS` in `text_analysts.py`).
 - *Runbook RAG (3.9).* Kept: removing it changed 0 of 9 decisions on synthetic data (rules path),
   so it neither helps nor harms there.
 - *Governance (4.1-4.3).* Outcome join and per-role hit rates (n = 0 real TaskRuns so far);

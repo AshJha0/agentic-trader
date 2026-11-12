@@ -145,6 +145,8 @@ unless explicitly allowed) and uses JSON-schema constrained decoding. The study 
 counted; `MAX_FALLBACK_SHARE = 0.10` makes a cell inadmissible when more than 10 % of its model
 calls fell back or failed the contract. The run header pins the model digest, and
 `run_study` re-checks the served digest every `SWAP_CHECK_EVERY = 25` rows (`ModelSwapped`).
+Outside the study, a pinned `local_llm_digest` is checked by `LocalLLM.verify_digest` before
+the first call (`ModelDigestMismatch` on a mismatch).
 
 ### Worked example from this repo
 
@@ -227,9 +229,14 @@ approval, and a red team measures how often an injection still moves the answer.
 
 - Fence: untrusted text is NFKC-normalised and fenced (`state.normalise_untrusted`); output
   guard `agentic/output_guard.py`.
-- Critic (`agentic/critic.py`): failed checks lower confidence; on a model/rules divergence above
-  `critic_divergence` 0.6, `apply_weight_rule` moves the weight toward neutral
-  (`scale` 0.5 by default), never away from it.
+- Model weight bands: a model trader's or PM's weight may sit at most 0.25 from that stage's
+  rules weight (`risk.trader_model_band`, `risk.pm_model_band`; `bound_model_weight` in
+  `agents/risk.py`), and a gap above `risk.pm_model_flag` 0.10 is logged.
+- Critic (`agentic/critic.py`): failed checks lower confidence, and a failed "error" check blocks
+  or downgrades the decision (`enforce_errors`); on a model/rules divergence above
+  `critic_divergence` 0.6, `apply_weight_rule` moves the weight toward an anchor (`scale` 0.5 by
+  default): `FinalDecision.rule_weight` when a model PM overrode it, flat otherwise. It never
+  increases the absolute size, `veto` included, and the guardrails run again.
 - Hard limits: `PortfolioManager.guardrails` (short policy, max position, VaR95 cap, book VaR,
   minimum trade) run after the PM's weight.
 - Policy and approvals: `agentic/policy.py`, six rules in order (deny list, capabilities,
@@ -244,9 +251,14 @@ LEARN [11](../../LEARN.md#11-policy-who-may-do-what-explained-by-rule),
 
 ### Worked example from this repo
 
-The model asks for +0.80 on an FX pair, whose neutral weight is 0.0 by default (`config.py`); the
-critic flags a divergence from the rules signal and `scale` gives 0 + 0.5 x (0.80 - 0) = +0.40
-(arithmetic on `critic.apply_weight_rule`). In the v0.15 local run 21 of 150 attacks (14 %)
+The PM's rules blend is +0.20 and its model asks for +0.80 (numbers invented for the
+arithmetic). `bound_model_weight` gives min(0.20 + 0.25, max(0.20 - 0.25, 0.80)) = +0.45, and the
+gap of 0.60 is logged. The critic then flags a model analyst's divergence from its rules signal;
+the decision came from a model PM, so the anchor is the rules weight +0.20 and `scale` gives
+0.20 + 0.5 x (0.45 - 0.20) = +0.325, smaller than +0.45, so it stands (arithmetic on
+`PortfolioManager.bound_model_weight` and `critic.apply_weight_rule`; guardrails assumed not to
+bind). Had the PM decided +0.45 on its rules, the anchor would be flat: 0 + 0.5 x 0.45 = +0.225.
+In the v0.15 local run 21 of 150 attacks (14 %)
 moved the News analyst's signal by more than 0.5 (measured, qwen2.5:7b, no control arm, so an
 upper bound on compliance).
 
@@ -264,7 +276,9 @@ COOKBOOK [106](../../COOKBOOK.md#106-cut-a-filing-into-sections-and-fence-them),
 
 ### Self-check (with answers)
 
-1. *Why may the critic only move toward neutral?* Neutral is a weight the limits already admit.
+1. *Why does the critic move toward the rules weight or flat, and never toward neutral?* The
+   strategic neutral weight for equities is 1.0, so "toward neutral" could turn an alarm into a
+   larger long; the rules weight or flat, with the size capped at the PM's, can only shrink the position or leave it.
 2. *Which runs first, approval or argument guards?* The guards; a bad request is denied before
    anyone is asked to approve it.
 3. *Why does 14 % overstate compliance?* Appending any text can move a small model; only the
