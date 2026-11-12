@@ -154,6 +154,10 @@ class TradeProposal:
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
     untrusted: bool = False
+    # Round 1 (review A3): the weight the trader's rules gave on the same inputs, and the
+    # model's own figure before it was bounded to a band around that. None on a rules proposal.
+    rule_weight: float | None = None
+    model_weight: float | None = None
 
 
 @dataclass

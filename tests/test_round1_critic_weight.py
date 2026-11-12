@@ -394,3 +394,50 @@ def test_a17_matching_pin_is_checked_once_and_no_pin_checks_nothing():
     assert llm.complete("s", "p", deep=False) == "ok" and seen["digest"] == 0
     with pytest.raises(ValueError, match="local_llm_digest"):
         LocalLLM({"llm_provider": "local", "local_llm_model": "m", "local_llm_digest": "abc"})
+
+
+# ---------------------------------------------------------------- integration: the trader stage
+def test_trader_model_weight_is_bounded_to_the_rules_weight(caplog: pytest.LogCaptureFixture) -> None:
+    """Lane S2 left the trader open: a model trader could write +0.9 where its own rules said
+    about 0, and the PM's 'rules' blend then started from the model's figure. The trader's
+    model weight is now held within risk.trader_model_band of the rules weight, the gap is
+    logged, and both figures are kept on the proposal."""
+    import logging
+    from datetime import date
+    from types import SimpleNamespace
+
+    from agentic_trader.agents.trader import Trader
+    from agentic_trader.config import make_config
+    from agentic_trader.state import Action
+
+    cfg = make_config()
+    trader = Trader(None, cfg)
+    debate = SimpleNamespace(score=0.0, winner="neutral", conviction=0.5, untrusted=False)
+    neutral = cfg["risk"].get("neutral_weight", {}).get("equity", 0.0)    # the rules weight at score 0
+    band, flag = cfg["risk"]["pm_model_band"], cfg["risk"]["pm_model_flag"]
+    replies = iter([{"action": "SELL", "target_weight": neutral - 0.9, "rationale": "strong conviction"},
+                    {"action": "HOLD", "target_weight": neutral - flag / 2, "rationale": "small"}])
+    trader.ask_json = lambda *a, **k: next(replies)             # type: ignore[method-assign]
+
+    def state() -> SimpleNamespace:
+        return SimpleNamespace(
+            debate=debate, last_price=100.0, forecast=None, current_weight=None, track_record={},
+            instrument=SimpleNamespace(symbol="AAPL", display="AAPL", asset_class="equity", is_fx=False),
+            as_of=date(2020, 1, 2), reports={}, untrusted_inputs=False, proposal=None,
+            history=None, px=lambda v: v, unpx=lambda v: v, reports_digest=lambda: "",
+            verdict_block=lambda: "", lessons_block=lambda: "", evidence=[], policy_hits=[])
+    import agentic_trader.agents.trader as tr
+    orig_atr, orig_short, orig_pp = tr.atr14, tr.allow_short, tr.policy_passages
+    tr.atr14, tr.allow_short, tr.policy_passages = (lambda s: 2.0), (lambda s, c: True), (lambda s: "")
+    try:
+        with caplog.at_level(logging.WARNING):
+            far = trader.run(state())
+        near = trader.run(state())
+    finally:
+        tr.atr14, tr.allow_short, tr.policy_passages = orig_atr, orig_short, orig_pp
+    assert far.rule_weight == pytest.approx(neutral) and far.model_weight == pytest.approx(neutral - 0.9)
+    assert far.target_weight == pytest.approx(neutral - band) and far.source == "llm"
+    assert "bounded to" in far.rationale and "trader model weight" in caplog.text
+    assert isinstance(far.action, Action)
+    assert near.target_weight == pytest.approx(neutral - flag / 2) and "trader model weight" not in near.rationale
+    assert near.rule_weight == pytest.approx(neutral)
