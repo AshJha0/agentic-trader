@@ -54,7 +54,8 @@ while a run waits for approval cancels it instead of resuming it. When a run fin
 cancelled its pending approvals are withdrawn, so deciding one is refused (409); once the
 run has been evicted from memory the approval id is unknown (404). The HTTP API builds its
 gateway from the setting; the MCP server takes the operator's role and gateway for the
-whole session (`--role`, `--approval`, defaulting to the configured setting) and refuses
+whole session (`--role`, default analyst; `--approval`, default deny, with `auto` an explicit
+opt-in that prints a warning) and refuses
 `queued`, because nothing on a stdio server can decide a parked request.
 
 ## Tools

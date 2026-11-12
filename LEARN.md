@@ -451,9 +451,12 @@ bull/bear contradiction without a balanced verdict; firm limits (size, shorting,
 and targets on the correct side (error); the trader's tilt agrees with the verdict and the PM
 did not flip direction without an adjustment; single-evidence findings capped at 0.6. The
 decision's confidence is scaled by the multiplier at finalisation. When a model signal diverges,
-`apply_weight_rule` also moves the weight toward neutral and, since v0.19, runs the PM
-guardrails on the result: with neutral 1.0, `max_position` 0.5 and a weight of 0.30, the rule
-gives 0.65 and the cap brings it to 0.50 (`guardrail_clipped` true; COOKBOOK recipe 134).
+`apply_weight_rule` also cuts the weight: toward the PM's rules weight when a model PM
+overrode it, toward flat otherwise, and never to a larger absolute exposure; the PM guardrails
+then run on the result. With a weight of 0.30 and scale 0.5 the rule gives 0.15 (COOKBOOK
+recipe 134). Until 2026-11-12 the rule moved toward the neutral weight, which is 1.0 for
+equities, so the same alarm turned 0.30 into 0.65: an alarm that added risk (review A4). So
+the title holds for confidence, which is only ever lowered; the weight can be cut as well.
 
 **Numbers.** 6 checks per task; in the injected-headline test the divergence check fails and the
 multiplier drops to 0.7.
@@ -837,7 +840,7 @@ of sections 26 and 35 print 1.40 for the same daily series because portfolio met
 annualise at 260, the FX sleeves' count: 1.375 × √(260/252) ≈ 1.40), t 3.42, skew −0.635,
 kurtosis 8.41, bootstrap 95% interval [0.593, 2.17], PSR against zero 1.00; with 26 trials
 the expected maximum Sharpe of that many null trials is 0.161, the deflated Sharpe
-probability 0.998 and the minimum track record 496 periods. The table's caveat, verbatim:
+probability 0.998 and the minimum track record 496 periods. (Corrected 2026-11-12: 0.998 was withdrawn; it and its v0.11 successor are an absolute deflated Sharpe, which is not a selection test (the no-desk vol-target control scores 0.921 on it at 81 trials). The selection statistic is the deflated Sharpe of desk minus vol-matched control: 0.009 at the registry's 81 trials (`docs/results/round2/selection_stat.md`).) The table's caveat, verbatim:
 "an upper bound on the true significance: the benchmark is built from the dispersion of
 trial_sharpes_annual, which is usually narrower than the dispersion of the full return
 series each trial would have produced, so the true search space is wider than this reports
@@ -1875,6 +1878,7 @@ the deflated Sharpe uses each trial's portfolio Sharpe.
 
 **The numbers.** The v0.11 measurement reports a deflated Sharpe probability of 0.949 for
 the frozen rules. It is below the usual 0.95 line, and the page says it is an upper bound.
+Corrected 2026-11-12: this figure is an absolute deflated Sharpe, which is not a selection test (the no-desk vol-target control scores 0.921 on it at 81 trials). The selection statistic is the deflated Sharpe of desk minus vol-matched control: 0.009 at the registry's 81 trials (`docs/results/round2/selection_stat.md`).
 
 **Questions.**
 - Why does mixing mean-of-instrument Sharpes with portfolio Sharpes across trials break the
@@ -2135,8 +2139,9 @@ ablation and drop whichever fact key carries it. (Illustrative numbers, not a re
 `docs/evaluation/v16_preregistration.md`; recipes 114-117. Model: `qwen2.5:7b-instruct`,
 4-bit, CPU. Interim result (2026-11-12, `docs/results/v17/llm_study_interim_report.md`): the IC
 difference local_analysts minus rules is -0.046 [95% CI -0.185, +0.067], hit rate 54.6% against
-55.1%, fallback 0%, both cells admissible; no evidence the model analysts help. `local_all` and
-`critic_on` are still running. The minimum detectable effect on the holdout is 0.59 to 1.32 annual
+55.1%, no failed model call; no evidence the model analysts help (descriptive; 404 of 1,200
+analyst outputs in the model cell came from the model). The study was stopped on 2026-11-12 and
+its pre-registered decisive test was not run (`docs/evaluation/v16_prereg_status_2026-11-12.md`). The minimum detectable effect on the holdout is 0.59 to 1.32 annual
 Sharpe (pre-registration, iid approximation), so a null there is weak evidence against a small gain.
 
 **Questions.**

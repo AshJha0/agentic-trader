@@ -416,6 +416,15 @@ class BacktestConfig:
     # Both 0 (default) is the historical fill. Take-profit fills are unchanged.
     stop_half_spread: float = 0.0
     stop_range_frac: float = 0.0
+    # Account-currency P&L for FX (round 2, review D5). The engine books the price move of the
+    # quote currency; for a USD account that is right only for XXXUSD pairs. quote_inverse:
+    # the instrument is quoted in units of quote currency per unit of account currency
+    # (USDJPY for a USD account), so one quote unit is worth 1/price and a long position's
+    # return over a leg from price a to b is (b/a - 1) * a/b = 1 - a/b, not b/a - 1. Exact at
+    # every fill (close, open, stop). For a cross, pass the ``quote_fx`` series instead (the
+    # account-currency value of one quote unit at each close). False and no series = the
+    # historical behaviour, bit-identical.
+    quote_inverse: bool = False
 
 
 @dataclass
@@ -601,7 +610,8 @@ def _exit_fill(w, stop, take, o, h, l, half_spread=0.0, range_frac=0.0):
 
 _EXTRA_RULES = {"carry": "finite_or_nan", "open": "positive", "high": "positive", "low": "positive",
                 "stop": "finite_or_nan", "take": "finite_or_nan", "rebalance": "finite",
-                "impact": "nonneg_or_nan", "cash_rate": "finite_or_nan"}
+                "impact": "nonneg_or_nan", "cash_rate": "finite_or_nan", "keep": "finite",
+                "quote_fx": "positive"}
 _RULE_TEXT = {"positive": "positive and finite", "finite": "finite",
               "nonneg_or_nan": "NaN or a finite non-negative number", "finite_or_nan": "NaN or finite"}
 
@@ -671,6 +681,8 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
     if config.fill_next_open:
         if out["open"] is None:
             raise ValueError("run_backtest: fill_next_open needs open prices")
+    if bool(config.quote_inverse) and out["quote_fx"] is not None:
+        raise ValueError("run_backtest: quote_inverse and a quote_fx series are mutually exclusive")
     return p, w_in, out
 
 
@@ -680,10 +692,11 @@ def run_backtest(prices, target_weights, config: BacktestConfig) -> BacktestResu
 
 def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, open=None,
                     high=None, low=None, stop=None, take=None, rebalance=None,
-                    impact=None, cash_rate=None) -> BacktestResult:
+                    impact=None, cash_rate=None, keep=None, quote_fx=None) -> BacktestResult:
     p, w_in, extras = validate_backtest_inputs(prices, target_weights, config, carry=carry, open=open,
                                                high=high, low=low, stop=stop, take=take,
-                                               rebalance=rebalance, impact=impact, cash_rate=cash_rate)
+                                               rebalance=rebalance, impact=impact, cash_rate=cash_rate,
+                                               keep=keep, quote_fx=quote_fx)
     T = p.size
     has_levels = extras["stop"] is not None or extras["take"] is not None
 
@@ -712,9 +725,16 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
     lag = int(config.exec_lag)
     next_open = bool(config.fill_next_open)
     opens = extras["open"]
+    keep_a, qfx = extras["keep"], extras["quote_fx"]
+    inv = bool(config.quote_inverse)
     for t in range(T - 1):
         j = t - lag  # decision bar whose target is executed now (j < 0: nothing decided yet)
         raw = 0.0 if (j < 0 or np.isnan(w_in[j])) else float(w_in[j])
+        if keep_a is not None and j >= 0 and keep_a[j] != 0.0:
+            # A keep (round 2, review D4) is a no-op flag, not a weight: hold what is held when
+            # the decision is executed. With exec_lag >= 1 the weight held at the decision bar
+            # has drifted by then, and passing it as a number traded back to it at a cost.
+            raw = prev
         clamped = float(min(max(raw, lo), hi))
         target = raw if raw == prev else clamped
         rearm = (clamped != prev_target) if reb is None else (j >= 0 and reb[j] != 0.0)
@@ -728,9 +748,12 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         if next_open:
             # The held position carries the overnight move close[t] -> open[t+1]; the new target
             # fills at the open. A keep (w == prev) holds the units: no trade at the open.
+            # Account currency: an inverse quote converts at 1/price exactly; a cross's quote_fx
+            # is known at closes only, so its whole move is put on the open -> close leg.
             on = opens[t + 1] / p[t]
-            f_on = 1.0 + prev * (on - 1.0)
-            held_on = 0.0 if (prev == 0.0 or f_on <= 0.0) else prev * on / f_on
+            q_on = p[t] / opens[t + 1] if inv else 1.0
+            f_on = 1.0 + prev * (on - 1.0) * q_on
+            held_on = 0.0 if (prev == 0.0 or f_on <= 0.0) else prev * on * q_on / f_on
             if w == prev:
                 w = held_on
             trade = w - held_on
@@ -759,8 +782,12 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
 
         # Costs come out of equity before the position is put on (w is a fraction of post-cost
         # equity): E_{t+1} = E_t (1 - k_in) (1 + g) (1 - k_out). Mirrors C++ operation for operation.
-        gross = px_end / (opens[t + 1] if next_open else p[t])  # a ratio: 1 + (gross - 1) loses digits on a huge move
-        price_ret = gross - 1.0
+        px_start = opens[t + 1] if next_open else p[t]
+        gross = px_end / px_start  # a ratio: 1 + (gross - 1) loses digits on a huge move
+        # qr: account-currency value of one quote unit at the end of the leg over its value at
+        # the start (1.0 for an account-currency quote: bit-identical to the historical engine).
+        qr = px_start / px_end if inv else (1.0 if qfx is None else float(qfx[t + 1] / qfx[t]))
+        price_ret = (gross - 1.0) * qr
         carry = w * rate / ppy
         cash = (1.0 - abs(w) if config.funded else 1.0) * cash_rate_t / ppy
         aw = abs(w)
@@ -798,7 +825,7 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         positions[t] = w
         returns[t + 1] = ret
         equity[t + 1] = nxt
-        prev = 0.0 if (exited or ruined or w == 0.0) else w * gross / (1.0 + g)
+        prev = 0.0 if (exited or ruined or w == 0.0) else w * gross * qr / (1.0 + g)
     positions[T - 1] = prev
     metrics = compute_metrics(equity, positions, ppy,
                               config.risk_free_annual if cash_a is None else cash_a, traded)

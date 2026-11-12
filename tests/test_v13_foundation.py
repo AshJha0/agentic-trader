@@ -127,7 +127,9 @@ def test_default_ids_resolve_in_both_tables(key):
     assert price_for("claude-opus-5-5") is not None and "claude-opus-5-5" in MODEL_CAPABILITIES
 
 
-@pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="needs a key (models.retrieve is free)")
+# Opt-in only: a key in the environment is not consent to call the network from a test run.
+@pytest.mark.skipif(not (os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("AGENTIC_TRADER_LIVE_API") == "1"),
+                    reason="live API check: set AGENTIC_TRADER_LIVE_API=1 with a key (models.retrieve is free)")
 def test_default_ids_exist_on_the_api():  # pragma: no cover - runs only with a key
     import anthropic
     client = anthropic.Anthropic()

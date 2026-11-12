@@ -35,6 +35,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import re
 import socket
 import threading
 import time
@@ -64,6 +65,10 @@ TRUNCATION_RATIO = 0.9
 # Backoff for transient failures when ``local_llm_retry_budget_s`` > 0: base, doubling, capped.
 RETRY_BASE_S = 2.0
 RETRY_MAX_DELAY_S = 60.0
+
+
+class ModelDigestMismatch(RuntimeError):
+    """The served model's weights are not the pinned ``local_llm_digest`` (review A17)."""
 
 
 class LocalLLMUnavailable(ConnectionError):
@@ -171,7 +176,8 @@ class LocalLLM:
     for protocol compatibility and recorded nowhere else); ``config`` keys: ``local_llm_url``,
     ``local_llm_model``, ``local_llm_timeout_s``, ``local_llm_seed``, ``local_llm_num_ctx``
     (default 8192, sent as ``num_ctx``), ``local_llm_temperature`` (default 0: greedy, so the seed has no effect),
-    ``local_llm_digest`` (optional pinned model digest, review N5), ``max_tokens`` (sent as
+    ``local_llm_digest`` (optional pinned model digest, review N5; enforced before the first
+    call since Round 1, see ``verify_digest``), ``max_tokens`` (sent as
     ``num_predict``) and ``llm_strict_model``. Run locally since v0.15 (see the
     module docstring)."""
 
@@ -202,7 +208,12 @@ class LocalLLM:
         self.num_ctx = int(config.get("local_llm_num_ctx") or DEFAULT_NUM_CTX)
         if self.num_ctx <= 0:
             raise ValueError("local_llm_num_ctx must be > 0")
-        self.digest = config.get("local_llm_digest") or None
+        self.digest = str(config.get("local_llm_digest") or "").strip().lower().removeprefix("sha256:") or None
+        if self.digest is not None and (len(self.digest) < 12 or not re.fullmatch(r"[0-9a-f]+", self.digest)):
+            raise ValueError("local_llm_digest must be a hex model digest (at least 12 characters), "
+                             f"got {config.get('local_llm_digest')!r}")
+        self._digest_fn: Callable[[str, str], dict[str, Any] | None] = model_digest
+        self._digest_verified = False
         self.retry_budget_s = float(config.get("local_llm_retry_budget_s") or 0.0)
         if self.retry_budget_s < 0:
             raise ValueError("local_llm_retry_budget_s must be >= 0")
@@ -258,9 +269,27 @@ class LocalLLM:
             raise ValueError("reply body is not a JSON object")
         return data
 
+    def verify_digest(self) -> None:
+        """Round 1 (review A17): with ``local_llm_digest`` pinned, the served model's digest
+        (``GET /api/tags``) must start with the pin before any call is made, so a re-pulled tag
+        with new weights under the same name stops the run instead of drifting silently.
+        Checked once per instance; a mismatch, or a model the server does not list, raises
+        ``ModelDigestMismatch``. Without a pin nothing is checked."""
+        if self.digest is None or self._digest_verified:
+            return
+        entry = self._digest_fn(self.url, self.model)
+        served = str((entry or {}).get("digest") or "").strip().lower().removeprefix("sha256:")
+        if not served:
+            raise ModelDigestMismatch(f"pinned digest {self.digest[:12]} for {self.model!r}, but the server at "
+                                      f"{self.url} does not list the model with a digest")
+        if not served.startswith(self.digest):
+            raise ModelDigestMismatch(f"pinned digest {self.digest[:12]} for {self.model!r}, served {served[:12]}")
+        self._digest_verified = True
+
     def _run(self, system: str, prompt: str, schema: dict[str, Any] | None) -> str | None:
         self._tls.last = None
-        body = self.build_request(system, prompt, schema)    # built once: retries resend it
+        self.verify_digest()
+        body =self.build_request(system, prompt, schema)    # built once: retries resend it
         try:
             data = self._post_with_retry(body)
         except LocalLLMUnavailable:

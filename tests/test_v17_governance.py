@@ -113,10 +113,11 @@ def test_veto_moves_to_neutral_and_clears_wrong_side_levels():
     assert d.target_weight == 0.0 and d.action is Action.HOLD and d.stop_loss is None and act["rule"] == "veto"
 
 
-def test_scale_is_toward_the_neutral_weight():
+def test_scale_ignores_the_neutral_weight():
+    # Round 1 (D4): a rules decision is pulled toward flat, whatever the strategic neutral weight.
     st, cfg = _state(weight=0.9), _cfg("scale", 0.5, neutral=0.5)
     apply_weight_rule(st, _review(st, cfg), cfg)
-    assert st.decision.target_weight == pytest.approx(0.7)
+    assert st.decision.target_weight == pytest.approx(0.45)
 
 
 def test_no_divergence_or_rule_off_leaves_weight():
@@ -296,21 +297,23 @@ def _cap_cfg(rule="scale", neutral=1.0, max_position=0.5):
     return make_config(_cfg(rule, 0.5, neutral), risk={"max_position": max_position, "max_var_95": 0.0})
 
 
-def test_critic_guardrail_clips_scaled_equity_long_past_the_cap():
+def test_critic_no_longer_scales_an_equity_long_up_toward_neutral_one():
+    # Round 1 (A4): before, 1.0 + 0.5 * (0.3 - 1.0) = 0.65 (clipped to the 0.5 cap): the alarm added risk.
     st, cfg = _state(weight=0.3), _cap_cfg("scale")
     act = apply_weight_rule(st, _review(st, cfg), cfg)
-    # 1.0 + 0.5 * (0.3 - 1.0) = 0.65 before the guardrails; max_position 0.5 caps it
-    assert act["pre_guardrail"] == pytest.approx(0.65)
-    assert act["to"] == pytest.approx(0.5) and st.decision.target_weight == pytest.approx(0.5)
-    assert act["guardrail_clipped"] and any("max position" in n for n in act["guardrail_notes"])
-    assert "guardrails:" in st.decision.adjustments[-1]
+    assert act["pre_guardrail"] == pytest.approx(0.15) and act["to"] == pytest.approx(0.15)
+    assert not act["guardrail_clipped"] and st.decision.target_weight == pytest.approx(0.15)
 
 
-def test_critic_guardrail_clips_veto_to_an_inadmissible_neutral():
+def test_critic_guardrail_flattens_a_veto_to_a_short_rules_weight_under_long_only():
+    # A model PM at +0.3 over a rules weight of -0.4: veto pulls to the rules side (capped at
+    # |0.3|), and the long-only equity guardrail then flattens it.
     st, cfg = _state(weight=0.3), _cap_cfg("veto")
+    st.decision.source, st.decision.rule_weight, st.decision.model_weight = "llm", -0.4, 0.3
     act = apply_weight_rule(st, _review(st, cfg), cfg)
-    assert act["pre_guardrail"] == pytest.approx(1.0) and act["to"] == pytest.approx(0.5)
-    assert act["guardrail_clipped"] and st.decision.action is Action.BUY
+    assert act["pre_guardrail"] == pytest.approx(-0.3) and act["to"] == 0.0
+    assert act["guardrail_clipped"] and any("short selling" in n for n in act["guardrail_notes"])
+    assert "guardrails:" in st.decision.adjustments[-1] and st.decision.action is Action.HOLD
 
 
 def test_critic_guardrail_leaves_an_admissible_weight_alone():

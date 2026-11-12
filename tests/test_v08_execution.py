@@ -448,7 +448,9 @@ def test_plan_returns_no_trade_for_a_change_below_one_lot():
     assert set(p) == {"trade", "reason"} and p["trade"] is False
     assert "below one share" in p["reason"] and "nothing to trade" in p["reason"] and "+0.2499 -> +0.2500" in p["reason"]
     assert tools.plan("AAPL", AS_OF, 0.25, current_weight=0.25) == {"trade": False, "reason": "target equals current position"}
-    fx = tools.plan("USDJPY", AS_OF, 0.005)                          # 500 USD is below one 1,000-unit lot
+    # Round 1 (A2): plans pass the PM guardrails, so min_trade_weight is off to reach the lot rule
+    no_min = make_config(CFG, risk={"min_trade_weight": 0.0})
+    fx = DeskTools(SyntheticProvider(no_min), no_min, capital=100_000.0).plan("USDJPY", AS_OF, 0.005)  # < one lot
     assert fx["trade"] is False and "below one lot of 1000 USD" in fx["reason"]
     res = _executor(tools).call("execution.plan", symbol="AAPL", as_of=AS_OF.isoformat(), target_weight=0.25,
                                 current_weight=0.2499)

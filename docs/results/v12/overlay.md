@@ -1,3 +1,10 @@
+> **Correction notice, 2026-11-12 (review D5).** The FX figures on this page were produced before the
+> engine converted FX P&L to the USD account. For USD-base pairs (USDJPY, USDCAD) the old engine booked
+> the pair's return r where r / (1 + r) is due, and crosses were not converted; the bias is about
+> +1 % a year on a full-weight long USD-base pair at 10 % volatility. Every FX sleeve with such a pair,
+> and every portfolio that holds one, is affected. The numbers below have not been re-run; read them as
+> slightly optimistic for long USD-base positions until they are.
+
 # v0.12: the vol-targeted book as the core, the desk's tilt at size lam, on the longer design period
 
 r(lam) = control + lam * (desk - control); lam 0 is `B&H vol-target`, lam 1 the desk. Excess-return Sharpe, 260 periods/year, paired block bootstrap over days. Chosen on the design period only.

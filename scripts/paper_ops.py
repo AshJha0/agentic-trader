@@ -4,7 +4,8 @@
   ``vintage_hash`` turns them into one SHA-256 that ``paper_trade_v09.py`` writes into the
   run's ``runs.jsonl`` line. Two runs with the same hash saw byte-identical bars; a Yahoo
   restatement or a back-filled session changes it.
-* ``freshness`` fails when the last recorded session is more than ``--max-business-days``
+* ``freshness`` fails when the last row of ``ledger.csv`` (round 2: the session actually
+  recorded, not the as-of a run asked for) is more than ``--max-business-days``
   NYSE sessions older than today (``agentic_trader/nyse_calendar.py``: weekends, holidays
   and one-off closures are not counted, so a Monday or post-holiday run is not stale). A file
   with no record yet passes: the first run has nothing to be late against.
@@ -20,10 +21,16 @@
   ``results/paper/bars/<as-of>/`` as deterministic gzip CSV, so a revision flagged by the hash
   can be attributed and a past session recomputed after Yahoo re-adjusts its history. That
   directory is git-ignored and never published (Yahoo data may not be redistributed, see
-  DATA_LICENSING.md): the workflow keeps it as a private Actions artifact and only the files'
-  SHA-256 go into ``runs.jsonl``.
+  DATA_LICENSING.md): it is not uploaded anywhere (round 2, owner decision D6: a public
+  repository's Actions artifacts are downloadable by others); only the files' SHA-256 go into
+  ``runs.jsonl``.
 * ``engine_fingerprint`` hashes the engine files and config blocks of the frozen record; the
   paper script refuses to run when it differs from ``docs/evaluation/paper_freeze.json``.
+  Since round 2 the whole package, ``cpp/`` and the lock are always included
+  (``REQUIRED_ENGINE_FILES``).
+* ``ledger_chain`` is the hash chain over the ledger's rows that each ``runs.jsonl`` line
+  records; ``scripts/paper_ledger_check.py`` checks it and the append-only files before a
+  publish.
 
 The ``commit``, ``push`` and ``freshness`` commands need only the standard library (the
 publish and freshness jobs install nothing); numpy and pandas are imported where frames are
@@ -56,8 +63,8 @@ RUNS = ROOT / "results" / "paper" / "runs.jsonl"
 PUBLISHED = ("ledger.csv", "ledger_recomputed.csv", "revisions.csv", "runs.jsonl", "summary.md", "exposure.csv",
              "ledger_vintage.csv")
 # raw session bars (results/paper/bars/) are NOT published: Yahoo data may not be redistributed
-# (DATA_LICENSING.md). They stay git-ignored on the runner, go to a private Actions artifact,
-# and only their SHA-256 is published in runs.jsonl.
+# (DATA_LICENSING.md). They stay git-ignored where the session ran (not uploaded as an Actions
+# artifact since round 2), and only their SHA-256 is published in runs.jsonl.
 MAX_STALE_BUSINESS_DAYS = 2
 
 
@@ -93,17 +100,49 @@ def vintage_hash(frames: dict[tuple[str, str, str], pd.DataFrame]) -> str:
     return h.hexdigest()
 
 
+# Round 2 (review D3): the freeze covers the whole package, the C++ core and the dependency
+# lock whatever the freeze file lists. Before, it hashed nine files/globs, so an edit to
+# regime.py, data/yahoo.py, agentic/* or cpp/** left the vintage id unchanged while the numbers
+# moved. Adding these trips a freeze recorded with the narrow list: deliberately, the owner
+# re-freezes (``paper_trade_v09.py --refreeze NEW_ID --reason ...``) once and from then on
+# every change to any of them is a new vintage.
+REQUIRED_ENGINE_FILES = (
+    "agentic_trader/**/*.py",
+    "cpp/**/*.cpp",
+    "cpp/**/*.hpp",
+    "CMakeLists.txt",
+    "pyproject.toml",
+    "requirements-lock.txt",
+    "requirements/*.txt",
+)
+
+
+def engine_patterns(listed: list[str]) -> list[str]:
+    """The globs the freeze hashes: those the freeze file lists plus ``REQUIRED_ENGINE_FILES``."""
+    return sorted(set(listed) | set(REQUIRED_ENGINE_FILES))
+
+
 def engine_fingerprint(root: Path, patterns: list[str], config: dict, config_keys: list[str],
                        books: object) -> str:
     """SHA-256 over the engine that computes the frozen record: the bytes of every file the
     ``patterns`` (globs relative to ``root``) match, in sorted path order with CRLF taken as
-    LF (a Windows checkout hashes like a Linux one), the ``config_keys`` subset of the run's
+    LF (a Windows checkout hashes like a Linux one) and the ``version = `` line of
+    ``pyproject.toml`` left out (a release bump is not an engine change), the ``config_keys`` subset of the run's
     config (the numbers-driving blocks, not paths or LLM settings) and ``repr(books)``."""
     h = hashlib.sha256()
-    files = sorted({p for pat in patterns for p in root.glob(pat) if p.is_file()})
+    # Ordered by the POSIX form of the relative path, compared as plain strings. Sorting the Path
+    # objects themselves is case-insensitive on Windows and case-sensitive elsewhere, which put
+    # CMakeLists.txt in a different place and gave each platform its own hash.
+    files = sorted({p for pat in patterns for p in root.glob(pat) if p.is_file()},
+                   key=lambda p: p.relative_to(root).as_posix())
     for p in files:
         h.update(p.relative_to(root).as_posix().encode() + b"\n")
-        h.update(p.read_bytes().replace(b"\r\n", b"\n"))
+        data = p.read_bytes().replace(b"\r\n", b"\n")
+        if p.name == "pyproject.toml":
+            # The package version is a label, not part of the engine: a release bump must not
+            # trip the freeze. Dependencies and everything else in the file still count.
+            data = b"\n".join(ln for ln in data.split(b"\n") if not ln.startswith(b"version = "))
+        h.update(data)
     h.update(json.dumps({k: config.get(k) for k in sorted(config_keys)}, sort_keys=True, default=str).encode())
     h.update(repr(books).encode())
     return h.hexdigest()
@@ -208,6 +247,38 @@ def push_with_retry(attempts: int = 5, backoff: float = 5.0,
     return False
 
 
+CHAIN_SEED = b"agentic-trader paper ledger chain v1\n"
+
+
+def ledger_chain(text: str) -> list[str]:
+    """Hash chain over the rows of ``ledger.csv`` (round 2, review D6).
+
+    ``heads[k]`` is the chain head after the header and the first ``k`` data rows:
+    ``h_0 = sha256(seed + header)``, ``h_k = sha256(h_{k-1} + "\\n" + row_k)``, with CRLF taken
+    as LF and blank lines ignored. Each run writes ``ledger_rows`` and ``ledger_chain`` (the head
+    after its rows) into its ``runs.jsonl`` line, so a later rewrite of any recorded row changes
+    every head from that row on and ``paper_ledger_check.py`` refuses the publish."""
+    lines = [ln for ln in text.replace("\r\n", "\n").split("\n") if ln.strip()]
+    if not lines:
+        return []
+    h = hashlib.sha256(CHAIN_SEED + lines[0].encode()).hexdigest()
+    heads = [h]
+    for row in lines[1:]:
+        h = hashlib.sha256(h.encode() + b"\n" + row.encode()).hexdigest()
+        heads.append(h)
+    return heads
+
+
+def last_ledger_session(ledger: Path) -> date | None:
+    """The date of the last row of ``ledger.csv`` (first field), or None when it has no rows."""
+    if not ledger.exists():
+        return None
+    lines = [ln for ln in ledger.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+    return date.fromisoformat(lines[-1].split(",", 1)[0].strip()[:10])
+
+
 def last_recorded_session(runs: Path) -> date | None:
     """The latest ``as_of`` in a runs.jsonl file, or None when there is no record yet."""
     if not runs.exists():
@@ -232,13 +303,23 @@ def business_days_stale(last: date, today: date) -> int:
     return int(_calendar().sessions_after(last, today))
 
 
-def freshness(runs: Path, today: date, max_business_days: int = MAX_STALE_BUSINESS_DAYS) -> tuple[bool, str]:
-    last = last_recorded_session(runs)
-    if last is None:
-        return True, f"{runs.name}: no recorded session yet, nothing to check"
+def freshness(runs: Path, today: date, max_business_days: int = MAX_STALE_BUSINESS_DAYS,
+              ledger: Path | None = None) -> tuple[bool, str]:
+    """Is the record current? Round 2 (review D7): judged on the last row of ``ledger``, the
+    session actually recorded, not on the ``as_of`` a run asked for: a run that appended nothing
+    (Yahoo stalled) still writes a runs.jsonl line with a fresh ``as_of``, which kept the old
+    check green while the ledger stood still. ``runs`` is used only when no ledger is given."""
+    if ledger is not None:
+        last, what = last_ledger_session(ledger), f"{ledger.name}: last ledger row"
+        if last is None:
+            return True, f"{ledger.name}: no ledger row yet, nothing to check"
+    else:
+        last, what = last_recorded_session(runs), "last recorded session (runs.jsonl as_of)"
+        if last is None:
+            return True, f"{runs.name}: no recorded session yet, nothing to check"
     stale = business_days_stale(last, today)
     verdict = "ok" if stale <= max_business_days else "STALE"
-    return stale <= max_business_days, (f"{verdict}: last recorded session {last}, {stale} business day(s) "
+    return stale <= max_business_days, (f"{verdict}: {what} {last}, {stale} business day(s) "
                                         f"before {today} (limit {max_business_days})")
 
 
@@ -260,6 +341,9 @@ def main(argv=None) -> int:
     f.add_argument("--runs", default=str(RUNS))
     f.add_argument("--today", default=None, help="reference date (default: today, UTC)")
     f.add_argument("--max-business-days", type=int, default=MAX_STALE_BUSINESS_DAYS)
+    f.add_argument("--ledger", default=None,
+                   help="judge freshness on this ledger's last row (default: ledger.csv beside --runs; "
+                        "when there is none, the runs.jsonl as_of is used)")
     c = sub.add_parser("commit", help="commit the published paper files if they changed")
     c.add_argument("--message", default="paper: daily record [skip ci]")
     p = sub.add_parser("push", help="push HEAD to main; on a lost race rebase and retry with backoff")
@@ -272,7 +356,8 @@ def main(argv=None) -> int:
         return 0 if ok else 1
     if a.cmd == "freshness":
         today = date.fromisoformat(a.today) if a.today else datetime.now(timezone.utc).date()
-        ok, msg = freshness(Path(a.runs), today, a.max_business_days)
+        ledger = Path(a.ledger) if a.ledger else Path(a.runs).with_name("ledger.csv")
+        ok, msg = freshness(Path(a.runs), today, a.max_business_days, ledger if ledger.exists() else None)
         print(msg)
         return 0 if ok else 1
     committed = commit_if_changed(ROOT, [f"results/paper/{p}" for p in PUBLISHED], a.message)

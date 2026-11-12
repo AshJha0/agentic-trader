@@ -70,7 +70,7 @@ flowchart TB
 | `policy.py` | Rules, `PolicyEngine`, `ROLE_CAPABILITIES`, `AutoApprovalGateway`, `QueuedApprovalGateway`, `DenyApprovalGateway` |
 | `planner.py` | `canonical_plan`, `propose_plan` (model), `validate_plan`, `make_plan` |
 | `harness.py` | `AgentHarness`, `TaskRun`: the state machine, tool batching, approvals, cancellation, governance steps |
-| `critic.py` | `Critic`: seven deterministic checks and an optional model critique that only lowers confidence |
+| `critic.py` | `Critic`: seven deterministic checks and an optional model critique that only lowers confidence; a flagged divergence also cuts the weight |
 | `reporter.py` | `collect_facts`, template or model narrative, `number_audit`, `evidence_audit`, `Report` (JSON and markdown) |
 | `rag.py`, `knowledge/docs` | `KnowledgeBase` with a hashed TF-IDF embedder over 11 documents |
 | `tracing.py` | `Tracer` spans, `Metrics` (Prometheus text), JSON-lines logging |
@@ -216,10 +216,12 @@ are not what enforces them.
 reachable. The governance steps are appended to any plan, including hand-built ones. Agents
 cannot schedule state changes; only the executor, under policy, can perform them.
 
-**The critic can only lower confidence.** Deterministic checks are the review; a model may
-add concerns and a multiplier that is clipped to at most 1. When it moves the weight toward
-neutral, the new weight passes the PM guardrails again (v0.19), because the equity neutral of
-1.0 can exceed `max_position` or the VaR cap.
+**The critic lowers confidence and can cut the weight; it never adds exposure.**
+Deterministic checks are the review; a model may add concerns and a multiplier that is clipped
+to at most 1. On a flagged divergence `apply_weight_rule` moves the weight toward the PM's
+rules weight, or toward flat, never to a larger absolute exposure, and the result passes the
+PM guardrails again. (Before 2026-11-12 it moved toward the neutral weight, 1.0 for equities,
+which could enlarge a long; review A4.)
 
 **Audits accept rounding, not invention.** A number in the narrative must match a fact when
 the fact is rounded to the number's displayed precision; counts are facts too, so nothing is

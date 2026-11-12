@@ -1,6 +1,7 @@
 """Trader: turns the debate verdict into a concrete, sized trade proposal."""
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
@@ -9,6 +10,8 @@ from .. import quant
 from .. import contracts
 from ..state import Action, TradeProposal, TradingState
 from .base import Agent, clip, fmt_facts
+
+log = logging.getLogger(__name__)
 
 
 def allow_short(state: TradingState, config: dict) -> bool:
@@ -142,7 +145,21 @@ class Trader(Agent):
                              numeric=("target_weight", "confidence", "stop_loss", "take_profit",
                                       "horizon_days"), schema=contracts.TRADER)
         if data:
-            w = clip(data["target_weight"], -1, 1)
+            # Round 1 (review A3): the model may move the trader's weight at most
+            # risk.trader_model_band (default: risk.pm_model_band, 0.25) from the rules weight
+            # computed above on the same inputs; a gap above risk.pm_model_flag is logged. Both
+            # figures stay on the proposal; the model's rationale text is left as written.
+            rule_w = w
+            model_w = clip(data["target_weight"], -1, 1)
+            band = float(risk.get("trader_model_band", risk.get("pm_model_band", 0.25)))
+            flag = float(risk.get("pm_model_flag", 0.10))
+            if not (math.isfinite(band) and band >= 0 and math.isfinite(flag) and flag >= 0):
+                raise ValueError(f"risk.trader_model_band {band} and risk.pm_model_flag {flag} must be finite and >= 0")
+            w = min(rule_w + band, max(rule_w - band, model_w))
+            if abs(model_w - rule_w) > flag + 1e-12:
+                gap_note = (f" [trader model weight {model_w:+.2f} vs rules {rule_w:+.2f}"
+                            + (f"; bounded to {w:+.2f} (band {band:.2f})" if abs(w - model_w) > 1e-12 else "") + "]")
+                log.warning("%s %s:%s", state.instrument.symbol, state.as_of, gap_note)
             if not shorts:
                 w = max(w, 0.0)
             d = float(np.sign(w))
@@ -155,7 +172,7 @@ class Trader(Agent):
                 Action(act) if act in Action.__members__ else action_for(w, score, thr),
                 w, clip(data.get("confidence"), 0, 1, debate.conviction), price, stop, tp,
                 int(clip(data.get("horizon_days"), 1, 90, 10)), str(data["rationale"]),
-                source="llm", untrusted=untrusted)
+                source="llm", untrusted=untrusted, rule_weight=round(rule_w, 6), model_weight=round(model_w, 6))
         state.proposal = proposal
         return proposal
 

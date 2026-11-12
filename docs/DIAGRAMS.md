@@ -113,8 +113,8 @@ flowchart LR
     AB -- no --> Q{LLM enabled<br/>and within budget?}
     Q -- no --> OUT
     Q -- yes --> L["Claude<br/>facts + untrusted blocks → JSON"]
-    L --> V{"valid JSON with<br/>required keys?"}
-    V -- yes --> CL["clip / coerce to valid ranges<br/>source = llm, rule_signal kept"]
+    L --> V{"valid JSON, required keys,<br/>finite numbers inside the schema bounds?"}
+    V -- yes --> CL["source = llm, rule_signal kept<br/>(trader and PM weights bounded<br/>to their rules weight ± 0.25)"]
     V -- "no / error / refusal / timeout" --> OUT
     CL --> W[write into TradingState]
     OUT --> W
@@ -218,7 +218,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    W["weight from blend (25/50/25)<br/>or from Claude, clipped to [-1, 1]"] --> S{"w < 0 and shorting<br/>not allowed?"}
+    W["weight from blend (25/50/25)<br/>or from Claude, bounded to blend ± pm_model_band (0.25)"] --> S{"w < 0 and shorting<br/>not allowed?"}
     S -- yes --> Z1[w = 0]
     S -- no --> C{"abs(w) > max_position?"}
     Z1 --> C
@@ -252,9 +252,9 @@ flowchart LR
     FACTS["numeric facts<br/>(JSON)"] --> LLM[Claude]
     BLK --> LLM
     LLM --> J["JSON reply"]
-    J --> CLIP["clip / coerce<br/>inf, nan, strings, wrong-side stops"]
+    J --> CLIP["reject the whole reply: inf, nan, strings,<br/>out-of-range values; replace wrong-side stops;<br/>bound a model weight to rules ± 0.25"]
     CLIP --> LIM["firm limits after the model<br/>(cannot be overridden)"]
-    LIM --> CRIT["critic: model vs rules divergence<br/>lowers confidence, moves weight toward neutral"]
+    LIM --> CRIT["critic: model vs rules divergence<br/>lowers confidence, cuts the weight toward<br/>the PM's rules weight or flat, never larger"]
     CRIT --> LIM2["firm limits re-applied to a weight<br/>the critic changed"]
     LIM2 --> OK[bounded decision]
 ```
@@ -511,7 +511,7 @@ flowchart TD
     C2 -- no --> W2["warning · multiplier ≤ 0.7<br/>that analyst's findings halved"]
     C2 -- yes --> C3{"strong bull vs strong bear<br/>without a balanced verdict?"}
     C3 -- yes --> W3["warning · multiplier ≤ 0.8"]
-    C3 -- no --> C4{"size, shorting, VaR<br/>within firm limits?"}
+    C3 -- no --> C4{"size, shorting, VaR<br/>within firm limits?<br/>(no risk facts: VaR not checked)"}
     C4 -- no --> E4[ERROR]
     C4 -- yes --> C5{"stop and target on the<br/>correct side of entry?"}
     C5 -- no --> E5[ERROR]
@@ -525,13 +525,14 @@ flowchart TD
     LLM -- yes --> M["concerns + multiplier<br/>clipped to ≤ 1: can only lower"]
     LLM -- no --> OUT
     M --> OUT["CriticReport: checks, multiplier"]
-    OUT --> WR{"divergence flagged and<br/>critic_weight_rule not off?"}
-    WR -- yes --> WS["weight toward neutral (scale or veto),<br/>then PortfolioManager.guardrails again;<br/>weight_action records pre_guardrail,<br/>guardrail_clipped, guardrail_notes"]
+    OUT --> EE["enforce_errors (any rule, off included):<br/>firm_limits failed → guardrails again, never larger,<br/>flat if still above max_position;<br/>protective_levels failed → wrong-side level cleared;<br/>other error → multiplier ≤ 0.5"]
+    EE --> WR{"divergence flagged and<br/>critic_weight_rule not off?"}
+    WR -- yes --> WS["weight toward the anchor (scale 0.5 or veto):<br/>rule_weight if a model PM overrode it, else flat;<br/>never a larger absolute size;<br/>then PortfolioManager.guardrails again;<br/>weight_action records pre_guardrail,<br/>guardrail_clipped, guardrail_notes"]
     OUT --> VAL["validate_evidence:<br/>drop findings with unresolved ids"]
     VAL --> REP["report: narrative from facts"]
-    REP --> NA["number audit:<br/>every figure ≈ a fact at displayed precision<br/>(percent forms, counts included)"]
+    REP --> NA["number audit:<br/>every figure ≈ a fact at displayed precision,<br/>same sign (percent forms, counts included)"]
     REP --> EA["evidence audit:<br/>every id resolves"]
-    NA --> WARN["warnings attached, never silently accepted"]
+    NA --> WARN["warnings attached; a model narrative that fails<br/>an audit or the output guard is replaced by the template<br/>(model text kept in rejected_narrative)"]
     EA --> WARN
 ```
 
@@ -1060,11 +1061,14 @@ flowchart LR
 
 The rules always answer; a model reply is used only if it passes the role's contract
 (`agents/base.py` `ask_json`, `contracts.py`), and out-of-range values are rejected, not
-clipped. The PM blends the risk views 25/50/25, then the guardrails and the no-trade band run;
-the critic moves the weight halfway toward neutral when a model signal is more than 0.6 from
-its rules (`agentic/critic.py`), and a weight the critic changed goes through the same
-guardrails again, because neutral (1.0 for equities by default) can sit above `max_position`
-or the VaR cap (fixed 2026-11-12; `tests/test_critic_coverage.py`). Explained with a worked example in
+clipped. The PM blends the risk views 25/50/25; a model PM's weight is bounded to within
+`risk.pm_model_band` (0.25) of that blend (`bound_model_weight`); then the guardrails and the
+no-trade band run. The critic first enforces any failed error check (`enforce_errors`); when a
+model signal is more than 0.6 from its rules it moves the weight halfway toward an anchor,
+the PM's `rule_weight` when a model PM overrode it and flat otherwise, never to a larger
+absolute size (`agentic/critic.py`, `apply_weight_rule`); a weight the critic changed goes
+through the same guardrails again, because a sign change can meet a long-only or minimum-size
+limit (`tests/test_critic_coverage.py`, `tests/test_round1_critic_weight.py`). Explained with a worked example in
 [how the AI works](ai/ai.md#one-decision-step-by-step-diagrams-41-and-44-with-a-worked-example).
 
 ```mermaid
@@ -1076,12 +1080,13 @@ flowchart TD
     M --> C{"contract: keys present,<br/>finite numbers, inside bounds?"}
     C -- no --> RU
     C -- yes --> LL["report: source llm<br/>rule_signal kept"]
-    RU --> PM["PM: risk views blended 25 / 50 / 25<br/>or a model weight that passes the contract"]
+    RU --> PM["PM: risk views blended 25 / 50 / 25<br/>or a model weight that passes the contract,<br/>bounded to blend ± pm_model_band (0.25)"]
     LL --> PM
     PM --> G["guardrails: shorting, short cap, max position,<br/>VaR cap, book VaR, minimum trade"]
     G --> B["no-trade band"]
-    B --> CR{"critic: any model signal more than 0.6<br/>from its rule_signal?"}
-    CR -- yes --> S["weight = neutral + 0.5 x (weight - neutral)<br/>(veto: weight = neutral)"]
+    B --> EE["critic checks; a failed error check<br/>blocks or downgrades (enforce_errors)"]
+    EE --> CR{"critic: any model signal more than 0.6<br/>from its rule_signal?"}
+    CR -- yes --> S["weight = anchor + 0.5 x (weight - anchor)<br/>anchor = rule_weight if a model PM overrode it, else 0<br/>(veto: weight = anchor); never a larger size"]
     CR -- no --> D["final decision"]
     S --> G2["guardrails again (PortfolioManager.guardrails)<br/>record: pre_guardrail, guardrail_clipped,<br/>guardrail_notes"]
     G2 --> D

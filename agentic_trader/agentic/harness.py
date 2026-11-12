@@ -43,7 +43,8 @@ import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
+from functools import wraps
 from typing import Any
 
 from ..agents.risk import risk_facts
@@ -190,9 +191,10 @@ def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
 
 def last_close_price_fn(provider: Any) -> Any:
     """``price_fn`` for the signed gateway's re-pricing check: the last close at or before the
-    request's ``as_of`` (today when absent) for the request's ``symbol``. None when the request
-    names no symbol or the provider has no price, which skips the check for that request
-    (the gateway's documented behaviour) rather than blocking it on missing data."""
+    request's ``as_of`` (today when absent) for the request's ``symbol``, read from the
+    providers' ``"Close"`` column. None when the request names no symbol or the provider has
+    no price; the gateway then refuses the approval (Round 1, A9/E-2: the check fails closed,
+    where it used to read ``"close"``, find nothing and skip the check every time)."""
     from datetime import date, timedelta
 
     def price(request: Any) -> float | None:
@@ -203,8 +205,9 @@ def last_close_price_fn(provider: Any) -> Any:
         try:
             as_of = date.fromisoformat(str(args["as_of"])) if args.get("as_of") else date.today()
             df = provider.history(Instrument.parse(str(sym)), as_of - timedelta(days=10), as_of)
-            px = float(df["close"].iloc[-1]) if df is not None and len(df) else None
-        except Exception:  # noqa: BLE001 - no price means no re-pricing check, never a crash
+            col = "Close" if df is not None and "Close" in df.columns else "close"
+            px = float(df[col].iloc[-1]) if df is not None and len(df) else None
+        except Exception:  # noqa: BLE001 - no price is reported as None, which the gateway rejects
             return None
         return px if px is not None and math.isfinite(px) and px > 0 else None
     return price
@@ -257,6 +260,9 @@ class AgentHarness:
         if store is None and acfg.get("task_db"):
             store = TaskStore(acfg["task_db"])
         self.store = store
+        self.persist_failures = 0          # consecutive store.save failures (E-6)
+        self._persist_lock = threading.Lock()
+        self.max_persist_failures = max(1, int(acfg.get("max_persist_failures", 3)))
         self.archive: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
@@ -312,11 +318,39 @@ class AgentHarness:
                  "state": r["state"]} for r in list(self.archive.values())]
 
     def _persist(self, run: TaskRun) -> None:
-        if self.store is not None:
-            try:
-                self.store.save(run, self.owner)
-            except Exception as e:  # persistence must never take a decision down with it
-                log.exception("could not persist task %s: %s", run.id, e)
+        """Save the run's record. A failure does not crash the run, but it is not ignored
+        either (Round 1, E-6): it is counted (``task_persist_failures_total``), and after
+        ``agentic.max_persist_failures`` consecutive failures (default 3) the harness is
+        degraded: every state-changing tool call is refused until a save succeeds again,
+        because a decision with no durable audit record must not change state."""
+        if self.store is None:
+            return
+        try:
+            self.store.save(run, self.owner)
+        except Exception as e:  # noqa: BLE001 - counted and acted on below, never silent
+            with self._persist_lock:
+                self.persist_failures += 1
+                n = self.persist_failures
+            self.metrics.inc("task_persist_failures_total")
+            log.exception("could not persist task %s (%d consecutive failure(s)): %s", run.id, n, e)
+            return
+        with self._persist_lock:
+            self.persist_failures = 0
+
+    @property
+    def persistence_degraded(self) -> bool:
+        """True while the last ``agentic.max_persist_failures`` saves in a row all failed."""
+        return self.store is not None and self.persist_failures >= self.max_persist_failures
+
+    def _persistence_guard(self, name: str, fn: Any) -> Any:
+        """``fn`` refused while persistence is degraded (state-changing tools only)."""
+        @wraps(fn)
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            if self.persistence_degraded:
+                raise PermissionError(f"{name} refused: the task store failed {self.persist_failures} times in a "
+                                      "row, so this call would leave no durable audit record")
+            return fn(*args, **kwargs)
+        return guarded
 
     def heartbeat_once(self) -> int:
         """One heartbeat tick: refresh the lease on this instance's live runs, then sweep the
@@ -536,7 +570,15 @@ class AgentHarness:
         descriptors as ``self.registry``, which the planner and the pre-check use)."""
         if run._executor is None:
             acfg = self.config.get("agentic", {})
-            registry = build_registry(self.tools.for_book(run.positions))
+            view = self.tools.for_book(run.positions)
+            # memory.remember writes are dated by the run's task date and budgeted per run (B9/B14)
+            view.session_as_of = run.task.as_of if isinstance(run.task.as_of, date) else None
+            view._session_writes = 0
+            registry = build_registry(view)
+            for desc in registry.descriptors():
+                if not desc.annotations.read_only:
+                    entry = registry.get(desc.name)
+                    entry.fn = self._persistence_guard(desc.name, entry.fn)
             run._executor = ToolExecutor(registry, self.policy, run.evidence, run.task.role, self.gateway,
                                          run.tracer, ExecutorConfig(float(acfg.get("tool_timeout_s", 30.0))),
                                          run.id)

@@ -3,28 +3,76 @@
 [![CI](https://github.com/AshJha0/agentic-trader/actions/workflows/ci.yml/badge.svg)](https://github.com/AshJha0/agentic-trader/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-ashjha0.github.io%2Fagentic--trader-16697a)](https://ashjha0.github.io/agentic-trader/)
 
+**AgenticTrader** is a research harness for trading agents under hard governance, with a
+rules-based desk for equities and FX measured against simple controls, and a designed but
+not yet run test of what a language model adds. The
+short version of what it has found: nothing has beaten a simple control, and the project says
+so with intervals.
+
+**What it found.**
+
+- **The rules desk does not beat a vol-targeted hold.** On real prices with costs and a cash
+  leg, the 15-sleeve holdout portfolio has Sharpe 0.91 against 0.99 for the vol-target control
+  (difference -0.08, 95 % interval [-0.46, +0.30]) and 0.86 for buy and hold
+  ([v0.11 re-measurement](docs/evaluation/v011_review.md)).
+- **The rules were not selected by skill.** The deflated Sharpe of desk minus vol-matched
+  control on the design period is 0.009 at the registry's 81 trials
+  ([selection statistic](docs/results/round2/selection_stat.md)).
+- **A local language model has added nothing measurable so far.** With `qwen2.5:7b-instruct`
+  in the analyst seats, the 20-bar IC was 0.046 below the rules desk (95 % interval
+  [-0.185, +0.067]; two complete cells of a first pass that was then stopped, descriptive only). In that cell 404 of 1,200
+  analyst outputs came from the model and the rest from rules, so the result is about the
+  technical analyst and the FX macro analyst, not about text-reading analysts
+  ([interim report](docs/results/v17/llm_study_interim_report.md)).
+
+**What was controlled for.** Lookahead (point-in-time data, a future-leak canary),
+memorisation (anonymised prompts, a recall audit with a placebo arm), multiple testing (a
+trial registry counted in every selection statistic) and equity beta (a vol-target control
+with no desk beside every claim).
+
+**What is not known yet.**
+
+- Whether the model adds information beyond the rules. That is one
+  [pre-registered](docs/evaluation/v16_preregistration.md) test, signed on 2026-11-12 before
+  any of its rows existed. It has **not been run**: the queue needed about 227 hours of model
+  time on one laptop and the owner stopped the study the same day
+  ([status](docs/evaluation/v16_prereg_status_2026-11-12.md)). There is no pre-registered
+  finding about the model, only a signed design.
+- Results at a one-bar execution lag. Every published Sharpe fills at the close the signal
+  saw; the lag comparison is written and not yet run.
+- Corrected FX tables. FX P&L was converted to the USD account on 2026-11-12 and the
+  published FX numbers have not been re-run
+  ([changelog](CHANGELOG.md)).
+- Anything the forward paper record could decide. It has run daily since 2026-09-29
+  ([results/paper/](results/paper/README.md)); its pre-registered look at about 3,600 sessions
+  (2040) has 50 % power for a 0.2 Sharpe difference, and 80 % power would need about 29 years
+  ([live-readiness statement](docs/evaluation/live_readiness.md)). It is an operations record.
+
+**Try it** (offline, synthetic data, no key):
+
+```bash
+pip install -e .
+agentic-trader task EURUSD --date 2024-03-01 --position 0.2
+```
+
+> Research and education only. This is not investment advice. Nothing here is production
+> trading and the framework never connects to a broker. The synthetic data mode produces fake
+> prices, news and fundamentals.
+
 **Documentation site: https://ashjha0.github.io/agentic-trader/**
 
 | Guide | For |
 |---|---|
 | [How the AI works](docs/ai/ai.md) · [How the quant works](docs/quant/quant.md) | Start here. The agents, the LLM, what is and is not machine learning, and the agentic layer; then the quant core, the backtester, risk, alphas, portfolios and the statistics |
-| [AI learning path](docs/learn/ai_learning_path.md) | Ten modules on the kinds of AI used here (agents, LLMs, local models, contracts, guardrails, tools, RAG, memory, classical ML, evaluation), each with an offline exercise |
-| [LEARN.md](LEARN.md) | 68 concepts: how the repo implements them, real numbers, questions |
-| [COOKBOOK.md](COOKBOOK.md) | 135 copy-pasteable recipes, including the agentic layer, quant research, operations, the v0.7 to v0.12 research tools, the v0.14 risk, leakage, Student-t gate and paper OMS recipes, and the v0.15 filing-text, research-retrieval, signed-approval, deferred-tool, replay, SLO and governance recipes, signed approvals from the configuration (v0.15.1), and the v0.16 local-model study recipes (114-117) and the batched walk-forward (118) and the KPI table (119), and the v0.17 recipes for the second review's fixes (120-130), and the v0.19 recipes for resuming a run, the skip cap, classical ML and judge agreement (131-133), and the critic's guardrail clip and the policy gate (134-135); every offline one runs in CI |
-| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions, 45 diagrams |
-| [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) | Requirements with status; 40 threats mapped to controls and tests |
-| [Evaluation](docs/evaluation/evaluation.md) · [API](docs/api/api.md) | Real-price results on 60 instruments with a design / holdout / reserve split and an impact sweep; the Python, HTTP, MCP and C++ interfaces |
+| [Evaluation](docs/evaluation/evaluation.md) · [What the model adds](docs/evaluation/what_the_model_adds.md) | Real-price results on 60 instruments with a design / holdout / reserve split; every model variant scored against the rules desk |
+| [AI learning path](docs/learn/ai_learning_path.md) · [LEARN.md](LEARN.md) | Ten modules on the kinds of AI used here, each with an offline exercise; then the concepts one by one, with how the repo implements each |
+| [COOKBOOK.md](COOKBOOK.md) | Copy-pasteable recipes for the agentic layer, quant research and operations |
+| [Architecture](docs/architecture/overview.md) · [Diagrams](docs/DIAGRAMS.md) | Components, data flow, design decisions |
+| [Specification](docs/SPECIFICATION.md) · [Threat model](docs/threat-model/threat-model.md) · [API](docs/api/api.md) | Requirements with status; threats mapped to controls and tests; the Python, HTTP, MCP and C++ interfaces |
 
-AgenticTrader is a **reference implementation of governed trading agents** with a **measured
-study of what a language model adds**. The incumbent is a rules-based single-name desk; every
-model variant is scored against it on the same states, and so far nothing a model produced has
-been adopted ([what the model adds](docs/evaluation/what_the_model_adds.md)). The only unseen
-data is the forward paper record ([results/paper/](results/paper/README.md), daily since
-2026-09-29), whose single pre-registered decision look is at 3,600 sessions, about 14 years
-([pre-registration](docs/evaluation/v09_preregistration.md)). Nothing here is production
-trading ([live-readiness statement](docs/evaluation/live_readiness.md)).
+## What it is
 
-In more detail: it is an **agentic trading desk** for **equities and FX**. A team of specialised
+It is an **agentic trading desk** for **equities and FX**. A team of specialised
 agents (analysts, bull and bear researchers, a trader, a risk team, a portfolio manager)
 produces sized, explained decisions. An **agentic layer** runs them the way an enterprise
 system would: every data access is a catalogued, policy-gated tool call that leaves an
@@ -34,10 +82,7 @@ back. Underneath is a **C++17 quant core** (indicators, backtester with stops an
 risk, alphas, execution schedules) exposed to Python through pybind11, and a **quant research
 layer** for alphas, execution algorithms, portfolio construction and backtest statistics.
 
-> Research and education only. This is not investment advice. The synthetic data mode
-> produces fake prices, news and fundamentals. The framework never connects to a broker.
-
-## Results in one paragraph
+## Results by release
 
 *v0.12 research ([docs/evaluation/v012_trend_core.md](docs/evaluation/v012_trend_core.md)):
 the three steps the review approved were run on design data only: a longer design period
@@ -142,11 +187,18 @@ volatility-targeted control achieves too.**
   (AAPL breach rate 0.0657, p 0.0207; AUDUSD 0.0634, p 0.0432), breach rates run
   0.0523–0.0657 (every one above 0.05), and the Christoffersen independence test rejects on
   6 of 15 — breaches cluster; book-level VaR was off in every published run and is untested.
-- **Selection statistics:** 26 trials judged on the design period (24 re-measured under the
-  v0.8 engine, 2 historical); the frozen rules' design-period portfolio: annual Sharpe 1.375,
-  bootstrap 95% CI [0.593, 2.17], expected maximum Sharpe of 26 null trials 0.161, deflated
-  Sharpe probability 0.998, minimum track record 496 periods — an upper bound on the true
-  significance, as the report itself says.
+- **Selection statistics:** the selection test is a deflated Sharpe on desk-minus-control
+  returns (the vol-target control levered to the desk's volatility) at the registry's trial
+  count. On the design period it is **0.009** at 81 registered trials (0.005 at 145, adding the
+  estimate of unregistered early trials). The differential Sharpe is 0.040 a year, against 1.00
+  expected from the best of 81 zero-skill trials. There is no evidence that the rules select
+  better than a vol-targeted hold. Evidence class: measured, design period, stored v0.11 files;
+  source [selection_stat.md](docs/results/round2/selection_stat.md), from
+  `scripts/selection_stat.py`. The figure printed here before, 0.998 at 26 trials, compared two
+  different statistics and had already been withdrawn in the evaluation document. The absolute
+  deflated Sharpe (0.925 at 81 trials) is not a selection test either: the control, which takes
+  no decisions, scores 0.921 on it. The frozen rules' design-period portfolio itself: annual
+  Sharpe 1.375, bootstrap 95% CI [0.593, 2.17].
 - **LLM desk:** measured once (v0.5.1: five stocks, Q1 2024, Claude Opus, anonymised prompts,
   $4): the same Sharpe as the rules with less than half the exposure — produced under the
   v0.7-and-earlier engine and **not re-derived under v0.8**. The multi-year harness — Opus,
@@ -185,7 +237,7 @@ the historical sections keep their earlier-engine numbers under a banner saying 
                                                  ▼
     Portfolio manager → firm limits (size, VaR, shorting, min trade) → no-trade band
                                                  ▼
-        Critic (deterministic checks; model may only lower confidence) → evidence validation
+        Critic (deterministic checks; a flag cuts the weight, never adds) → evidence validation
                                                  ▼
         Audited report (number audit · evidence-id audit) → decision memory → HTTP API / CLI
 ```
@@ -238,7 +290,7 @@ agentic_trader/
     policy.py              rules -> ALLOW / DENY / REQUIRE_APPROVAL; roles; auto / queued / deny gateways
     planner.py             canonical plan, model-proposed plan, validator (strip, pin, repair, append governance)
     harness.py             AgentHarness state machine: batching, approvals, cancellation, governance steps
-    critic.py              deterministic checks + model critique that can only lower confidence
+    critic.py              deterministic checks + model critique; lowers confidence, a flag cuts the weight
     reporter.py            structured report, narrative, number audit, evidence-id audit
     rag.py + knowledge/    hashed TF-IDF retrieval over 11 runbooks and policies
     tracing.py             spans, JSON-lines logs, Prometheus text metrics
@@ -268,7 +320,7 @@ scripts/                   measure_v08.py (re-measures every published table int
                            measure_v09.py · combine_v09.py · overlay_v09.py · attribution_v09.py (return streams, books, overlay, attribution; v0.9 to v0.12)
                            render_v09_doc.py · render_v11_doc.py · render_v12_doc.py (write the evaluation pages from result files) · paper_trade_v09.py (the forward record)
                            run_cookbook.py · check_mermaid.py · check_links.py (the CI docs job) · build_cpp · set_api_key
-tests/                     879 pytest tests on both backends (v0.8 fixes 105 + 17 CLI, fuzz 73 C++ boundary + 7 agentic layer, v0.8 agents 68, v0.8 engine 57,
+tests/                     pytest tests on both backends; about 2,100 in the PR gate (the CI log has the count). Largest groups at v0.8 (v0.8 fixes 105 + 17 CLI, fuzz 73 C++ boundary + 7 agentic layer, v0.8 agents 68, v0.8 engine 57,
                            v0.8 data 57, v0.8 execution 41, v0.8 agentic 41, quant edges 38, v0.7 37, agents 35, v0.8 portfolio 30, agentic 30, v0.11 18 + 4, v0.9 8 + 3, ...)
 examples/                  equity, FX, baseline comparison
 ```
@@ -484,11 +536,13 @@ The answer is about that 7B model class only.
 (`local_analysts`) and in every role (`local_all`), compared with the rules desk and a
 vol-target control; an anonymisation recall audit (can the model name the ticker and month from
 a scrubbed prompt?); calibration (dispersion, anchoring, drift between builds); a 150-item
-analyst eval set with deterministic checks and a local judge; and a draft pre-registration of the
-single holdout look. Recipes 114-117 in [COOKBOOK.md](COOKBOOK.md), lesson 56 in
+analyst eval set with deterministic checks and a local judge; and a pre-registration of the
+decisive test and the single holdout look, amended and signed on 2026-11-12
+([document](docs/evaluation/v16_preregistration.md), [amendment record](docs/evaluation/v16_prereg_amendment_2026-11-12.md)). Recipes 114-117 in [COOKBOOK.md](COOKBOOK.md), lesson 56 in
 [LEARN.md](LEARN.md).
 
-**Interim result (2026-11-12, two of four cells): no evidence that the model analysts help.**
+**First-pass result (2026-11-12, two complete cells; the study was then stopped): no evidence
+that the model analysts help.**
 Source: [`docs/results/v17/llm_study_interim_report.md`](docs/results/v17/llm_study_interim_report.md)
 (`scripts/llm_study.py --report`, 300 decisions per cell, 15 names x 20 dates; evidence class:
 measured on real prices, design period, one local model).
@@ -499,13 +553,30 @@ measured on real prices, design period, one local model).
 | local_analysts | -0.042 [-0.173, +0.101] | 54.6% | +1.77 | 0.0% | yes |
 | vol-target control | | | +1.93 | | |
 
-The primary measure is the difference in IC, local_analysts minus rules: **-0.046 [95% CI
--0.185, +0.067]**. The interval includes zero and its centre is negative, so these data give no
-reason to think putting `qwen2.5:7b-instruct` at the analysts improves the desk's ranking of
-names. The Sharpe ratios are secondary and noisy (local_analysts minus control -0.16 [-0.85,
-+0.30]). INTERIM: `local_all` and `critic_on` are still running, and `critic_on` runs on the code
-from before the v0.19 critic fix, so it measures the old weight rule. The holdout is not touched.
-Twenty decisions per cell without 20 forward bars are left out of the IC and listed in the report.
+The table is descriptive: the first pass has too few dates to accept or reject an edge, and
+the pre-registration says so. The difference in IC, local_analysts minus rules, is **-0.046
+[95% CI -0.185, +0.067]**. The interval includes zero and its centre is negative, so these data
+give no reason to think putting `qwen2.5:7b-instruct` at the analysts improves the desk's
+ranking of names. The Sharpe ratios are noisier still (local_analysts minus control -0.16
+[-0.85, +0.30]). Read it with four cautions:
+
+- **Most of the "model" cell is rules.** 404 of its 1,200 analyst outputs came from the model
+  (the technical analyst on all 300 decisions, the FX macro analyst on 100, sentiment on 4);
+  news and fundamentals ran on rules throughout. "0.0% fallback" counts failed model calls,
+  not this. The result speaks to the technical and FX macro analysts only.
+- **The scoring has since been corrected and this table has not been re-scored.** It ranks
+  equities and FX pairs together, and two of the 20 design dates (2016-01-01, 2017-11-23) are
+  NYSE closures on which only the five FX pairs were scored; the report's reason for the 20
+  left-out decisions ("without 20 forward bars") was wrong. From 2026-11-12 the report ranks
+  within asset class and drops closed dates for every name. The re-scored table follows when
+  the remaining cells finish.
+- **The study was stopped on 2026-11-12.** `local_all` reached 59 of 300 decisions and
+  `critic_on` never started; both would have measured the desk as it was before that day's
+  critic and weight-bound fixes ([status](docs/evaluation/v16_prereg_status_2026-11-12.md)).
+- **This is not the decisive test.** The pre-registered question is whether the model's signal
+  carries information the rule's signal does not (the residual IC, on 313 weekly dates, with a
+  replication on dates after the model's release). It has not been run and is not scheduled.
+  The holdout is untouched.
 
 **Judge calibration (n = 30, [`agreement.json`](docs/results/v17/agreement.json)).** Cohen's
 kappa against hand labels, `llama3.1` judge versus the deterministic rule checker:
@@ -522,7 +593,10 @@ verdicts are not used where the rule checker exists.
 ## v0.15 (v0.15.1, 2026-11-08): text, retrieval and an auditable agent
 
 Filing text from EDGAR and GDELT headlines are in, always fenced as untrusted text. The filing
-tone-change and GDELT features are registered as trials and **not run**. Research retrieval is
+tone-change feature was run on the design period (9 names, 201 filings): mean IC negative at
+every horizon and no horizon reaches |t| = 2, so it is **not supported**
+([evaluation](docs/evaluation/evaluation.md), trial 3.2). The GDELT feature is registered as a trial
+and its design run is still pending. Research retrieval is
 point in time and gated: on 100 questions over a 34-passage invented corpus, recall@5 is 0.990
 (TF-IDF and hybrid), which shows the mechanism and says nothing about real filings. The text
 analysts are in the desk behind `text_analysts` (off by default, v0.15.1). A 150-snippet injection corpus is

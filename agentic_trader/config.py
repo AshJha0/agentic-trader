@@ -161,6 +161,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ---- Risk limits (enforced by the Portfolio Manager after any LLM output) --
     "risk": {
         "max_position": 1.0,       # |target weight| cap (1.0 = 100% of equity notional)
+        # Round 1 (review A3): a model PM's weight may sit at most pm_model_band from the rules
+        # weight computed on the same inputs; a gap above pm_model_flag is logged on the decision.
+        "pm_model_band": 0.25,
+        "pm_model_flag": 0.10,
         "target_vol": 0.15,        # annualised vol target used by the neutral risk analyst
         # v0.11: the aggressive risk analyst sizes at 1.25x the vol-targeted weight instead of
         # max(1.25 x proposal, vol target); under the 1.0 cap the old rule pinned the aggressive
@@ -308,7 +312,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # so it goes through the approval gateway like an order.
         "memory_tool": False,
         "llm_planner": False,        # let the model propose the plan (validated either way)
-        "llm_critic": True,          # optional model critique (can only lower confidence)
+        "llm_critic": True,          # optional model critique (lowers confidence; a flag can cut the weight)
         "llm_reporter": True,        # model-written executive summary (audited either way)
         "use_alpha_tool": True,      # run quant.alpha in the canonical plan
         "critic_divergence": 0.6,    # max |model signal - rule signal| before the critic flags it

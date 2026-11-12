@@ -219,7 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
     kp = sub.add_parser("kpi", help="KPI table of model vs rules control from decision records (JSONL)")
     kp.add_argument("path", help="JSONL of decision records (see agentic_trader.kpi)")
     kp.add_argument("--bins", type=int, default=10, help="calibration bins on [0, 1]")
-    kp.add_argument("--ppy", type=float, default=252.0, help="periods per year for Sharpe")
+    kp.add_argument("--ppy", type=float, default=None,
+                    help="periods per year for Sharpe (default: inferred from the decision dates)")
     kp.add_argument("--json", action="store_true", help="print the full result as JSON")
     kp.set_defaults(func=cmd_kpi)
 
@@ -247,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     mc = sub.add_parser("mcp", help="MCP server over stdio (needs the [mcp] extra)")
     common(mc, symbol_required=None)
-    mc.add_argument("--role", choices=["viewer", "analyst", "trader", "risk", "admin"], default="trader",
+    mc.add_argument("--role", choices=["viewer", "analyst", "trader", "risk", "admin"], default="analyst",
                     help="the role every call is evaluated for (stdio carries no identity)")
     mc.add_argument("--approval", choices=["auto", "queued", "deny", "signed"], default=None,
                     help="gateway for tools that need approval (default: config agentic.approval); "

@@ -3,11 +3,17 @@
 ``decision_horizon`` (B6). The forward paper record is the only data no choice has seen, but
 its pre-registered decision needs a sample long enough to detect the effect sizes at stake.
 From the v0.9 pre-registration amendment: the holdout's paired block-bootstrap half-width was
-0.35 Sharpe over 1,167 sessions; half-widths shrink as ``1 / sqrt(n)``, so a difference ``d``
-is detectable at 95 % after ``n = 1167 * (0.35 / d) ** 2`` sessions. For ``d = 0.2`` that is
-3,574 sessions, about 14.2 years of NYSE sessions from the 2026-09-29 freeze. Until then the
-record is operational evidence (the pipeline runs, fills reconcile, nothing leaks), not
-research evidence.
+0.35 Sharpe over 1,167 sessions; half-widths shrink as ``1 / sqrt(n)``. Up to v0.19 the horizon
+was the ``n`` at which the 95 % half-width equals ``d``, ``n = 1167 * (0.35 / d) ** 2``: that is
+a test at 5 % two-sided with only 50 % power (a true difference of exactly ``d`` is detected
+half the time). Round 2 (review C3) sizes it for power ``1 - beta`` (default 80 %):
+
+    n = 1167 * (0.35 * (z_{1-alpha/2} + z_{1-beta}) / (z_{1-alpha/2} * d)) ** 2
+
+For ``d = 0.2`` that is 7,303 sessions, about 29.0 years from the 2026-09-29 freeze (the old
+figure, 3,574 sessions / 14.2 years, is the 50 % power value and is still reported beside it).
+Until then the record is operational evidence (the pipeline runs, fills reconcile, nothing
+leaks), not research evidence.
 
 ``selection_premium`` (B8). The equity universe is ten names chosen in 2025, nine large caps
 plus SPY. A point-in-time top-N-by-market-cap universe needs historical shares outstanding
@@ -20,19 +26,35 @@ from __future__ import annotations
 
 import math
 from datetime import date, timedelta
+from statistics import NormalDist
 
 import numpy as np
 
 PREREG_HALFWIDTH = 0.35      # Sharpe, paired block bootstrap, holdout (v09_preregistration.md)
 PREREG_SESSIONS = 1167       # holdout sessions behind that half-width
 FREEZE_DATE = date(2026, 9, 29)
+_N = NormalDist()
 
 
-def sessions_needed(effect: float, halfwidth: float = PREREG_HALFWIDTH, n: int = PREREG_SESSIONS) -> float:
-    """Sessions after which a 95 % half-width equals ``effect``, by ``1 / sqrt(n)`` scaling."""
+DEFAULT_POWER = 0.8
+PREREG_ALPHA = 0.05          # the half-width is a 95 % two-sided interval
+
+
+def sessions_needed(effect: float, halfwidth: float = PREREG_HALFWIDTH, n: int = PREREG_SESSIONS,
+                    power: float = DEFAULT_POWER, alpha: float = PREREG_ALPHA) -> float:
+    """Sessions for a two-sided test at ``alpha`` to detect a Sharpe difference ``effect`` with
+    probability ``power``, scaling the measured ``halfwidth`` (over ``n`` sessions) by
+    ``1 / sqrt(n)``: ``n * (halfwidth * (z_a + z_b) / (z_a * effect)) ** 2`` with
+    ``z_a = z_{1-alpha/2}``, ``z_b = z_{power}``. ``power = 0.5`` (``z_b = 0``) gives the
+    pre-round-2 rule, where the half-width equals ``effect``. Worked example: effect 0.2 ->
+    3,573.9 sessions at 50 % power, 7,302.4 at 80 % (factor (2.8016 / 1.96) ** 2 = 2.043)."""
     if effect <= 0 or halfwidth <= 0 or n <= 0:
         raise ValueError("effect, halfwidth and n must be positive")
-    return n * (halfwidth / effect) ** 2
+    if not (0 < power < 1 and 0 < alpha < 1):
+        raise ValueError("power and alpha must lie in (0, 1)")
+    za = _N.inv_cdf(1 - alpha / 2)
+    zb = _N.inv_cdf(power)
+    return n * (halfwidth * (za + zb) / (za * effect)) ** 2
 
 
 def nth_session(start: date, k: int) -> date:
@@ -51,12 +73,17 @@ def nth_session(start: date, k: int) -> date:
         d += timedelta(days=1)
 
 
-def decision_horizon(effect: float = 0.2, start: date = FREEZE_DATE) -> dict[str, object]:
-    """Sessions, years (252 a year) and the calendar date of the decision look for ``effect``."""
-    n = sessions_needed(effect)
+def decision_horizon(effect: float = 0.2, start: date = FREEZE_DATE,
+                     power: float = DEFAULT_POWER) -> dict[str, object]:
+    """Sessions, years (252 a year) and the calendar date of the decision look for ``effect``
+    at ``power`` (stated in the result), with the 50 % power figures (the pre-round-2 numbers)
+    beside them for comparison."""
+    n = sessions_needed(effect, power=power)
     k = math.ceil(n)
-    return {"effect_sharpe": effect, "sessions": k, "years": n / 252.0,
-            "decision_date": nth_session(start, k).isoformat()}
+    n50 = sessions_needed(effect, power=0.5)
+    return {"effect_sharpe": effect, "power": power, "alpha": PREREG_ALPHA, "sessions": k, "years": n / 252.0,
+            "decision_date": nth_session(start, k).isoformat(),
+            "sessions_at_50pct_power": math.ceil(n50), "years_at_50pct_power": n50 / 252.0}
 
 
 def selection_premium(name_cr_pct, index_cr_pct: float, years: float,

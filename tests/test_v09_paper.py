@@ -13,6 +13,19 @@ def _paper():
     spec = importlib.util.spec_from_file_location("paper_trade_v09", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    # Round 2: these tests are about the record, not the committed freeze, which trips (by
+    # design) on every engine change until the owner re-freezes. Run against a copy re-frozen
+    # on the current engine.
+    import shutil
+    import tempfile
+    from datetime import date
+
+    from agentic_trader.config import make_config
+    copy = Path(tempfile.mkdtemp()) / "paper_freeze.json"
+    shutil.copy(mod.FREEZE_FILE, copy)
+    mod.refreeze(copy, make_config(data_provider="synthetic", memory_path=None), "tests-current-engine",
+                 "tests", date.today())
+    mod.FREEZE_FILE = copy
     return mod
 
 
@@ -61,7 +74,7 @@ def test_ledger_is_append_only_and_a_revised_recomputation_is_logged_not_absorbe
     first = pd.read_csv(out / "ledger.csv", index_col=0, parse_dates=True)
     real = mod.recompute
 
-    def shifted(as_of, cfg, provider, freeze, exposure=None):
+    def shifted(as_of, cfg, provider, freeze, exposure=None, coverage=None):
         f = real(as_of, cfg, provider, freeze)
         f.iloc[5, 0] += 0.005                                          # a restated return on an old session
         return f

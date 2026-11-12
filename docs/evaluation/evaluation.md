@@ -494,6 +494,8 @@ information coefficients are in the evidence for anyone who wants to read them.
 
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
+> *Corrected 2026-11-12: the figures below are an absolute deflated Sharpe, which is not a selection test (the no-desk vol-target control scores 0.921 on it at 81 trials). The selection statistic is the deflated Sharpe of desk minus vol-matched control: 0.009 at the registry's 81 trials (`docs/results/round2/selection_stat.md`).*
+
 v0.8 recomputes this with the 26-entry trials registry: deflated Sharpe probability 0.998,
 expected maximum of 26 null trials 0.161, bootstrap 95% interval [0.593, 2.17] — see
 [selection statistics: 26 trials](#9-selection-statistics-26-trials). The holdout portfolio

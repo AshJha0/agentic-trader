@@ -39,7 +39,7 @@ reconciliation against an external statement, tax lots, margin, surveillance and
 entitlements, each with its own tests, and an independent review. None of it is planned in
 `docs/review/PLAN.md`.
 
-## Forward paper record: operational evidence, decision in 2040
+## Forward paper record: operational evidence, not a test that can decide
 
 Plain idea. The forward paper record (`results/paper/`) is the only data no design choice has
 seen, but a short record cannot tell a 0.2 Sharpe difference from noise. Until the
@@ -49,15 +49,24 @@ leaks: operational evidence. It does not show that anything has an edge.
 Formal statement. The v0.9 pre-registration amendment (`docs/evaluation/v09_preregistration.md`)
 fixes one decision look. The holdout's paired block-bootstrap half-width for the desk minus its
 control was h = 0.35 Sharpe over n = 1,167 sessions. Half-widths shrink as 1 / sqrt(n), so a
-Sharpe difference d is detectable at 95 % after n_d = 1,167 x (0.35 / d)^2 sessions.
+Sharpe difference d has a 95 % interval that just reaches zero after n_d = 1,167 x (0.35 / d)^2
+sessions. Corrected 2026-11-12 (review C3): that is the point where a true effect of size d is
+detected half the time, so it is 50 % power, not "detectable". At 80 % power the count is
+((1.96 + 0.84) / 1.96)^2 = 2.04 times larger.
 
 Worked example (`evidence_bounds.decision_horizon`; evidence class: arithmetic on
 pre-registered numbers, tested in `tests/test_v17_l8.py::test_decision_horizon_from_prereg_numbers`):
 
-| Sharpe difference d | sessions | years (252 a year) | decision look, counting NYSE sessions from 2026-09-29 |
-|---|--:|--:|---|
-| 0.2 (pre-registered) | 3,574 | 14.2 | 2040-12-19 |
-| 0.5 | 572 | 2.3 | 2029-01-05 |
+| Sharpe difference d | power | sessions | years (252 a year) | look, counting NYSE sessions from 2026-09-29 |
+|---|--:|--:|--:|---|
+| 0.2 (pre-registered look) | 50 % | 3,574 | 14.2 | 2040-12-19 |
+| 0.2 | 80 % | 7,303 | 29.0 | 2055-10-29 |
+| 0.5 | 50 % | 572 | 2.3 | 2029-01-05 |
+| 0.5 | 80 % | 1,169 | 4.6 | 2031-05-23 |
+
+Plainly: the pre-registered look in 2040 stays where it was registered, but it has an even
+chance of missing a real 0.2 effect, and a properly powered answer would take about 29 years.
+The forward record cannot decide an effect of this size. It is an operations record.
 
 The interim summary prints Sharpes and, after 60 sessions, intervals of about +/-1.2 to
 +/-1.5 Sharpe; those are descriptions, not decisions. The calendar is the OMS NYSE holiday

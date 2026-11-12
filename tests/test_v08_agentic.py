@@ -89,7 +89,9 @@ def _ticket(h, symbol, target):
 
 
 def _parked_run(h, tickets):
-    """A run paused in AWAITING_APPROVAL on a hand-built plan whose first steps are orders."""
+    """A run paused in AWAITING_APPROVAL on a hand-built plan whose first steps are orders.
+    Round 1 (E-1): callers with two tickets plan them on different symbols, since two plans
+    sized from one book are refused as stale once the first is ticketed."""
     ins = Instrument.parse("AAPL")
     run = h.submit(Task("AAPL", AS_OF, Role.TRADER))
     orders = tuple(PlanStep.make(StepType.TOOL, "execution.submit_order", t) for t in tickets)
@@ -374,7 +376,7 @@ def test_state_changing_tools_are_never_retried_and_timeouts_are_isolated():
 @pytest.mark.parametrize("trial", range(3))
 def test_two_approvals_decided_back_to_back_execute_each_step_once(trial):
     h = harness(gateway=QueuedApprovalGateway())
-    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
+    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "MSFT", 0.2)])
     for a in h.pending_approvals(run.id):
         h.decide_approval(a.id, True, "risk", "ok", resume=False)
     barrier, errors = threading.Barrier(2), []
@@ -397,7 +399,7 @@ def test_two_approvals_decided_back_to_back_execute_each_step_once(trial):
 def test_sequential_and_racing_decisions_never_drive_a_run_twice():
     # CLI path: each decision resumes on the calling thread; the second waits for its own approval.
     h = harness(gateway=QueuedApprovalGateway())
-    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
+    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "MSFT", 0.2)])
     a1, a2 = h.pending_approvals(run.id)
     h.decide_approval(a1.id, True)
     assert run.state is TaskState.AWAITING_APPROVAL and len(h.tools.orders) == 1
@@ -408,7 +410,7 @@ def test_sequential_and_racing_decisions_never_drive_a_run_twice():
     # (or drives itself when the run is parked) -- never by a second concurrent driver.
     for _ in range(4):
         h = harness(gateway=QueuedApprovalGateway())
-        run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
+        run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "MSFT", 0.2)])
         a1, a2 = h.pending_approvals(run.id)
         t = threading.Thread(target=h.decide_approval, args=(a1.id, True))
         t.start()
@@ -460,7 +462,7 @@ def test_a_decision_landing_as_the_driver_parks_is_not_lost():
     # driving lock back. A decision that lands in between must still wake the run.
     for _ in range(3):
         h = harness(gateway=QueuedApprovalGateway())
-        run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
+        run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "MSFT", 0.2)])
         a1, a2 = h.pending_approvals(run.id)
         slow = SlowReleaseLock(0.3)
         run._driving = slow
@@ -478,7 +480,7 @@ def test_a_decision_landing_as_the_driver_parks_is_not_lost():
     from agentic_trader.agentic.api import create_app
     h = harness(gateway=QueuedApprovalGateway())
     c = TestClient(create_app(harness=h, workers=4))
-    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
+    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "MSFT", 0.2)])
     a1, a2 = c.get("/approvals", headers=KEY["risk"]).json()
     slow = SlowReleaseLock(0.3)
     run._driving = slow
@@ -495,7 +497,7 @@ def test_a_decision_landing_as_the_driver_parks_is_not_lost():
 def test_a_cancel_landing_as_the_driver_parks_is_applied():
     # Deterministic: the cancel arrives while the driver hands the lock back after re-parking.
     h = harness(gateway=QueuedApprovalGateway())
-    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
+    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "MSFT", 0.2)])
     a1, _ = h.pending_approvals(run.id)
     slow = SlowReleaseLock(0.3)
     run._driving = slow
@@ -510,7 +512,7 @@ def test_a_cancel_landing_as_the_driver_parks_is_applied():
     # Natural timing: the cancel arrives while the driver is inside the order that then parks.
     for _ in range(3):
         h = harness(gateway=QueuedApprovalGateway())
-        run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
+        run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "MSFT", 0.2)])
         a1, a2 = h.pending_approvals(run.id)
         tool = h._executor(run).registry.get("execution.submit_order")   # the run's own view of the desk
         real = tool.fn
@@ -537,7 +539,7 @@ def test_api_two_approvals_execute_once_and_continuation_errors_are_logged(caplo
     from agentic_trader.agentic.api import create_app
     h = harness(gateway=QueuedApprovalGateway())
     c = TestClient(create_app(harness=h, workers=4))
-    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "AAPL", 0.2)])
+    run = _parked_run(h, [_ticket(h, "AAPL", 0.1), _ticket(h, "MSFT", 0.2)])
     pend = c.get("/approvals", headers=KEY["risk"]).json()
     assert len(pend) == 2
     replies = [c.post(f"/approvals/{p['id']}", json={"approve": True}, headers=KEY["risk"]).json() for p in pend]
@@ -974,7 +976,7 @@ def test_remote_registry_keeps_one_server_session():
     # when the order citing it arrives (a fresh process per call would refuse every ticket).
     pytest.importorskip("mcp")
     from agentic_trader.agentic.mcp_server import registry_from_stdio
-    reg = registry_from_stdio()
+    reg = registry_from_stdio(["--role", "trader", "--approval", "auto"])   # Round 1: trading is opt-in
     try:
         ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER)
         plan = ex.call("execution.plan", symbol="AAPL", as_of="2024-03-01", target_weight=0.1)
@@ -1022,15 +1024,15 @@ def test_mcp_server_routes_every_call_through_policy_approval_and_evidence():
     _, err = call_local(viewer, "execution__submit_order", ticket)
     assert err and "lacks propose_trades" in err and tools.orders == []
     # auto gateway: the approval is recorded as evidence before the ticket is written
-    auto = build_mcp_server(reg, executor=governed_executor(reg, make_config(CFG, agentic={"approval": "auto"}),
-                                                           Role.TRADER, order_cap=tools.order_cap))
+    auto = build_mcp_server(reg, executor=governed_executor(reg, CFG, Role.TRADER, order_cap=tools.order_cap,
+                                                           approval="auto"))   # Round 1: auto is explicit
     res, err = call_local(auto, "execution__submit_order", ticket)
     assert err is None and len(tools.orders) == 1
     kinds = [e.type for e in auto.executor.evidence]
     assert kinds == [EvidenceType.APPROVAL, EvidenceType.DECISION]
     # and the same over a real stdio round trip: the server's own flags decide
     with pytest.raises(RuntimeError, match="approval rejected"):
-        call("execution__submit_order", ticket, ["--approval", "deny"])
+        call("execution__submit_order", ticket, ["--role", "trader", "--approval", "deny"])
     with pytest.raises(RuntimeError, match="lacks propose_trades"):
         call("execution__submit_order", ticket, ["--role", "viewer"])
 
@@ -1044,7 +1046,7 @@ def test_mcp_server_default_executor_caps_notional_and_refuses_a_queued_gateway(
     tools = DeskTools(SyntheticProvider(cfg), cfg)
     reg = build_registry(tools)
     # Findings 43/58/71: the default executor carries the desk's per-order cap into policy.
-    server = build_mcp_server(reg, config=cfg)
+    server = build_mcp_server(reg, config=cfg, role=Role.TRADER)   # Round 1: the default role is analyst
     assert server.executor.policy.config["max_order_notional"] == tools.order_cap == 100_000.0
     assert build_mcp_server(reg, config=cfg, order_cap=5e3).executor.policy.config["max_order_notional"] == 5e3
     assert governed_executor(reg, cfg).policy.config["max_order_notional"] == 100_000.0
@@ -1064,14 +1066,14 @@ def test_mcp_server_default_executor_caps_notional_and_refuses_a_queued_gateway(
     assert governed_executor(reg, frozen).policy.config["max_order_notional"] == 0.0
     # nothing can drain a queue on a stdio server: queued is refused with a clear error
     with pytest.raises(ValueError, match="queued"):
-        build_mcp_server(reg, config=make_config(cfg, agentic={"approval": "queued"}))
+        build_mcp_server(reg, config=cfg, approval="queued")   # Round 1: agentic.approval is not read
     with pytest.raises(SystemExit) as exc:
         main(["--approval", "queued"])
     assert exc.value.code == 2 and "cannot work on a stdio server" in capsys.readouterr().err
     # the documented CLI can now choose the role and the gateway, and forwards them
     args = build_parser().parse_args(["mcp", "--role", "viewer", "--approval", "deny", "--data", "synthetic"])
     assert args.func.__name__ == "cmd_mcp" and args.role == "viewer" and args.approval == "deny"
-    assert build_parser().parse_args(["mcp"]).role == "trader" and build_parser().parse_args(["mcp"]).approval is None
+    assert build_parser().parse_args(["mcp"]).role == "analyst" and build_parser().parse_args(["mcp"]).approval is None
     seen = {}
     with monkeypatch.context() as m:
         m.setattr(ms, "main", lambda argv=None: seen.setdefault("argv", argv) and 0)

@@ -154,6 +154,10 @@ class TradeProposal:
     source: str = "rules"
     evidence_ids: tuple[str, ...] = ()
     untrusted: bool = False
+    # Round 1 (review A3): the weight the trader's rules gave on the same inputs, and the
+    # model's own figure before it was bounded to a band around that. None on a rules proposal.
+    rule_weight: float | None = None
+    model_weight: float | None = None
 
 
 @dataclass
@@ -183,6 +187,10 @@ class FinalDecision:
     evidence_ids: tuple[str, ...] = ()
     kept: bool = False   # the desk held its current position (the no-trade band): not a target
     models_served: tuple[str, ...] = ()   # distinct model ids that served this decision's calls
+    # Round 1 (A3): the PM's rules weight is computed on every decision, and a model PM's raw
+    # weight is kept beside it (both before the guardrails), so every override is auditable.
+    rule_weight: float | None = None
+    model_weight: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

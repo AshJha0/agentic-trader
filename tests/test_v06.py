@@ -125,7 +125,10 @@ def test_calibration_with_a_noisy_model():
             w = 0.3 + 0.1 * (self.k % 3)
             return json.dumps({"action": "BUY", "target_weight": w, "confidence": 0.6, "stop_loss": 150,
                                "take_profit": 220, "horizon_days": 10, "rationale": "x"})
-    g = TradingGraph(CFG, llm=Noisy(), **QUIET)
+    # Round 1 (review A3) bounds a model trader's weight to a band around the rules weight. This
+    # test measures the model's own dispersion, so the bands are opened wide here.
+    cfg = {**CFG, "risk": {**CFG.get("risk", {}), "trader_model_band": 2.0, "pm_model_band": 2.0}}
+    g = TradingGraph(cfg, llm=Noisy(), **QUIET)
     rep = calibrate(g, "AAPL", "2024-03-01", n=3, anchors=(None,))
     d = rep.dispersion(None)
     assert d["runs"] == 3 and d["std"] > 0 and rep.samples.llm_share.mean() > 0

@@ -146,7 +146,8 @@ def test_retrieval_only_through_the_gate_and_point_in_time(tmp_path):
 
 # ------------------------------------------------------------------ 2. memory tool
 def _executor(cfg, role=Role.TRADER, gateway=None, memory=None):
-    tools = DeskTools(SyntheticProvider(cfg), cfg, memory=memory or DecisionMemory(None))
+    tools = DeskTools(SyntheticProvider(cfg), cfg, memory=memory or DecisionMemory(None),
+                      session_as_of=date(2024, 3, 1))   # Round 1: memory writes take the session's date
     reg = build_registry(tools)
     ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), role,
                       gateway or AutoApprovalGateway(), Tracer(), ExecutorConfig(5.0), task_id="t")
@@ -235,7 +236,8 @@ def test_signed_config_drives_a_quorum_write(monkeypatch):
     assert isinstance(h.gateway, SignedApprovalGateway)
     ex = ToolExecutor(h.registry, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER, h.gateway,
                       Tracer(), ExecutorConfig(5.0), task_id="t")
-    args = dict(symbol="AAPL", as_of="2024-03-01", action="BUY", weight=0.2, price=180.0, summary="x")
+    args = dict(symbol="AAPL", as_of=h.tools.write_date().isoformat(),   # Round 1: the server dates writes
+                action="BUY", weight=0.2, price=180.0, summary="x")
     assert not ex.call("memory.remember", **args).ok
     [a] = h.gateway.pending("t")
     h.gateway.resolve(a.id, True, "alice", signature=sign_approval(b"a-secret", a.id, a.request, True))
@@ -245,9 +247,9 @@ def test_signed_config_drives_a_quorum_write(monkeypatch):
 def test_mcp_refuses_signed_over_stdio(monkeypatch):
     pytest.importorskip("mcp")
     from agentic_trader.agentic import mcp_server
-    monkeypatch.setattr(mcp_server, "make_config", lambda over: make_config({**over, "agentic": {"approval": BLOCK}}))
+    # Round 1 (D3): the server no longer reads agentic.approval; signed is refused as a flag
     with pytest.raises(SystemExit):
-        mcp_server.main(["--data", "synthetic"])
+        mcp_server.main(["--data", "synthetic", "--approval", "signed"])
 
 
 # ------------------------------------------------------------------ 4. otel extra

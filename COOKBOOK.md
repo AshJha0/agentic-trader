@@ -1320,6 +1320,7 @@ That report (`results/v08/tables.md`, "selection statistics for the frozen rules
 from `results/v08/trials.json` and `portfolio_design.csv`) gives, for 26 trials, an expected
 maximum null Sharpe of 0.161 and a deflated Sharpe probability of 0.998 — an upper bound, as
 the report's own caveat says, because the trial Sharpes' dispersion understates the search.
+Corrected 2026-11-12: 0.998 compared two different statistics and was withdrawn; the absolute deflated Sharpe that replaced it is not a selection test (the no-desk vol-target control scores 0.921 on it at 81 trials). The selection statistic is the deflated Sharpe of desk minus vol-matched control: 0.009 at the registry's 81 trials (`docs/results/round2/selection_stat.md`). To reproduce: `python scripts/selection_stat.py --results results/v11`.
 
 ## v0.5: execution-aware evaluation, cross-sectional research, operations
 
@@ -2956,17 +2957,19 @@ would agree often by chance alone. The real calibration commands are in recipe 1
 
 ### 134. The critic's weight rule, then the guardrails again
 
-**Plain idea.** When a model analyst disagrees sharply with its own rules, the critic moves the
-position toward the strategic neutral weight. For equities that neutral is 1.0 by default
-(`risk.neutral_weight.equity`), so "toward neutral" can make a long larger, and the result must
-pass the firm limits again. **Precisely.** `critic.apply_weight_rule` computes
-`neutral + critic_weight_scale * (weight - neutral)` (or `neutral` under `veto`), then passes a
-changed weight through `PortfolioManager.guardrails`; the action record keeps the weight before
-that step (`pre_guardrail`), whether the guardrails changed it (`guardrail_clipped`) and why
-(`guardrail_notes`). Fixed in v0.19; tests in `tests/test_critic_coverage.py` and
-`tests/test_v17_governance.py`. **Worked example.** A synthetic AAPL fixture: the model analyst
-says +0.9, its rules say -0.1 (a gap of 1.0, above the 0.6 threshold), the PM weight is +0.30 and
-`max_position` is 0.5. The rule gives 1.0 + 0.5 x (0.30 - 1.0) = 0.65; the cap clips it to 0.50.
+**Plain idea.** When a model analyst disagrees sharply with its own rules, the critic cuts the
+position: an alarm must never add risk. **Precisely.** `critic.apply_weight_rule` picks an
+anchor (the PM's rules weight when a model PM overrode it, otherwise 0, flat) and computes
+`anchor + critic_weight_scale * (weight - anchor)` (or the anchor under `veto`), holds the
+result to at most the old absolute exposure, then passes a changed weight through
+`PortfolioManager.guardrails`; the action record keeps the anchor (`anchor`, `anchor_source`),
+the weight before the guardrails (`pre_guardrail`), whether they changed it
+(`guardrail_clipped`) and why (`guardrail_notes`). Tests in `tests/test_round1_critic_weight.py`
+and `tests/test_critic_coverage.py`. **Worked example.** A synthetic AAPL fixture: the model
+analyst says +0.9, its rules say -0.1 (a gap of 1.0, above the 0.6 threshold), the PM weight is
++0.30 from rules and the equity neutral weight is 1.0. The rule gives 0 + 0.5 x (0.30 - 0) =
+0.15. Until 2026-11-12 the anchor was the neutral weight, and the same alarm gave
+1.0 + 0.5 x (0.30 - 1.0) = 0.65, more than twice the position it was warning about (review A4).
 
 ```python
 from datetime import date
@@ -2991,15 +2994,17 @@ cfg = make_config(memory_path=None,
                   risk={"neutral_weight": {"equity": 1.0, "fx": 0.0}, "max_position": 0.5, "max_var_95": 0.0})
 report = critic.Critic(cfg).review(state, [], critic.EvidenceStore())
 act = apply_weight_rule(state, report, cfg)
-print(f"from {act['from']:.2f}  rule gives {act['pre_guardrail']:.2f}  after guardrails {act['to']:.2f}")
+print(f"from {act['from']:.2f}  anchor {act['anchor']:.2f}  rule gives {act['pre_guardrail']:.2f}  "
+      f"after guardrails {act['to']:.2f}")
 print("clipped:", act["guardrail_clipped"], "|", act["guardrail_notes"])
 assert report.divergence_flagged
-assert abs(act["pre_guardrail"] - 0.65) < 1e-9 and abs(act["to"] - 0.5) < 1e-9
-assert act["guardrail_clipped"] and state.decision.target_weight == act["to"]
+assert act["anchor"] == 0.0 and abs(act["to"] - 0.15) < 1e-9
+assert abs(act["to"]) <= abs(act["from"])                  # an alarm never adds exposure
+assert not act["guardrail_clipped"] and state.decision.target_weight == act["to"]
 ```
 
-Before the fix the decision would have ended at 0.65, above the 0.5 cap. `max_var_95` is set to 0
-in this fixture to switch the VaR cap off, so only `max_position` binds.
+`max_var_95` is set to 0 in this fixture to switch the VaR cap off, so only `max_position`
+(0.5) could bind, and at 0.15 it does not.
 
 ### 135. The policy gate deciding a tool request
 

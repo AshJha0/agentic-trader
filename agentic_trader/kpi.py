@@ -20,7 +20,12 @@ Formal: a record is one JSON object per (as_of, symbol) with
 hit rate = share of records with a non-zero view whose sign matches the outcome's sign;
 Brier = mean((prob_up - 1[outcome > 0])^2); the delta book's return on a date is
 sum over names of (model_weight - control_weight) * outcome_return; Sharpe is annualised
-with ``ppy`` periods per year on the per-date book returns.
+on the per-date book returns with the *decision* frequency (round 2, review C10): each book
+return is one decision's horizon return, so the periods per year are the decisions per year,
+``252 / median business-day gap between decision dates`` (daily 252, weekly 50.4, first-pass
+dates about 82 business days apart 3.1). Annualising weekly records at 252 overstated the
+Sharpe by sqrt(252 / 50.4) = 2.24x. An explicit ``ppy`` more than 25 % away from the inferred
+frequency is refused (``ValueError``) unless ``ppy_check=False``.
 
 Worked example: two records on one date, model +1 / rules -1 on a +2% outcome and model +1 /
 rules +1 on a -1% outcome. Model hit rate 1/2, rules hit rate 0/2; the delta book is
@@ -131,10 +136,42 @@ def _book(records: list[KPIRecord], weight) -> list[float]:
     return [by_date[d] for d in sorted(by_date)]
 
 
-def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float = 252.0) -> dict[str, Any]:
-    """All KPIs in one dict; ``rows`` is the flat table the CLI prints."""
+PPY_TOLERANCE = 0.25
+
+
+def decision_ppy(dates: Iterable[str]) -> float | None:
+    """Decisions per year from the decision dates: ``252 / median business-day gap`` between
+    consecutive distinct dates (``None`` with fewer than two dates or non-ISO labels). Worked example: weekly
+    Mondays -> gap 5 -> 50.4; daily sessions -> 252."""
+    import numpy as np
+    ds = sorted({str(d)[:10] for d in dates})
+    if len(ds) < 2:
+        return None
+    try:
+        arr = np.array(ds, dtype="datetime64[D]")
+    except ValueError:          # labels that are not ISO dates: the frequency is unknown
+        return None
+    gaps = np.busday_count(arr[:-1], arr[1:])
+    gaps = gaps[gaps > 0]
+    if gaps.size == 0:
+        return None
+    return 252.0 / float(np.median(gaps))
+
+
+def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float | None = None,
+              ppy_check: bool = True) -> dict[str, Any]:
+    """All KPIs in one dict; ``rows`` is the flat table the CLI prints.
+
+    ``ppy=None`` (round 2 default) annualises by the decision frequency (``decision_ppy``);
+    an explicit ``ppy`` is used only when within ``PPY_TOLERANCE`` of it (``ppy_check``)."""
     if not records:
         raise ValueError("no KPI records")
+    inferred = decision_ppy(r.as_of for r in records)
+    if ppy is None:
+        ppy = inferred if inferred is not None else 252.0
+    elif ppy_check and inferred is not None and abs(ppy / inferred - 1.0) > PPY_TOLERANCE:
+        raise ValueError(f"ppy {ppy:g} does not match the decision frequency ({inferred:.1f} decisions a year "
+                         f"from the record dates); pass ppy=None to infer it, or ppy_check=False")
     outs = [r.outcome_return for r in records]
     m_hit, m_n = hit_rate([r.model_signal for r in records], outs)
     c_hit, c_n = hit_rate([r.rule_signal for r in records], outs)
@@ -159,6 +196,7 @@ def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float = 252.0) -
     out: dict[str, Any] = {
         "n_records": len(records),
         "n_dates": len(delta),
+        "ppy": ppy, "ppy_inferred": inferred,
         "hit_rate_model": m_hit, "hit_n_model": m_n,
         "hit_rate_control": c_hit, "hit_n_control": c_n,
         "hit_rate_delta": None if m_hit is None or c_hit is None else m_hit - c_hit,
