@@ -480,7 +480,8 @@ def test_report_flags_fabricated_numbers_and_ids_from_a_model():
     st, _ = graph().propagate("AAPL", AS_OF)
     critic = Critic(make_config(CFG, agentic={"llm_critic": False})).review(st, [], EvidenceStore())
     rep = build_report(Task("AAPL", AS_OF), st, [], critic, EvidenceStore(), Fabricator())
-    assert rep.narrative_source == "llm"
+    # Round 1 (A12): a failing model narrative no longer ships; the template replaces it
+    assert rep.narrative_source == "template" and rep.rejected_narrative and "99.9%" not in rep.narrative
     joined = " ".join(rep.warnings)
     assert "99.9%" in joined and "42%" in joined and "DATA-ffffffff" in joined
     assert "EXEC-deadbeef" not in joined                              # not one of our id prefixes
