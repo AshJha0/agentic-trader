@@ -157,12 +157,13 @@ def _recall(t_hits, m_hits=1, near=5, n=200, unparsed=0):
 
 
 def test_recall_verdict_worked_example():
-    assert evaluation.recall_audit_verdict(_recall(20))["passed"]
-    v = evaluation.recall_audit_verdict(_recall(21))
+    assert evaluation.recall_audit_verdict(_recall(20), legacy=True)["passed"]
+    assert not evaluation.recall_audit_verdict(_recall(20))["passed"]      # void as a gate (review B3)
+    v = evaluation.recall_audit_verdict(_recall(21), legacy=True)
     assert not v["passed"] and "ticker" in v["reasons"][0]
     assert v["bounds"]["ticker"] == pytest.approx(1 / 15 + 2 * math.sqrt((1 / 15) * (14 / 15) / 200))
-    assert not evaluation.recall_audit_verdict(_recall(5, n=50))["passed"]
-    assert not evaluation.recall_audit_verdict(_recall(5, unparsed=30))["passed"]
+    assert not evaluation.recall_audit_verdict(_recall(5, n=50), legacy=True)["passed"]
+    assert not evaluation.recall_audit_verdict(_recall(5, unparsed=30), legacy=True)["passed"]
 
 
 def test_require_recall_pass_guard(tmp_path):
@@ -172,9 +173,19 @@ def test_require_recall_pass_guard(tmp_path):
     bad.write_text(json.dumps(_recall(40)), encoding="utf-8")
     with pytest.raises(evaluation.HoldoutLocked):
         evaluation.require_recall_pass(bad)
+    void = tmp_path / "v016.json"                       # a clean v0.16 result no longer unlocks anything
+    void.write_text(json.dumps(_recall(10)), encoding="utf-8")
+    with pytest.raises(evaluation.HoldoutLocked, match="void"):
+        evaluation.require_recall_pass(void)
+    v2 = {"recall_flagged": False, "reasons": [], "real": {"n": 200}, "placebo": {"n": 60}}
     good = tmp_path / "good.json"
-    good.write_text(json.dumps(_recall(10)), encoding="utf-8")
+    good.write_text(json.dumps(v2), encoding="utf-8")
     assert evaluation.require_recall_pass(good)["passed"]
+    for broken in ({**v2, "recall_flagged": True}, {**v2, "real": {"n": 40}}, {**v2, "placebo": None},
+                   {k: v for k, v in v2.items() if k != "recall_flagged"} | {"recall_flagged": None}):
+        good.write_text(json.dumps(broken), encoding="utf-8")
+        with pytest.raises(evaluation.HoldoutLocked):
+            evaluation.require_recall_pass(good)
 
 
 def test_evaluate_refuses_local_model_holdout_without_recall(tmp_path):
@@ -190,7 +201,8 @@ def test_evaluate_refuses_local_model_holdout_without_recall(tmp_path):
 
 
 def test_prereg_states_recall_precondition_and_no_hand_count():
-    text = (ROOT / "docs/evaluation/v16_preregistration_DRAFT.md").read_text(encoding="utf-8")
+    from agentic_trader.study_design import prereg_document
+    text = prereg_document(ROOT).read_text(encoding="utf-8")
     assert "Precondition: the 2.4 recall audit must pass" in text
     assert "require_recall_pass" in text
     assert not re.search(r"\(\d+ at writing\)", text)                    # N10

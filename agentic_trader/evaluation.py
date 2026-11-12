@@ -632,7 +632,11 @@ class HoldoutLocked(RuntimeError):
     """Raised when a holdout look is attempted without a passing 2.4 recall audit."""
 
 
-DEFAULT_RECALL_AUDIT_PATH = "results/v16_local/recall.json"
+# The v2 audit (``v16_local_study.py recall2``). Until 2026-11-12 this pointed at the v0.16
+# result, which the pre-registration itself declares void (review B3).
+DEFAULT_RECALL_AUDIT_PATH = "results/v17_local/recall2.json"
+VOID_RECALL_AUDIT = ("this is a v0.16 recall result (fixed candidate order); the pre-registration "
+                     "declares it void, run the v2 audit (recall2)")
 
 
 def touches_holdout(periods: dict[str, tuple[str, str]]) -> bool:
@@ -642,7 +646,7 @@ def touches_holdout(periods: dict[str, tuple[str, str]]) -> bool:
 
 
 def recall_audit_verdict(result: dict, *, n_se: float = 2.0, min_n: int = 100,
-                         max_unparsed_share: float = 0.10) -> dict:
+                         max_unparsed_share: float = 0.10, legacy: bool = False) -> dict:
     """Judge a ``scripts/v16_local_study.py recall`` result (its ``summarise_recall`` dict).
 
     Pass rule (v16 prereg, "recall <= chance + 2 SE"): for each of ``ticker``, ``month`` and
@@ -653,6 +657,10 @@ def recall_audit_verdict(result: dict, *, n_se: float = 2.0, min_n: int = 100,
     hits (0.100) pass and 21 (0.105) fail. Returns ``{"passed", "reasons", "bounds"}``."""
     reasons: list[str] = []
     bounds: dict[str, float] = {}
+    if "recall_flagged" in result:
+        return recall2_verdict(result, min_n=min_n)
+    if not legacy:      # the v0.16 rule below is kept for the record only; no gate uses it
+        return {"passed": False, "reasons": [VOID_RECALL_AUDIT], "bounds": bounds}
     n = int(result.get("n") or 0)
     if n < min_n:
         reasons.append(f"n = {n} < {min_n}")
@@ -672,10 +680,26 @@ def recall_audit_verdict(result: dict, *, n_se: float = 2.0, min_n: int = 100,
     return {"passed": not reasons, "reasons": reasons, "bounds": bounds}
 
 
+def recall2_verdict(result: dict, *, min_n: int = 100) -> dict:
+    """Judge a v2 audit (``recall_audit.AuditResult.as_dict``): it passes only when
+    ``recall_flagged`` is exactly ``False``, the real arm has at least ``min_n`` items and a
+    placebo arm was run. A missing piece fails: the gate needs evidence, not its absence."""
+    reasons: list[str] = []
+    if result.get("recall_flagged") is not False:
+        reasons.append("recall flagged: " + "; ".join(map(str, result.get("reasons") or ["no reason recorded"])))
+    n = int((result.get("real") or {}).get("n") or 0)
+    if n < min_n:
+        reasons.append(f"real arm n = {n} < {min_n}")
+    if not result.get("placebo"):
+        reasons.append("no placebo arm")
+    return {"passed": not reasons, "reasons": reasons, "bounds": {}, "audit": "v2"}
+
+
 def require_recall_pass(path: str | Path, **kw) -> dict:
     """Guard for any holdout run: read the recall-audit JSON at ``path`` and raise
-    ``HoldoutLocked`` unless ``recall_audit_verdict`` passes. A holdout entry point calls
-    this one line before it touches ``PERIODS["holdout"]``."""
+    ``HoldoutLocked`` unless it is a v2 audit that passes ``recall2_verdict``. A v0.16
+    result is refused as void. A holdout entry point calls this one line before it touches
+    ``PERIODS["holdout"]``."""
     p = Path(path)
     if not p.is_file():
         raise HoldoutLocked(f"no recall-audit result at {p}; run the 2.4 audit first")

@@ -72,7 +72,7 @@ from agentic_trader import contracts  # noqa: E402
 from agentic_trader.agents.analysts import TechnicalAnalyst  # noqa: E402
 from agentic_trader.anonymize import PRICE_KEYS, Anonymizer  # noqa: E402
 from agentic_trader.config import make_config  # noqa: E402
-from agentic_trader.evaluation import CORE_UNIVERSE  # noqa: E402
+from agentic_trader.evaluation import CORE_UNIVERSE, HoldoutLocked  # noqa: E402
 from agentic_trader.graph import TradingGraph  # noqa: E402
 from agentic_trader.llm import extract_json  # noqa: E402
 from agentic_trader import recall_audit as ra  # noqa: E402
@@ -722,6 +722,20 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
             return 2
         if a.cmd == "design":
             cell = next(c for c in design.DESIGN_CELLS if c.name == a.cell)
+            # Review B4 / B3 / B10: a registered cell runs only under the signed pre-registration,
+            # with its holdout basis recorded, and never on a truncated grid. The smoke test
+            # (three decisions, its own file) is the one exception.
+            if not a.smoke:
+                if limit:
+                    print("refusing design --limit: it keeps the earliest dates only, a different population "
+                          "from the registered cell; the futility rule is the only early stop", file=sys.stderr)
+                    return 2
+                try:
+                    gate = design.prereg_gate(ROOT) | design.holdout_access(cell)
+                except (design.PreregNotSigned, HoldoutLocked) as e:
+                    print(f"refusing design {cell.name}: {e}", file=sys.stderr)
+                    return 2
+                (out.with_suffix(".gate.json")).write_text(json.dumps(gate, indent=1), encoding="utf-8")
             drows = design.run_cell(cell, NAMES, graph, llm, out, header=hdr, limit=limit,
                                 futility_check=not a.no_futility)
             rep = design.report(cell, drows, NAMES)
