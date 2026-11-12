@@ -45,6 +45,7 @@ import math
 import random
 import re
 from dataclasses import dataclass, field
+from statistics import NormalDist
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -328,6 +329,76 @@ def placebo_ohlc(history: Any, seed: int) -> Any:
     return out[list(history.columns)]
 
 
+# ---- power of the audit (round 2, review C11) ---------------------------------------------------
+
+DEFAULT_RECALL_SHARE = 0.10     # the stated excess: the model truly recognises 10 % of real items
+POWER_TARGET = 0.80
+
+
+def _rr_draws(rng: np.random.Generator, n: int, sims: int, n_candidates: int, share: float) -> np.ndarray:
+    """(sims x n) reciprocal ranks: with prob ``share`` the model ranks the truth first (RR 1),
+    otherwise it ranks uniformly at random (truth at rank k <= 3 with prob 1/N each)."""
+    know = rng.random((sims, n)) < share
+    pos = rng.integers(0, n_candidates, size=(sims, n))          # truth's rank - 1 under a random ranking
+    rr_rand = np.where(pos < TOP_K, 1.0 / (pos + 1.0), 0.0)
+    return np.where(know, 1.0, rr_rand)
+
+
+def audit_power(n_real: int, n_placebo: int, n_candidates: int, *, recall_share: float = DEFAULT_RECALL_SHARE,
+                alpha: float = 0.05, n_sim: int = 4000, seed: int = 11) -> dict[str, Any]:
+    """Probability that ``summarise`` flags recall at these sample sizes when the model truly
+    recognises a share ``recall_share`` of the real items (and none of the placebo items).
+
+    Plain idea: "not flagged" is evidence of no recall only if the audit would have flagged a
+    recall of the size that matters. Formal: per item, with probability ``s`` the truth is
+    ranked first (RR = 1), otherwise the ranking is uniform (``E[RR] = chance_mrr(N)``), so
+    real MRR = ``s + (1 - s) * chance_mrr``. Each simulated audit applies the two one-sided tests
+    of ``summarise`` in their large-sample form: real MRR above chance (z-test with the null RR
+    variance, approximating the label-permutation test) and real MRR above placebo MRR (Welch
+    z); flagged when both are below ``alpha`` (with no placebo arm the audit cannot flag, so
+    power is 0). Worked numbers are pinned in ``tests/test_round2_stats.py``.
+    Evidence class: seeded Monte Carlo of an approximation to the permutation tests."""
+    if n_candidates < 2 or n_real < 1 or not (0 <= recall_share <= 1) or not 0 < alpha < 1:
+        raise ValueError("need n_candidates >= 2, n_real >= 1, 0 <= recall_share <= 1, 0 < alpha < 1")
+    m0 = chance_mrr(n_candidates)
+    v0 = sum(1.0 / j ** 2 for j in range(1, TOP_K + 1)) / n_candidates - m0 ** 2
+    out: dict[str, Any] = {"recall_share": recall_share, "n_real": n_real, "n_placebo": n_placebo,
+                           "n_candidates": n_candidates, "alpha": alpha, "chance_mrr": m0,
+                           "mrr_under_alternative": recall_share + (1 - recall_share) * m0,
+                           "n_sim": n_sim, "method": "Monte Carlo, normal approximations to both tests"}
+    if n_placebo < 1:
+        return {**out, "power": 0.0, "note": "no placebo arm: the audit cannot flag recall"}
+    z = NormalDist().inv_cdf(1 - alpha)
+    rng = np.random.default_rng(seed)
+    real = _rr_draws(rng, n_real, n_sim, n_candidates, recall_share)
+    plc = _rr_draws(rng, n_placebo, n_sim, n_candidates, 0.0)
+    mr, mp = real.mean(axis=1), plc.mean(axis=1)
+    t1 = (mr - m0) / math.sqrt(v0 / n_real)
+    var_r = real.var(axis=1, ddof=1) if n_real > 1 else np.full(n_sim, v0)
+    var_p = plc.var(axis=1, ddof=1) if n_placebo > 1 else np.full(n_sim, v0)
+    se = np.sqrt(var_r / n_real + var_p / n_placebo)
+    t2 = np.where(se > 0, (mr - mp) / np.where(se > 0, se, 1.0), 0.0)
+    return {**out, "power": float(np.mean((t1 > z) & (t2 > z)))}
+
+
+def min_detectable_recall_share(n_real: int, n_placebo: int, n_candidates: int, *, power: float = POWER_TARGET,
+                                alpha: float = 0.05, n_sim: int = 1000, seed: int = 11) -> float | None:
+    """Smallest recognised share (to 0.005) that ``audit_power`` detects with ``power``; ``None``
+    when even full recall is not detected (no placebo arm)."""
+    lo, hi = 0.0, 1.0
+    if audit_power(n_real, n_placebo, n_candidates, recall_share=hi, alpha=alpha, n_sim=n_sim,
+                   seed=seed)["power"] < power:
+        return None
+    while hi - lo > 0.005:
+        mid = (lo + hi) / 2
+        if audit_power(n_real, n_placebo, n_candidates, recall_share=mid, alpha=alpha, n_sim=n_sim,
+                       seed=seed)["power"] >= power:
+            hi = mid
+        else:
+            lo = mid
+    return round(hi, 3)
+
+
 # ---- summary and verdict ----------------------------------------------------------------------
 
 @dataclass
@@ -341,12 +412,14 @@ class AuditResult:
     leak: dict[str, Any] | None
     flagged: bool
     reasons: list[str] = field(default_factory=list)
+    # round 2 (C11): the audit's power at the n used; a "not flagged" verdict reads with it
+    power: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {"real": self.real, "placebo": self.placebo, "real_vs_placebo": self.real_vs_placebo,
                 "position_bias": self.position_bias, "concentration": self.concentration,
                 "month": self.month, "leak": self.leak, "recall_flagged": self.flagged,
-                "reasons": self.reasons}
+                "reasons": self.reasons, "power": self.power}
 
 
 def month_test(answers_month: Sequence[str | None], truths_month: Sequence[str], *, n_perm: int = 2000,
@@ -395,10 +468,20 @@ def summarise(real_items: Sequence[AuditItem], real_answers: Sequence[dict[str, 
         reasons.append("no placebo arm: verdict incomplete")
     flagged = bool(beats_null and (beats_placebo is True))
     leak = leak_test(leak_rows) if leak_rows else None
+    power = None
+    if real_items:
+        n_c = len(real_items[0].candidates)
+        power = audit_power(len(real_items), len(placebo_items), n_c, alpha=alpha)
+        power["min_detectable_recall_share_80pct"] = min_detectable_recall_share(
+            len(real_items), len(placebo_items), n_c, alpha=alpha)
+        if not flagged:
+            reasons.append(f"not flagged; power to flag a {power['recall_share']:.0%} recognised share at "
+                           f"n = {len(real_items)} is {power['power']:.2f}")
     return AuditResult(real, plc, rvp, position_bias(real_items, ra), answer_concentration(ra), months,
-                       leak, flagged, reasons)
+                       leak, flagged, reasons, power)
 
 
 __all__ = ["AuditItem", "AuditResult", "build_items", "question", "parse_ranked", "reciprocal_rank",
            "chance_mrr", "mrr", "permutation_test", "two_sample_mrr", "position_bias",
-           "answer_concentration", "spearman", "leak_test", "placebo_ohlc", "month_test", "summarise"]
+           "answer_concentration", "spearman", "leak_test", "placebo_ohlc", "month_test", "summarise",
+           "audit_power", "min_detectable_recall_share"]
