@@ -129,7 +129,7 @@ def run_eval(name: str, out: Path, provider) -> None:
                    progress=lambda m: log(f"  {name}: {m}"))
     res.meta["measurement"] = {"name": name, "overrides": _jsonable(over), "rebalance_every": EVERY,
                                "seconds": round(time.time() - t0, 1)}   # meta["macro_sources"] is evaluate()'s own tally
-    res.to_json(path)
+    res.to_json(path, include_returns=True)
     log(f"{name}: done in {time.time() - t0:.0f}s ({len(res.rows)} rows, {len(res.meta.get('errors', []))} errors)")
 
 
@@ -227,7 +227,7 @@ def run_trials(out: Path, provider) -> None:
                                    "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1),
                                    "portfolio_sharpe": float(port.metrics[AGENT].sharpe), "fingerprint": fp}
         tmp = path.with_suffix(".json.tmp")   # atomic: a crash mid-write never leaves a half file
-        res.to_json(tmp)
+        res.to_json(tmp, include_returns=True)
         os.replace(tmp, path)
         log(f"trial {t.name!r}: done in {time.time() - t0:.0f}s")
     rows = []
