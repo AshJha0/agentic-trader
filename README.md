@@ -484,7 +484,7 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
-## v0.19 (unreleased): long runs that survive, skips that are counted
+## v0.19 (release candidates v0.19.0rc1 and rc2, 2026-11-12): long runs that survive, skips that are counted
 
 Evidence class: code and offline tests (fakes only); no model was run. Running study chains
 keep their start-of-run code.
@@ -510,7 +510,7 @@ keep their start-of-run code.
   in [COOKBOOK.md](COOKBOOK.md), lessons 66-68 in [LEARN.md](LEARN.md). Details in
   [CHANGELOG.md](CHANGELOG.md).
 
-## v0.18 (unreleased): leftovers closed
+## v0.18 (never tagged on its own; shipped in v0.19.0rc1): leftovers closed
 
 Evidence class: code and offline tests; no model was run.
 
@@ -529,7 +529,7 @@ Evidence class: code and offline tests; no model was run.
   How the local-model queue is run and restarted:
   [docs/operations/long_runs.md](docs/operations/long_runs.md).
 
-## v0.16 (unreleased): the LLM study on a local model
+## v0.16 (v0.16.0, 2026-11-09): the LLM study on a local model
 
 **Plain idea.** Does a language model make the desk better, and in which roles? Asking that of
 Claude across a full design costs about $215 per cell (dry-run estimate at list prices), so the

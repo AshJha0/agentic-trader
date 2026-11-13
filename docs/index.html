@@ -99,10 +99,10 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 <div class="wrap">
 
 <!-- current state -->
-  <h2 id="now">Where the project stands (v0.19, unreleased)</h2>
+  <h2 id="now">Where the project stands (v0.19.0rc2)</h2>
   <div class="state">
-    <p>The last released version is v0.15.1 (<code>pyproject.toml</code>); the work since then is in the
-       <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a> under v0.16 to v0.19, all marked unreleased. The current round
+    <p>The last full release is v0.16.0 (2026-11-09) and the current version is the release candidate v0.19.0rc2 (<code>pyproject.toml</code>); the work since v0.16.0 is in the
+       <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a> under v0.19.0rc1 and v0.19.0rc2 (they include the v0.17 and v0.18 work, which was never tagged on its own). The current round
        makes long local-model runs survivable: resumable checkpoints, bounded retries, and provider misses
        recorded as counted skips, with a cell that skips more than 10% of its units ruled inadmissible by the
        <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration.md">pre-registration</a>, which the owner signed on 2026-11-12 before any row of its decisive test existed. A flagged critic alarm now cuts the weight and never adds exposure.
@@ -127,7 +127,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
       <li><strong>Every historical period has been looked at.</strong> The only unseen data is the forward paper
           record, frozen on 2026-09-29, <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v09_preregistration.md">pre-registered</a>,
           and run on GitHub Actions each weekday since 2026-11-08
-          (<a href="https://github.com/AshJha0/agentic-trader/tree/main/results/paper">ledger and revision log</a>).
+          (<a href="https://github.com/AshJha0/agentic-trader/tree/paper-ledger/results/paper">ledger and revision log</a>).
           A Sharpe near 1 needs years of it before an interval excludes zero.</li>
       <li><strong>The model's contribution is not yet measured at scale.</strong> The one LLM run (v0.5.1, five
           stocks, one quarter, $4) had the same Sharpe as the rules with half the exposure, under an engine
@@ -222,7 +222,7 @@ flowchart TB
      <a href="https://ashjha0.github.io/AgenticAICashEquities/">AgenticAICashEquities</a> (its lesson pages are coming).</p>
 
 <!-- v0.19 strip -->
-  <h2>What changed recently (v0.14 to v0.19, unreleased)</h2>
+  <h2>What changed recently (v0.14 to v0.19.0rc2)</h2>
   <div class="grid">
     <div class="card"><h3>v0.19: long runs</h3>
       <p>Resumable checkpoints, bounded retries for the local model, provider misses recorded as
@@ -412,7 +412,7 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
       <p>Every historical period has now been looked at. A daily paper-trading job, frozen on 2026-09-29
          and <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v09_preregistration.md">pre-registered</a>,
          appends to an append-only ledger and logs any revision of history beside it. The
-         <a href="https://github.com/AshJha0/agentic-trader/tree/main/results/paper">ledger and revision log</a>
+         <a href="https://github.com/AshJha0/agentic-trader/tree/paper-ledger/results/paper">ledger and revision log</a>
          are published and updated after each run; the job missed 2026-10-31 to 11-06, filled in afterwards and marked. It is the only
          unseen data, and a Sharpe near 1 needs years before its interval excludes zero.</p></div>
     <div class="card"><h3>v0.15 (v0.15.1, 2026-11-08): text, retrieval, an auditable agent</h3>
