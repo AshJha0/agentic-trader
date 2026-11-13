@@ -428,7 +428,7 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
          two-backend core, the backtester's conventions, risk, alphas, portfolios and the statistics.
          The concept guide, the cookbook and the diagrams page follow the same rule: every number names its source.</p></div>
     <div class="card"><h3>Engineering</h3>
-      <p>The pull-request gate runs about 2,100 tests on the numpy backend with line and branch coverage
+      <p>The pull-request gate runs about <!-- count:tests_approx -->2,300<!-- /count --> tests on the numpy backend with line and branch coverage
          above the 90% floor that CI enforces (94.0% in the run of 2026-11-12); a separate job builds the
          C++ core on Linux, macOS and Windows and runs the parity tests. Exact counts are in the CI log,
          not on this page.
@@ -480,7 +480,7 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
 
   <h2>Measured, not claimed</h2>
   <div class="numbers">
-    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; about 2,100 pytest tests in the pull-request gate on the numpy backend, with line and branch coverage above the enforced 90% floor (94.0% in the CI run of 2026-11-12) · the C++ core is built and parity-tested on Linux, macOS and Windows · a nightly job runs the slow tests · exact counts are in the CI log, which is the source, not this page<br>
+    Test suite&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; about <!-- count:tests_approx -->2,300<!-- /count --> pytest tests in the pull-request gate on the numpy backend, with line and branch coverage above the enforced 90% floor (<!-- count:coverage_pct -->94.0<!-- /count -->% in the CI run of 2026-11-12) · the C++ core is built and parity-tested on Linux, macOS and Windows · a nightly job runs the slow tests · exact counts are in the CI log, which is the source, not this page<br>
     One task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ≈31 ms offline: plan → 12 steps → 2 parallel tool calls → 4 analysts → debate → trader → risk → critic (6 checks) → validation → audited report · 21 evidence records · 7 findings · 18 spans · every transition written to SQLite when a task store is configured<br>
     Capability surface&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 16 tools on 5 servers (market_data · quant incl. cross-sectional alphas · knowledge · portfolio · execution) · schemas derived from Python signatures · in-process or MCP over stdio from one definition<br>
     Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 11-state machine · 5 roles · 6 policy rules (deny list → capabilities → argument guards → read-only → risk level → allow) · approvals deny by default on the MCP server (auto is an explicit opt-in) · order tickets pass the desk's limits · plans pinned to the task's symbol and date · call and dollar LLM budgets · TLS and dev-key guards on the API · a bounded task pool per process (503 + Retry-After when full) and multi-process serving over the task store<br>

@@ -633,7 +633,7 @@ Steps only the repository owner can take on GitHub:
 
 ```bash
 pytest -q -m "not slow"                     # CI, Python 3.12, numpy backend, v0.19 branch (run 43228695881): 2073 passed, 53 skipped, 17 slow deselected; incl. adversarial, API, a real MCP stdio round trip and hypothesis fuzzing of both boundaries
-pytest --cov=agentic_trader --cov-report=term-missing   # 94.01% line+branch coverage in that CI run (16,582 statements, 4,966 branches; 744 lines and 457 branch arcs missed); CI fails below 90% ([tool.coverage.report] fail_under); it counts the numpy backend (quant/pycore.py) only: the C++ core in cpp/ is checked by the parity tests, not measured by coverage
+pytest --cov=agentic_trader --cov-report=term-missing   # <!-- count:coverage_pct2 -->94.01<!-- /count -->% line+branch coverage in that CI run (<!-- count:coverage_statements -->16,582<!-- /count --> statements, <!-- count:coverage_branches -->4,966<!-- /count --> branches; <!-- count:coverage_missed_lines -->744<!-- /count --> lines and <!-- count:coverage_missed_branches -->457<!-- /count --> branch arcs missed); CI fails below 90% ([tool.coverage.report] fail_under); it counts the numpy backend (quant/pycore.py) only: the C++ core in cpp/ is checked by the parity tests, not measured by coverage
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 839 passed, 40 skipped (C++-only tests)
 ctest --test-dir build -C Release           # 26 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests
 python scripts/run_cookbook.py --offline && python scripts/check_mermaid.py && python scripts/check_links.py   # the docs, as CI runs them
