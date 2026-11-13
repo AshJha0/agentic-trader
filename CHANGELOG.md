@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Review A11: the fundamentals-text prompt now has a token budget
+  (`text_analyst_options.fundamentals_max_prompt_tokens`, default 6,000, estimated with
+  `llm.estimate_tokens`, no API call). Sections are admitted newest first; the cut is recorded
+  in the report's `facts["prompt_budget"]`. A reply whose backend flags the prompt as truncated
+  (`last_call["truncated"]`) is rejected with a logged reason and the analyst abstains.
+
 ## v0.19.0rc2 — 2026-11-12 (release candidate): the 2026-11-12 review's Rounds 0 to 2
 
 A second release candidate, not the final v0.19.0. It carries the study repair and the signed

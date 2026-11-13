@@ -12,6 +12,14 @@ Two analysts, both structured-output and both fenced:
   and a shift in [-1, 1] against the previous text, with cited quotes checked the same way. A
   shift that is not a finite number in [-1, 1] is rejected, not clipped (A8).
 
+Prompt budget (A11). The fundamentals prompt is held to ``max_prompt_tokens`` (default
+``DEFAULT_FUNDAMENTALS_PROMPT_TOKENS``), counted with the deterministic, conservative
+``llm.estimate_tokens`` over the system and user prompt (no tokeniser, no API call). Sections
+are admitted newest first until the next one would not fit; the rest are left out, and the
+cut is recorded (``TextAnalysis.budget``, then ``facts["prompt_budget"]`` in the report). A
+reply whose backend says the server truncated the prompt (``last_call["truncated"]``) is
+rejected with a logged reason, and the report abstains, so the desk runs on its rules analysts.
+
 The model never computes a number the rules can compute: it reads and cites. Every input text
 is third-party and goes into the prompt inside an ``<untrusted_data>`` block.
 
@@ -78,6 +86,7 @@ class TextAnalysis:
     dropped: list[dict[str, Any]] = field(default_factory=list)
     untrusted: bool = True
     problem: str | None = None
+    budget: dict[str, Any] | None = None    # A11: the prompt budget and what it left out
 
 
 class FixtureLLM:
@@ -124,6 +133,9 @@ def _parse(reply: str | None) -> dict[str, Any] | None:
 MIN_QUOTE_WORDS = 3
 MIN_QUOTE_CHARS = 12
 MAX_CLAIMS = 12
+# A11: the fundamentals prompt budget in estimated tokens (llm.estimate_tokens, which is
+# conservative). 6,000 leaves room for the schema and the reply in the 8,192-token local window.
+DEFAULT_FUNDAMENTALS_PROMPT_TOKENS = 6000
 _STOPWORDS = frozenset("""
 a an the of to and or is are was were be been being this that these those it its on in at for with by
 as from has have had not no but if then than so such can may might will would should could do does did
@@ -148,10 +160,14 @@ class FundamentalsTextAnalyst:
     system = FUNDAMENTALS_SYSTEM
     schema = FUNDAMENTALS_SCHEMA
 
-    def __init__(self, llm: Any, max_chars_per_section: int = 6000, anon: Any = None):
+    def __init__(self, llm: Any, max_chars_per_section: int = 6000, anon: Any = None,
+                 max_prompt_tokens: int = DEFAULT_FUNDAMENTALS_PROMPT_TOKENS):
+        if max_prompt_tokens <= 0:
+            raise ValueError("max_prompt_tokens must be positive")
         self.llm = llm
         self.max_chars = max_chars_per_section
         self.anon = anon     # anonymize.Anonymizer (None = prompts carry real names and dates)
+        self.max_prompt_tokens = int(max_prompt_tokens)
 
     def _t(self, text: str) -> str:
         return self.anon.scrub_text(text) if self.anon is not None else text
@@ -165,20 +181,57 @@ class FundamentalsTextAnalyst:
                   for s in sections]
         return self._t(f"Company: {symbol}") + "\nFiling sections:\n" + "\n".join(blocks)
 
+    def estimate(self, symbol: str, sections: list[Any]) -> int:
+        """Estimated input tokens of the request (system + user prompt); deterministic."""
+        from .llm import estimate_tokens
+        return estimate_tokens(self.system, self.prompt(symbol, sections))
+
+    def fit(self, symbol: str, sections: list[Any]) -> tuple[list[Any], dict[str, Any]]:
+        """The sections that fit ``max_prompt_tokens``, admitted newest first (by
+        ``visible_date``) and returned in their original order, and a record of the cut."""
+        order = sorted(range(len(sections)), key=lambda i: (sections[i].visible_date, -i), reverse=True)
+        chosen: list[int] = []
+        for i in order:
+            trial = sorted(chosen + [i])
+            if self.estimate(symbol, [sections[j] for j in trial]) > self.max_prompt_tokens:
+                break     # newest first: everything older is left out too
+            chosen = trial
+        keep = set(chosen)
+        kept = [sections[j] for j in chosen]
+        left = [sections[j] for j in range(len(sections)) if j not in keep]
+        record = {"max_prompt_tokens": self.max_prompt_tokens,
+                  "estimated_tokens": self.estimate(symbol, kept) if kept else 0,
+                  "sections_given": len(sections), "sections_kept": len(kept),
+                  "truncated": bool(left),
+                  "left_out": [f"{s.accession}/{s.section}" for s in left]}
+        return kept, record
+
     def analyze(self, symbol: str, sections: list[Any]) -> TextAnalysis:
         if not sections:
             return TextAnalysis(self.name, False, problem="no sections")
+        sections, budget = self.fit(symbol, sections)
+        if not sections:
+            return TextAnalysis(self.name, False, problem="prompt budget leaves no section", budget=budget)
         reply = _parse(self.llm.complete_json(self.system, self.prompt(symbol, sections), deep=False,
                                               schema=self.schema))
+        last = getattr(self.llm, "last_call", None)
+        if isinstance(last, dict) and last.get("truncated"):
+            budget["server_truncated"] = True
+            log.warning("fundamentals_text %s: reply rejected, the server truncated the prompt "
+                        "(prompt_eval_count=%s, estimate=%s, num_ctx=%s)", symbol,
+                        last.get("prompt_eval_count"), last.get("prompt_tok_est"), last.get("num_ctx"))
+            return TextAnalysis(self.name, False, problem="reply rejected: the server truncated the prompt",
+                                budget=budget)
         if reply is None or not isinstance(reply.get("claims"), list):
-            return TextAnalysis(self.name, False, problem="no usable reply")
+            return TextAnalysis(self.name, False, problem="no usable reply", budget=budget)
         # The model saw the scrubbed text and the aliased accession, so quotes are checked
         # against what it saw and the cited accession is mapped back to the real one.
         by_key = {(s.accession, s.section): _norm(self._t(s.text[: self.max_chars])) for s in sections}
         if self.anon is not None:
             reply["claims"] = [{**c, "accession": self.anon.accession_real(str(c.get("accession")))}
                                if isinstance(c, dict) else c for c in reply["claims"]]
-        kept, dropped = [], []
+        kept: list[dict[str, Any]] = []
+        dropped: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
         for c in reply["claims"]:
             if not isinstance(c, dict):
@@ -201,7 +254,7 @@ class FundamentalsTextAnalyst:
                 kept.append(c)
         directions: dict[Any, int] = {"positive": 1, "negative": -1}
         score = sum(directions.get(c.get("direction"), 0) for c in kept)
-        return TextAnalysis(self.name, True, {"claims": kept, "net_direction": score}, dropped)
+        return TextAnalysis(self.name, True, {"claims": kept, "net_direction": score}, dropped, budget=budget)
 
 
 class MacroTextAnalyst:
@@ -239,7 +292,9 @@ class MacroTextAnalyst:
         src = _norm(current + " " + (previous or ""))
         quotes = [q for q in reply.get("quotes", []) if isinstance(q, str)] \
             if isinstance(reply.get("quotes"), list) else []
-        kept, dropped, seen = [], [], set()
+        kept: list[str] = []
+        dropped: list[dict[str, Any]] = []
+        seen: set[str] = set()
         for q in quotes:
             n = _norm(q)
             why = ("quote not found in the text" if not n or n not in src
@@ -309,6 +364,7 @@ class TextInputs:
     statements: list[Any] = field(default_factory=list)
     retriever: Any = None
     retrieval_k: int = 3
+    fundamentals_max_prompt_tokens: int = DEFAULT_FUNDAMENTALS_PROMPT_TOKENS
 
     @classmethod
     def from_config(cls, config: dict) -> "TextInputs":
@@ -325,7 +381,8 @@ class TextInputs:
                 retriever = rr.analyst_retriever(corpus, qs, opts.get("retrieval_method", "tfidf"))
             except (rr.RetrievalGateError, ValueError) as e:   # fail closed: no retrieval
                 log.warning("research retrieval refused: %s", e)
-        return cls(EdgarProvider.from_config(config), statements, retriever, int(opts.get("retrieval_k", 3)))
+        return cls(EdgarProvider.from_config(config), statements, retriever, int(opts.get("retrieval_k", 3)),
+                   int(opts.get("fundamentals_max_prompt_tokens") or DEFAULT_FUNDAMENTALS_PROMPT_TOKENS))
 
 
 def _visible(items: Iterable[Any], cut: datetime) -> list[Any]:
@@ -379,7 +436,11 @@ def text_reports(names: Iterable[str], llm: Any, inputs: TextInputs, instrument:
                     secs = secs + _visible(extra, cut)
                 facts["sections"] = [f"{s.accession}/{s.section}" for s in secs]
                 facts["visible_dates"] = [s.visible_date.isoformat() for s in secs]
-                res = FundamentalsTextAnalyst(llm, anon=anon).analyze(instrument.symbol, secs)
+                res = FundamentalsTextAnalyst(llm, anon=anon,
+                                              max_prompt_tokens=inputs.fundamentals_max_prompt_tokens
+                                              ).analyze(instrument.symbol, secs)
+                if res.budget is not None:
+                    facts["prompt_budget"] = res.budget
         else:
             pairs = ([(CCY_BANK.get(instrument.base), 1.0), (CCY_BANK.get(instrument.quote), -1.0)]
                      if instrument.is_fx else [("FOMC", -0.5)])   # tighter policy is an equity headwind
