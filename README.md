@@ -117,6 +117,8 @@ resampling instruments (`scheme=instruments`) on the core and extended slices an
 cluster bootstrap over the five asset-class-by-universe groups (core equities, core FX, extended equities, macro ETFs, FX crosses; `scheme=clusters`) on all 60 — its p, and whether
 the Benjamini–Hochberg correction across the table flags it ("BH-significant").
 
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+
 **The headline:** out of sample the desk is **below buy & hold on Sharpe**, per instrument
 and as a portfolio — inside the noise for the portfolio, BH-significant on the 45 names it
 was never tuned on — with **about half of buy & hold's drawdown, which the
@@ -488,7 +490,9 @@ Evidence class: code and offline tests (fakes only); no model was run. Running s
 keep their start-of-run code.
 
 - **Resumable runs.** `agentic_trader/checkpoint.py` (append-only JSON lines, fingerprinted
-  header, fsync per unit, torn last line cut); `scripts/v17_exec_lag.py` resumes by default
+  header, fsync per unit, torn last line cut; since 2026-11-13 a corrupt line in the middle is
+  skipped on its own, the valid rows after it are kept and counted in `Checkpoint.skipped_lines`,
+  and the file is rewritten clean); `scripts/v17_exec_lag.py` resumes by default
   (`--fresh` to restart) and a resumed run writes byte-identical files.
 - **Local model retries.** `local_llm_retry_budget_s` (default 0; 600 s in the study drivers)
   retries timeouts, refused connections and 5xx with the same request body and raises
@@ -613,8 +617,20 @@ The forward paper record runs on GitHub Actions (`.github/workflows/paper.yml`, 
 `price_vintage` hash of the bars it read in `results/paper/runs.jsonl`; the freshness job fails
 when the last session is more than two business days old, and any failure opens or comments on
 one issue labelled `paper-record`. The laptop task `scripts/paper_daily.cmd` is the fallback;
-run only one of the two. `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy
-advisory); `nightly.yml` runs the full suite. The paper OMS shadow record (`--oms`, off by
+run only one of the two. `ci.yml` is the PR gate and also runs on every push to `main`. A newer push cancels an older run on
+the same PR branch but never on `main`, so every `main` commit gets a complete result. Jobs:
+lint (ruff blocking with the rule sets `E4`, `E7`, `E9`, `F`, bugbear `B` and bandit `S`, the
+remaining `B`/`S` hits ignored per file with a reason in `pyproject.toml`; `scripts/gen_counts.py
+--check`; mypy blocking on the quant core and advisory on the whole package); the Python 3.10 to
+3.14 matrix, each installing its hashed lock `requirements/lock-py<version>.txt` with
+`pip install --require-hashes` and running `pytest -m "not slow"` with coverage, which is a gate
+(`fail_under = 90` in `[tool.coverage.report]`; a run below it fails); a minimum-versions leg
+(Python 3.10 with the declared floors numpy 1.24.0 and pandas 2.0.0); a leg that installs the
+v0.8 pin set `requirements-lock.txt` and checks the installed versions equal its pins; the C++
+core; and the docs checks. `nightly.yml` (03:17 UTC) runs the full suite, slow tests included, on
+the numpy backend and on the C++ backend (Python 3.12). `lockfiles.yml` (manual) regenerates the
+hashed locks with uv. `paper.yml` installs `requirements/paper-lock-py3.12.txt`, the same v0.8
+versions with a SHA-256 per file. The paper OMS shadow record (`--oms`, off by
 default) is labelled `oms_shadow_v14` and never writes `ledger.csv`; the frozen forward record
 (from 2026-09-29) is unchanged.
 
@@ -637,4 +653,16 @@ pytest --cov=agentic_trader --cov-report=term-missing   # <!-- count:coverage_pc
 AGENTIC_TRADER_BACKEND=python pytest -q     # the numpy fallback: 839 passed, 40 skipped (C++-only tests)
 ctest --test-dir build -C Release           # 26 C++ test functions in cpp/tests/test_core.cpp, run as the one ctest test at_core_tests
 python scripts/run_cookbook.py --offline && python scripts/check_mermaid.py && python scripts/check_links.py   # the docs, as CI runs them
+python scripts/gen_counts.py --check        # quoted counts in step with the repository, as CI runs it
 ```
+
+**Quoted counts.** A number such as the coverage figure above sits between
+`<!-- count:NAME -->` and `<!-- /count -->` markers in README.md and the docs site.
+`scripts/gen_counts.py` recomputes each one from the repository and rewrites the text between
+the markers; `--check` writes nothing and exits non-zero on drift, and CI runs it in the lint
+job. Test counts need a full collection (`--with-tests`) and coverage counts need the
+`coverage.xml` of a full run with branch data (`--coverage-xml PATH`, for example the
+`coverage-xml` artifact of the Python 3.12 CI leg); without them those counts are skipped,
+not guessed, because an old or partial file gives false drift. To update after a change, run
+`python scripts/gen_counts.py` (with the two options when test or coverage figures moved),
+read the diff and commit it.

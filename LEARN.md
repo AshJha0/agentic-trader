@@ -875,6 +875,8 @@ interval, p and Benjamini-Hochberg flag; the bootstrap resamples instruments
 first (`scheme=clusters`, 5 groups: core equities, core FX, extended equities, macro ETFs,
 FX crosses) on all 60 (section 33).
 
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+
 - **Per instrument, out of sample, the desk is below buy & hold on Sharpe, and below the
   vol-targeted control too.** Core 15 holdout median Sharpe 0.30 (desk) against 0.51 (buy &
   hold) and 0.52 (vol-target); desk minus buy & hold −0.10 [−0.21, −0.00], p 0.04, not
@@ -984,6 +986,8 @@ standard error of a per-instrument annualised Sharpe is about 2 — carries no e
 weight, yet counted as two of the four confirmations. The rule stays because it was adopted
 under the protocol as it stood; what changed is what the record says about how much it
 proved.
+
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
 
 **Numbers** (v0.8; `results/v08/tables.md`, "summary: extended (45), holdout", the paired
 Sharpe and MDD% tables and "summary: extended (45), reserve"; `scheme=instruments`). The
@@ -1277,13 +1281,25 @@ returns the mean paired difference, its interval and a two-sided p; `EvaluationR
 and `paired_table` apply it to any metric against any baseline, and the CLI prints the
 table after every evaluation with a `scheme` and `groups` column and a Benjamini-Hochberg
 `significant` flag computed on the unrounded p (rows with fewer than three paired
-instruments print p as NaN and do not count toward the correction). Read against the core
+instruments print p as NaN and do not count toward the correction). Since 2026-11-13 (review
+C8) the primary interval and p of a Sharpe row come from `stats.paired_time_block_table`:
+circular day blocks (length 10) shared by every instrument, `scheme=time-block`, with the
+path length in `days`. The reason: every instrument's difference comes from the same calendar
+path, so resampling instruments treats one path as N independent draws and gives an interval
+several times too narrow (`tests/test_round2_stats.py`: 20 instruments loading on one daily
+factor). The cross-instrument figure moves to `secondary` columns, read as a statement about
+these names in this window; a row without daily returns (another metric, or a result read
+from JSON written without `include_returns=True`) falls back to it and its `scheme` says so.
+The BH flag is decided on the primary p. The figures that follow were measured before this
+change. Read against the core
 universe (v0.8; `results/v08/tables.md`, "paired Sharpe, agent minus baseline: core (15)";
 `scheme=instruments`, groups 2): the desk's per-instrument mean Sharpe minus buy & hold's
 is +0.06 [−0.06, +0.17], p 0.29, on the design period and −0.10 [−0.21, −0.00], p 0.04, on
 the holdout, neither BH-significant — the noise floor the earlier concepts estimated, now
 measured. The contrast is the same comparison over all 60 under the cluster scheme (5
 groups): holdout desk minus buy & hold −0.08 [−0.15, −0.03], p 0.00, BH-significant.
+
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
 
 **Instruments are not exchangeable, and the v0.7 fix made it worse.** The plain bootstrap
 assumes the instruments are independent draws. Nine rate, credit and commodity ETFs that
@@ -1554,6 +1570,8 @@ portfolio comparison lacked, all added in v0.8.
   & hold; extended 45 holdout −4.33 [−6.10, −2.55], p 0.00, BH-significant; on the core
   equities (10) alone +0.83 [−1.63, +3.21], p 0.50, not BH-significant — the desk draws down no less than the
   fair control on the names it was tuned on (section 26).
+
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
 
 **What did not change.** The rules. No parameter of the desk was re-fitted to the new
 engine; the same frozen rules were re-measured under the corrected conventions, and
@@ -1872,7 +1890,8 @@ discovery rate: with nine baselines, one p below 0.05 is expected by luck about 
 the time. Across the history of the project, deflate the Sharpe by the number of variants
 ever tried, and compute every trial's Sharpe the same way or the dispersion means nothing.
 
-**In the repo.** `paired_table` applies Benjamini–Hochberg over the rows it prints.
+**In the repo.** `paired_table` applies Benjamini–Hochberg over the rows it prints, on the
+primary p (the time-block bootstrap for Sharpe rows since 2026-11-13, section 33).
 `evaluation.TRIALS` registers every variant judged on a design period (62 after v0.12), and
 the deflated Sharpe uses each trial's portfolio Sharpe.
 
@@ -2311,7 +2330,15 @@ placebo arm at 5%; without a placebo arm the verdict is "incomplete", never "fla
 position-bias chi-square and the first-option share are reported beside it. A leak test
 compares the model's signals on real and date-shifted windows with a date-clustered bootstrap.
 Since v0.17 the prereg holdout look and `evaluation.evaluate` on a local model refuse to start
-until the audit has passed (`evaluation.require_recall_pass`).
+until the audit has passed (`evaluation.require_recall_pass`). Since 2026-11-13 (review C11)
+"not flagged" is not enough: passing is an equivalence test. The null is "recall above chance
+is at least a margin" (default: the excess MRR of a model that recognises 10 % of items,
+`0.10 * (1 - chance MRR)`), and the gate passes only when the one-sided 95 % upper bound of
+real MRR minus chance is below that margin (`recall_audit.equivalence_test`, which also
+reports its power and the n for 80 % power). With 15 candidates the margin is 0.088; a
+chance-level model passes at n = 100 (bound 0.045) and fails at n = 20 (bound 0.101), so a
+small audit fails. An audit JSON without the `equivalence` block no longer passes
+`evaluation.recall2_verdict`.
 
 **Worked example.** In `tests/test_v017_study_rigour.py` the v0.16 design flags an
 always-first responder on a 30-item prefix; v2 does not flag it at any prefix tried, and its
@@ -2409,7 +2436,10 @@ work, and must not quietly shrink the sample either.
 **Formally.** Three mechanisms (v0.19, evidence class: code + offline tests).
 `agentic_trader/checkpoint.py` appends one JSON line per finished unit and fsyncs it; line 1 is
 a header whose SHA-256 fingerprint must match on resume (else `CheckpointMismatch`), and a torn
-last line is truncated so that unit simply runs again. `local_llm_retry_budget_s` (0 by default,
+last line is truncated so that unit simply runs again. A corrupt line in the middle (since
+2026-11-13, review D11) is skipped on its own: the valid rows after it are kept, the count is in
+`Checkpoint.skipped_lines` with a logged warning, and the file is rewritten clean. Before, the
+first corrupt line truncated the file and every later unit ran again. `local_llm_retry_budget_s` (0 by default,
 600 s in the study drivers, `scripts/llm_study.py` `LOCAL_BUDGET`) retries timeouts, refused
 connections and HTTP 5xx with the same request body, and raises `LocalLLMUnavailable` when the
 budget is spent, so a dead server stops the run instead of turning every later row into a

@@ -24,6 +24,8 @@ reproduce anything, see [Reproducing](#reproducing).
 
 ## Summary
 
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+
 > v0.12 (after this release): a longer design period (2008 to 2021), a long/short trend stream and
 > the vol-target core with the desk as an overlay are in [v012_trend_core.md](v012_trend_core.md);
 > v0.10, the overlay on the core 15, is in [v010_overlay.md](v010_overlay.md). Nothing was adopted.
@@ -240,6 +242,8 @@ counts instruments.
 
 ## Headline results
 
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
 Under v0.8 the core holdout median Sharpe is 0.30 (desk) against 0.51 (buy & hold) and 0.52
@@ -268,6 +272,8 @@ below are the v0.3 record.
 | all | B&H vol-target | 15 | 0.67 | 0.75 | 123.06 | 21.15 | 13.63 | 80.89 | 760.00 |
 
 ### Holdout period (2022–2026): run once with frozen rules
+
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
 
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
@@ -555,6 +561,8 @@ agentic-trader stats returns.csv --trials 26 --pre-registry-trials 64 --trial-re
 Report all three figures; quoting only the most favourable one would defeat the purpose.
 
 ## The extended universe (v0.5): out of sample on every period
+
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
 
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
@@ -1089,6 +1097,8 @@ dates; the desk is not being told anything it did not know. Its cost is real eit
 cross-section per decision date, cached across the names that share it.
 
 ### Cross-instrument bootstrap: is any edge real across the universe?
+
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
 
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
@@ -1719,6 +1729,8 @@ the scheme, groups, p and BH columns.
 
 #### paired Sharpe, agent minus baseline: all 60 (scheme column: clusters needs 5 groups)
 
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+
 | period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
 |:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
 | design | B&H vol-target | 60 | -0.06 | -0.15 | 0.04 | 0.20 | 18 | clusters | 5 |  |
@@ -2038,6 +2050,8 @@ holdout.
 | reserve | Buy&Hold | 5 | -0.04 | -0.44 | 0.47 | 0.80 | 1 | instruments | 1 |  |
 
 #### paired MDD% by asset class, agent minus control: core (15) fx (5)
+
+*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
 
 | period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
 |:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|

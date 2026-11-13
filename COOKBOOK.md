@@ -1815,7 +1815,9 @@ print([x < 0.05 for x in p])                  # naive: four flags
 print(benjamini_hochberg(p, q=0.05).tolist()) # BH: fewer survive
 ```
 
-`EvaluationResult.paired_table` applies this over the rows it prints.
+`EvaluationResult.paired_table` applies this over the rows it prints, on the primary p: since
+2026-11-13 (review C8) that is the time-block bootstrap for Sharpe rows (day blocks shared by
+every instrument), with the cross-instrument figure in `secondary` columns.
 
 ### 77. How long a track record does a Sharpe ratio need?
 
@@ -2831,7 +2833,12 @@ per item. Its ranked answer is scored against a label-permutation null and again
 nobody could know (the placebo arm). Read `recall_flagged`, `real.mrr` against
 `real.null_mean`, `real_vs_placebo.diff` and `position_bias.first_share`. A `first_share` near 1
 with `recall_flagged: false` is a model that always picks the first option: biased, not
-remembering. The old `recall` subcommand stays only to reproduce the void v0.16 rows.
+remembering. Not being flagged is not a pass: since 2026-11-13 (review C11) the gate
+(`evaluation.recall2_verdict`) also needs `equivalence.passed`, the one-sided test that recall
+above chance is below a margin (a model recognising 10 % of items). Read `equivalence.upper_bound`
+against `equivalence.margin`, and `equivalence.n_for_power` for the audit size that gives 80 %
+power. A JSON written before that date has no `equivalence` block and no longer passes. The old
+`recall` subcommand stays only to reproduce the void v0.16 rows.
 
 ### 130. Run a de-anonymised control
 
