@@ -6,7 +6,8 @@
   Python, plus `paper-lock-py3.12.txt`, the v0.8 pin set of `requirements-lock.txt` with hashes),
   and the test matrix and the paper job install them with `--require-hashes`; the paper job
   keeps the same versions. A new CI leg installs the declared floors (numpy 1.24.0, pandas
-  2.0.0) on Python 3.10 and runs the fast tests. The coverage comment and test now say what CI
+  2.1.0) on Python 3.10 and runs the fast tests; it found that the code needs pandas 2.1
+  (`DataFrame.stack(future_stack=...)`), so the declared floor is now `pandas>=2.1`. The coverage comment and test now say what CI
   does: `fail_under = 90` is a gate, and the test checks that a run below the floor fails.
   Pushes to main are no longer cancelled by a newer push; the nightly run adds a C++-backend
   leg with the slow tests; ruff now selects bugbear (B) and bandit (S), with the trivial hits

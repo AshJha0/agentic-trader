@@ -84,7 +84,7 @@ jobs:
           path: coverage.xml
 
   minimum:
-    # The floors pyproject declares for the runtime dependencies (numpy>=1.24, pandas>=2.0),
+    # The floors pyproject declares for the runtime dependencies (numpy>=1.24, pandas>=2.1),
     # installed exactly, on the oldest supported Python: proves the lower bounds are real.
     name: Minimum declared versions (Python 3.10, numpy backend)
     runs-on: ubuntu-latest
@@ -99,8 +99,8 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install the declared floors
         run: |
-          python -m pip install -e ".[dev]" "numpy==1.24.0" "pandas==2.0.0"
-          python -c "import numpy, pandas; assert numpy.__version__ == '1.24.0' and pandas.__version__ == '2.0.0'"
+          python -m pip install -e ".[dev]" "numpy==1.24.0" "pandas==2.1.0"
+          python -c "import numpy, pandas; assert numpy.__version__ == '1.24.0' and pandas.__version__ == '2.1.0'"
       - name: Run tests
         run: python -m pytest -ra -m "not slow"
 

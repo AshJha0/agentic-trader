@@ -2,7 +2,7 @@
   "vintage_id": "v09-engine-5",
   "frozen_on": "2026-11-13",
   "freeze_session": "2026-09-29",
-  "reason": "Round 3 (2026-11-13): A11 prompt budget, D11 checkpoint, C8 paired table, C11 recall gate, B/S lint fixes, hashed locks; no change to the paper book's rules",
+  "reason": "Round 3 (2026-11-13): A11 prompt budget, D11 checkpoint, C8 paired table, C11 recall gate, B/S lint fixes, hashed locks, pandas floor 2.1; no change to the paper book's rules",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
@@ -44,7 +44,7 @@
     "max_debate_rounds",
     "max_risk_discuss_rounds"
   ],
-  "engine_hash": "823915437d7398ae9deb83c33735f3db5e3750ea63d27d9a8861425534a58641",
+  "engine_hash": "bd35dd3e89a27d471ef87bfae04152892638404c79352e736fec9e3cbf5ffea9",
   "history": [
     {
       "vintage_id": "v09-engine-1",

@@ -9,7 +9,7 @@ description = "Agentic multi-agent LLM trading desk for equities and FX: policy-
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "pandas>=2.0"]
+dependencies = ["numpy>=1.24", "pandas>=2.1"]
 
 [project.optional-dependencies]
 llm = ["anthropic>=1.0"]

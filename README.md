@@ -625,7 +625,7 @@ remaining `B`/`S` hits ignored per file with a reason in `pyproject.toml`; `scri
 3.14 matrix, each installing its hashed lock `requirements/lock-py<version>.txt` with
 `pip install --require-hashes` and running `pytest -m "not slow"` with coverage, which is a gate
 (`fail_under = 90` in `[tool.coverage.report]`; a run below it fails); a minimum-versions leg
-(Python 3.10 with the declared floors numpy 1.24.0 and pandas 2.0.0); a leg that installs the
+(Python 3.10 with the declared floors numpy 1.24.0 and pandas 2.1.0); a leg that installs the
 v0.8 pin set `requirements-lock.txt` and checks the installed versions equal its pins; the C++
 core; and the docs checks. `nightly.yml` (03:17 UTC) runs the full suite, slow tests included, on
 the numpy backend and on the C++ backend (Python 3.12). `lockfiles.yml` (manual) regenerates the
