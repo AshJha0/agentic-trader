@@ -127,9 +127,16 @@ def test_horizon_returns_use_the_decision_horizon_and_check_price_source() -> No
     assert len(fwd) == len(rows) - 3 * len(NAMES)
     r = rows[7]
     assert fwd[(r["symbol"], r["as_of"])] == pytest.approx(_fwd(paths, r["symbol"], pd.Timestamp(r["as_of"])))
-    bad = [dict(rows[5], close=rows[5]["close"] * 1.01)]
+    # One decision of a symbol off by 1 % against its other decisions: a different source,
+    # left out. A common factor on every decision of a symbol is a later re-adjustment, kept.
+    sym = rows[5]["symbol"]
+    mine = [r for r in rows if r["symbol"] == sym]
+    bad = [dict(r, close=r["close"] * (1.01 if r is rows[5] else 1.0)) for r in mine]
     fwd2, problems2 = study.horizon_returns(bad, _prices_from(paths), 20)
-    assert not fwd2 and "stored close" in problems2[0]
+    assert (sym, rows[5]["as_of"]) not in fwd2 and any("stored close" in p for p in problems2)
+    scaled = [dict(r, close=r["close"] * 1.01) for r in mine]
+    fwd3, _ = study.horizon_returns(scaled, _prices_from(paths), 20)
+    assert fwd3 == {k: v for k, v in fwd.items() if k[0] == sym}
 
 
 def test_horizon_metrics_perfect_foresight_and_noise() -> None:
