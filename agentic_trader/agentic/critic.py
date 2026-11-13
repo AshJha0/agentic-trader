@@ -176,7 +176,8 @@ def enforce_errors(state: TradingState, report: CriticReport, config: dict[str, 
         return None
     names = sorted({c.name for c in failed})
     old = float(d.target_weight)
-    new, notes = old, []
+    new = old
+    notes: list[str] = []
     if "firm_limits" in names:
         new, notes = _guard(state, old, config, risk_facts)
         new = _shrink_only(new, old)

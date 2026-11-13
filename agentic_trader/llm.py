@@ -415,7 +415,7 @@ class AnthropicLLM:
         if remote:
             try:
                 r = self.client.messages.count_tokens(
-                    model=self.model_for(deep), system=self._system_blocks(system),
+                    model=self.model_for(deep), system=self._system_blocks(system),  # type: ignore[arg-type]  # SDK accepts cache_control blocks
                     messages=[{"role": "user", "content": prompt}])
                 return int(r.input_tokens)
             except Exception as e:  # noqa: BLE001 - counting is advisory, the estimate is safe

@@ -116,7 +116,7 @@ def _subject(text: str, base: str, quote: str) -> str | None:
             for m in re.finditer(rf"\b{c}\b", t):
                 if not any(a <= m.start() < b for a, b in spans):
                     first[role] = min(first.get(role, m.start()), m.start())
-    return min(first, key=first.get) if first else None
+    return min(first, key=first.__getitem__) if first else None
 
 
 def score_fx_headline(text: str, base: str, quote: str) -> float:

@@ -353,7 +353,7 @@ def _score(item: NewsItem, state: TradingState) -> float:
         return clip(item.sentiment, -1, 1)
     ins = state.instrument
     if ins.is_fx:
-        return score_fx_headline(item.headline, ins.base, ins.quote)
+        return score_fx_headline(item.headline, ins.base, ins.quote)  # type: ignore[arg-type]  # is_fx: base/quote set
     return score_text(item.headline)
 
 

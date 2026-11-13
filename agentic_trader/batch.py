@@ -197,7 +197,7 @@ def run_jobs(llm: BatchLLM, jobs: Sequence[Callable[[Callable[[], bool]], T]],
                 continue
             before = llm.misses
             try:
-                out = job((lambda before=before: llm.misses > before) if stop_at_pending else (lambda: False))
+                out = job((lambda before=before: llm.misses > before) if stop_at_pending else (lambda: False))  # type: ignore[misc]  # lambda default-arg binds this pass
             except PassPending:
                 continue
             if llm.misses == before:

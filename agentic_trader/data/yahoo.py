@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 
 def _yf():
     try:
-        import yfinance as yf  # type: ignore
+        import yfinance as yf
     except ImportError as e:  # pragma: no cover
         raise ImportError("YahooProvider needs `pip install yfinance`") from e
     return yf
