@@ -295,6 +295,20 @@ def test_push_gives_up_after_the_attempts_and_aborts_on_a_conflict():
     assert calls == ["push", "pull", "rebase"]
 
 
+def test_push_targets_the_paper_ledger_branch_not_main():
+    # Round 3 (review E-3): the record lives on its own branch so main needs no bypass.
+    ops = _load("paper_ops")
+    cmds = []
+    assert ops.push_with_retry(2, 1.0, run=lambda cmd: cmds.append(cmd) or 0, sleep=lambda s: None)
+    assert cmds == [["git", "push", "-q", "origin", "HEAD:paper-ledger"]]
+    cmds.clear()
+    pushes = iter([1, 0])
+    ops.push_with_retry(2, 1.0, run=lambda cmd: cmds.append(cmd) or (next(pushes) if cmd[1] == "push" else 0),
+                        sleep=lambda s: None, branch="other")
+    assert cmds[1] == ["git", "pull", "-q", "--rebase", "origin", "other"]
+    assert all("main" not in c for c in cmds)
+
+
 # ---------------------------------------------------------------- N1 engine freeze
 def test_a_changed_engine_is_refused_and_a_refreeze_starts_a_new_vintage(tmp_path):
     mod = _load("paper_trade_v09")

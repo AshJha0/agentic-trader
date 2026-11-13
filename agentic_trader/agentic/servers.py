@@ -324,7 +324,7 @@ class DeskTools:
             ins, df = self._history(s, d, lookback_days)
             rets[ins.symbol] = df["Close"].pct_change()
         frame = pd.DataFrame(rets).dropna(how="all")
-        pw = construct({Instrument.parse(s).symbol: t for s, t in zip(symbols, targets)}, frame, method,
+        pw = construct({Instrument.parse(s).symbol: t for s, t in zip(symbols, targets)}, frame, method,  # type: ignore[arg-type]  # construct validates method
                        max_weight=self.config["risk"].get("max_position", 1.0),
                        target_vol=self.config["risk"].get("target_vol"))
         return _clean({**pw.to_dict(), "contributions": pw.contributions.to_dict(orient="index")})
@@ -413,7 +413,7 @@ class DeskTools:
         allow_short = bool(risk["allow_short_fx"] if ins.is_fx else risk["allow_short_equity"])
         rate = None
         if ins.is_fx and self.account_currency not in (ins.base, ins.quote):
-            rate = base_to_account_rate(self.provider, ins.base, self.account_currency, d)
+            rate = base_to_account_rate(self.provider, ins.base, self.account_currency, d)  # type: ignore[arg-type]  # is_fx: base set
         target = float(target_weight)
         if not math.isfinite(target):
             raise ValueError("target_weight must be a finite number")

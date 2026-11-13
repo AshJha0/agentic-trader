@@ -44,7 +44,7 @@ with no desk beside every claim).
   published FX numbers have not been re-run
   ([changelog](CHANGELOG.md)).
 - Anything the forward paper record could decide. It has run daily since 2026-09-29
-  ([results/paper/](results/paper/README.md)); its pre-registered look at about 3,600 sessions
+  ([results/paper/](https://github.com/AshJha0/agentic-trader/tree/paper-ledger/results/paper)); its pre-registered look at about 3,600 sessions
   (2040) has 50 % power for a 0.2 Sharpe difference, and 80 % power would need about 29 years
   ([live-readiness statement](docs/evaluation/live_readiness.md)). It is an operations record.
 
@@ -102,7 +102,7 @@ attribution shows the desk's active tilts add nothing over the vol-targeted cont
 carry streams were tried on the design period and none beat its control, so nothing was
 adopted; the [pre-registered](docs/evaluation/v09_preregistration.md) holdout report is
 published as a report, and a daily paper-trading job from 2026-09-29 is the forward test. Its append-only ledger, revision
-log and assumptions are published in [results/paper/](results/paper/README.md), updated after each run.*
+log and assumptions are published in [results/paper/ on the `paper-ledger` branch](https://github.com/AshJha0/agentic-trader/tree/paper-ledger/results/paper), updated after each run.*
 
 On **real prices**, the rule-based desk is evaluated over 60 instruments: the 15 *core*
 ones every rule choice was made on (10 equities, 5 FX pairs; rules chosen on 2016–2021 only,
@@ -484,7 +484,7 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
-## v0.19 (unreleased): long runs that survive, skips that are counted
+## v0.19 (release candidates v0.19.0rc1 and rc2, 2026-11-12): long runs that survive, skips that are counted
 
 Evidence class: code and offline tests (fakes only); no model was run. Running study chains
 keep their start-of-run code.
@@ -510,7 +510,7 @@ keep their start-of-run code.
   in [COOKBOOK.md](COOKBOOK.md), lessons 66-68 in [LEARN.md](LEARN.md). Details in
   [CHANGELOG.md](CHANGELOG.md).
 
-## v0.18 (unreleased): leftovers closed
+## v0.18 (never tagged on its own; shipped in v0.19.0rc1): leftovers closed
 
 Evidence class: code and offline tests; no model was run.
 
@@ -529,7 +529,7 @@ Evidence class: code and offline tests; no model was run.
   How the local-model queue is run and restarted:
   [docs/operations/long_runs.md](docs/operations/long_runs.md).
 
-## v0.16 (unreleased): the LLM study on a local model
+## v0.16 (v0.16.0, 2026-11-09): the LLM study on a local model
 
 **Plain idea.** Does a language model make the desk better, and in which roles? Asking that of
 Claude across a full design costs about $215 per cell (dry-run estimate at list prices), so the
@@ -613,7 +613,14 @@ by v0.15. Since 2026-11-08 the forward record is produced by `paper.yml` on GitH
 ## Operations (v0.14)
 
 The forward paper record runs on GitHub Actions (`.github/workflows/paper.yml`, weekdays
-21:30 UTC: jobs `session`, `publish`, `freshness`, `report`). Each run records a
+21:30 UTC: jobs `session`, `publish`, `freshness`, `report`). Since round 3 (review E-3) the
+record lives on its own append-only branch, `paper-ledger`, not on `main`: the session and
+freshness jobs check out code from `main` and `results/paper/` from `paper-ledger`, and
+`publish` commits and pushes only to `paper-ledger` (it creates the branch from `main` the
+first time). The `results/paper/` copy on `main` is the snapshot from that day and is no
+longer updated; read the live record at
+[`paper-ledger:results/paper/`](https://github.com/AshJha0/agentic-trader/tree/paper-ledger/results/paper).
+Each run records a
 `price_vintage` hash of the bars it read in `results/paper/runs.jsonl`; the freshness job fails
 when the last session is more than two business days old, and any failure opens or comments on
 one issue labelled `paper-record`. The laptop task `scripts/paper_daily.cmd` is the fallback;
@@ -640,9 +647,16 @@ Steps only the repository owner can take on GitHub:
 2. Workflow permissions can stay at the default (read). `paper.yml` grants `contents: write` to
    the `publish` job and `issues: write` to `report` explicitly, which overrides the default
    for those jobs only; raising the repository default would widen every other workflow.
-3. If a ruleset on `main` requires pull requests or status checks, add a bypass for
-   `github-actions[bot]`, or the `publish` commit is refused.
-4. After the first green scheduled run, disable the laptop `paper_daily.cmd` task so two
+3. Ruleset on `main` with no bypass: require a pull request, block force pushes and deletion,
+   and require the `ci.yml` checks (`Lint (ruff) and types (mypy, blocking on the quant core)`,
+   `Python 3.10 (numpy backend)` to `Python 3.14 (numpy backend)`,
+   `Minimum declared versions (Python 3.10, numpy backend)`,
+   `Locked dependencies (Python 3.12, numpy backend)`, `C++ core (ubuntu-latest)`,
+   `C++ core (windows-latest)`, `C++ core (macos-latest)`, `Docs (cookbook, diagrams, links)`).
+   The paper job no longer pushes to `main`, so no bypass is needed.
+4. Ruleset on `paper-ledger`: block force pushes and deletion (the record is append-only) and
+   require nothing else, since the bot pushes to it directly.
+5. After the first green scheduled run, disable the laptop `paper_daily.cmd` task so two
    runners do not write the same record.
 
 ## Tests

@@ -143,7 +143,7 @@ def fit_gjr(returns, use_scipy: bool | None = None) -> GJRParams:
     best = None
     if use_scipy is not False:
         try:
-            from scipy.optimize import minimize  # type: ignore[import-untyped]
+            from scipy.optimize import minimize
             res = minimize(f, x0, method="Nelder-Mead", options={"maxiter": 4000, "xatol": 1e-10, "fatol": 1e-10})
             best = np.asarray(res.x)
         except ImportError:

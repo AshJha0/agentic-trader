@@ -175,7 +175,7 @@ class Anonymizer:
         else:
             self.aliases = [(instrument.yahoo_symbol, "STOCK_X"), (instrument.symbol, "STOCK_X")]
             self.restores = [("STOCK_X", instrument.symbol)]
-        self._patterns = [(re.compile(rf"(?<![A-Za-z0-9]){re.escape(real)}(?![A-Za-z0-9])"), alias)
+        self._patterns = [(re.compile(rf"(?<![A-Za-z0-9]){re.escape(real)}(?![A-Za-z0-9])"), alias)  # type: ignore[type-var]  # aliases built from set symbols
                           for real, alias in self.aliases]
         self.accessions: dict[str, str] = {}      # real accession -> ACC_n
         self._names: set[str] = set()
@@ -317,7 +317,7 @@ class Anonymizer:
         """Put real names back into model output (recursively for JSON)."""
         if isinstance(value, str):
             for alias, real in self.restores:
-                value = value.replace(alias, real)
+                value = value.replace(alias, real)  # type: ignore[arg-type]  # restores built from set symbols
             # longest alias first so ACC_12 is not read as ACC_1 followed by "2"
             for real, alias in sorted(self.accessions.items(), key=lambda kv: -len(kv[1])):
                 value = value.replace(alias, real)

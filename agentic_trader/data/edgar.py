@@ -282,7 +282,7 @@ class EdgarClient:
                 self.requests += 1
                 missing = False
                 try:
-                    raw = (self._fetch or (lambda u: _http_fetch(u, self.user_agent)))(url)
+                    raw = (self._fetch or (lambda u: _http_fetch(u, self.user_agent)))(url)  # type: ignore[arg-type]  # user_agent checked at construction
                 except HTTPError as e:
                     if e.code != 404:   # an index fund has no company facts: that is "no data"
                         raise
@@ -803,7 +803,7 @@ def _tag_classes(sub: pd.DataFrame, tags: tuple[str, ...]) -> list[list[str]]:
                 continue
             scale = m[["val_a", "val_b"]].abs().max(axis=1)
             if ((m["val_a"] - m["val_b"]).abs() <= TAG_EQUIVALENCE_TOLERANCE * scale).all():
-                lo, hi = sorted((root(a), root(b)), key=rank.get)
+                lo, hi = sorted((root(a), root(b)), key=rank.get)  # type: ignore[arg-type]  # keep .get: error class unchanged
                 parent[hi] = lo
     classes: dict[str, list[str]] = {}
     for t in present:

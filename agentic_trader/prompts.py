@@ -84,7 +84,7 @@ def shared_prompt_code() -> dict[str, Callable[..., Any] | type]:
     from . import anonymize, memory, state
     from .agents import analysts, base, researchers, risk, trader
     return {
-        "Agent.system_prompt": base.Agent.system_prompt.fget,
+        "Agent.system_prompt": base.Agent.system_prompt.fget,  # type: ignore[attr-defined]  # property object
         "Agent._complete": base.Agent._complete,
         "Agent.ask_json": base.Agent.ask_json,
         "Agent._contract_problem": base.Agent._contract_problem,
@@ -96,7 +96,7 @@ def shared_prompt_code() -> dict[str, Callable[..., Any] | type]:
         "TradingState.prompt_facts": state.TradingState.prompt_facts,
         "TradingState.reports_digest": state.TradingState.reports_digest,
         "TradingState.lessons_block": state.TradingState.lessons_block,
-        "TradingState.untrusted_inputs": state.TradingState.untrusted_inputs.fget,
+        "TradingState.untrusted_inputs": state.TradingState.untrusted_inputs.fget,  # type: ignore[attr-defined]  # property object
         "TradingState.debate_block": state.TradingState.debate_block,
         "TradingState.verdict_block": state.TradingState.verdict_block,
         "TradingState.proposal_block": state.TradingState.proposal_block,

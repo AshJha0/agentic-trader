@@ -295,7 +295,7 @@ def book_var_95(weights: dict[str, float], returns: pd.DataFrame, alpha: float =
     if method == "historical":
         return quant.historical_var(port, alpha)
     from .risk_model import var_next
-    return var_next(port, method, alpha=alpha)
+    return var_next(port, method, alpha=alpha)  # type: ignore[arg-type]  # var_next validates method
 
 
 def book_var_scale(symbol: str, proposed_weight: float, other_positions: dict[str, float],
@@ -545,5 +545,5 @@ def construct(targets: dict[str, float], returns: pd.DataFrame, method: Method =
         log.warning("%s allocation did not converge within its iteration cap; the result is "
                     "the solver's best iterate, not a verified optimum (check for near-"
                     "duplicate or highly correlated sleeves)", method)
-    return PortfolioWeights(symbols, alloc, w, method, rc["vol"], contrib, rc["diversification_ratio"],
+    return PortfolioWeights(symbols, alloc, w, method, rc["vol"], contrib, rc["diversification_ratio"],  # type: ignore[arg-type]  # numpy scalars; float() could change repr
                             corr, scale, group_risk, converged)

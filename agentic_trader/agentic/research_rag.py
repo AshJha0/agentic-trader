@@ -410,7 +410,7 @@ def load_eval_corpus(path: Path | str = EVAL_DIR / "corpus.json", **kw) -> Resea
             for r in raw["filings"]]
     sts = [CentralBankStatement(r["bank"], _utc(r["released"]), r.get("title", ""), r["text"])
            for r in raw["statements"]]
-    return ResearchCorpus.build(secs, sts, **kw)
+    return ResearchCorpus.build(secs, sts, **kw)  # type: ignore[arg-type]  # _Section is FilingSectionLike at runtime
 
 
 @dataclass
