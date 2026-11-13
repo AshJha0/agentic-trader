@@ -2,7 +2,7 @@
   "vintage_id": "v09-engine-6",
   "frozen_on": "2026-11-13",
   "freeze_session": "2026-09-29",
-  "reason": "Round 3 part 2: mypy gate (annotations and coded ignores only, no logic change), version 0.19.0rc3",
+  "reason": "Round 3 part 2: mypy gate (annotations and coded ignores only, no logic change), eval baseline re-recorded for the same comment-only change, version 0.19.0rc3",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
