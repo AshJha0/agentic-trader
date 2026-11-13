@@ -177,7 +177,7 @@ def _deferred_tools(server, ex: ToolExecutor, registry: ToolRegistry) -> None:
 
     from .tool_search import DeferredToolCatalog
     catalog = DeferredToolCatalog(registry)
-    server.catalog = catalog   # type: ignore[attr-defined]
+    server.catalog = catalog
 
     def tool_names() -> list[str]:
         """Names of every tool on this server. Descriptions and schemas are deferred:

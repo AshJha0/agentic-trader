@@ -40,10 +40,9 @@ jobs:
       # error there fails the PR.
       - name: mypy (quant core, blocking)
         run: mypy agentic_trader/quant agentic_trader/risk_model.py agentic_trader/stats.py agentic_trader/oms.py agentic_trader/nyse_calendar.py
-      # The rest stays advisory until its Optional-handling backlog is cleared: the log shows
-      # the count without blocking a PR.
-      - name: mypy (whole package, advisory)
-        continue-on-error: true
+      # Whole package, blocking, with the settings in pyproject [tool.mypy]
+      # (check_untyped_defs, warn_unused_ignores, coded ignores only).
+      - name: mypy (whole package, blocking)
         run: mypy
 
   python:

@@ -206,7 +206,7 @@ def fx_rates(instrument: Instrument, dates: pd.DatetimeIndex, config: dict,
         spec = RATE_SERIES.get(ccy)
         return c.series_asof(spec, idx) if spec else pd.Series(np.nan, index=idx)
 
-    return leg(b), leg(q), src
+    return leg(b), leg(q), src  # type: ignore[arg-type]  # FX instrument: base/quote set
 
 
 def static_fx_macro(instrument: Instrument, config: dict) -> dict[str, Any]:
@@ -251,7 +251,7 @@ def fx_macro(instrument: Instrument, as_of: date, config: dict, real_world: bool
                            "macro_source": MACRO_SOURCE_FRED}
     from .fred import default_client
     c = default_client(config)
-    bi, qi = c.inflation(b, as_of), c.inflation(q, as_of)
+    bi, qi = c.inflation(b, as_of), c.inflation(q, as_of)  # type: ignore[arg-type]  # FX: base/quote set
     if bi is not None and qi is not None:
         out.update(base_inflation=bi, quote_inflation=qi)
     return out

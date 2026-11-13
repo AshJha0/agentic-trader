@@ -415,7 +415,7 @@ def replication_verdict(decisive: dict[str, Any], postcutoff: dict[str, Any] | N
     cell is admissible and its one-sided 95 % lower bound is above zero (review B2: the
     burden is on replication, so a low-powered control cannot wave a memory effect through)."""
     def ok(rep: dict[str, Any] | None) -> bool:
-        return bool(rep) and rep.get("fallback_share") is not None and rep["fallback_share"] <= MAX_FALLBACK_SHARE
+        return rep is not None and bool(rep) and rep.get("fallback_share") is not None and rep["fallback_share"] <= MAX_FALLBACK_SHARE
     d = decisive["metric"]["primary"]
     if not ok(decisive) or d["ic"] is None:
         return {"design_pass": False, "replicated": None, "adopt": False, "verdict": "design cell inadmissible or empty"}
