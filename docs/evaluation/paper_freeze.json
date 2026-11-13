@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-4",
-  "frozen_on": "2026-11-12",
+  "vintage_id": "v09-engine-5",
+  "frozen_on": "2026-11-13",
   "freeze_session": "2026-09-29",
-  "reason": "2026-11-12 review rounds 1-2: a PM keep is an engine flag (D4), FX P&L converted to the USD account (D5, backtest.fx_account_currency on), participation cap on sleeve capital (D8), null-centred bootstrap p-values (C12); the freeze hash now covers the whole package, cpp/ and the lock files (D3). Rows before this vintage were computed by v09-engine-3 and are not rewritten.",
+  "reason": "Round 3 (2026-11-13): A11 prompt budget, D11 checkpoint, C8 paired table, C11 recall gate, B/S lint fixes, hashed locks; no change to the paper book's rules",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
@@ -44,7 +44,7 @@
     "max_debate_rounds",
     "max_risk_discuss_rounds"
   ],
-  "engine_hash": "9995bb6a973adbccada0a2e3fc2cae847afab6212ffb0d95067e5f34c5bc255d",
+  "engine_hash": "823915437d7398ae9deb83c33735f3db5e3750ea63d27d9a8861425534a58641",
   "history": [
     {
       "vintage_id": "v09-engine-1",
@@ -63,6 +63,12 @@
       "engine_hash": "079980f0238a7c1360f4a48180ea5556f437e069d1a6604ab01e3667457ca2e4",
       "frozen_on": "2026-11-09",
       "reason": "v0.18: next-open fills allowed with stop/take levels (quant core); default results unchanged"
+    },
+    {
+      "vintage_id": "v09-engine-4",
+      "engine_hash": "9995bb6a973adbccada0a2e3fc2cae847afab6212ffb0d95067e5f34c5bc255d",
+      "frozen_on": "2026-11-12",
+      "reason": "2026-11-12 review rounds 1-2: a PM keep is an engine flag (D4), FX P&L converted to the USD account (D5, backtest.fx_account_currency on), participation cap on sleeve capital (D8), null-centred bootstrap p-values (C12); the freeze hash now covers the whole package, cpp/ and the lock files (D3). Rows before this vintage were computed by v09-engine-3 and are not rewritten."
     }
   ]
 }
