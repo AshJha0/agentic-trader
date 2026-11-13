@@ -213,7 +213,8 @@ def test_holdout_access_needs_a_recorded_basis_or_the_v2_audit(tmp_path: Path) -
     with pytest.raises(evaluation.HoldoutLocked):
         sd.holdout_access(bare, tmp_path / "none.json")
     ok = tmp_path / "recall2.json"
-    ok.write_text(json.dumps({"recall_flagged": False, "reasons": [], "real": {"n": 200}, "placebo": {"n": 60}}),
+    ok.write_text(json.dumps({"recall_flagged": False, "reasons": [], "real": {"n": 200}, "placebo": {"n": 60},
+                              "equivalence": {"passed": True}}),
                   encoding="utf-8")
     assert sd.holdout_access(bare, ok)["holdout_basis"] == "v2 recall audit passed"
     assert evaluation.DEFAULT_RECALL_AUDIT_PATH.endswith("recall2.json")

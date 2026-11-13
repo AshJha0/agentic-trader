@@ -148,8 +148,34 @@ def test_evaluation_paired_uses_the_cluster_scheme_with_five_groups_and_it_chang
     assert clustered.ci_low != plain.ci_low and clustered.ci_high != plain.ci_high
     assert clustered.ci_high - clustered.ci_low > plain.ci_high - plain.ci_low
     tab = res.paired_table()
-    assert list(tab.scheme) == ["clusters"] and list(tab.groups) == [5]
-    assert list(res.paired_table(cluster=False).scheme) == ["instruments"]
+    # review C8: rows only (no daily returns), so the labelled cross-instrument fallback
+    assert list(tab.scheme) == ["cross-instrument (clusters); no daily returns"] and list(tab.groups) == [5]
+    assert list(res.paired_table(cluster=False).scheme) == ["cross-instrument (instruments); no daily returns"]
+
+
+def test_c8_paired_table_uses_the_time_block_primary_when_daily_returns_are_held(tmp_path):
+    """Review C8: with daily returns the primary is the time-block interval; differences that load
+    on one common daily factor give a much wider primary than the cross-instrument secondary."""
+    rng = np.random.default_rng(4)
+    days, syms = pd.bdate_range("2024-01-02", periods=250), [f"S{i}" for i in range(12)]
+    common = rng.normal(0, 0.01, size=(250, 1))
+    base = pd.DataFrame(rng.normal(0.0003, 0.01, size=(250, 12)), index=days, columns=syms)
+    agent = base + common + rng.normal(0, 0.001, size=(250, 12))
+    rows = [{"period": "q", "symbol": s, "asset_class": "equity", "universe": "core", "strategy": st,
+             "Sharpe": float(stats.sharpe_stats(df[s]).sharpe_annual)}
+            for s in syms for st, df in (("AgenticTrader", agent), ("Buy&Hold", base))]
+    res = EvaluationResult(pd.DataFrame(rows), {}, {"q|AgenticTrader": agent, "q|Buy&Hold": base})
+    tab = res.paired_table(n_boot=400)
+    r = tab.iloc[0]
+    assert r.scheme == "time-block" and r.days == 250 and r.n == 12
+    assert "conditional" in r.secondary and r.secondary.endswith("(instruments)")
+    assert (r["ci95 high"] - r["ci95 low"]) > 3 * (r["secondary ci95 high"] - r["secondary ci95 low"])
+    res.to_json(tmp_path / "a.json")
+    assert EvaluationResult.from_json(tmp_path / "a.json").paired_table(n_boot=400).scheme[0].startswith(
+        "cross-instrument")
+    res.to_json(tmp_path / "b.json", include_returns=True)
+    back = EvaluationResult.from_json(tmp_path / "b.json").paired_table(n_boot=400)
+    assert back.scheme[0] == "time-block" and back["ci95 low"][0] == r["ci95 low"]
 
 
 def test_evaluation_paired_passes_the_asset_class_universe_labels_as_groups(monkeypatch):
@@ -226,5 +252,7 @@ def test_paired_table_untested_rows_are_nan_and_do_not_shrink_the_others_thresho
 def test_paired_table_columns_carry_the_scheme(monkeypatch):
     tab = _table_with(monkeypatch, {"b0": PairedBootstrap(10, 0.1, 0.01, 0.2, 0.02, 8, "clusters", 5)})
     assert list(tab.columns) == ["period", "baseline", "n", "mean Sharpe diff", "ci95 low", "ci95 high", "p",
-                                 "wins", "scheme", "groups", "significant"]
-    assert tab.scheme[0] == "clusters" and tab.groups[0] == 5
+                                 "wins", "scheme", "days", "secondary", "secondary ci95 low",
+                                 "secondary ci95 high", "secondary p", "groups", "significant"]
+    # no daily returns held: the cross-instrument figure is the fallback, and the label says so
+    assert tab.scheme[0] == "cross-instrument (clusters); no daily returns" and tab.groups[0] == 5

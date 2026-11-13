@@ -24,9 +24,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
-import numpy as np
 import pandas as pd
 
 from .backtest import AGENT, run_agent_backtest
@@ -311,6 +310,8 @@ METRIC_COLS = ["CR%", "AR%", "Vol%", "Sharpe", "t(SR)", "MDD%", "Calmar", "Exp%"
 class EvaluationResult:
     rows: pd.DataFrame  # period, symbol, asset_class, strategy + METRIC_COLS
     meta: dict = field(default_factory=dict)
+    # "period|strategy" -> (days x symbols) daily returns; the time-block primary of paired_table (C8)
+    returns: dict[str, pd.DataFrame] = field(default_factory=dict)
 
     def summary(self, period: str | None = None, universe: str | None = None) -> pd.DataFrame:
         """Per (period, strategy): n, median Sharpe and mean CR / MDD / Vol / exposure.
@@ -392,23 +393,40 @@ class EvaluationResult:
 
     def paired_table(self, metric: str = "Sharpe", universe: str | None = None, strategy: str = AGENT,
                      fdr_q: float = 0.05, cluster: bool = True,
-                     baselines: tuple[str, ...] | None = None) -> pd.DataFrame:
-        """Per period and baseline: mean paired difference, 95% CI and two-sided p across
-        instruments, which resampling ``scheme`` produced them over how many ``groups``, plus
-        ``significant`` corrected for the number of tested rows in *this table*
-        (Benjamini-Hochberg false discovery rate at ``fdr_q``). Printing many paired tests side
-        by side is a multiple-comparisons problem exactly like choosing among rule variants;
-        the raw per-row ``p`` is still reported, but ``significant`` is the one to read when
-        the table has more than a couple of rows. BH runs on the unrounded p-values; a row
-        with fewer than three paired instruments was never tested, shows ``p`` as NaN and
-        neither counts towards nor can win a share of the false-discovery budget. ``baselines``
-        restricts the table to those baselines *before* the correction, so a table that only
-        shows the two controls is corrected over the rows it prints (v0.8 printed flags decided
-        over all six baselines and then dropped four rows).
+                     baselines: tuple[str, ...] | None = None, block: int = 10, n_boot: int = 2000,
+                     seed: int = 0) -> pd.DataFrame:
+        """Per period and baseline: mean paired difference, 95% CI and two-sided p, which
+        resampling ``scheme`` produced them, plus ``significant`` corrected for the number of
+        tested rows in *this table* (Benjamini-Hochberg false discovery rate at ``fdr_q``).
+
+        Primary interval (review C8, 2026-11-13). Every per-instrument difference comes from the
+        same calendar path, so one regime moves them all the same way. Resampling instruments
+        treats N names as N independent draws of that path and gives an interval about three
+        times too narrow. When the daily returns are held (``self.returns``, filled by
+        ``evaluate``) and ``metric`` is ``"Sharpe"``, the primary columns come from
+        ``stats.paired_time_block_table``: circular day blocks of length ``block`` shared by every
+        instrument, scheme ``"time-block"``, ``days`` the path length. The point estimate is the
+        mean per-instrument Sharpe difference of the raw daily returns, so it can differ slightly
+        from the excess-return Sharpes in ``rows``. The cross-instrument bootstrap (``paired``,
+        clustered when ``cluster``) follows in the ``secondary`` columns, labelled as conditional
+        on the realised path; ``groups`` belongs to it. Without daily returns (a result read back
+        from JSON written without them, or another metric) the row falls back to the
+        cross-instrument figure and ``scheme`` says so; read such a row as a statement about these
+        names in this window, not about the strategy.
+
+        BH runs on the unrounded primary p-values; a row with fewer than three paired
+        instruments was never tested, shows ``p`` as NaN and neither counts towards nor can win
+        a share of the false-discovery budget. ``baselines`` restricts the table to those
+        baselines *before* the correction. With repeated agent runs the time-block primary uses
+        the per-day mean return over runs.
         """
-        out, p_raw = [], []
+        from .stats import benjamini_hochberg, paired_time_block_table
+        out: list[dict[str, Any]] = []
+        cases: list[dict[str, Any]] = []
         rows = self.rows if universe is None or "universe" not in self.rows else self.rows[self.rows.universe == universe]
+        nan = float("nan")
         for period in sorted(rows.period.unique()):
+            syms = sorted(rows[rows.period == period].symbol.unique())
             for base in sorted(rows.strategy.unique()):
                 if base == strategy or (baselines is not None and base not in baselines):
                     continue
@@ -417,15 +435,37 @@ class EvaluationResult:
                                      cluster=cluster)
                 except ValueError:
                     continue
-                p = pb.p_value if math.isfinite(pb.ci_low) else float("nan")
-                p_raw.append(p)
-                out.append({"period": period, "baseline": base, "n": pb.n, f"mean {metric} diff": round(pb.mean_diff, 3),
-                            "ci95 low": round(pb.ci_low, 3), "ci95 high": round(pb.ci_high, 3),
-                            "p": round(p, 3), "wins": pb.wins, "scheme": pb.scheme, "groups": pb.n_groups})
+                p = pb.p_value if math.isfinite(pb.ci_low) else nan
+                row = {"period": period, "baseline": base, "n": pb.n, f"mean {metric} diff": pb.mean_diff,
+                       "ci95 low": pb.ci_low, "ci95 high": pb.ci_high, "p": p, "wins": pb.wins,
+                       "scheme": f"cross-instrument ({pb.scheme}); no daily returns", "days": nan,
+                       "secondary": "", "secondary ci95 low": nan, "secondary ci95 high": nan,
+                       "secondary p": nan, "groups": pb.n_groups}
+                a, b = self.returns.get(f"{period}|{strategy}"), self.returns.get(f"{period}|{base}")
+                if metric == "Sharpe" and a is not None and b is not None and pb.n >= 3:
+                    cols = [s for s in syms if s in a.columns and s in b.columns]
+                    if len(cols) >= 3:
+                        a2, b2 = a[cols].align(b[cols], join="inner", axis=0)
+                        cases.append({"label": len(out), "a": a2.to_numpy(float), "b": b2.to_numpy(float),
+                                      "secondary_scheme": pb.scheme})
+                out.append(row)
+        if cases:
+            for c, tb in zip(cases, paired_time_block_table(cases, fdr_q=fdr_q, block=block, n_boot=n_boot,
+                                                            seed=seed)):
+                row = out[c["label"]]
+                row.update({"secondary": f"{tb['secondary']} ({c['secondary_scheme']})",
+                            "secondary ci95 low": row["ci95 low"], "secondary ci95 high": row["ci95 high"],
+                            "secondary p": row["p"],
+                            "n": tb["n"], f"mean {metric} diff": tb["mean Sharpe diff"],
+                            "ci95 low": tb["ci95 low"], "ci95 high": tb["ci95 high"], "p": tb["p"],
+                            "scheme": tb["primary"], "days": tb["days"]})
         df = pd.DataFrame(out)
         if len(df):
-            from .stats import benjamini_hochberg
-            df["significant"] = benjamini_hochberg(np.asarray(p_raw), fdr_q)
+            p_raw = df["p"].to_numpy(dtype=float)
+            for col in (f"mean {metric} diff", "ci95 low", "ci95 high", "p",
+                        "secondary ci95 low", "secondary ci95 high", "secondary p"):
+                df[col] = df[col].astype(float).round(3)
+            df["significant"] = benjamini_hochberg(p_raw, fdr_q)
         return df
 
     def run_dispersion(self, metric: str = "Sharpe", strategy: str = AGENT) -> pd.DataFrame:
@@ -452,16 +492,22 @@ class EvaluationResult:
             return pd.DataFrame(columns=["period", "symbol", "run", "seconds", "error"])
         return pd.DataFrame(timings).sort_values("seconds", ascending=False).head(n).reset_index(drop=True)
 
-    def to_json(self, path: str | Path) -> None:
+    def to_json(self, path: str | Path, include_returns: bool = False) -> None:
+        """Write meta and rows; the daily returns only with ``include_returns`` (they are large).
+        A result read back without them gives ``paired_table`` rows on the labelled
+        cross-instrument fallback, not the time-block primary."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(json.dumps({"meta": self.meta,
-                                          "rows": self.rows.to_dict(orient="records")},
-                                         indent=1, default=str), encoding="utf-8")
+        d: dict[str, Any] = {"meta": self.meta, "rows": self.rows.to_dict(orient="records")}
+        if include_returns and self.returns:
+            d["returns"] = {k: v.to_dict(orient="split") for k, v in self.returns.items()}
+        Path(path).write_text(json.dumps(d, indent=1, default=str), encoding="utf-8")
 
     @classmethod
     def from_json(cls, path: str | Path) -> "EvaluationResult":
         d = json.loads(Path(path).read_text(encoding="utf-8"))
-        return cls(pd.DataFrame(d["rows"]), d.get("meta", {}))
+        rets = {k: pd.DataFrame(v["data"], index=pd.to_datetime(v["index"]), columns=v["columns"])
+                for k, v in (d.get("returns") or {}).items()}
+        return cls(pd.DataFrame(d["rows"]), d.get("meta", {}), rets)
 
 
 def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str]] | None = None,
@@ -549,6 +595,7 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
         outcomes = [run(j) for j in jobs]
 
     rows, errors, sources, timings = [], [], {"llm": 0, "rules": 0}, []
+    daily: dict[str, dict[str, list[pd.Series]]] = {}
     baselines_done: set[tuple[str, str]] = set()
     for (pname, sym, k), rep, err, elapsed in outcomes:  # job order: deterministic regardless of workers
         timings.append({"period": pname, "symbol": sym, "run": k, "seconds": round(elapsed, 3),
@@ -558,6 +605,11 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             continue
         for name, v in rep.agent_sources.items():
             sources[name] = sources.get(name, 0) + v
+        rets = rep.returns()
+        for strat in rets.columns:   # daily returns for the time-block primary (C8), same dedup as rows
+            if strat != AGENT and (pname, sym) in baselines_done:
+                continue
+            daily.setdefault(f"{pname}|{strat}", {}).setdefault(rep.instrument.symbol, []).append(rets[strat])
         for strat, r in rep.table(decimals=None).iterrows():   # full precision: aggregates and bootstraps run on these
             if strat != AGENT:   # baselines are deterministic: one row each, from the first run that succeeded
                 if (pname, sym) in baselines_done:
@@ -592,7 +644,9 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
                     max_llm_calls=cfg.get("max_llm_calls"), max_llm_cost_usd=cfg.get("max_llm_cost_usd"),
                     usage=llm_usage(llm),
                     budget_refused=getattr(llm, "refused", 0))
-    return EvaluationResult(pd.DataFrame(rows), meta)
+    returns = {key: pd.DataFrame({s: pd.concat(runs, axis=1).mean(axis=1) for s, runs in by_sym.items()})
+               for key, by_sym in daily.items()}   # repeats: per-day mean over runs
+    return EvaluationResult(pd.DataFrame(rows), meta, returns)
 
 
 # ------------------------------------------------------- pre-registry trials (v0.17 R1.3)
@@ -682,8 +736,9 @@ def recall_audit_verdict(result: dict, *, n_se: float = 2.0, min_n: int = 100,
 
 def recall2_verdict(result: dict, *, min_n: int = 100) -> dict:
     """Judge a v2 audit (``recall_audit.AuditResult.as_dict``): it passes only when
-    ``recall_flagged`` is exactly ``False``, the real arm has at least ``min_n`` items and a
-    placebo arm was run. A missing piece fails: the gate needs evidence, not its absence."""
+    ``recall_flagged`` is exactly ``False``, the real arm has at least ``min_n`` items, a
+    placebo arm was run and the equivalence test (``recall_audit.equivalence_test``, review C11)
+    rejected recall above chance >= its margin. A missing piece fails: the gate needs evidence, not its absence."""
     reasons: list[str] = []
     if result.get("recall_flagged") is not False:
         reasons.append("recall flagged: " + "; ".join(map(str, result.get("reasons") or ["no reason recorded"])))
@@ -692,7 +747,11 @@ def recall2_verdict(result: dict, *, min_n: int = 100) -> dict:
         reasons.append(f"real arm n = {n} < {min_n}")
     if not result.get("placebo"):
         reasons.append("no placebo arm")
-    return {"passed": not reasons, "reasons": reasons, "bounds": {}, "audit": "v2"}
+    eq = result.get("equivalence") or {}
+    if eq.get("passed") is not True:   # review C11: not flagged is not enough, recall >= margin must be rejected
+        reasons.append("equivalence test " + (str(eq.get("reason")) if eq else "missing: rerun the v2 audit"))
+    return {"passed": not reasons, "reasons": reasons, "bounds": {}, "audit": "v2",
+            "equivalence": eq or None}
 
 
 def require_recall_pass(path: str | Path, **kw) -> dict:
