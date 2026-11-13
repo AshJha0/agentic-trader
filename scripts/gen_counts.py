@@ -20,7 +20,7 @@ Counts and their sources:
 
 Collecting the tests needs the full dev install and coverage needs a test run, so
 both families are skipped (with a note) unless ``--with-tests`` is given or a
-coverage.xml is present. Code size by language is not quoted anywhere, so it is not counted.
+--coverage-xml names a file. Code size by language is not quoted anywhere, so it is not counted.
 """
 
 from __future__ import annotations
@@ -105,7 +105,9 @@ CHEAP: dict[str, Callable[[Path], str]] = {
 }
 
 
-def compute(root: Path, *, with_tests: bool) -> tuple[dict[str, str], list[str]]:
+def compute(
+    root: Path, *, with_tests: bool, coverage_xml: Path | None = None
+) -> tuple[dict[str, str], list[str]]:
     """Return the computed counts and notes on any family that was skipped."""
     counts = {name: fn(root) for name, fn in CHEAP.items()}
     notes: list[str] = []
@@ -113,11 +115,11 @@ def compute(root: Path, *, with_tests: bool) -> tuple[dict[str, str], list[str]]
         counts["tests_approx"] = count_tests_approx(root)
     else:
         notes.append("tests_approx skipped: needs a full pytest collection (use --with-tests)")
-    xml_path = root / "coverage.xml"
-    if xml_path.is_file():
+    xml_path = coverage_xml
+    if xml_path is not None and xml_path.is_file():
         counts.update(coverage_counts(xml_path))
     else:
-        notes.append("coverage_* skipped: no coverage.xml (run pytest --cov-report=xml first)")
+        notes.append("coverage_* skipped: pass --coverage-xml PATH (a full-suite coverage.xml with branch data)")
     return counts, notes
 
 
@@ -141,8 +143,12 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="report drift, write nothing")
     parser.add_argument("--with-tests", action="store_true", help="also collect the tests")
+    parser.add_argument(
+        "--coverage-xml", type=Path, default=None,
+        help="coverage.xml of a full run with --cov-branch (an old or partial file gives false drift)",
+    )
     args = parser.parse_args(argv)
-    counts, notes = compute(root, with_tests=args.with_tests)
+    counts, notes = compute(root, with_tests=args.with_tests, coverage_xml=args.coverage_xml)
     for note in notes:
         print(f"note: {note}")
     unknown: set[str] = set()
