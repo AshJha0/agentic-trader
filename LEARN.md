@@ -1809,7 +1809,7 @@ its interval excludes zero.
 
 **In the repo.** `scripts/paper_trade_v09.py` runs daily, recomputes every stream from the
 freeze date (2026-09-29) with data up to the previous close, and appends the new day to
-`results/paper/ledger.csv`. The rules, universe and code version are recorded with each run.
+`results/paper/ledger.csv` on the `paper-ledger` branch (not on main; see the README, Operations). The rules, universe and code version are recorded with each run.
 
 **The numbers.** `stats.min_track_record` gives the arithmetic: at a true annual Sharpe of
 1.0 about 684 daily observations (2.7 years) are needed to be 95% sure it is above zero; at

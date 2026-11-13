@@ -953,7 +953,13 @@ flowchart TB
     REV --> RV[("revisions.csv")]
     REC --> RC[("ledger_recomputed.csv")]
     L --> SUM["summary: days, Sharpe and interval<br/>per stream; no decision before<br/>the pre-registered look"]
+    L --> CHK{"append-only check<br/>against paper-ledger"}
+    CHK -->|"fails"| ERR
+    CHK -->|"passes"| PUB["commit and push to the<br/>paper-ledger branch (never main)"]
 ```
+
+Since round 3 (review E-3) the record is published to its own branch, `paper-ledger`; code
+comes from `main`, and `main` takes no bot pushes.
 
 ## 35. When a filing becomes visible (v0.11)
 
