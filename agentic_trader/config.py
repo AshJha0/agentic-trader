@@ -89,6 +89,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "retrieval_questions_path": None, # labelled questions for the gate (None = packaged set)
         "retrieval_method": "tfidf",
         "retrieval_k": 3,
+        # A11: estimated-token budget for the fundamentals_text prompt (llm.estimate_tokens);
+        # sections are admitted newest first and the cut is recorded in the report facts.
+        "fundamentals_max_prompt_tokens": 6000,
     },
     "max_debate_rounds": 2,
     "max_risk_discuss_rounds": 1,

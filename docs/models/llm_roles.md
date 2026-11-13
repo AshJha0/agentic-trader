@@ -35,7 +35,12 @@ years), and any run with a model attached is anonymised unless `allow_deanonymiz
 ## Limitations
 - All study dates fall inside the model's training data (review N9); a post-cutoff slice is
   planned, not run.
-- `num_ctx` is not set, so long prompts may be truncated by the server (review N4, lane L1).
+- The local context window is 8,192 tokens (`num_ctx`, review N4). The fundamentals-text
+  prompt is held to `text_analyst_options.fundamentals_max_prompt_tokens` (default 6,000),
+  counted with the conservative character estimate `llm.estimate_tokens`; filing sections go
+  in newest first and the ones left out are listed in the report's `facts["prompt_budget"]`. A
+  reply the server flags as truncated is rejected and the analyst abstains (review A11). The
+  estimate is a heuristic, not a tokeniser, so the server-side check stays in place.
 - No per-decision lineage (prompt hash, model digest, code SHA) yet (review N5, lane L1).
 
 ## Monitoring
