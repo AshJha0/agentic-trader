@@ -1,41 +1,40 @@
-> **Correction notice, 2026-11-12 (review D5).** The FX figures on this page were produced before the
-> engine converted FX P&L to the USD account. For USD-base pairs (USDJPY, USDCAD) the old engine booked
-> the pair's return r where r / (1 + r) is due, and crosses were not converted; the bias is about
-> +1 % a year on a full-weight long USD-base pair at 10 % volatility. Every FX sleeve with such a pair,
-> and every portfolio that holds one, is affected. The numbers below have not been re-run; read them as
-> slightly optimistic for long USD-base positions until they are.
+> **FX re-run, 2026-11-13 (review D5 closed).** Every table on this page was re-measured from main
+> 3f80a69, whose engine converts FX P&L to the USD account (the earlier tables booked a USD-base pair's
+> return r where r / (1 + r) is due and left crosses unconverted). Source: `results/v12_fx_final_2009/overlay/overlay.md`. The re-run
+> replaces the 2026-11-12 correction notice.
+> The v0.12 period now starts 2009-10-01, not 2008-07-01: the bar check refuses the 2008 EUR/USD data gap inside the 400-day lookback, so the first scorable day moves forward. core15 is not on this page (it fails the bar check on META in 2012; it was not on the earlier page either).
 
 # v0.12: the vol-targeted book as the core, the desk's tilt at size lam, on the longer design period
 
 r(lam) = control + lam * (desk - control); lam 0 is `B&H vol-target`, lam 1 the desk. Excess-return Sharpe, 260 periods/year, paired block bootstrap over days. Chosen on the design period only.
 
-## etf11_rp: 2008-07-01 -> 2021-12-31, a design period (no holdout is consulted), n = 3400 days
+## etf11_rp: 2009-10-01 -> 2021-12-31, a design period (no holdout is consulted), n = 3084 days
 
 | lam | Sharpe | vol %/yr | cumulative return % | MDD % | Sharpe - control [95% CI] p | Sharpe - desk [95% CI] p |
 |--:|--:|--:|--:|--:|:--|:--|
-| 0.00 | 0.89 | 5.34 | 94.97 | 9.84 | +0.00 [+0.00, +0.00] p 1.000 | +0.10 [-0.07, +0.26] p 0.250 |
-| 0.25 | 0.88 | 5.00 | 86.27 | 9.22 | -0.01 [-0.05, +0.02] p 0.474 | +0.08 [-0.05, +0.22] p 0.211 |
-| 0.50 | 0.86 | 4.68 | 77.90 | 8.59 | -0.03 [-0.10, +0.04] p 0.397 | +0.07 [-0.03, +0.16] p 0.168 |
-| 0.75 | 0.83 | 4.39 | 69.86 | 7.97 | -0.06 [-0.18, +0.06] p 0.324 | +0.04 [-0.01, +0.09] p 0.139 |
-| 1.00 | 0.79 | 4.14 | 62.13 | 7.49 | -0.10 [-0.26, +0.07] p 0.250 | +0.00 [-0.00, +0.00] p 1.000 |
+| 0.00 | 0.95 | 5.11 | 85.59 | 9.93 | +0.00 [+0.00, +0.00] p 1.000 | +0.03 [-0.13, +0.21] p 0.690 |
+| 0.25 | 0.95 | 4.77 | 79.05 | 9.40 | -0.00 [-0.03, +0.03] p 0.994 | +0.03 [-0.10, +0.17] p 0.616 |
+| 0.50 | 0.94 | 4.46 | 72.70 | 8.87 | -0.00 [-0.08, +0.07] p 0.909 | +0.03 [-0.07, +0.13] p 0.542 |
+| 0.75 | 0.93 | 4.17 | 66.53 | 8.35 | -0.02 [-0.13, +0.10] p 0.805 | +0.02 [-0.03, +0.07] p 0.460 |
+| 1.00 | 0.91 | 3.91 | 60.55 | 7.84 | -0.03 [-0.21, +0.13] p 0.690 | +0.00 [-0.00, +0.00] p 1.000 |
 
-## fx15_rp: 2008-07-01 -> 2021-12-31, a design period (no holdout is consulted), n = 3521 days
-
-| lam | Sharpe | vol %/yr | cumulative return % | MDD % | Sharpe - control [95% CI] p | Sharpe - desk [95% CI] p |
-|--:|--:|--:|--:|--:|:--|:--|
-| 0.00 | -0.27 | 2.64 | -3.26 | 14.08 | +0.00 [+0.00, +0.00] p 1.000 | -0.04 [-0.64, +0.60] p 0.914 |
-| 0.25 | -0.31 | 2.26 | -3.03 | 11.03 | -0.04 [-0.21, +0.13] p 0.645 | -0.08 [-0.54, +0.42] p 0.755 |
-| 0.50 | -0.31 | 2.19 | -2.90 | 10.17 | -0.05 [-0.43, +0.33] p 0.808 | -0.09 [-0.37, +0.22] p 0.581 |
-| 0.75 | -0.28 | 2.46 | -2.87 | 10.00 | -0.01 [-0.54, +0.50] p 0.969 | -0.05 [-0.17, +0.08] p 0.456 |
-| 1.00 | -0.22 | 2.98 | -2.95 | 11.46 | +0.04 [-0.60, +0.64] p 0.914 | +0.00 [-0.00, +0.00] p 1.000 |
-
-## all26_rp: 2008-07-01 -> 2021-12-31, a design period (no holdout is consulted), n = 3523 days
+## fx15_rp: 2009-10-01 -> 2021-12-31, a design period (no holdout is consulted), n = 3195 days
 
 | lam | Sharpe | vol %/yr | cumulative return % | MDD % | Sharpe - control [95% CI] p | Sharpe - desk [95% CI] p |
 |--:|--:|--:|--:|--:|:--|:--|
-| 0.00 | 0.30 | 2.49 | 17.82 | 8.08 | +0.00 [+0.00, +0.00] p 1.000 | +0.13 [-0.31, +0.60] p 0.564 |
-| 0.25 | 0.29 | 2.27 | 16.65 | 7.38 | -0.01 [-0.12, +0.12] p 0.950 | +0.12 [-0.22, +0.51] p 0.472 |
-| 0.50 | 0.27 | 2.20 | 15.44 | 6.95 | -0.03 [-0.28, +0.21] p 0.800 | +0.10 [-0.14, +0.36] p 0.397 |
-| 0.75 | 0.22 | 2.28 | 14.19 | 6.98 | -0.08 [-0.45, +0.27] p 0.666 | +0.05 [-0.06, +0.18] p 0.348 |
-| 1.00 | 0.17 | 2.51 | 12.90 | 7.16 | -0.13 [-0.60, +0.31] p 0.564 | +0.00 [-0.00, +0.00] p 1.000 |
+| 0.00 | -0.44 | 2.68 | -8.37 | 15.36 | +0.00 [+0.00, +0.00] p 1.000 | -0.29 [-0.91, +0.32] p 0.322 |
+| 0.25 | -0.42 | 2.33 | -6.16 | 12.80 | +0.01 [-0.15, +0.18] p 0.857 | -0.28 [-0.76, +0.19] p 0.234 |
+| 0.50 | -0.36 | 2.25 | -3.98 | 10.39 | +0.08 [-0.27, +0.46] p 0.622 | -0.21 [-0.50, +0.08] p 0.152 |
+| 0.75 | -0.25 | 2.48 | -1.84 | 10.24 | +0.19 [-0.32, +0.73] p 0.436 | -0.10 [-0.22, +0.03] p 0.101 |
+| 1.00 | -0.15 | 2.94 | 0.26 | 11.07 | +0.29 [-0.32, +0.91] p 0.322 | +0.00 [-0.00, +0.00] p 1.000 |
+
+## all26_rp: 2009-10-01 -> 2021-12-31, a design period (no holdout is consulted), n = 3196 days
+
+| lam | Sharpe | vol %/yr | cumulative return % | MDD % | Sharpe - control [95% CI] p | Sharpe - desk [95% CI] p |
+|--:|--:|--:|--:|--:|:--|:--|
+| 0.00 | 0.19 | 2.48 | 12.26 | 8.86 | +0.00 [+0.00, +0.00] p 1.000 | -0.08 [-0.52, +0.39] p 0.731 |
+| 0.25 | 0.23 | 2.27 | 12.98 | 7.94 | +0.04 [-0.07, +0.17] p 0.495 | -0.04 [-0.38, +0.35] p 0.837 |
+| 0.50 | 0.26 | 2.19 | 13.67 | 7.61 | +0.07 [-0.17, +0.32] p 0.559 | -0.01 [-0.24, +0.26] p 0.948 |
+| 0.75 | 0.27 | 2.26 | 14.31 | 7.53 | +0.08 [-0.28, +0.44] p 0.647 | +0.00 [-0.11, +0.14] p 0.959 |
+| 1.00 | 0.27 | 2.46 | 14.91 | 7.52 | +0.08 [-0.39, +0.52] p 0.731 | +0.00 [-0.00, +0.00] p 1.000 |
 
