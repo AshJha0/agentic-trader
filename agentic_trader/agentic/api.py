@@ -192,7 +192,7 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
             try:
                 run = harness.submit(task, body.positions)
             except ValueError as e:
-                raise HTTPException(422, str(e))
+                raise HTTPException(422, str(e)) from e
             schedule(task.id, run)
         return {"task_id": task.id, "state": run.state.value}
 
@@ -267,9 +267,9 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
             run = harness.decide_approval(approval_id, body.approve, body.approver or role.value, body.note,
                                          resume=False, signature=body.signature)
         except KeyError:
-            raise HTTPException(404, f"unknown approval {approval_id} (approvals live on the process that queued them)")
+            raise HTTPException(404, f"unknown approval {approval_id} (approvals live on the process that queued them)") from None
         except ValueError as e:
-            raise HTTPException(409, str(e))
+            raise HTTPException(409, str(e)) from e
         # Only a parked run nobody is driving gets a continuation (on the pool, under the same
         # bound as a new task); a running driver sees the decision at the step, and a second
         # thread can never enter the same run (the harness's per-run driving lock).

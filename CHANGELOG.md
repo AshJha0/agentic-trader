@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Review E-4, E-7, E-8 (CI): hashed lockfiles are committed in `requirements/` (one per
+  Python, plus `paper-lock-py3.12.txt`, the v0.8 pin set of `requirements-lock.txt` with hashes),
+  and the test matrix and the paper job install them with `--require-hashes`; the paper job
+  keeps the same versions. A new CI leg installs the declared floors (numpy 1.24.0, pandas
+  2.0.0) on Python 3.10 and runs the fast tests. The coverage comment and test now say what CI
+  does: `fail_under = 90` is a gate, and the test checks that a run below the floor fails.
+  Pushes to main are no longer cancelled by a newer push; the nightly run adds a C++-backend
+  leg with the slow tests; ruff now selects bugbear (B) and bandit (S), with the trivial hits
+  fixed and the rest ignored per file with a reason in `pyproject.toml`.
 - Review A11: the fundamentals-text prompt now has a token budget
   (`text_analyst_options.fundamentals_max_prompt_tokens`, default 6,000, estimated with
   `llm.estimate_tokens`, no API call). Sections are admitted newest first; the cut is recorded

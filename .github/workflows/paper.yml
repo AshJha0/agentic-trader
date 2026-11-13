@@ -44,16 +44,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-lock.txt
-      # Hashed lock when it exists (requirements/lock-py3.12.txt, made by scripts/gen_lockfiles.sh
-      # in the "Lockfiles" workflow), else the v0.8 pin list (no hashes).
+          cache-dependency-path: requirements/paper-lock-py3.12.txt
+      # The v0.8 pin set (requirements-lock.txt) with a SHA-256 for every file, so the session
+      # computes with the same versions as before and pip refuses anything not in the lock.
       - name: Install from the lock
         run: |
-          if [ -f requirements/lock-py3.12.txt ]; then
-            python -m pip install --require-hashes -r requirements/lock-py3.12.txt
-          else
-            python -m pip install -r requirements-lock.txt
-          fi
+          python -m pip install --require-hashes -r requirements/paper-lock-py3.12.txt
           python -m pip install -e . --no-deps
       # Records the last complete NYSE session on or before New York's yesterday (a Monday run
       # records Friday), refuses a session that may not be final, and refuses to run when the

@@ -263,7 +263,7 @@ def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, abla
     def fs(sym: str, d: date) -> FrozenState:
         k = f"{sym}@{d.isoformat()}"
         if k not in frozen:
-            frozen[k] = retry_provider(lambda: FrozenState(graph, sym, d), label=k,
+            frozen[k] = retry_provider(lambda sym=sym, d=d: FrozenState(graph, sym, d), label=k,
                                        tries=provider_tries, sleep=sleep)
         return frozen[k]
 
@@ -400,7 +400,7 @@ def run_calibration(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0,
                 continue
             if st is None:
                 try:
-                    st = retry_provider(lambda: FrozenState(graph, sym, d), label=key,
+                    st = retry_provider(lambda sym=sym, d=d: FrozenState(graph, sym, d), label=key,
                                         tries=provider_tries, sleep=sleep)
                 except ProviderMiss as e:
                     ck.add(skip_row(skip_id, e.reason, e.tries, kind="skipped", state=key))

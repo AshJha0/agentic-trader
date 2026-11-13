@@ -161,7 +161,7 @@ def cmd_judge(a: argparse.Namespace, llm=None) -> int:
     try:   # v0.17 R3.1: judge from another model family than the judged one (self-preference)
         a.model = resolve_judge_model(a.judge_model, a.judged_model, a.allow_same_family)
     except JudgeConfigError as e:
-        raise SystemExit(str(e))
+        raise SystemExit(str(e)) from e
     llm = llm or make_llm(a)
     pairs = _calibration_targets(a)
     out = Path(a.out)
