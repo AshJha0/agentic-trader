@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+Round 3 part 3 (next): exec-lag (C7) tables from the final run, the C8 time-block evaluation pages,
+README/LEARN/COOKBOOK result numbers, and the first-pass re-score after the report's price-vintage
+fix. Then v0.19.0.
+
+## v0.19.0rc3 — 2026-11-13 (release candidate): Round 3 part 2
+
+- Item 4 (FX, partial): the v0.9 design, v0.9 holdout and v0.12 results pages (tables, combine,
+  overlay) are rebuilt from clean re-runs on commit 3f80a69 (`results/v09_fx_final`,
+  `results/v12_fx_final_2009`); the dated FX correction notices are replaced by sourced notes. The
+  v0.12 period now starts 2009-10-01 because the bar check refuses the 2008 EUR/USD gap in the
+  400-day lookback. No headline conclusion changed: every desk-minus-control interval still
+  contains zero.
+- Review C8 (tooling): `scripts/measure_v08.py` writes daily returns (`include_returns=True`) so
+  the time-block bootstrap can decide BH significance; the evaluation page update follows in part 3.
+- Item 7 lane C: mypy now runs blocking on the whole package in CI with `check_untyped_defs`,
+  `no_implicit_optional`, `warn_unused_ignores`, `warn_redundant_casts`, `strict_equality` and
+  coded ignores only (0 errors, from 25 under these settings; 3 real fixes, 16 coded ignores, no
+  behaviour change). New offline tests for the compiled-core dispatch in `quant/__init__.py`
+  (73% to 100%) and `financing.py` (85% to 100%).
+- Paper engine re-frozen as `v09-engine-6` (type annotations and ignores only; no logic change).
+
 - Review E-3 (owner decision): the paper record moves off `main` to its own append-only branch,
   `paper-ledger`, so `main` can require every check with no bypass. `paper.yml` reads
   `results/paper/` from `paper-ledger` in the session and freshness jobs and commits and pushes
@@ -191,8 +212,8 @@ cells are not finished), and the README and site still describe the old metric (
 
 ## v0.19.0rc1 — 2026-11-12 (release candidate; final v0.19.0 follows with the full v0.17 study results): long runs, the critic fix, coverage, docs refresh and the first interim LLM result
 
-Evidence class for each entry is stated in it. Nothing here was released; v0.16.0 and v0.17.0
-are tagged first, in that order. Branch `docs/site-refresh-v019`, PR #35.
+Evidence class for each entry is stated in it. Nothing here was released; v0.16.0 is tagged
+first; v0.17.0 was never tagged on its own (it shipped in this rc). Branch `docs/site-refresh-v019`, PR #35.
 
 ### Interim result: the v0.17 LLM study, two of four cells (2026-11-12)
 
