@@ -35,8 +35,9 @@
 The ``commit``, ``push`` and ``freshness`` commands need only the standard library (the
 publish and freshness jobs install nothing); numpy and pandas are imported where frames are
 handled.
-* ``push`` pushes HEAD to main and, when the push loses a race with another commit, rebases
-  and retries with exponential backoff (``--attempts`` pushes in all).
+* ``push`` pushes HEAD to the record branch (``paper-ledger`` since round 3, review E-3; it
+  was main before) and, when the push loses a race with another commit, rebases and retries
+  with exponential backoff (``--attempts`` pushes in all).
 """
 from __future__ import annotations
 
@@ -227,21 +228,25 @@ def read_session_bars(path: Path) -> dict[str, pd.DataFrame]:
     return {str(sym): g.drop(columns="symbol") for sym, g in long.groupby("symbol", sort=True)}
 
 
+LEDGER_BRANCH = "paper-ledger"
+
+
 def push_with_retry(attempts: int = 5, backoff: float = 5.0,
                     run: Callable[[list[str]], int] | None = None,
-                    sleep: Callable[[float], None] = time.sleep) -> bool:
-    """``git push origin HEAD:main``; when it fails (usually a lost race with another commit
-    to main), wait ``backoff x 2^k`` seconds, ``git pull --rebase`` and push again, ``attempts``
+                    sleep: Callable[[float], None] = time.sleep,
+                    branch: str = LEDGER_BRANCH) -> bool:
+    """``git push origin HEAD:<branch>``; when it fails (usually a lost race with another
+    commit to that branch), wait ``backoff x 2^k`` seconds, ``git pull --rebase`` and push again, ``attempts``
     pushes in all. A rebase conflict aborts and returns False at once: a real conflict on the
     append-only files needs a person, not a loop."""
     runner = run or (lambda cmd: subprocess.run(cmd, cwd=ROOT).returncode)
     for k in range(attempts):
-        if runner(["git", "push", "-q", "origin", "HEAD:main"]) == 0:
+        if runner(["git", "push", "-q", "origin", f"HEAD:{branch}"]) == 0:
             return True
         if k == attempts - 1:
             break
         sleep(backoff * 2 ** k)
-        if runner(["git", "pull", "-q", "--rebase", "origin", "main"]) != 0:
+        if runner(["git", "pull", "-q", "--rebase", "origin", branch]) != 0:
             runner(["git", "rebase", "--abort"])
             return False
     return False
@@ -346,12 +351,13 @@ def main(argv=None) -> int:
                         "when there is none, the runs.jsonl as_of is used)")
     c = sub.add_parser("commit", help="commit the published paper files if they changed")
     c.add_argument("--message", default="paper: daily record [skip ci]")
-    p = sub.add_parser("push", help="push HEAD to main; on a lost race rebase and retry with backoff")
+    p = sub.add_parser("push", help="push HEAD to the record branch; on a lost race rebase and retry with backoff")
+    p.add_argument("--branch", default=LEDGER_BRANCH, help=f"target branch (default: {LEDGER_BRANCH})")
     p.add_argument("--attempts", type=int, default=5)
     p.add_argument("--backoff", type=float, default=5.0, help="first wait in seconds; doubles on each retry")
     a = ap.parse_args(argv)
     if a.cmd == "push":
-        ok = push_with_retry(a.attempts, a.backoff)
+        ok = push_with_retry(a.attempts, a.backoff, branch=a.branch)
         print("pushed" if ok else f"push failed after up to {a.attempts} attempt(s)")
         return 0 if ok else 1
     if a.cmd == "freshness":

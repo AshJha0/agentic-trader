@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Review E-3 (owner decision): the paper record moves off `main` to its own append-only branch,
+  `paper-ledger`, so `main` can require every check with no bypass. `paper.yml` reads
+  `results/paper/` from `paper-ledger` in the session and freshness jobs and commits and pushes
+  only there (creating the branch from `main` on first run); the D6 append-only check now runs
+  against `paper-ledger`. `paper_ops.py push` takes `--branch` (default `paper-ledger`). The
+  laptop fallback `paper_daily.cmd` runs in a worktree on `paper-ledger` and merges `main` for
+  code. The `results/paper/` copy on `main` is a frozen snapshot; README links point to the branch.
 - Review E-4, E-7, E-8 (CI): hashed lockfiles are committed in `requirements/` (one per
   Python, plus `paper-lock-py3.12.txt`, the v0.8 pin set of `requirements-lock.txt` with hashes),
   and the test matrix and the paper job install them with `--require-hashes`; the paper job

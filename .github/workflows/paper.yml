@@ -5,7 +5,7 @@ name: Paper record
 #
 # Two paths, one record. Primary: this workflow. Fallback: the laptop task
 # scripts/paper_daily.cmd (Windows Task Scheduler), which commits the same files with the
-# same message to main. Run one of them, not both: each run appends a runs.jsonl line, so
+# same message to the paper-ledger branch. Run one of them, not both: each run appends a runs.jsonl line, so
 # two runners give two lines per session (the ledger itself is append-only and unaffected).
 # To fall back, disable this workflow (Actions > Paper record > Disable) and enable the
 # laptop task; to return, do the reverse. This runner uses the numpy backend and the locked
@@ -14,7 +14,13 @@ name: Paper record
 #
 # Jobs, each with only the permissions it needs:
 #   session    reads Yahoo/FRED (the only job with live web data), writes results/paper as an artifact
-#   publish    commits the artifact to main as the bot, only when the files changed
+#   publish    commits the artifact to the paper-ledger branch as the bot, only when the files changed
+#
+# Round 3 (review E-3, owner decision): the record lives on its own append-only branch,
+# paper-ledger, not on main, so main's ruleset can require every check with no bypass for the
+# bot. Code always comes from main; results/paper/ always comes from paper-ledger. The
+# results/paper/ copy on main is the snapshot taken when the branch was created and is not
+# updated any more.
 #   freshness  fails if the last ledger row (not the as-of a run asked for) is more than 2 business days old
 #   report     opens (or comments on) one issue when any of the above fails
 on:
@@ -51,6 +57,15 @@ jobs:
         run: |
           python -m pip install --require-hashes -r requirements/paper-lock-py3.12.txt
           python -m pip install -e . --no-deps
+      # The session extends the published record, which lives on paper-ledger (E-3). Until the
+      # branch exists the snapshot on main is the record.
+      - name: Take results/paper from paper-ledger
+        run: |
+          if git fetch -q --depth=1 origin paper-ledger; then
+            git checkout FETCH_HEAD -- results/paper
+          else
+            echo "no paper-ledger branch yet; using the results/paper snapshot on main"
+          fi
       # Records the last complete NYSE session on or before New York's yesterday (a Monday run
       # records Friday), refuses a session that may not be final, and refuses to run when the
       # engine differs from docs/evaluation/paper_freeze.json (N1).
@@ -78,9 +93,20 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Full history so the paper-ledger branch can be found, or created from main the first
+      # time (it then starts with main's history and record snapshot, and only record commits
+      # follow). From then on this job works on paper-ledger, never on main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: main
+          fetch-depth: 0
+      - name: Switch to paper-ledger (create it from main if missing)
+        run: |
+          if git ls-remote --exit-code --heads origin paper-ledger >/dev/null; then
+            git checkout -q -B paper-ledger origin/paper-ledger
+          else
+            git checkout -q -b paper-ledger
+          fi
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
@@ -93,21 +119,21 @@ jobs:
       # to commit unless every append-only file (ledger, vintages, revisions, runs.jsonl) keeps
       # every committed line, in order, and the ledger's rows match the hash chain recorded in
       # runs.jsonl. A commit to results/paper between the two checkouts fails here instead of
-      # being reverted silently. Standard library only.
-      - name: Append-only check against main
+      # being reverted silently. Standard library only. HEAD is paper-ledger here.
+      - name: Append-only check against paper-ledger
         run: python scripts/paper_ledger_check.py --base HEAD
       # Same files, message and branch as the laptop task; commits only when they changed,
       # and a push that loses a race with another commit rebases and retries, up to 5 pushes
       # with 5/10/20/40 s backoff. The raw bars are not in this artifact and not committed.
-      # Pushing to main: the GITHUB_TOKEN push must be allowed by the main ruleset (the bot in
-      # its bypass list); "[skip ci]" only skips workflow runs, it does not bypass required
-      # checks. If the bypass is removed this step fails and the report job opens an issue.
+      # The push goes to paper-ledger (E-3), so main's ruleset needs no bypass. paper-ledger
+      # should have its own ruleset: no deletion, no force push (append-only), no required
+      # checks (the bot pushes directly). If the push fails the report job opens an issue.
       - name: Commit and push the record
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           python scripts/paper_ops.py commit --message "paper: daily record [skip ci]"
-          python scripts/paper_ops.py push --attempts 5 --backoff 5
+          python scripts/paper_ops.py push --branch paper-ledger --attempts 5 --backoff 5
 
   freshness:
     needs: publish
@@ -123,6 +149,10 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
+      - name: Take results/paper from paper-ledger
+        run: |
+          git fetch -q --depth=1 origin paper-ledger
+          git checkout FETCH_HEAD -- results/paper
       # stdlib only: freshness counts NYSE sessions with agentic_trader/nyse_calendar.py
       - name: Last recorded session is at most 2 NYSE sessions old
         run: python scripts/paper_ops.py freshness
