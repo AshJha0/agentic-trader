@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+- Review E-4, E-7, E-8 (CI): hashed lockfiles are committed in `requirements/` (one per
+  Python, plus `paper-lock-py3.12.txt`, the v0.8 pin set of `requirements-lock.txt` with hashes),
+  and the test matrix and the paper job install them with `--require-hashes`; the paper job
+  keeps the same versions. A new CI leg installs the declared floors (numpy 1.24.0, pandas
+  2.1.0) on Python 3.10 and runs the fast tests; it found that the code needs pandas 2.1
+  (`DataFrame.stack(future_stack=...)`), so the declared floor is now `pandas>=2.1`. The coverage comment and test now say what CI
+  does: `fail_under = 90` is a gate, and the test checks that a run below the floor fails.
+  Pushes to main are no longer cancelled by a newer push; the nightly run adds a C++-backend
+  leg with the slow tests; ruff now selects bugbear (B) and bandit (S), with the trivial hits
+  fixed and the rest ignored per file with a reason in `pyproject.toml`.
+- Review C8: `EvaluationResult.paired_table` now reports the time-block bootstrap
+  (`stats.paired_time_block_table`, day blocks shared by every instrument) as the primary
+  interval and p, with `days`; the cross-instrument figure moves to labelled `secondary`
+  columns. `evaluate` keeps the daily returns (`EvaluationResult.returns`; written to JSON only
+  with `to_json(..., include_returns=True)`). A row without daily returns falls back to the
+  cross-instrument figure and its `scheme` says so. BH significance is decided on the primary p,
+  so published "BH-significant" tables built on the old interval need re-reading.
+- Review C11: the recall gate is now an equivalence test. `recall_audit.equivalence_test` passes
+  only when the one-sided upper bound of recall above chance (MRR minus chance) is below a margin
+  (default: a model recognising 10 % of items), and states its power and the n for 80 % power.
+  `AuditResult.gate_passed` and `evaluation.recall2_verdict` require it; an audit JSON without
+  the `equivalence` block no longer passes.
+- Review D11: `Checkpoint` skips only corrupt lines on open, keeps valid rows written after
+  them, reports the count (`Checkpoint.skipped_lines`, plus a logged warning) and rewrites the
+  file clean. Before, the first corrupt line truncated the file and later rows ran again.
+- Review A11: the fundamentals-text prompt now has a token budget
+  (`text_analyst_options.fundamentals_max_prompt_tokens`, default 6,000, estimated with
+  `llm.estimate_tokens`, no API call). Sections are admitted newest first; the cut is recorded
+  in the report's `facts["prompt_budget"]`. A reply whose backend flags the prompt as truncated
+  (`last_call["truncated"]`) is rejected with a logged reason and the analyst abstains.
+
 ## v0.19.0rc2 — 2026-11-12 (release candidate): the 2026-11-12 review's Rounds 0 to 2
 
 A second release candidate, not the final v0.19.0. It carries the study repair and the signed

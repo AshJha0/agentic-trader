@@ -520,6 +520,8 @@ def run_cell(cell: DesignCell, names: Sequence[str], graph: Any, llm: Any, out: 
             seen: list[tuple[str, str]] = []
 
             class _Rec:
+                _seen = seen   # bound now, per grid cell
+
                 def __init__(self, inner):
                     self.inner = inner
 
@@ -527,11 +529,11 @@ def run_cell(cell: DesignCell, names: Sequence[str], graph: Any, llm: Any, out: 
                     return getattr(self.inner, a)
 
                 def complete_json(self, system, prompt, *, deep, schema):
-                    seen.append((system, prompt))
+                    self._seen.append((system, prompt))
                     return self.inner.complete_json(system, prompt, deep=deep, schema=schema)
 
                 def complete(self, system, prompt, *, deep):
-                    seen.append((system, prompt))
+                    self._seen.append((system, prompt))
                     return self.inner.complete(system, prompt, deep=deep)
             rep = TechnicalAnalyst(_Rec(llm) if llm is not None else None, graph.config).run(state, graph.provider)
             bar = state.history.index[-1].date()

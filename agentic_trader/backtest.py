@@ -624,7 +624,7 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
 
     rets, metrics = {}, {}
     for name in strategies:
-        def frame(attr):
+        def frame(attr, name=name):
             return pd.DataFrame({s: pd.Series(np.abs(getattr(r.results[name], attr)), index=r.dates)
                                  for s, r in sleeves.items()}).reindex(idx).fillna(0.0)
         per = pd.DataFrame({s: pd.Series(r.results[name].returns, index=r.dates)

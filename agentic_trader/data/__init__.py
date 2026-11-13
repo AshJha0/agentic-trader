@@ -14,7 +14,7 @@ def get_provider(config: dict) -> MarketDataProvider:
     try:
         return PROVIDERS[name](config)
     except KeyError:
-        raise ValueError(f"unknown data_provider {name!r}; choose from {sorted(PROVIDERS)}")
+        raise ValueError(f"unknown data_provider {name!r}; choose from {sorted(PROVIDERS)}") from None
 
 
 __all__ = ["MarketDataProvider", "NewsItem", "SyntheticProvider", "YahooProvider",

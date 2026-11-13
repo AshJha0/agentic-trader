@@ -254,3 +254,62 @@ def test_runs_through_local_llm_backend(monkeypatch):
                                                      "done": True, "done_reason": "stop"})
     out = MacroTextAnalyst(llm).analyze("Policy is well positioned.")
     assert out.ok and out.result["stance"] == "neutral"
+
+
+
+# ------------------------------------------------------------------ A11 prompt budget
+def _many_sections(n: int, chars: int = 4000) -> list:
+    return [FilingSection("WID", f"0001-24-{i:06d}", "10-Q", "2", datetime(2024, 1, 1 + i, 21, 0, tzinfo=UTC),
+                          f"Section {i} revenue grew steadily on demand. " + "x" * chars) for i in range(n)]
+
+
+def test_fundamentals_prompt_budget_keeps_newest_and_records_cut():
+    secs = _many_sections(10)
+    a = FundamentalsTextAnalyst(FixtureLLM(), max_prompt_tokens=4000)
+    kept, rec = a.fit("WID", secs)
+    assert 0 < len(kept) < len(secs) and rec["truncated"] and rec["sections_kept"] == len(kept)
+    assert kept == secs[-len(kept):]                      # newest first, original order kept
+    assert rec["estimated_tokens"] <= 4000 and a.estimate("WID", kept) == rec["estimated_tokens"]
+    assert rec["left_out"] == [f"{s.accession}/{s.section}" for s in secs[:-len(kept)]]
+    assert a.fit("WID", secs) == (kept, rec)              # deterministic
+    out = a.analyze("WID", secs)                          # no recorded reply -> abstains, budget recorded
+    assert not out.ok and out.budget == rec
+
+
+def test_fundamentals_prompt_budget_small_input_untouched_and_too_small_budget():
+    secs = _sections()
+    kept, rec = FundamentalsTextAnalyst(FixtureLLM()).fit("WID", secs)
+    assert kept == secs and not rec["truncated"] and rec["left_out"] == []
+    out = FundamentalsTextAnalyst(FixtureLLM(), max_prompt_tokens=10).analyze("WID", secs)
+    assert not out.ok and out.problem == "prompt budget leaves no section" and out.budget["sections_kept"] == 0
+    with pytest.raises(ValueError):
+        FundamentalsTextAnalyst(FixtureLLM(), max_prompt_tokens=0)
+
+
+def test_reply_from_server_truncated_prompt_is_rejected(monkeypatch, caplog):
+    from agentic_trader.local_llm import LocalLLM
+    llm = LocalLLM({"local_llm_model": "qwen2.5:7b"})
+    secs = _sections()
+    reply = json.dumps({"claims": [{"claim": "demand strong", "direction": "positive",
+                                    "accession": "0001-24-000001", "section": "7",
+                                    "quote": "Revenue increased 12% on strong demand."}]})
+    monkeypatch.setattr(llm, "_post", lambda body: {"model": body["model"], "message": {"content": reply},
+                                                     "done": True, "done_reason": "length",
+                                                     "prompt_eval_count": 8192})
+    with caplog.at_level("WARNING"):
+        out = FundamentalsTextAnalyst(llm).analyze("WID", secs)
+    assert not out.ok and "truncated" in (out.problem or "") and out.budget["server_truncated"]
+    assert "reply rejected" in caplog.text
+
+
+def test_text_reports_records_prompt_budget_in_facts():
+    from types import SimpleNamespace
+
+    from agentic_trader.text_analysts import TextInputs, text_reports
+    secs = _many_sections(10)
+    edgar = SimpleNamespace(sections=lambda sym, cut: secs)
+    ins = SimpleNamespace(symbol="WID", is_fx=False)
+    rep = text_reports(["fundamentals_text"], FixtureLLM(), TextInputs(edgar=edgar, fundamentals_max_prompt_tokens=4000),
+                       ins, date(2024, 3, 1))[0]
+    assert rep.abstained and rep.facts["prompt_budget"]["truncated"]
+    assert len(rep.facts["prompt_budget"]["left_out"]) == 10 - rep.facts["prompt_budget"]["sections_kept"]

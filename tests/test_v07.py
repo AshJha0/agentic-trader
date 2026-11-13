@@ -162,7 +162,9 @@ def test_evaluation_paired_reports_the_fallback_below_five_groups_and_can_reprod
     tab_old = res.paired_table(cluster=False)
     assert list(tab.columns) == list(tab_old.columns)
     assert {"scheme", "groups"} <= set(tab.columns)
-    assert (tab.scheme == "instruments").all() and (tab.groups == 3).all() and (tab_old.groups == 0).all()
+    # review C8: rows only, no daily returns, so the cross-instrument fallback is labelled as such
+    assert (tab.scheme == "cross-instrument (instruments); no daily returns").all()
+    assert (tab.groups == 3).all() and (tab_old.groups == 0).all()
 
 
 def evaluate_full_universe():
@@ -367,14 +369,31 @@ def _workflow_steps(text: str) -> dict[str, str]:
     return steps
 
 
-def test_ci_collects_coverage_as_a_report_not_a_gate():
+def test_ci_coverage_is_a_gate_at_the_pyproject_floor(tmp_path):
+    # The gate: every python matrix leg runs pytest with --cov, and pytest-cov fails the run
+    # when the total is below [tool.coverage.report] fail_under.
+    import re
+    import subprocess
+    import sys
     text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    python_job = text.split("\n  python:", 1)[1].split("\n  lock:", 1)[0]   # the python matrix job only
+    python_job = text.split("\n  python:", 1)[1].split("\n  minimum:", 1)[0]   # the python matrix job only
     steps = _workflow_steps(python_job)
     run_tests = steps["Run tests"]
     assert "--cov=agentic_trader" in run_tests
-    assert "--cov-fail-under" not in run_tests   # a report, never a merge-blocking gate
+    assert "--cov-fail-under" not in run_tests   # the floor lives in pyproject, in one place
     assert "path: coverage.xml" in steps["Upload coverage report"]
+    floor = re.search(r"^fail_under\s*=\s*(\d+)", (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M)
+    assert floor is not None and int(floor.group(1)) >= 90
+    # Behaviour, not text: a run under pyproject's coverage settings exits non-zero when
+    # coverage of the measured code is below fail_under.
+    (tmp_path / "mod.py").write_text("def used():\n    return 1\n\n\ndef unused():\n    return 2\n")
+    (tmp_path / "test_mod.py").write_text("from mod import used\n\n\ndef test_used():\n    assert used() == 1\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.coverage.run]\nsource = ['mod']\n[tool.coverage.report]\nfail_under = %s\n" % floor.group(1))
+    proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--cov=mod", "test_mod.py"],
+                          cwd=tmp_path, capture_output=True, text=True, timeout=120)
+    assert proc.returncode != 0, proc.stdout
+    assert "FAIL Required test coverage" in proc.stdout
 
 
 # ---------------------------------------------------------- job timing

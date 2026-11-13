@@ -466,7 +466,7 @@ def run_study(names: list[str], dates: list[date], seeds: int, cells: Iterable[C
                             check_swap()
                         t = time.perf_counter()
                         try:
-                            state, dec = retry_provider(lambda: graph.propagate(name, d),
+                            state, dec = retry_provider(lambda graph=graph, name=name, d=d: graph.propagate(name, d),
                                                         label=f"{name}@{d}", tries=provider_tries, sleep=sleep)
                         except ProviderMiss as e:
                             if llm is not None:

@@ -186,6 +186,31 @@ def test_c11_summarise_reports_power_and_keeps_pass_rule():
     assert d["recall_flagged"] is False                         # the rule itself is unchanged
     assert d["power"]["n_real"] == 30 and d["power"]["power"] < 0.5
     assert any("power to flag" in r for r in d["reasons"])
+    # C11 gate (2026-11-13): no answer parses, so MRR is 0, far below chance, and even 30 items
+    # reject recall >= margin; the stated power at chance-level answers is still below 80 %
+    eq = d["equivalence"]
+    assert eq["passed"] is True and d["gate_passed"] is True and eq["excess"] < 0
+    assert eq["power"] < 0.8 and eq["n_for_power"] > 30
+
+
+def test_c11_equivalence_test_numbers():
+    m0 = recall_audit.chance_mrr(15)
+    assert abs(recall_audit.equivalence_margin(15) - 0.1 * (1 - m0)) < 1e-12
+    small = recall_audit.equivalence_test(np.full(20, m0), 15)
+    big = recall_audit.equivalence_test(np.full(100, m0), 15)
+    assert not small["passed"] and abs(small["upper_bound"] - 0.101) < 1e-3
+    assert big["passed"] and abs(big["upper_bound"] - 0.045) < 1e-3 and abs(big["power"] - 0.94) < 0.01
+    assert big["n_for_power"] == 61
+    # a model that recognises 10 % of items (excess = the margin) must fail, however large n is
+    rng = np.random.default_rng(0)
+    n = 2000
+    know = rng.random(n) < 0.10
+    pos = rng.integers(0, 15, size=n)
+    rr = np.where(know, 1.0, np.where(pos < 3, 1.0 / (pos + 1.0), 0.0))
+    assert not recall_audit.equivalence_test(rr, 15)["passed"]
+    assert not recall_audit.equivalence_test([1.0], 15)["passed"]
+    with pytest.raises(ValueError):
+        recall_audit.equivalence_test(rr, 15, margin=0.0)
 
 
 # ------------------------------------------------------------------ C12 one p convention

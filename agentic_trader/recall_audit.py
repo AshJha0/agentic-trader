@@ -399,6 +399,62 @@ def min_detectable_recall_share(n_real: int, n_placebo: int, n_candidates: int, 
     return round(hi, 3)
 
 
+# ---- equivalence gate (review C11, 2026-11-13) --------------------------------------------------
+
+def equivalence_margin(n_candidates: int, recall_share: float = DEFAULT_RECALL_SHARE) -> float:
+    """The margin in MRR units: the excess over chance of a model that truly recognises a share
+    ``recall_share`` of items, ``s * (1 - chance_mrr(N))``."""
+    return recall_share * (1.0 - chance_mrr(n_candidates))
+
+
+def equivalence_test(real_rr: Sequence[float], n_candidates: int, *, margin: float | None = None,
+                     alpha: float = 0.05, power: float = POWER_TARGET) -> dict[str, Any]:
+    """One-sided equivalence test: is real MRR shown to be below chance + ``margin``?
+
+    Plain idea. "Not flagged" passes on absence of evidence: at n = 100 a model that truly
+    recognises 10 % of items is flagged only about half the time. This test reverses the burden.
+    The null is "recall above chance is at least the margin"; the gate passes only when the data
+    reject it, that is when the one-sided (1 - alpha) upper bound of real MRR minus chance is
+    below the margin. A small audit cannot reject it, so a small audit fails.
+
+    Formal. With RR_i the reciprocal ranks, m0 = chance_mrr(N) and v0 the RR variance of a
+    random ranking, the bound is mean(RR) - m0 + z_(1-alpha) * sqrt(max(s^2, v0) / n) (the
+    sample variance s^2, floored at v0 so that a degenerate answer pattern cannot shrink it).
+    Pass when bound < margin. Power is stated for a model with no recall (true excess 0):
+    Phi(margin / sqrt(v0 / n) - z_(1-alpha)); ``n_for_power`` is the n that gives ``power``.
+
+    Worked example (N = 15, default margin 0.10 * (1 - 0.122) = 0.088): v0 = 0.0758, so at
+    n = 100 the bound for a chance-level model is 0 + 1.645 * 0.0275 = 0.045 < 0.088 and power
+    is 0.94; at n = 20 the bound is 0.101 and the gate fails; 61 items give 80 % power. Pinned in
+    ``tests/test_round2_stats.py``. Evidence class: closed-form normal approximation."""
+    if n_candidates < 2 or not 0 < alpha < 0.5 or not 0 < power < 1:
+        raise ValueError("need n_candidates >= 2, 0 < alpha < 0.5 and 0 < power < 1")
+    m0 = chance_mrr(n_candidates)
+    v0 = sum(1.0 / j ** 2 for j in range(1, TOP_K + 1)) / n_candidates - m0 ** 2
+    marg = equivalence_margin(n_candidates) if margin is None else float(margin)
+    if marg <= 0:
+        raise ValueError("margin must be positive")
+    rr = np.asarray(real_rr, dtype=float)
+    n = int(rr.size)
+    z, zb = NormalDist().inv_cdf(1 - alpha), NormalDist().inv_cdf(power)
+    n_need = int(math.ceil((z + zb) ** 2 * v0 / marg ** 2))
+    out: dict[str, Any] = {"test": "one-sided equivalence: H0 recall above chance >= margin",
+                           "n": n, "chance_mrr": m0, "margin": marg, "alpha": alpha,
+                           "power_target": power, "n_for_power": n_need}
+    if n < 2:
+        return {**out, "excess": None, "upper_bound": None, "power": 0.0, "passed": False,
+                "reason": "fewer than two items: the margin cannot be rejected"}
+    excess = float(rr.mean()) - m0
+    se = math.sqrt(max(float(rr.var(ddof=1)), v0) / n)
+    upper = excess + z * se
+    pw = NormalDist().cdf(marg / math.sqrt(v0 / n) - z)
+    passed = upper < marg
+    reason = (f"upper bound of recall above chance {upper:.3f} < margin {marg:.3f}" if passed else
+              f"cannot reject recall above chance >= {marg:.3f} (upper bound {upper:.3f}); "
+              f"n = {n}, about {n_need} items give {power:.0%} power")
+    return {**out, "excess": excess, "upper_bound": upper, "power": pw, "passed": passed, "reason": reason}
+
+
 # ---- summary and verdict ----------------------------------------------------------------------
 
 @dataclass
@@ -414,12 +470,20 @@ class AuditResult:
     reasons: list[str] = field(default_factory=list)
     # round 2 (C11): the audit's power at the n used; a "not flagged" verdict reads with it
     power: dict[str, Any] | None = None
+    # review C11 (2026-11-13): the gate. Passes only when recall above chance >= margin is rejected
+    equivalence: dict[str, Any] | None = None
+
+    @property
+    def gate_passed(self) -> bool:
+        """The holdout gate: not flagged *and* the equivalence test rejects recall >= margin."""
+        return (not self.flagged) and bool(self.equivalence and self.equivalence.get("passed"))
 
     def as_dict(self) -> dict[str, Any]:
         return {"real": self.real, "placebo": self.placebo, "real_vs_placebo": self.real_vs_placebo,
                 "position_bias": self.position_bias, "concentration": self.concentration,
                 "month": self.month, "leak": self.leak, "recall_flagged": self.flagged,
-                "reasons": self.reasons, "power": self.power}
+                "reasons": self.reasons, "power": self.power,
+                "equivalence": self.equivalence, "gate_passed": self.gate_passed}
 
 
 def month_test(answers_month: Sequence[str | None], truths_month: Sequence[str], *, n_perm: int = 2000,
@@ -441,7 +505,9 @@ def summarise(real_items: Sequence[AuditItem], real_answers: Sequence[dict[str, 
     """The audit verdict. Recall is flagged only when (a) real MRR beats the label-permutation
     null at ``alpha`` and (b) real MRR beats the placebo arm at ``alpha`` (when a placebo arm
     was run; without one the verdict says 'incomplete'). Position bias and answer
-    concentration are reported but never flag recall by themselves."""
+    concentration are reported but never flag recall by themselves. Not being flagged is not
+    the holdout gate: ``AuditResult.gate_passed`` also needs ``equivalence_test`` to reject
+    recall above chance >= its margin (review C11)."""
     ra = [(a or {}).get("ranked") for a in real_answers]
     truths = [i.truth for i in real_items]
     real = {**permutation_test(ra, truths, n_perm=n_perm),
@@ -477,11 +543,16 @@ def summarise(real_items: Sequence[AuditItem], real_answers: Sequence[dict[str, 
         if not flagged:
             reasons.append(f"not flagged; power to flag a {power['recall_share']:.0%} recognised share at "
                            f"n = {len(real_items)} is {power['power']:.2f}")
+    equiv = None
+    if real_items:
+        equiv = equivalence_test([reciprocal_rank(a, t) for a, t in zip(ra, truths)],
+                                 len(real_items[0].candidates), alpha=alpha)
+        reasons.append(f"equivalence gate: {equiv['reason']} (power {equiv['power']:.2f} at n = {equiv['n']})")
     return AuditResult(real, plc, rvp, position_bias(real_items, ra), answer_concentration(ra), months,
-                       leak, flagged, reasons, power)
+                       leak, flagged, reasons, power, equiv)
 
 
 __all__ = ["AuditItem", "AuditResult", "build_items", "question", "parse_ranked", "reciprocal_rank",
            "chance_mrr", "mrr", "permutation_test", "two_sample_mrr", "position_bias",
            "answer_concentration", "spearman", "leak_test", "placebo_ohlc", "month_test", "summarise",
-           "audit_power", "min_detectable_recall_share"]
+           "audit_power", "min_detectable_recall_share", "equivalence_margin", "equivalence_test"]

@@ -9,7 +9,7 @@ description = "Agentic multi-agent LLM trading desk for equities and FX: policy-
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "pandas>=2.0"]
+dependencies = ["numpy>=1.24", "pandas>=2.1"]
 
 [project.optional-dependencies]
 llm = ["anthropic>=1.0"]
@@ -47,16 +47,45 @@ line-length = 130
 target-version = "py310"
 
 [tool.ruff.lint]
-# Conservative: pyflakes and the pycodestyle error classes (real bugs and syntax-level
-# issues), no style or import-order rules.
-select = ["E4", "E7", "E9", "F"]
-# `l` for a low/level/length in the numeric kernels reads fine next to `h` and `c`
-ignore = ["E741"]
+# pyflakes, the pycodestyle error classes, flake8-bugbear (B) and flake8-bandit (S): real
+# bugs, syntax-level issues and security smells; no style or import-order rules.
+select = ["E4", "E7", "E9", "F", "B", "S"]
+ignore = [
+    "E741",   # `l` for a low/level/length in the numeric kernels reads fine next to `h` and `c`
+    "B905",   # zip() without strict=: adding strict= changes behaviour; each call site keeps equal lengths by construction
+    "S101",   # assert states internal invariants and narrows types; the package is never run under python -O
+    "S311",   # random is used for seeded simulation, sampling and jitter, never for secrets
+]
 
 [tool.ruff.lint.per-file-ignores]
 # analysts.py keeps the cross-sectional cache's imports beside the cache they serve; the
-# file is owned by another work item, so it is not reordered here
-"agentic_trader/agents/analysts.py" = ["E402"]
+# file is owned by another work item, so it is not reordered here. S112: a symbol whose
+# cross-sectional inputs fail to load is skipped on purpose.
+"agentic_trader/agents/analysts.py" = ["E402", "S112"]
+# Tests: subprocess calls with fixed argv, fake credentials, bind-all test servers, md5 as a
+# fixture checksum, expressions evaluated only for their exception, loop closures called in place.
+"tests/**" = ["S104", "S105", "S106", "S108", "S324", "S603", "S607", "B006", "B007", "B017", "B018", "B023"]
+# Scripts run maintainer tools (git, gpg, mmdc, python) with fixed argv, and check_links opens
+# only the http(s) links it found in the repository's docs.
+"scripts/**" = ["S603", "S607", "S310"]
+# gen_counts.py parses the coverage.xml that pytest-cov just wrote in the same job (not
+# untrusted input); the file is owned by another work item.
+"scripts/gen_counts.py" = ["S314"]
+# FastAPI's documented dependency-injection idiom is a Depends() call in the default.
+"agentic_trader/agentic/api.py" = ["B008"]
+# The interpolated SQL fragments are module constants; every value is a bound parameter.
+"agentic_trader/agentic/store.py" = ["S608"]
+# Fixed https endpoints (SEC EDGAR, FRED) and a local model server URL from configuration.
+"agentic_trader/data/edgar.py" = ["S310"]
+"agentic_trader/data/edgar_text.py" = ["S310"]
+"agentic_trader/data/fred.py" = ["S310"]
+"agentic_trader/local_llm.py" = ["S310"]
+# `git rev-parse` with fixed argv to record the commit a result was produced on.
+"agentic_trader/provenance.py" = ["S603", "S607"]
+# Best-effort cleanup / optional enrichment: a failure there must not fail the run.
+"agentic_trader/agentic/redteam_v2.py" = ["S110"]
+"agentic_trader/graph.py" = ["S112"]
+"agentic_trader/evaluation.py" = ["S110"]   # owned by another work item
 
 [tool.mypy]
 # Lenient on purpose: catch outright type errors in agentic_trader/ without demanding

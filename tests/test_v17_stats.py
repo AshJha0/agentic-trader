@@ -177,11 +177,14 @@ def test_require_recall_pass_guard(tmp_path):
     void.write_text(json.dumps(_recall(10)), encoding="utf-8")
     with pytest.raises(evaluation.HoldoutLocked, match="void"):
         evaluation.require_recall_pass(void)
-    v2 = {"recall_flagged": False, "reasons": [], "real": {"n": 200}, "placebo": {"n": 60}}
+    v2 = {"recall_flagged": False, "reasons": [], "real": {"n": 200}, "placebo": {"n": 60},
+          "equivalence": {"passed": True}}
     good = tmp_path / "good.json"
     good.write_text(json.dumps(v2), encoding="utf-8")
     assert evaluation.require_recall_pass(good)["passed"]
     for broken in ({**v2, "recall_flagged": True}, {**v2, "real": {"n": 40}}, {**v2, "placebo": None},
+                   {**v2, "equivalence": {"passed": False, "reason": "cannot reject"}},
+                   {k: v for k, v in v2.items() if k != "equivalence"},
                    {k: v for k, v in v2.items() if k != "recall_flagged"} | {"recall_flagged": None}):
         good.write_text(json.dumps(broken), encoding="utf-8")
         with pytest.raises(evaluation.HoldoutLocked):

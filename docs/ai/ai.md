@@ -646,7 +646,11 @@ and each agent run can be recorded and replayed to check it gives the same decis
   are dry-run only. A macro shift that is `NaN`, `Infinity` or outside [-1, 1] is rejected, not
   clipped; a claim's quote needs at least 3 words, 12 characters and one content word (four
   letters or more, not a stopword), a repeated quote is dropped, and at most 12 claims count
-  (`MIN_QUOTE_WORDS`, `MIN_QUOTE_CHARS`, `MAX_CLAIMS` in `text_analysts.py`).
+  (`MIN_QUOTE_WORDS`, `MIN_QUOTE_CHARS`, `MAX_CLAIMS` in `text_analysts.py`). The
+  fundamentals prompt has a token budget (`fundamentals_max_prompt_tokens`, default 6,000 by
+  the conservative `llm.estimate_tokens`): sections go in newest first, the rest are left out
+  and listed in `facts["prompt_budget"]`, and a reply the server flags as truncated is
+  rejected, so the analyst abstains and the desk runs on its rules analysts (review A11).
 - *Runbook RAG (3.9).* Kept: removing it changed 0 of 9 decisions on synthetic data (rules path),
   so it neither helps nor harms there.
 - *Governance (4.1-4.3).* Outcome join and per-role hit rates (n = 0 real TaskRuns so far);

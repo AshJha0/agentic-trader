@@ -318,9 +318,22 @@ See `config.py` for the full dictionary.
 | `scripts/v16_eval.py`, `agentic/eval_set.py` | 150-item analyst eval set, checks, local judge, agreement (2.7) | checks in CI on fixtures; model run pending |
 | `scripts/paper_ops.py` | Price-vintage hash, freshness check, publish commit | used by `paper.yml` |
 
-Workflows: `ci.yml` is the PR gate (`pytest -m "not slow"`, ruff blocking, mypy advisory);
-`nightly.yml` runs the full suite at 03:17 UTC; `paper.yml` runs the paper session on weekdays
-at 21:30 UTC (`session`, `publish`, `freshness`, `report`). Every action is pinned by commit SHA.
+Workflows: `ci.yml` is the PR gate and also runs on every push to `main`. A newer push cancels an older run on
+the same PR branch but never on `main`, so every `main` commit gets a complete result. Jobs:
+lint (ruff blocking with the rule sets `E4`, `E7`, `E9`, `F`, bugbear `B` and bandit `S`, the
+remaining `B`/`S` hits ignored per file with a reason in `pyproject.toml`; `scripts/gen_counts.py
+--check`; mypy blocking on the quant core and advisory on the whole package); the Python 3.10 to
+3.14 matrix, each installing its hashed lock `requirements/lock-py<version>.txt` with
+`pip install --require-hashes` and running `pytest -m "not slow"` with coverage, which is a gate
+(`fail_under = 90` in `[tool.coverage.report]`; a run below it fails); a minimum-versions leg
+(Python 3.10 with the declared floors numpy 1.24.0 and pandas 2.1.0); a leg that installs the
+v0.8 pin set `requirements-lock.txt` and checks the installed versions equal its pins; the C++
+core; and the docs checks. `nightly.yml` (03:17 UTC) runs the full suite, slow tests included, on
+the numpy backend and on the C++ backend (Python 3.12). `lockfiles.yml` (manual) regenerates the
+hashed locks with uv. `paper.yml` installs `requirements/paper-lock-py3.12.txt`, the same v0.8
+versions with a SHA-256 per file. `paper.yml` runs the paper session on weekdays
+at 21:30 UTC (`session`, `publish`, `freshness`, `report`). Counts quoted in README.md and the
+docs site are kept in step by `scripts/gen_counts.py` (README, "Quoted counts"). Every action is pinned by commit SHA.
 The OMS kill switch is checked both by `OMS.submit` and by the agentic `submit_order` tool
 (`agentic/servers.py`), so a halt binds both order paths.
 
