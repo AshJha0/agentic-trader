@@ -21,7 +21,7 @@ fix. Then v0.19.0.
   coded ignores only (0 errors, from 25 under these settings; 3 real fixes, 16 coded ignores, no
   behaviour change). New offline tests for the compiled-core dispatch in `quant/__init__.py`
   (73% to 100%) and `financing.py` (85% to 100%).
-- Paper engine re-frozen as `v09-engine-6` (type annotations and ignores only; no logic change).
+- Paper engine re-frozen as `v09-engine-6` (type annotations and ignores only; no logic change), then `v09-engine-7` after three ignores were marked `unused-ignore` (CI installs SDK versions where they are not needed; comments only).
 
 - Review E-3 (owner decision): the paper record moves off `main` to its own append-only branch,
   `paper-ledger`, so `main` can require every check with no bypass. `paper.yml` reads
