@@ -11,6 +11,21 @@
   Pushes to main are no longer cancelled by a newer push; the nightly run adds a C++-backend
   leg with the slow tests; ruff now selects bugbear (B) and bandit (S), with the trivial hits
   fixed and the rest ignored per file with a reason in `pyproject.toml`.
+- Review C8: `EvaluationResult.paired_table` now reports the time-block bootstrap
+  (`stats.paired_time_block_table`, day blocks shared by every instrument) as the primary
+  interval and p, with `days`; the cross-instrument figure moves to labelled `secondary`
+  columns. `evaluate` keeps the daily returns (`EvaluationResult.returns`; written to JSON only
+  with `to_json(..., include_returns=True)`). A row without daily returns falls back to the
+  cross-instrument figure and its `scheme` says so. BH significance is decided on the primary p,
+  so published "BH-significant" tables built on the old interval need re-reading.
+- Review C11: the recall gate is now an equivalence test. `recall_audit.equivalence_test` passes
+  only when the one-sided upper bound of recall above chance (MRR minus chance) is below a margin
+  (default: a model recognising 10 % of items), and states its power and the n for 80 % power.
+  `AuditResult.gate_passed` and `evaluation.recall2_verdict` require it; an audit JSON without
+  the `equivalence` block no longer passes.
+- Review D11: `Checkpoint` skips only corrupt lines on open, keeps valid rows written after
+  them, reports the count (`Checkpoint.skipped_lines`, plus a logged warning) and rewrites the
+  file clean. Before, the first corrupt line truncated the file and later rows ran again.
 - Review A11: the fundamentals-text prompt now has a token budget
   (`text_analyst_options.fundamentals_max_prompt_tokens`, default 6,000, estimated with
   `llm.estimate_tokens`, no API call). Sections are admitted newest first; the cut is recorded

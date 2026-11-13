@@ -97,3 +97,28 @@ def test_half_written_last_line_tolerated(tmp_path):
     ck2.add("u3", {"v": 3})
     assert Checkpoint(p, {"a": 1}).get("u3") == {"v": 3}
     assert all(json.loads(x) for x in p.read_text(encoding="utf-8").splitlines())
+
+
+def test_corrupt_middle_line_keeps_later_rows(tmp_path, caplog):
+    """Review D11: a corrupt line costs only itself; later valid rows survive and are counted."""
+    p = tmp_path / "ck.jsonl"
+    ck = Checkpoint(p, {"a": 1})
+    for k in range(1, 4):
+        ck.add(f"u{k}", {"v": k})
+    lines = p.read_bytes().split(b"\n")
+    lines.insert(2, b'{"key": "bad", "row"')       # after u1: a torn line in the middle
+    lines.insert(4, b'["not", "an", "object"]')    # a valid JSON value that is not a row
+    p.write_bytes(b"\n".join(lines))
+    with caplog.at_level("WARNING"):
+        ck2 = Checkpoint(p, {"a": 1})
+    assert ck2.skipped_lines == 2 and "skipped 2 corrupt" in caplog.text
+    assert [ck2.get(f"u{k}") for k in range(1, 4)] == [{"v": 1}, {"v": 2}, {"v": 3}]
+    ck3 = Checkpoint(p, {"a": 1})                    # the file was rewritten clean
+    assert ck3.skipped_lines == 0 and len(ck3) == 3
+
+
+def test_corrupt_header_restarts(tmp_path):
+    p = tmp_path / "ck.jsonl"
+    p.write_bytes(b'{"head\n{"key": "u1", "row": {}}\n')
+    ck = Checkpoint(p, {"a": 1})
+    assert len(ck) == 0 and ck.skipped_lines == 0

@@ -23,8 +23,10 @@ def cmd_evaluate(args) -> int:
     print("\n" + res.head_to_head().to_string(index=False))
     paired = res.paired_table()
     if len(paired) and (paired.n >= 3).any():
-        print("\ncross-instrument bootstrap of the agent's Sharpe minus each baseline's (95% CI, two-sided p; "
-              "'significant' is FDR-corrected across this table's rows, not the raw p):\n"
+        print("\nagent's Sharpe minus each baseline's: 95% CI and two-sided p from the time-block bootstrap "
+              "(primary; days resampled in blocks shared by every instrument), the cross-instrument "
+              "bootstrap as the secondary, conditional on the realised path; 'significant' is "
+              "FDR-corrected across this table's rows on the primary p:\n"
               + paired.to_string(index=False))
     disp = res.run_dispersion()
     if len(disp):
