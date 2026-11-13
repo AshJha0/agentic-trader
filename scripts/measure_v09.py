@@ -41,6 +41,12 @@ from agentic_trader.cli.common import load_dotenv  # noqa: E402
 from agentic_trader.config import make_config  # noqa: E402
 from agentic_trader.data import get_provider  # noqa: E402
 from agentic_trader.evaluation import CORE_UNIVERSE, EXTENDED_UNIVERSE, PERIODS, UNIVERSES  # noqa: E402
+
+# Round 3 re-run (2026-11-13): the v0.12 design_long period starts 2008-07-01, but the bar check
+# added in Round 1 refuses Yahoo EUR/USD across an 8-day gap (2008-07-31 to 2008-08-08). The
+# check covers the 400-day lookback, so the corrected-FX re-run starts 2009-10-01 (the first month
+# whose lookback clears the gap, with margin); the end date is unchanged.
+EXTRA_PERIODS = {"design_long_2009": ("2009-10-01", "2021-12-31")}
 from agentic_trader.provenance import provenance  # noqa: E402
 
 ETF11 = ["SPY", "EFA", "EEM", "IWM", "TLT", "IEF", "LQD", "HYG", "GLD", "DBC", "VNQ"]
@@ -91,7 +97,7 @@ def run(name: str, out: Path, provider, period: str) -> None:
         log(f"{name}: exists, skipped")
         return
     syms, weighting, budgets = RUNS[name]
-    start, end = PERIODS[period]
+    start, end = EXTRA_PERIODS.get(period) or PERIODS[period]
     log(f"{name}: {len(syms)} sleeves, {weighting}, budgets {budgets}, {start} -> {end} ...")
     t0 = time.time()
     rep = run_portfolio_backtest(syms, start, end, base_config(), rebalance_every=EVERY, provider=provider,
@@ -119,13 +125,13 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=str(ROOT / "results" / "v09"))
     ap.add_argument("--only", default=None, help="comma list of run names (default: every run)")
-    ap.add_argument("--period", default="design", choices=("design", "holdout", "design_long"))
+    ap.add_argument("--period", default="design", choices=("design", "holdout", "design_long", "design_long_2009"))
     a = ap.parse_args(argv)
     load_dotenv(str(ROOT / ".env"))
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     only = set(a.only.split(",")) if a.only else None
-    log(f"quant backend {quant.BACKEND}; period {a.period} {PERIODS[a.period]}; output {out}")
+    log(f"quant backend {quant.BACKEND}; period {a.period} {EXTRA_PERIODS.get(a.period) or PERIODS[a.period]}; output {out}")
     provider = get_provider(base_config())
     t0 = time.time()
     for name in RUNS:
