@@ -66,7 +66,10 @@ def load_json(path: Path) -> dict | None:
 def subset(res: EvaluationResult, universes: tuple[str, ...] | None) -> EvaluationResult:
     if universes is None:
         return res
-    return EvaluationResult(res.rows[res.rows["universe"].isin(universes)].reset_index(drop=True), res.meta)
+    # Keep the daily returns: paired_table selects the slice's columns from them, and
+    # dropping them silently forced the core/extended slices onto the cross-instrument fallback.
+    return EvaluationResult(res.rows[res.rows["universe"].isin(universes)].reset_index(drop=True), res.meta,
+                            res.returns)
 
 
 # The documentation's three slices: the 15 instruments every rule choice was made on, the 45
@@ -84,7 +87,7 @@ def section_headline(res: EvaluationResult) -> None:
         emit(f"head to head: {label}", md(view.head_to_head(), index=False))
     for label, universes in SLICES:
         view = subset(res, universes)
-        emit(f"paired Sharpe, agent minus baseline: {label} (scheme column: clusters needs 5 groups)",
+        emit(f"paired Sharpe, agent minus baseline: {label} (primary: time-block; secondary clusters need 5 groups)",
              md(view.paired_table("Sharpe"), index=False))
     for metric in ("MDD%", "Calmar"):
         for label, universes in SLICES[:2]:
@@ -100,7 +103,8 @@ def section_asset_class(res: EvaluationResult) -> None:
     for label, universes in SLICES[:2]:
         view = subset(res, universes)
         for ac in sorted(view.rows["asset_class"].astype(str).unique()):
-            sub = EvaluationResult(view.rows[view.rows["asset_class"] == ac].reset_index(drop=True), view.meta)
+            sub = EvaluationResult(view.rows[view.rows["asset_class"] == ac].reset_index(drop=True), view.meta,
+                                   view.returns)
             n = sub.rows["symbol"].nunique()
             for period in PERIODS:
                 s = sub.summary(period=period)

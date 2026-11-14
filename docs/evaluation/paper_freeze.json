@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-7",
-  "frozen_on": "2026-11-13",
+  "vintage_id": "v09-engine-8",
+  "frozen_on": "2026-11-14",
   "freeze_session": "2026-09-29",
-  "reason": "mypy ignores marked unused-ignore for SDK-version differences between CI and local (comments only, no logic change)",
+  "reason": "C8 evaluation fixes",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
@@ -44,7 +44,7 @@
     "max_debate_rounds",
     "max_risk_discuss_rounds"
   ],
-  "engine_hash": "579b83ac5f15a6f222b55d18cb79776595c359075a4199523d80d68c7c590eb4",
+  "engine_hash": "98388729207d7f2c2b98ad75a7e2c362ff348e12da4f149635cd74736e3717ba",
   "history": [
     {
       "vintage_id": "v09-engine-1",
@@ -81,6 +81,12 @@
       "engine_hash": "9da58c270db3f8bfa9d72b1097e3540c50cd8ad797fc29ebd6a3937a896e587e",
       "frozen_on": "2026-11-13",
       "reason": "Round 3 part 2: mypy gate (annotations and coded ignores only, no logic change), eval baseline re-recorded for the same comment-only change, version 0.19.0rc3"
+    },
+    {
+      "vintage_id": "v09-engine-7",
+      "engine_hash": "579b83ac5f15a6f222b55d18cb79776595c359075a4199523d80d68c7c590eb4",
+      "frozen_on": "2026-11-13",
+      "reason": "mypy ignores marked unused-ignore for SDK-version differences between CI and local (comments only, no logic change)"
     }
   ]
 }

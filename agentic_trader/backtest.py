@@ -84,6 +84,23 @@ class ComparisonReport:
     def returns(self) -> pd.DataFrame:
         return pd.DataFrame({k: r.returns for k, r in self.results.items()}, index=self.dates)
 
+    def excess_returns(self) -> pd.DataFrame:
+        """Daily excess returns ``r_t - rf_{t-1} / ppy``, aligned exactly as
+        ``quant.compute_metrics`` builds the Sharpe (first bar dropped: it has no return).
+
+        The time-block primary (review C8) must use these, not ``returns()``: a strategy
+        flat on an instrument earns the cash rate, whose raw daily series is smooth and
+        positive, so its raw-return Sharpe is huge (about +17 on the v0.8 design window)
+        while its excess-return Sharpe, the one in ``table()``, is 0."""
+        raw = self.returns()
+        if self.rf is not None:
+            rf = np.where(np.isnan(np.asarray(self.rf, dtype=float)), 0.0, np.asarray(self.rf, dtype=float))
+        else:
+            rf0 = float(getattr(self.backtest_config, "risk_free_annual", 0.0) or 0.0)
+            rf = np.full(len(raw), rf0)
+        ppy = float(self.instrument.periods_per_year)
+        return raw.iloc[1:].sub(rf[: len(raw) - 1] / ppy, axis=0)
+
 
 ACCOUNT_CCY = "USD"
 # Currencies conventionally quoted against the dollar as CCYUSD (one unit is worth the close);

@@ -406,8 +406,8 @@ class EvaluationResult:
         ``evaluate``) and ``metric`` is ``"Sharpe"``, the primary columns come from
         ``stats.paired_time_block_table``: circular day blocks of length ``block`` shared by every
         instrument, scheme ``"time-block"``, ``days`` the path length. The point estimate is the
-        mean per-instrument Sharpe difference of the raw daily returns, so it can differ slightly
-        from the excess-return Sharpes in ``rows``. The cross-instrument bootstrap (``paired``,
+        mean per-instrument Sharpe difference of the daily excess returns (``Report.excess_returns``),
+        the same series the Sharpes in ``rows`` are computed on. The cross-instrument bootstrap (``paired``,
         clustered when ``cluster``) follows in the ``secondary`` columns, labelled as conditional
         on the realised path; ``groups`` belongs to it. Without daily returns (a result read back
         from JSON written without them, or another metric) the row falls back to the
@@ -438,12 +438,16 @@ class EvaluationResult:
                 p = pb.p_value if math.isfinite(pb.ci_low) else nan
                 row = {"period": period, "baseline": base, "n": pb.n, f"mean {metric} diff": pb.mean_diff,
                        "ci95 low": pb.ci_low, "ci95 high": pb.ci_high, "p": p, "wins": pb.wins,
-                       "scheme": f"cross-instrument ({pb.scheme}); no daily returns", "days": nan,
+                       "scheme": "", "days": nan,
                        "secondary": "", "secondary ci95 low": nan, "secondary ci95 high": nan,
                        "secondary p": nan, "groups": pb.n_groups}
                 a, b = self.returns.get(f"{period}|{strategy}"), self.returns.get(f"{period}|{base}")
+                cols = [s for s in syms if s in a.columns and s in b.columns] if a is not None and b is not None else []
+                # Time blocks are shared days, so the cluster-group rule never gates this scheme.
+                why = ("metric is not Sharpe" if metric != "Sharpe" else "no daily returns held"
+                       if a is None or b is None else "fewer than 3 instruments with daily returns")
+                row["scheme"] = f"cross-instrument ({pb.scheme}); fallback: {why}"
                 if metric == "Sharpe" and a is not None and b is not None and pb.n >= 3:
-                    cols = [s for s in syms if s in a.columns and s in b.columns]
                     if len(cols) >= 3:
                         a2, b2 = a[cols].align(b[cols], join="inner", axis=0)
                         cases.append({"label": len(out), "a": a2.to_numpy(float), "b": b2.to_numpy(float),
@@ -605,8 +609,8 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             continue
         for name, v in rep.agent_sources.items():
             sources[name] = sources.get(name, 0) + v
-        rets = rep.returns()
-        for strat in rets.columns:   # daily returns for the time-block primary (C8), same dedup as rows
+        rets = rep.excess_returns()
+        for strat in rets.columns:   # daily excess returns for the time-block primary (C8), same dedup as rows
             if strat != AGENT and (pname, sym) in baselines_done:
                 continue
             daily.setdefault(f"{pname}|{strat}", {}).setdefault(rep.instrument.symbol, []).append(rets[strat])

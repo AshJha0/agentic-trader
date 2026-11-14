@@ -149,8 +149,8 @@ def test_evaluation_paired_uses_the_cluster_scheme_with_five_groups_and_it_chang
     assert clustered.ci_high - clustered.ci_low > plain.ci_high - plain.ci_low
     tab = res.paired_table()
     # review C8: rows only (no daily returns), so the labelled cross-instrument fallback
-    assert list(tab.scheme) == ["cross-instrument (clusters); no daily returns"] and list(tab.groups) == [5]
-    assert list(res.paired_table(cluster=False).scheme) == ["cross-instrument (instruments); no daily returns"]
+    assert list(tab.scheme) == ["cross-instrument (clusters); fallback: no daily returns held"] and list(tab.groups) == [5]
+    assert list(res.paired_table(cluster=False).scheme) == ["cross-instrument (instruments); fallback: no daily returns held"]
 
 
 def test_c8_paired_table_uses_the_time_block_primary_when_daily_returns_are_held(tmp_path):
@@ -255,4 +255,58 @@ def test_paired_table_columns_carry_the_scheme(monkeypatch):
                                  "wins", "scheme", "days", "secondary", "secondary ci95 low",
                                  "secondary ci95 high", "secondary p", "groups", "significant"]
     # no daily returns held: the cross-instrument figure is the fallback, and the label says so
-    assert tab.scheme[0] == "cross-instrument (clusters); no daily returns" and tab.groups[0] == 5
+    assert tab.scheme[0] == "cross-instrument (clusters); fallback: no daily returns held" and tab.groups[0] == 5
+
+
+# ---------------------------------- C8 follow-ups (Round 3 part 3, lane c8)
+def _two_group_result(with_returns: bool = True):
+    rng = np.random.default_rng(7)
+    days, syms = pd.bdate_range("2024-01-02", periods=120), [f"S{i}" for i in range(6)]
+    base = pd.DataFrame(rng.normal(0.0003, 0.01, size=(120, 6)), index=days, columns=syms)
+    agent = base + rng.normal(0, 0.002, size=(120, 6))
+    rows = [{"period": "q", "symbol": s, "asset_class": "fx" if i % 2 else "equity", "universe": "core",
+             "strategy": st, "Sharpe": float(stats.sharpe_stats(df[s]).sharpe_annual), "MDD%": -1.0 * i}
+            for i, s in enumerate(syms) for st, df in (("AgenticTrader", agent), ("Buy&Hold", base))]
+    rets = {"q|AgenticTrader": agent, "q|Buy&Hold": base} if with_returns else {}
+    return EvaluationResult(pd.DataFrame(rows), {}, rets)
+
+
+def test_c8_time_block_is_not_gated_by_the_cluster_group_count():
+    res = _two_group_result()
+    r = res.paired_table(universe="core", n_boot=200).iloc[0]
+    assert r.groups < MIN_CLUSTER_GROUPS and r.scheme == "time-block" and r.days == 120
+
+
+def test_c8_fallback_label_states_the_real_reason():
+    assert _two_group_result(False).paired_table(n_boot=200).scheme[0].endswith("fallback: no daily returns held")
+    s = _two_group_result().paired_table("MDD%", n_boot=200).scheme[0]
+    assert s.startswith("cross-instrument") and s.endswith("fallback: metric is not Sharpe")
+
+
+def test_c8_render_subset_keeps_daily_returns():
+    import importlib.util
+    from pathlib import Path
+    p = Path(__file__).resolve().parents[1] / "scripts" / "render_v08_tables.py"
+    spec = importlib.util.spec_from_file_location("render_v08_tables", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    res = _two_group_result()
+    assert mod.subset(res, ("core",)).paired_table(n_boot=200).scheme[0] == "time-block"
+
+
+def test_c8_excess_returns_make_a_cash_only_book_sharpe_zero():
+    """A strategy flat on an instrument earns rf: raw daily returns are smooth and positive (the
+    v0.8 Carry rows read +17.6 on raw returns, giving -12.69 agent minus Carry), excess returns are 0."""
+    from types import SimpleNamespace
+    from agentic_trader.backtest import ComparisonReport as Report
+    n = 300
+    rf = np.linspace(0.01, 0.05, n)                    # annual, per bar
+    r = np.r_[0.0, rf[:-1] / 252.0]                    # returns[t+1] earns rf[t] / ppy
+    rep = SimpleNamespace(results={"Carry": SimpleNamespace(returns=r)}, dates=pd.bdate_range("2020-01-01", periods=n),
+                          rf=rf, backtest_config=None, instrument=SimpleNamespace(periods_per_year=252.0))
+    rep.returns = lambda: Report.returns(rep)
+    raw = rep.returns()["Carry"].iloc[1:].to_numpy()[:, None]
+    ex = Report.excess_returns(rep)
+    assert len(ex) == n - 1 and np.allclose(ex["Carry"], 0.0)
+    assert stats._column_sharpes(raw, 252.0)[0] > 5
+    assert stats._column_sharpes(ex.to_numpy(), 252.0)[0] == 0.0
