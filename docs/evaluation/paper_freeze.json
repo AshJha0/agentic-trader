@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-8",
+  "vintage_id": "v09-engine-9",
   "frozen_on": "2026-11-14",
   "freeze_session": "2026-09-29",
-  "reason": "C8 evaluation fixes",
+  "reason": "version 0.19.0 (pyproject version only, no logic change)",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
@@ -87,6 +87,12 @@
       "engine_hash": "579b83ac5f15a6f222b55d18cb79776595c359075a4199523d80d68c7c590eb4",
       "frozen_on": "2026-11-13",
       "reason": "mypy ignores marked unused-ignore for SDK-version differences between CI and local (comments only, no logic change)"
+    },
+    {
+      "vintage_id": "v09-engine-8",
+      "engine_hash": "98388729207d7f2c2b98ad75a7e2c362ff348e12da4f149635cd74736e3717ba",
+      "frozen_on": "2026-11-14",
+      "reason": "C8 evaluation fixes"
     }
   ]
 }

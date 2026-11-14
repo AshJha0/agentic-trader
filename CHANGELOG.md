@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.19.0 — 2026-11-14: Round 3 part 3
 
-Round 3 part 3:
+Round 3 part 3. Paper engine re-frozen as `v09-engine-8` (C8 code fix) and `v09-engine-9` (version string only).
 
 - Evaluation significance (review C8): the paired Sharpe bootstrap now uses the time-block
   interval as primary on every slice (returns are passed into the core, extended and all-60
