@@ -50,7 +50,10 @@ model cells describe the desk as it was.
 - The project may say that the test is designed, amended after review and signed, and that it
   has not been run. It may not say or imply a pre-registered finding about what the model adds.
 - The interim first-pass table (`docs/results/v17/llm_study_interim_report.md`) is descriptive,
-  covers two complete cells, predates the scoring correction and has not been re-scored. Its
+  covers two complete cells and predates the scoring correction. The same rows were re-scored
+  with the corrected scoring on 2026-11-14
+  ([re-score](../results/v17/llm_study_rescore_2026-11-14.md)): IC minus rules for
+  `local_analysts` is -0.030 [-0.140, +0.089], descriptive only. Its
   model cell is mostly rules: 404 of 1,200 analyst outputs came from the model.
 - The Sharpe holdout look was not run. No cell was put to the design bar, because the first
   pass was not completed.

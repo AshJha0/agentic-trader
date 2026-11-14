@@ -247,6 +247,29 @@ def test_first_pass_report_drops_closed_dates_for_every_name() -> None:
     assert problems == ["2016-01-01: not an NYSE session, design date dropped for all 2 names"]
 
 
+def test_first_pass_report_scores_rows_stored_on_an_older_adjustment_vintage() -> None:
+    """Rescore bug: the rows hold adjusted closes from the run's vintage; the provider at report
+    time has re-adjusted for a later dividend (every close x 0.9992) or serves a different
+    source altogether (unadjusted / synthetic). The first must score with the provider's own
+    return; the second must be left out, never scored."""
+    study = _llm_study()
+    idx = pd.DatetimeIndex([d for d in pd.bdate_range("2016-04-01", "2016-08-31") if is_session(d.date())])
+    adjusted = pd.Series(23.0 * np.exp(0.002 * np.arange(len(idx))), index=idx)
+    revintaged = adjusted * 0.9992                      # dividend paid after the run
+    unadjusted = adjusted * 26.0 * (1.0 + 0.01 * np.sin(np.arange(len(idx))))   # different basis and path
+
+    def feed(series: pd.Series) -> Callable[[str, date, date], pd.Series]:
+        return lambda sym, start, end: series[(series.index >= pd.Timestamp(start)) & (series.index <= pd.Timestamp(end))]
+    dates = [idx[0], idx[10], idx[30]]
+    rows = [{"symbol": "AAPL", "as_of": d.date().isoformat(), "close": float(adjusted.loc[d])} for d in dates]
+    fwd, problems = study.horizon_returns(rows, feed(revintaged), 20)
+    assert problems == [] and len(fwd) == 3
+    i0 = idx.get_loc(dates[1])
+    assert fwd[("AAPL", dates[1].date().isoformat())] == pytest.approx(adjusted.iloc[i0 + 20] / adjusted.iloc[i0] - 1)
+    fwd, problems = study.horizon_returns(rows, feed(unadjusted), 20)
+    assert len(fwd) < 3 and problems and all("different source or adjustment basis" in p for p in problems)
+
+
 def test_first_pass_ic_is_within_asset_class() -> None:
     study = _llm_study()
     syms = ["AAPL", "MSFT", "NVDA", "JPM", "EURUSD", "USDJPY", "GBPUSD"]

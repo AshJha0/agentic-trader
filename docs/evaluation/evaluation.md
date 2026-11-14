@@ -24,7 +24,7 @@ reproduce anything, see [Reproducing](#reproducing).
 
 ## Summary
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+*Updated 2026-11-14 (review C8). The paired Sharpe tables now use the time-block bootstrap (days resampled in blocks) as the primary interval on every slice: core 15, extended 45 and all 60. Two root causes were fixed in the code: the daily returns were not passed into the slices, so the core and extended rows fell back to resampling instruments; and the daily series were raw rather than in excess of the cash rate, which produced the degenerate Carry row (-12.69). The cross-instrument interval is kept as the secondary columns. The MDD% and Calmar rows stay on the cross-instrument scheme (fallback reason printed in the table: metric is not Sharpe). Source: `results/v08_c8_fixed/tables_render.md`, run 2026-11-14 08:14-09:17 UTC on bee26ad; log `results/rerun_logs/eval_c8_lane.log`; manifest `results/v08_c8_fixed/manifest.json`.*
 
 > v0.12 (after this release): a longer design period (2008 to 2021), a long/short trend stream and
 > the vol-target core with the desk as an overlay are in [v012_trend_core.md](v012_trend_core.md);
@@ -39,43 +39,30 @@ reproduce anything, see [Reproducing](#reproducing).
 > Nothing there changes a rule, a universe or a number below.
 
 The v0.8 re-measurement is the current record: every number in this summary is from
-[the v0.8 section](#v08-engine-and-protocol-corrections-and-every-number-re-measured) (`results/v08`, measured
-2026-09-28 under the corrected engine, Sharpe on returns in excess of the credited 3-month
-bill); the earlier sections are the historical record and carry a banner saying so. Median
-Sharpe is quoted from the summary tables; mean differences, with their 95% bootstrap
-interval, two-sided p and the Benjamini–Hochberg flag where the table prints one, from the
-paired tables. The bootstrap resamples instruments on the core (15) and extended (45)
-universes (`scheme=instruments`, fewer than 5 asset-class-by-universe groups) and clusters
-of those groups on all 60 (`scheme=clusters`, 5 groups: core equities, core FX, extended
-equities, macro ETFs, FX crosses). An interval printed as [0.00, x] or [-0.00, x] is
-never called "excluding zero".
+[the v0.8 section](#v08-engine-and-protocol-corrections-and-every-number-re-measured) (Sharpe on
+returns in excess of the credited 3-month bill; paired tables re-measured 2026-11-14, see the
+note above). Median Sharpe is quoted from the summary tables; mean differences, with their 95%
+bootstrap interval, two-sided p and the Benjamini–Hochberg flag, from the paired tables. The
+primary Sharpe interval resamples days in blocks (`time-block`) on every slice; the
+cross-instrument interval is printed as secondary columns. An interval printed as [0.00, x]
+or [-0.00, x] is never called "excluding zero".
 
-- **Per instrument, out of sample, the desk is below buy & hold on Sharpe, and below the
-  volatility-targeted control too.** Core holdout median Sharpe 0.30 against 0.51 (buy &
-  hold) and 0.52 (vol-target); paired mean difference desk − B&H -0.10 [-0.21, -0.00] p 0.04
-  and desk − vol-target -0.11 [-0.21, -0.00] p 0.04, neither BH-significant. Extended
-  universe (45 names no rule was chosen on), holdout: 0.25 against 0.39 and 0.27; desk − B&H
-  -0.07 [-0.12, -0.02] p 0.01, **BH-significant**; desk − vol-target -0.03 [-0.09, +0.02]
-  p 0.19, not BH-significant. All 60 (clusters): desk − B&H -0.08 [-0.15, -0.03] p 0.00,
-  **BH-significant**; desk − vol-target -0.05 [-0.15, 0.00] p 0.07, not significant. On the
-  design period the core desk is level: 0.67 against 0.73 and 0.69; desk − B&H +0.06
-  [-0.06, +0.17] p 0.29, not BH-significant. This is stronger than v0.7's "noise either way":
-  on the extended names, which no rule was tuned on, the deficit against buy & hold clears
-  the BH bar. The desk still beats the signal-flipping baselines on most slices (holdout,
-  all 60, desk − SMA +0.25 [+0.01, +0.43] p 0.04, not BH-flagged; extended holdout +0.28
-  [+0.16, +0.41] p 0.00, BH-significant).
-- **"About half the drawdown" is true against plain buy & hold and is almost entirely
-  volatility scaling.** Core holdout mean maximum drawdown 17.40% (desk) against 31.64%
-  (buy & hold) and 18.98% (vol-target); paired desk − B&H -14.24 points [-20.41, -8.70]
-  p 0.00, BH-significant; desk − vol-target -1.58 [-4.33, +1.14] p 0.27, not significant. On
-  the ten core equities the desk's holdout drawdown is not lower than the fair control's:
-  22.11% against 21.28%, +0.83 [-1.63, +3.21] p 0.50, not BH-significant. On the extended
-  universe it is: 15.46% against 19.79% (and 26.39% for buy & hold); desk − vol-target -4.33
-  [-6.10, -2.55] p 0.00, BH-significant; desk − B&H -10.93 [-13.41, -8.64] p 0.00,
-  BH-significant. On FX the vol-target control sits at the shared 1.0 position cap most of
-  the time, so the FX drawdown comparison has essentially no control. Calmar on the extended
-  holdout: desk − B&H +0.11 [+0.03, +0.19] p 0.00, BH-significant; desk − vol-target +0.07
-  [0.00, +0.14] p 0.05, not flagged.
+- **Per instrument the desk has no Sharpe edge over the volatility-targeted control.** All
+  60, design: desk − vol-target -0.07 [-0.20, +0.07] p 0.32; desk − B&H -0.03 [-0.25, +0.21]
+  p 0.85. Holdout: -0.07 [-0.23, +0.09] p 0.40 and -0.10 [-0.31, +0.10] p 0.32. On the design
+  period the only BH-significant difference on all 60 is against Carry, +0.50 [+0.18, +0.82];
+  desk − TSMOM(L/S) +0.40 [+0.06, +0.72] p 0.02 is not BH-significant. On the holdout nothing
+  is BH-significant (desk − TSMOM(L/S) +0.37 p 0.02, desk − SMA +0.22 p 0.04). On Q1 2024,
+  extended universe, the desk is significantly worse than both controls: -0.30 [-0.48, -0.12]
+  against vol-target and -0.29 [-0.48, -0.13] against buy & hold, BH-significant.
+- **"About half the drawdown" is true against plain buy & hold and is mostly volatility
+  scaling** (cross-instrument interval; metric is not Sharpe). Core holdout mean maximum
+  drawdown 13.19% (desk) against 31.50% (buy & hold) and 18.92% (vol-target); desk − B&H
+  -18.31 points [-27.63, -9.99] p 0.00; desk − vol-target -5.73 [-8.44, -2.73] p 0.00; both
+  BH-significant. Extended holdout 14.42% against 26.18% and 19.72%; desk − vol-target -5.29
+  [-7.09, -3.53] p 0.00, BH-significant. On FX the vol-target control sits at the shared 1.0
+  position cap most of the time, so the FX drawdown comparison has essentially no control.
+  Holdout Calmar differences are not BH-significant on either universe.
 - **As a 15-sleeve equal-capital portfolio the desk no longer beats plain buy & hold on
   Sharpe; the v0.7 claim (1.09 against 1.06) is retracted.** Holdout Sharpe 0.80 (CR 50.62%,
   MDD 7.80%, exposure 59.10%) against 0.86 for buy & hold (96.91%, 20.43%) and 0.99 for the
@@ -242,15 +229,13 @@ counts instruments.
 
 ## Headline results
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
-
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
-Under v0.8 the core holdout median Sharpe is 0.30 (desk) against 0.51 (buy & hold) and 0.52
-(vol-target), with the desk's paired mean difference -0.10 [-0.21, -0.00] p 0.04 against buy
-& hold and -0.11 [-0.21, -0.00] p 0.04 against the control, neither BH-significant
-([headline re-measurement](#2-headline-re-measurement-eval_mainjson)); the mean-Sharpe columns
-below are the v0.3 record.
+Under v0.8 (time-block, 2026-11-14) the core holdout median Sharpe is 0.35 (desk) against
+0.51 (buy & hold) and 0.52 (vol-target), with the desk's paired mean difference -0.08
+[-0.46, +0.27] p 0.65 against buy & hold and -0.08 [-0.41, +0.21] p 0.60 against the control,
+neither BH-significant ([headline re-measurement](#2-headline-re-measurement-eval_mainjson));
+the mean-Sharpe columns below are the v0.3 record.
 
 ### Design period (2016–2021): used to choose the v0.3 rules
 
@@ -272,8 +257,6 @@ below are the v0.3 record.
 | all | B&H vol-target | 15 | 0.67 | 0.75 | 123.06 | 21.15 | 13.63 | 80.89 | 760.00 |
 
 ### Holdout period (2022–2026): run once with frozen rules
-
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
 
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
@@ -300,11 +283,10 @@ below are the v0.3 record.
   see [re-checks](#7-every-earlier-decision-re-checked-under-the-v08-engine).)
 - **The return and cost gains did survive:** equity mean return rose from 30% to 47%, and
   trades roughly halved.
-- **The drawdown profile held:** about half of buy & hold's. (v0.8: true against plain buy &
-  hold — core holdout -14.24 points [-20.41, -8.70] p 0.00, BH-significant — but not against
-  the fair control, -1.58 [-4.33, +1.14] p 0.27, not BH-significant; on the ten core equities
-  +0.83 [-1.63, +3.21] p 0.50, not BH-significant; see
-  [drawdown against the fair control](#5-drawdown-against-the-fair-control).)
+- **The drawdown profile held:** about half of buy & hold's. (v0.8, 2026-11-14: core holdout
+  desk − B&H -18.31 points [-27.63, -9.99] p 0.00 and desk − vol-target -5.73 [-8.44, -2.73]
+  p 0.00, both BH-significant; ten core equities desk − vol-target -5.54 [-9.01, -1.73] p 0.00;
+  see [drawdown against the fair control](#5-drawdown-against-the-fair-control).)
 - **FX stays near zero.** Buy & hold's positive FX mean comes mostly from USDJPY (+67%) and
   USDCAD, while the median pair lost money.
 
@@ -562,14 +544,12 @@ Report all three figures; quoting only the most favourable one would defeat the 
 
 ## The extended universe (v0.5): out of sample on every period
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
-
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
-Under v0.8 the extended-universe conclusion holds and hardens: holdout desk − B&H -0.07
-[-0.12, -0.02] p 0.01, BH-significant, and the drawdown is lower than the fair control's too,
--4.33 [-6.10, -2.55] p 0.00, BH-significant. The extended universe is no longer unseen: it
-judged the v0.5.1 and v0.6 decisions and v0.8 re-measured it
+Under v0.8 (time-block, 2026-11-14) the extended holdout desk − B&H is -0.10 [-0.29, +0.07]
+p 0.25, not BH-significant, and the drawdown is lower than the fair control's, -5.29
+[-7.09, -3.53] p 0.00, BH-significant (cross-instrument; metric is not Sharpe). The extended
+universe is no longer unseen: it judged the v0.5.1 and v0.6 decisions and v0.8 re-measured it
 ([what remains unseen](#10-what-remains-unseen)).
 
 Every rule choice through v0.4 was made on the 15 core instruments, and by v0.4 the holdout
@@ -1098,8 +1078,6 @@ cross-section per decision date, cached across the names that share it.
 
 ### Cross-instrument bootstrap: is any edge real across the universe?
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
-
 > *Measured under the v0.7 engine (constant weight between decisions, no cash leg, per-instrument impact at whole-book capital, static-table FX fallback); superseded by the v0.8 re-measurement — see [v0.8](#v08-engine-and-protocol-corrections-and-every-number-re-measured).*
 
 These tables used the plain instrument bootstrap (v0.8 labels it `scheme=instruments`) and
@@ -1167,9 +1145,8 @@ touch or exclude zero on the holdout. Against the vol-targeted control the desk 
 the extended design period (interval excludes zero) and level elsewhere. This is the
 statistical form of what the tables have said since v0.3: the desk's per-instrument Sharpe
 is buy & hold's, give or take the noise of 15 or 45 names; what it changes is the drawdown.
-(v0.8, with BH: on the extended holdout desk − B&H -0.07 [-0.12, -0.02] p 0.01 is
-BH-significant and desk − vol-target -0.03 [-0.09, +0.02] p 0.19 is not — the deficit against
-buy & hold is no longer noise on the 45 extended names no rule was tuned on.)
+(v0.8, time-block, 2026-11-14: on the extended holdout desk − B&H -0.10 [-0.29, +0.07] p 0.25
+and desk − vol-target -0.06 [-0.20, +0.08] p 0.38, neither BH-significant.)
 
 ### The published tables under the v0.6 defaults
 
@@ -1519,269 +1496,347 @@ the scheme, groups, p and BH columns.
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| design | AgenticTrader | 15 | 0.67 | 118.18 | 17.59 | 12.22 | 63.31 |
-| design | B&H vol-target | 15 | 0.69 | 128.28 | 20.17 | 13.60 | 80.51 |
-| design | Buy&Hold | 15 | 0.73 | 415.17 | 32.83 | 21.81 | 99.10 |
-| design | KDJ+RSI | 15 | 0.54 | 75.97 | 27.23 | 16.21 | 54.24 |
-| design | MACD | 15 | 0.54 | 95.79 | 24.95 | 15.04 | 67.80 |
-| design | SMA(20/50) | 15 | 0.64 | 172.49 | 23.14 | 16.67 | 78.78 |
-| design | ZMR | 15 | 0.41 | 47.07 | 27.75 | 15.56 | 44.42 |
+| design | AgenticTrader | 15 | 0.55 | 87.90 | 13.56 | 10.48 | 58.31 |
+| design | B&H vol-target | 15 | 0.69 | 127.88 | 20.31 | 13.62 | 80.65 |
+| design | Buy&Hold | 15 | 0.73 | 414.92 | 33.06 | 21.91 | 100.32 |
+| design | Carry | 15 | 0.00 | 6.91 | 1.64 | 0.89 | 9.33 |
+| design | KDJ+RSI | 15 | 0.54 | 75.92 | 27.24 | 16.22 | 54.26 |
+| design | MACD | 15 | 0.54 | 95.80 | 24.95 | 15.04 | 67.80 |
+| design | SMA(20/50) | 15 | 0.64 | 172.58 | 23.15 | 16.68 | 78.83 |
+| design | TSMOM(12-1) | 15 | 0.49 | 97.78 | 20.35 | 12.70 | 73.45 |
+| design | TSMOM(L/S) | 15 | 0.07 | 41.50 | 18.45 | 10.46 | 56.82 |
+| design | ZMR | 15 | 0.41 | 47.07 | 27.68 | 15.56 | 44.42 |
 
 #### summary: core (15), holdout
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| holdout | AgenticTrader | 15 | 0.30 | 49.52 | 17.40 | 12.82 | 60.51 |
-| holdout | B&H vol-target | 15 | 0.52 | 60.63 | 18.98 | 14.12 | 73.67 |
-| holdout | Buy&Hold | 15 | 0.51 | 98.41 | 31.64 | 23.40 | 97.39 |
-| holdout | KDJ+RSI | 15 | 0.44 | 54.53 | 23.93 | 17.50 | 60.70 |
-| holdout | MACD | 15 | 0.19 | 32.78 | 27.53 | 17.19 | 66.59 |
-| holdout | SMA(20/50) | 15 | 0.36 | 52.12 | 25.04 | 17.20 | 72.99 |
-| holdout | ZMR | 15 | 0.22 | 37.62 | 21.72 | 16.01 | 49.57 |
+| holdout | AgenticTrader | 15 | 0.35 | 45.84 | 13.19 | 10.55 | 52.91 |
+| holdout | B&H vol-target | 15 | 0.52 | 59.68 | 18.92 | 14.06 | 72.88 |
+| holdout | Buy&Hold | 15 | 0.51 | 97.28 | 31.50 | 23.28 | 96.10 |
+| holdout | Carry | 15 | 0.00 | 21.16 | 1.61 | 1.09 | 10.64 |
+| holdout | KDJ+RSI | 15 | 0.44 | 54.82 | 23.79 | 17.47 | 60.50 |
+| holdout | MACD | 15 | 0.19 | 32.73 | 27.53 | 17.19 | 66.56 |
+| holdout | SMA(20/50) | 15 | 0.36 | 51.96 | 25.05 | 17.19 | 72.86 |
+| holdout | TSMOM(12-1) | 15 | 0.24 | 46.90 | 16.75 | 12.72 | 65.32 |
+| holdout | TSMOM(L/S) | 15 | 0.14 | 26.64 | 15.71 | 10.64 | 51.10 |
+| holdout | ZMR | 15 | 0.22 | 37.71 | 21.67 | 16.01 | 49.50 |
 
 #### summary: core (15), q1_2024
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| q1_2024 | AgenticTrader | 15 | 2.79 | 9.27 | 3.47 | 12.36 | 69.27 |
-| q1_2024 | B&H vol-target | 15 | 2.81 | 8.89 | 4.12 | 13.44 | 83.51 |
-| q1_2024 | Buy&Hold | 15 | 2.62 | 14.37 | 5.22 | 18.59 | 99.77 |
-| q1_2024 | KDJ+RSI | 15 | 0.09 | 3.68 | 2.96 | 6.89 | 50.23 |
-| q1_2024 | MACD | 15 | 0.72 | 7.14 | 4.62 | 14.67 | 67.54 |
-| q1_2024 | SMA(20/50) | 15 | 0.37 | 12.98 | 4.28 | 16.96 | 88.27 |
-| q1_2024 | ZMR | 15 | 0.00 | 2.20 | 2.29 | 5.63 | 35.94 |
+| q1_2024 | AgenticTrader | 15 | 2.67 | 8.39 | 3.18 | 11.30 | 64.90 |
+| q1_2024 | B&H vol-target | 15 | 2.81 | 8.86 | 4.12 | 13.42 | 83.09 |
+| q1_2024 | Buy&Hold | 15 | 2.62 | 14.34 | 5.21 | 18.56 | 99.36 |
+| q1_2024 | Carry | 15 | 0.00 | 1.79 | 0.18 | 0.74 | 11.14 |
+| q1_2024 | KDJ+RSI | 15 | 0.09 | 3.67 | 2.95 | 6.87 | 50.05 |
+| q1_2024 | MACD | 15 | 0.72 | 7.14 | 4.62 | 14.67 | 67.46 |
+| q1_2024 | SMA(20/50) | 15 | 0.36 | 12.98 | 4.26 | 16.95 | 88.08 |
+| q1_2024 | TSMOM(12-1) | 15 | 2.82 | 9.20 | 3.65 | 12.62 | 75.89 |
+| q1_2024 | TSMOM(L/S) | 15 | 0.10 | 7.24 | 3.32 | 11.17 | 59.32 |
+| q1_2024 | ZMR | 15 | 0.00 | 2.20 | 2.28 | 5.63 | 35.89 |
 
 #### summary: core (15), reserve
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| reserve | AgenticTrader | 15 | 0.81 | 4.67 | 4.58 | 12.99 | 64.95 |
-| reserve | B&H vol-target | 15 | 1.05 | 4.72 | 4.42 | 13.05 | 71.07 |
-| reserve | Buy&Hold | 15 | 1.05 | 8.12 | 7.76 | 22.75 | 99.83 |
-| reserve | KDJ+RSI | 15 | 1.76 | 7.70 | 4.81 | 15.37 | 65.72 |
-| reserve | MACD | 15 | 1.03 | 2.92 | 6.96 | 16.93 | 66.32 |
-| reserve | SMA(20/50) | 15 | 0.22 | 1.47 | 6.25 | 15.80 | 77.46 |
-| reserve | ZMR | 15 | 1.03 | 4.11 | 3.55 | 11.54 | 44.49 |
+| reserve | AgenticTrader | 15 | 0.68 | 3.24 | 3.94 | 10.38 | 57.27 |
+| reserve | B&H vol-target | 15 | 1.05 | 4.71 | 4.44 | 13.07 | 71.31 |
+| reserve | Buy&Hold | 15 | 1.05 | 8.11 | 7.78 | 22.77 | 100.07 |
+| reserve | Carry | 15 | 0.00 | 0.92 | 0.37 | 0.76 | 12.73 |
+| reserve | KDJ+RSI | 15 | 1.76 | 7.71 | 4.81 | 15.38 | 65.74 |
+| reserve | MACD | 15 | 1.03 | 2.92 | 6.96 | 16.93 | 66.38 |
+| reserve | SMA(20/50) | 15 | 0.22 | 1.47 | 6.26 | 15.82 | 77.57 |
+| reserve | TSMOM(12-1) | 15 | 0.63 | 2.56 | 3.82 | 10.42 | 66.29 |
+| reserve | TSMOM(L/S) | 15 | -1.13 | -0.75 | 4.58 | 8.60 | 44.62 |
+| reserve | ZMR | 15 | 1.03 | 4.11 | 3.55 | 11.55 | 44.53 |
 
 #### head to head: core (15)
 
 | period | baseline | agent wins | instruments | median Sharpe diff |
 |:--|:--|--:|--:|--:|
-| design | B&H vol-target | 6 | 15 | -0.04 |
-| design | Buy&Hold | 9 | 15 | 0.08 |
-| design | KDJ+RSI | 10 | 15 | 0.31 |
-| design | MACD | 10 | 15 | 0.29 |
+| design | B&H vol-target | 6 | 15 | -0.06 |
+| design | Buy&Hold | 10 | 15 | 0.10 |
+| design | Carry | 12 | 15 | 0.53 |
+| design | KDJ+RSI | 10 | 15 | 0.33 |
+| design | MACD | 10 | 15 | 0.28 |
 | design | SMA(20/50) | 8 | 15 | 0.05 |
-| design | ZMR | 12 | 15 | 0.33 |
-| holdout | B&H vol-target | 4 | 15 | -0.09 |
-| holdout | Buy&Hold | 3 | 15 | -0.06 |
-| holdout | KDJ+RSI | 5 | 15 | -0.16 |
-| holdout | MACD | 12 | 15 | 0.28 |
-| holdout | SMA(20/50) | 11 | 15 | 0.24 |
-| holdout | ZMR | 10 | 15 | 0.14 |
-| q1_2024 | B&H vol-target | 4 | 15 | -0.16 |
-| q1_2024 | Buy&Hold | 5 | 15 | -0.03 |
+| design | TSMOM(12-1) | 10 | 15 | 0.02 |
+| design | TSMOM(L/S) | 13 | 15 | 0.40 |
+| design | ZMR | 12 | 15 | 0.32 |
+| holdout | B&H vol-target | 5 | 15 | -0.05 |
+| holdout | Buy&Hold | 7 | 15 | -0.08 |
+| holdout | Carry | 10 | 15 | 0.30 |
+| holdout | KDJ+RSI | 5 | 15 | -0.18 |
+| holdout | MACD | 12 | 15 | 0.25 |
+| holdout | SMA(20/50) | 11 | 15 | 0.25 |
+| holdout | TSMOM(12-1) | 7 | 15 | -0.04 |
+| holdout | TSMOM(L/S) | 13 | 15 | 0.33 |
+| holdout | ZMR | 10 | 15 | 0.17 |
+| q1_2024 | B&H vol-target | 5 | 15 | -0.22 |
+| q1_2024 | Buy&Hold | 7 | 15 | -0.00 |
+| q1_2024 | Carry | 8 | 15 | 0.63 |
 | q1_2024 | KDJ+RSI | 8 | 15 | 0.45 |
-| q1_2024 | MACD | 13 | 15 | 0.71 |
-| q1_2024 | SMA(20/50) | 10 | 15 | 0.17 |
-| q1_2024 | ZMR | 10 | 15 | 1.64 |
-| reserve | B&H vol-target | 4 | 15 | -0.08 |
-| reserve | Buy&Hold | 2 | 15 | -0.07 |
-| reserve | KDJ+RSI | 5 | 15 | -1.35 |
-| reserve | MACD | 10 | 15 | 0.89 |
-| reserve | SMA(20/50) | 11 | 15 | 0.93 |
+| q1_2024 | MACD | 11 | 15 | 0.93 |
+| q1_2024 | SMA(20/50) | 10 | 15 | 0.26 |
+| q1_2024 | TSMOM(12-1) | 4 | 15 | -0.29 |
+| q1_2024 | TSMOM(L/S) | 9 | 15 | 0.37 |
+| q1_2024 | ZMR | 10 | 15 | 1.28 |
+| reserve | B&H vol-target | 4 | 15 | -0.20 |
+| reserve | Buy&Hold | 4 | 15 | -0.20 |
+| reserve | Carry | 10 | 15 | 0.55 |
+| reserve | KDJ+RSI | 5 | 15 | -1.50 |
+| reserve | MACD | 9 | 15 | 0.52 |
+| reserve | SMA(20/50) | 12 | 15 | 0.61 |
+| reserve | TSMOM(12-1) | 7 | 15 | -0.08 |
+| reserve | TSMOM(L/S) | 15 | 15 | 1.98 |
 | reserve | ZMR | 8 | 15 | 0.18 |
 
 #### summary: extended (45), design
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| design | AgenticTrader | 45 | 0.51 | 57.08 | 18.37 | 11.05 | 65.34 |
-| design | B&H vol-target | 45 | 0.58 | 74.13 | 20.77 | 13.17 | 85.23 |
-| design | Buy&Hold | 45 | 0.55 | 104.91 | 32.58 | 19.86 | 99.16 |
-| design | KDJ+RSI | 45 | 0.41 | 43.42 | 28.85 | 15.02 | 49.52 |
-| design | MACD | 45 | 0.40 | 50.02 | 21.07 | 13.30 | 61.93 |
-| design | SMA(20/50) | 45 | 0.51 | 57.64 | 24.00 | 13.73 | 72.31 |
-| design | ZMR | 45 | 0.27 | 29.75 | 28.34 | 14.60 | 40.94 |
+| design | AgenticTrader | 45 | 0.46 | 47.51 | 16.46 | 9.98 | 62.18 |
+| design | B&H vol-target | 45 | 0.58 | 73.64 | 20.91 | 13.17 | 85.22 |
+| design | Buy&Hold | 45 | 0.55 | 104.62 | 32.84 | 19.97 | 100.20 |
+| design | Carry | 45 | 0.00 | 5.60 | 1.13 | 0.65 | 6.70 |
+| design | KDJ+RSI | 45 | 0.41 | 43.39 | 28.87 | 15.03 | 49.60 |
+| design | MACD | 45 | 0.40 | 49.96 | 21.09 | 13.30 | 61.92 |
+| design | SMA(20/50) | 45 | 0.51 | 57.62 | 23.99 | 13.74 | 72.36 |
+| design | TSMOM(12-1) | 45 | 0.29 | 46.55 | 20.07 | 11.48 | 69.58 |
+| design | TSMOM(L/S) | 45 | 0.11 | 11.15 | 21.42 | 9.85 | 57.76 |
+| design | ZMR | 45 | 0.27 | 29.69 | 28.34 | 14.60 | 40.93 |
 
 #### summary: extended (45), holdout
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| holdout | AgenticTrader | 45 | 0.25 | 42.00 | 15.46 | 11.65 | 64.73 |
-| holdout | B&H vol-target | 45 | 0.27 | 46.35 | 19.79 | 13.88 | 81.32 |
-| holdout | Buy&Hold | 45 | 0.39 | 66.81 | 26.39 | 19.19 | 97.87 |
-| holdout | KDJ+RSI | 45 | 0.39 | 47.17 | 20.14 | 13.65 | 54.19 |
-| holdout | MACD | 45 | 0.15 | 38.94 | 21.48 | 13.89 | 61.62 |
-| holdout | SMA(20/50) | 45 | -0.09 | 27.63 | 24.39 | 14.55 | 67.00 |
-| holdout | ZMR | 45 | 0.16 | 33.77 | 19.23 | 12.85 | 44.63 |
+| holdout | AgenticTrader | 45 | 0.18 | 35.79 | 14.42 | 10.50 | 59.69 |
+| holdout | B&H vol-target | 45 | 0.27 | 45.43 | 19.72 | 13.80 | 80.74 |
+| holdout | Buy&Hold | 45 | 0.39 | 65.59 | 26.18 | 19.02 | 96.22 |
+| holdout | Carry | 45 | 0.00 | 21.20 | 0.95 | 0.74 | 7.47 |
+| holdout | KDJ+RSI | 45 | 0.39 | 47.26 | 20.13 | 13.65 | 54.08 |
+| holdout | MACD | 45 | 0.15 | 38.90 | 21.49 | 13.89 | 61.59 |
+| holdout | SMA(20/50) | 45 | -0.09 | 27.59 | 24.37 | 14.54 | 66.90 |
+| holdout | TSMOM(12-1) | 45 | 0.17 | 36.04 | 17.49 | 11.83 | 64.71 |
+| holdout | TSMOM(L/S) | 45 | -0.16 | 9.99 | 20.69 | 10.39 | 55.08 |
+| holdout | ZMR | 45 | 0.16 | 33.73 | 19.23 | 12.85 | 44.61 |
 
 #### summary: extended (45), q1_2024
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| q1_2024 | AgenticTrader | 45 | 2.27 | 5.53 | 3.52 | 10.12 | 73.90 |
-| q1_2024 | B&H vol-target | 45 | 2.32 | 6.55 | 4.02 | 11.93 | 90.64 |
-| q1_2024 | Buy&Hold | 45 | 2.32 | 7.05 | 4.78 | 13.74 | 99.81 |
-| q1_2024 | KDJ+RSI | 45 | 0.53 | 3.09 | 2.82 | 6.89 | 44.88 |
-| q1_2024 | MACD | 45 | 0.38 | 2.90 | 3.91 | 10.07 | 59.83 |
-| q1_2024 | SMA(20/50) | 45 | 0.80 | 5.16 | 4.39 | 11.76 | 82.57 |
-| q1_2024 | ZMR | 45 | 0.68 | 2.28 | 2.21 | 5.89 | 34.09 |
+| q1_2024 | AgenticTrader | 45 | 2.26 | 5.44 | 3.34 | 9.70 | 71.35 |
+| q1_2024 | B&H vol-target | 45 | 2.31 | 6.51 | 4.01 | 11.89 | 89.94 |
+| q1_2024 | Buy&Hold | 45 | 2.31 | 7.01 | 4.77 | 13.70 | 99.11 |
+| q1_2024 | Carry | 45 | 0.00 | 1.65 | 0.11 | 0.52 | 9.05 |
+| q1_2024 | KDJ+RSI | 45 | 0.53 | 3.09 | 2.80 | 6.86 | 44.41 |
+| q1_2024 | MACD | 45 | 0.38 | 2.90 | 3.91 | 10.06 | 59.69 |
+| q1_2024 | SMA(20/50) | 45 | 0.80 | 5.16 | 4.37 | 11.74 | 82.29 |
+| q1_2024 | TSMOM(12-1) | 45 | 2.03 | 6.00 | 3.29 | 10.21 | 74.30 |
+| q1_2024 | TSMOM(L/S) | 45 | 0.41 | 3.88 | 3.67 | 9.74 | 68.96 |
+| q1_2024 | ZMR | 45 | 0.68 | 2.28 | 2.21 | 5.88 | 33.96 |
 
 #### summary: extended (45), reserve
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| reserve | AgenticTrader | 45 | -0.11 | 1.54 | 4.60 | 11.03 | 63.09 |
-| reserve | B&H vol-target | 45 | -0.11 | 1.21 | 5.61 | 12.55 | 78.90 |
-| reserve | Buy&Hold | 45 | -0.08 | 1.87 | 8.05 | 18.30 | 99.89 |
-| reserve | KDJ+RSI | 45 | 0.42 | 3.51 | 4.73 | 12.10 | 59.86 |
-| reserve | MACD | 45 | -0.82 | -0.76 | 6.07 | 12.84 | 55.92 |
-| reserve | SMA(20/50) | 45 | -0.49 | 0.44 | 6.39 | 13.94 | 71.70 |
-| reserve | ZMR | 45 | 0.81 | 2.51 | 3.99 | 10.23 | 46.71 |
+| reserve | AgenticTrader | 45 | -0.17 | 1.33 | 4.15 | 9.84 | 57.31 |
+| reserve | B&H vol-target | 45 | -0.11 | 1.19 | 5.63 | 12.58 | 79.22 |
+| reserve | Buy&Hold | 45 | -0.09 | 1.86 | 8.07 | 18.33 | 100.20 |
+| reserve | Carry | 45 | 0.00 | 0.86 | 0.21 | 0.44 | 6.72 |
+| reserve | KDJ+RSI | 45 | 0.42 | 3.52 | 4.73 | 12.11 | 59.91 |
+| reserve | MACD | 45 | -0.81 | -0.75 | 6.08 | 12.85 | 55.98 |
+| reserve | SMA(20/50) | 45 | -0.49 | 0.43 | 6.40 | 13.95 | 71.78 |
+| reserve | TSMOM(12-1) | 45 | -0.16 | 1.47 | 5.00 | 11.25 | 69.94 |
+| reserve | TSMOM(L/S) | 45 | -0.13 | 0.42 | 3.91 | 9.02 | 50.11 |
+| reserve | ZMR | 45 | 0.79 | 2.51 | 3.99 | 10.23 | 46.72 |
 
 #### head to head: extended (45)
 
 | period | baseline | agent wins | instruments | median Sharpe diff |
 |:--|:--|--:|--:|--:|
-| design | B&H vol-target | 12 | 45 | -0.09 |
-| design | Buy&Hold | 20 | 45 | -0.02 |
-| design | KDJ+RSI | 32 | 45 | 0.18 |
-| design | MACD | 26 | 45 | 0.13 |
-| design | SMA(20/50) | 26 | 45 | 0.06 |
-| design | ZMR | 35 | 45 | 0.25 |
-| holdout | B&H vol-target | 16 | 45 | -0.03 |
-| holdout | Buy&Hold | 12 | 45 | -0.08 |
-| holdout | KDJ+RSI | 21 | 45 | -0.06 |
-| holdout | MACD | 23 | 45 | 0.04 |
-| holdout | SMA(20/50) | 36 | 45 | 0.31 |
-| holdout | ZMR | 27 | 45 | 0.10 |
+| design | B&H vol-target | 11 | 45 | -0.09 |
+| design | Buy&Hold | 17 | 45 | -0.02 |
+| design | Carry | 38 | 45 | 0.46 |
+| design | KDJ+RSI | 32 | 45 | 0.16 |
+| design | MACD | 27 | 45 | 0.09 |
+| design | SMA(20/50) | 27 | 45 | 0.05 |
+| design | TSMOM(12-1) | 30 | 45 | 0.11 |
+| design | TSMOM(L/S) | 39 | 45 | 0.46 |
+| design | ZMR | 35 | 45 | 0.28 |
+| holdout | B&H vol-target | 15 | 45 | -0.07 |
+| holdout | Buy&Hold | 14 | 45 | -0.12 |
+| holdout | Carry | 30 | 45 | 0.14 |
+| holdout | KDJ+RSI | 21 | 45 | -0.02 |
+| holdout | MACD | 20 | 45 | -0.06 |
+| holdout | SMA(20/50) | 33 | 45 | 0.23 |
+| holdout | TSMOM(12-1) | 28 | 45 | 0.06 |
+| holdout | TSMOM(L/S) | 41 | 45 | 0.41 |
+| holdout | ZMR | 25 | 45 | 0.06 |
 | q1_2024 | B&H vol-target | 14 | 45 | -0.01 |
-| q1_2024 | Buy&Hold | 11 | 45 | -0.01 |
-| q1_2024 | KDJ+RSI | 23 | 45 | 0.03 |
-| q1_2024 | MACD | 34 | 45 | 0.97 |
-| q1_2024 | SMA(20/50) | 27 | 45 | 0.13 |
-| q1_2024 | ZMR | 28 | 45 | 0.60 |
-| reserve | B&H vol-target | 18 | 45 | -0.04 |
-| reserve | Buy&Hold | 19 | 45 | -0.02 |
-| reserve | KDJ+RSI | 14 | 45 | -0.34 |
-| reserve | MACD | 29 | 45 | 0.62 |
-| reserve | SMA(20/50) | 29 | 45 | 0.18 |
-| reserve | ZMR | 14 | 45 | -0.58 |
+| q1_2024 | Buy&Hold | 12 | 45 | -0.05 |
+| q1_2024 | Carry | 32 | 45 | 1.09 |
+| q1_2024 | KDJ+RSI | 23 | 45 | 0.01 |
+| q1_2024 | MACD | 33 | 45 | 0.97 |
+| q1_2024 | SMA(20/50) | 28 | 45 | 0.15 |
+| q1_2024 | TSMOM(12-1) | 19 | 45 | -0.01 |
+| q1_2024 | TSMOM(L/S) | 38 | 45 | 0.54 |
+| q1_2024 | ZMR | 28 | 45 | 0.66 |
+| reserve | B&H vol-target | 18 | 45 | -0.16 |
+| reserve | Buy&Hold | 18 | 45 | -0.11 |
+| reserve | Carry | 20 | 45 | -0.15 |
+| reserve | KDJ+RSI | 15 | 45 | -0.53 |
+| reserve | MACD | 31 | 45 | 0.61 |
+| reserve | SMA(20/50) | 32 | 45 | 0.22 |
+| reserve | TSMOM(12-1) | 14 | 45 | -0.21 |
+| reserve | TSMOM(L/S) | 30 | 45 | 0.56 |
+| reserve | ZMR | 12 | 45 | -0.44 |
 
-#### paired Sharpe, agent minus baseline: core (15) (scheme column: clusters needs 5 groups)
+#### paired Sharpe, agent minus baseline: core (15) (primary: time-block; secondary clusters need 5 groups)
 
-| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 15 | 0.02 | -0.11 | 0.15 | 0.80 | 6 | instruments | 2 |  |
-| design | Buy&Hold | 15 | 0.06 | -0.06 | 0.17 | 0.29 | 9 | instruments | 2 |  |
-| design | KDJ+RSI | 15 | 0.20 | -0.10 | 0.48 | 0.17 | 10 | instruments | 2 |  |
-| design | MACD | 15 | 0.26 | 0.09 | 0.43 | 0.00 | 10 | instruments | 2 | yes |
-| design | SMA(20/50) | 15 | 0.09 | -0.09 | 0.29 | 0.34 | 8 | instruments | 2 |  |
-| design | ZMR | 15 | 0.31 | -0.00 | 0.62 | 0.05 | 12 | instruments | 2 |  |
-| holdout | B&H vol-target | 15 | -0.11 | -0.21 | -0.00 | 0.04 | 4 | instruments | 2 |  |
-| holdout | Buy&Hold | 15 | -0.10 | -0.21 | -0.00 | 0.04 | 3 | instruments | 2 |  |
-| holdout | KDJ+RSI | 15 | -0.04 | -0.25 | 0.20 | 0.68 | 5 | instruments | 2 |  |
-| holdout | MACD | 15 | 0.21 | -0.01 | 0.40 | 0.05 | 12 | instruments | 2 |  |
-| holdout | SMA(20/50) | 15 | 0.17 | -0.09 | 0.42 | 0.20 | 11 | instruments | 2 |  |
-| holdout | ZMR | 15 | 0.16 | -0.11 | 0.48 | 0.28 | 10 | instruments | 2 |  |
-| q1_2024 | B&H vol-target | 15 | 0.13 | -0.49 | 0.93 | 0.79 | 4 | instruments | 2 |  |
-| q1_2024 | Buy&Hold | 15 | 0.18 | -0.45 | 0.96 | 0.70 | 5 | instruments | 2 |  |
-| q1_2024 | KDJ+RSI | 15 | 0.65 | -0.69 | 2.00 | 0.35 | 8 | instruments | 2 |  |
-| q1_2024 | MACD | 15 | 1.34 | 0.21 | 2.54 | 0.02 | 13 | instruments | 2 |  |
-| q1_2024 | SMA(20/50) | 15 | 0.87 | -0.03 | 1.90 | 0.06 | 10 | instruments | 2 |  |
-| q1_2024 | ZMR | 15 | 0.96 | -0.62 | 2.44 | 0.23 | 10 | instruments | 2 |  |
-| reserve | B&H vol-target | 15 | -0.06 | -0.24 | 0.14 | 0.53 | 4 | instruments | 2 |  |
-| reserve | Buy&Hold | 15 | -0.06 | -0.21 | 0.12 | 0.44 | 2 | instruments | 2 |  |
-| reserve | KDJ+RSI | 15 | -0.76 | -1.66 | 0.19 | 0.11 | 5 | instruments | 2 |  |
-| reserve | MACD | 15 | 0.36 | -0.65 | 1.32 | 0.47 | 10 | instruments | 2 |  |
-| reserve | SMA(20/50) | 15 | 1.15 | 0.58 | 1.72 | 0.00 | 11 | instruments | 2 | yes |
-| reserve | ZMR | 15 | 0.10 | -0.70 | 0.89 | 0.80 | 8 | instruments | 2 |  |
+| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 15 | 0.01 | -0.21 | 0.25 | 0.93 | 6 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.12 | 0.15 | 0.89 | 2 |  |
+| design | Buy&Hold | 15 | 0.05 | -0.24 | 0.35 | 0.75 | 10 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.07 | 0.18 | 0.44 | 2 |  |
+| design | Carry | 15 | 0.59 | 0.23 | 0.93 | 0.00 | 12 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.30 | 0.89 | 0.00 | 2 | yes |
+| design | KDJ+RSI | 15 | 0.19 | -0.26 | 0.61 | 0.43 | 10 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.12 | 0.48 | 0.23 | 2 |  |
+| design | MACD | 15 | 0.24 | -0.08 | 0.57 | 0.14 | 10 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.07 | 0.42 | 0.01 | 2 |  |
+| design | SMA(20/50) | 15 | 0.07 | -0.15 | 0.29 | 0.52 | 8 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.12 | 0.28 | 0.46 | 2 |  |
+| design | TSMOM(12-1) | 15 | 0.14 | -0.06 | 0.35 | 0.21 | 10 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.04 | 0.34 | 0.14 | 2 |  |
+| design | TSMOM(L/S) | 15 | 0.40 | 0.11 | 0.66 | 0.00 | 13 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.25 | 0.53 | 0.00 | 2 | yes |
+| design | ZMR | 15 | 0.30 | -0.15 | 0.73 | 0.20 | 12 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.02 | 0.62 | 0.07 | 2 |  |
+| holdout | B&H vol-target | 15 | -0.08 | -0.41 | 0.21 | 0.60 | 5 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.20 | 0.03 | 0.15 | 2 |  |
+| holdout | Buy&Hold | 15 | -0.08 | -0.46 | 0.27 | 0.65 | 7 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.22 | 0.05 | 0.24 | 2 |  |
+| holdout | Carry | 15 | 0.29 | -0.04 | 0.63 | 0.09 | 10 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.10 | 0.49 | 0.00 | 2 |  |
+| holdout | KDJ+RSI | 15 | -0.03 | -0.46 | 0.38 | 0.86 | 5 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.27 | 0.23 | 0.79 | 2 |  |
+| holdout | MACD | 15 | 0.22 | -0.17 | 0.62 | 0.27 | 12 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.01 | 0.43 | 0.05 | 2 |  |
+| holdout | SMA(20/50) | 15 | 0.18 | -0.12 | 0.48 | 0.24 | 11 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.07 | 0.42 | 0.14 | 2 |  |
+| holdout | TSMOM(12-1) | 15 | 0.00 | -0.24 | 0.25 | 0.98 | 7 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.15 | 0.15 | 0.97 | 2 |  |
+| holdout | TSMOM(L/S) | 15 | 0.24 | -0.09 | 0.58 | 0.16 | 13 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.05 | 0.39 | 0.01 | 2 |  |
+| holdout | ZMR | 15 | 0.17 | -0.27 | 0.61 | 0.43 | 10 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.09 | 0.48 | 0.24 | 2 |  |
+| q1_2024 | B&H vol-target | 15 | 0.08 | -0.87 | 0.98 | 0.85 | 5 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.57 | 0.90 | 0.83 | 2 |  |
+| q1_2024 | Buy&Hold | 15 | 0.12 | -0.91 | 1.13 | 0.79 | 7 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.53 | 0.94 | 0.74 | 2 |  |
+| q1_2024 | Carry | 15 | 1.06 | 0.31 | 2.09 | 0.03 | 8 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.23 | 2.36 | 0.12 | 2 |  |
+| q1_2024 | KDJ+RSI | 15 | 0.59 | -0.42 | 1.90 | 0.33 | 8 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.80 | 2.00 | 0.41 | 2 |  |
+| q1_2024 | MACD | 15 | 1.29 | -0.04 | 2.85 | 0.09 | 11 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.12 | 2.54 | 0.04 | 2 |  |
+| q1_2024 | SMA(20/50) | 15 | 0.81 | -0.55 | 2.35 | 0.30 | 10 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.10 | 1.87 | 0.10 | 2 |  |
+| q1_2024 | TSMOM(12-1) | 15 | -0.47 | -0.95 | -0.04 | 0.04 | 4 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.92 | -0.10 | 0.02 | 2 |  |
+| q1_2024 | TSMOM(L/S) | 15 | 0.98 | -0.13 | 2.06 | 0.08 | 9 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.09 | 1.96 | 0.04 | 2 |  |
+| q1_2024 | ZMR | 15 | 0.92 | -0.30 | 2.61 | 0.23 | 10 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.70 | 2.42 | 0.26 | 2 |  |
+| reserve | B&H vol-target | 15 | -0.19 | -1.09 | 0.83 | 0.69 | 4 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.42 | 0.05 | 0.11 | 2 |  |
+| reserve | Buy&Hold | 15 | -0.19 | -1.13 | 0.86 | 0.69 | 4 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.41 | 0.04 | 0.09 | 2 |  |
+| reserve | Carry | 15 | 0.53 | -0.18 | 1.22 | 0.13 | 10 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.21 | 1.22 | 0.15 | 2 |  |
+| reserve | KDJ+RSI | 15 | -0.90 | -2.89 | 1.30 | 0.39 | 5 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -1.85 | 0.11 | 0.07 | 2 |  |
+| reserve | MACD | 15 | 0.24 | -0.33 | 1.03 | 0.49 | 9 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.77 | 1.17 | 0.65 | 2 |  |
+| reserve | SMA(20/50) | 15 | 1.00 | -0.46 | 2.80 | 0.24 | 12 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.41 | 1.63 | 0.00 | 2 |  |
+| reserve | TSMOM(12-1) | 15 | 0.41 | -0.37 | 1.38 | 0.36 | 7 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.12 | 1.05 | 0.17 | 2 |  |
+| reserve | TSMOM(L/S) | 15 | 2.15 | 1.13 | 3.06 | 0.00 | 15 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 1.49 | 2.87 | 0.00 | 2 | yes |
+| reserve | ZMR | 15 | -0.03 | -1.26 | 1.50 | 0.96 | 8 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.88 | 0.81 | 0.94 | 2 |  |
 
-#### paired Sharpe, agent minus baseline: extended (45) (scheme column: clusters needs 5 groups)
+#### paired Sharpe, agent minus baseline: extended (45) (primary: time-block; secondary clusters need 5 groups)
 
-| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 45 | -0.09 | -0.15 | -0.03 | 0.01 | 12 | instruments | 3 | yes |
-| design | Buy&Hold | 45 | -0.04 | -0.10 | 0.02 | 0.21 | 20 | instruments | 3 |  |
-| design | KDJ+RSI | 45 | 0.09 | -0.06 | 0.22 | 0.21 | 32 | instruments | 3 |  |
-| design | MACD | 45 | 0.08 | -0.03 | 0.19 | 0.16 | 26 | instruments | 3 |  |
-| design | SMA(20/50) | 45 | 0.05 | -0.05 | 0.14 | 0.32 | 26 | instruments | 3 |  |
-| design | ZMR | 45 | 0.21 | 0.10 | 0.32 | 0.00 | 35 | instruments | 3 | yes |
-| holdout | B&H vol-target | 45 | -0.03 | -0.09 | 0.02 | 0.19 | 16 | instruments | 3 |  |
-| holdout | Buy&Hold | 45 | -0.07 | -0.12 | -0.02 | 0.01 | 12 | instruments | 3 | yes |
-| holdout | KDJ+RSI | 45 | -0.06 | -0.22 | 0.09 | 0.43 | 21 | instruments | 3 |  |
-| holdout | MACD | 45 | 0.08 | -0.07 | 0.23 | 0.30 | 23 | instruments | 3 |  |
-| holdout | SMA(20/50) | 45 | 0.28 | 0.16 | 0.41 | 0.00 | 36 | instruments | 3 | yes |
-| holdout | ZMR | 45 | 0.07 | -0.05 | 0.19 | 0.26 | 27 | instruments | 3 |  |
-| q1_2024 | B&H vol-target | 45 | -0.26 | -0.63 | 0.01 | 0.06 | 14 | instruments | 3 |  |
-| q1_2024 | Buy&Hold | 45 | -0.26 | -0.63 | 0.01 | 0.06 | 11 | instruments | 3 |  |
-| q1_2024 | KDJ+RSI | 45 | 0.58 | -0.25 | 1.42 | 0.17 | 23 | instruments | 3 |  |
-| q1_2024 | MACD | 45 | 1.14 | 0.59 | 1.69 | 0.00 | 34 | instruments | 3 | yes |
-| q1_2024 | SMA(20/50) | 45 | 0.54 | 0.04 | 1.07 | 0.04 | 27 | instruments | 3 |  |
-| q1_2024 | ZMR | 45 | 0.58 | -0.27 | 1.43 | 0.19 | 28 | instruments | 3 |  |
-| reserve | B&H vol-target | 45 | 0.07 | -0.15 | 0.33 | 0.61 | 18 | instruments | 3 |  |
-| reserve | Buy&Hold | 45 | 0.08 | -0.14 | 0.33 | 0.54 | 19 | instruments | 3 |  |
-| reserve | KDJ+RSI | 45 | -0.81 | -1.40 | -0.22 | 0.01 | 14 | instruments | 3 | yes |
-| reserve | MACD | 45 | 0.72 | 0.24 | 1.22 | 0.00 | 29 | instruments | 3 | yes |
-| reserve | SMA(20/50) | 45 | 0.61 | 0.19 | 1.03 | 0.00 | 29 | instruments | 3 | yes |
-| reserve | ZMR | 45 | -0.70 | -1.14 | -0.26 | 0.00 | 14 | instruments | 3 | yes |
+| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 45 | -0.09 | -0.21 | 0.03 | 0.14 | 11 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.15 | -0.03 | 0.00 | 3 |  |
+| design | Buy&Hold | 45 | -0.05 | -0.27 | 0.18 | 0.68 | 17 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.11 | 0.01 | 0.12 | 3 |  |
+| design | Carry | 45 | 0.47 | 0.15 | 0.79 | 0.00 | 38 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.35 | 0.58 | 0.00 | 3 | yes |
+| design | KDJ+RSI | 45 | 0.08 | -0.30 | 0.41 | 0.68 | 32 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.07 | 0.21 | 0.29 | 3 |  |
+| design | MACD | 45 | 0.06 | -0.24 | 0.36 | 0.69 | 27 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.05 | 0.18 | 0.27 | 3 |  |
+| design | SMA(20/50) | 45 | 0.03 | -0.16 | 0.22 | 0.75 | 27 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.07 | 0.13 | 0.53 | 3 |  |
+| design | TSMOM(12-1) | 45 | 0.10 | -0.10 | 0.29 | 0.32 | 30 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.02 | 0.17 | 0.01 | 3 |  |
+| design | TSMOM(L/S) | 45 | 0.40 | 0.02 | 0.77 | 0.03 | 39 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.28 | 0.52 | 0.00 | 3 |  |
+| design | ZMR | 45 | 0.20 | -0.19 | 0.54 | 0.30 | 35 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.08 | 0.30 | 0.00 | 3 |  |
+| holdout | B&H vol-target | 45 | -0.06 | -0.20 | 0.08 | 0.38 | 15 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.12 | -0.01 | 0.02 | 3 |  |
+| holdout | Buy&Hold | 45 | -0.10 | -0.29 | 0.07 | 0.25 | 14 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.17 | -0.04 | 0.00 | 3 |  |
+| holdout | Carry | 45 | 0.16 | -0.21 | 0.49 | 0.37 | 30 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.03 | 0.28 | 0.01 | 3 |  |
+| holdout | KDJ+RSI | 45 | -0.11 | -0.40 | 0.18 | 0.46 | 21 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.27 | 0.06 | 0.20 | 3 |  |
+| holdout | MACD | 45 | 0.04 | -0.23 | 0.32 | 0.78 | 20 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.11 | 0.19 | 0.60 | 3 |  |
+| holdout | SMA(20/50) | 45 | 0.24 | 0.02 | 0.46 | 0.04 | 33 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.12 | 0.36 | 0.00 | 3 |  |
+| holdout | TSMOM(12-1) | 45 | 0.04 | -0.15 | 0.23 | 0.68 | 28 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.05 | 0.14 | 0.39 | 3 |  |
+| holdout | TSMOM(L/S) | 45 | 0.42 | 0.09 | 0.78 | 0.02 | 41 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.33 | 0.50 | 0.00 | 3 |  |
+| holdout | ZMR | 45 | 0.03 | -0.29 | 0.34 | 0.85 | 25 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.09 | 0.15 | 0.62 | 3 |  |
+| q1_2024 | B&H vol-target | 45 | -0.30 | -0.48 | -0.12 | 0.00 | 14 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.66 | -0.03 | 0.06 | 3 | yes |
+| q1_2024 | Buy&Hold | 45 | -0.29 | -0.48 | -0.13 | 0.00 | 12 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.67 | -0.01 | 0.07 | 3 | yes |
+| q1_2024 | Carry | 45 | 1.02 | 0.17 | 1.87 | 0.02 | 32 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.34 | 1.65 | 0.00 | 3 |  |
+| q1_2024 | KDJ+RSI | 45 | 0.53 | -0.24 | 1.37 | 0.20 | 23 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.31 | 1.40 | 0.21 | 3 |  |
+| q1_2024 | MACD | 45 | 1.10 | 0.04 | 2.12 | 0.04 | 33 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.54 | 1.66 | 0.00 | 3 |  |
+| q1_2024 | SMA(20/50) | 45 | 0.50 | -0.23 | 1.19 | 0.19 | 28 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.02 | 1.04 | 0.06 | 3 |  |
+| q1_2024 | TSMOM(12-1) | 45 | -0.17 | -0.69 | 0.37 | 0.54 | 19 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.95 | 0.73 | 0.69 | 3 |  |
+| q1_2024 | TSMOM(L/S) | 45 | 1.07 | 0.71 | 1.53 | 0.00 | 38 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.46 | 1.75 | 0.00 | 3 | yes |
+| q1_2024 | ZMR | 45 | 0.53 | -0.25 | 1.41 | 0.22 | 28 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.34 | 1.41 | 0.23 | 3 |  |
+| reserve | B&H vol-target | 45 | 0.01 | -0.40 | 0.40 | 0.95 | 18 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.26 | 0.31 | 0.94 | 3 |  |
+| reserve | Buy&Hold | 45 | 0.02 | -0.41 | 0.42 | 0.92 | 18 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.24 | 0.32 | 0.87 | 3 |  |
+| reserve | Carry | 45 | -0.14 | -0.91 | 0.53 | 0.72 | 20 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.60 | 0.33 | 0.56 | 3 |  |
+| reserve | KDJ+RSI | 45 | -0.86 | -1.72 | 0.13 | 0.06 | 15 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -1.48 | -0.27 | 0.01 | 3 |  |
+| reserve | MACD | 45 | 0.66 | -0.10 | 1.60 | 0.13 | 31 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.17 | 1.16 | 0.01 | 3 |  |
+| reserve | SMA(20/50) | 45 | 0.54 | -0.06 | 1.28 | 0.10 | 32 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | 0.13 | 0.97 | 0.01 | 3 |  |
+| reserve | TSMOM(12-1) | 45 | -0.12 | -0.43 | 0.18 | 0.43 | 14 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.36 | 0.14 | 0.35 | 3 |  |
+| reserve | TSMOM(L/S) | 45 | 0.50 | -0.51 | 1.60 | 0.37 | 30 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.10 | 1.10 | 0.10 | 3 |  |
+| reserve | ZMR | 45 | -0.76 | -1.56 | 0.14 | 0.09 | 12 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -1.23 | -0.31 | 0.00 | 3 |  |
 
-#### paired Sharpe, agent minus baseline: all 60 (scheme column: clusters needs 5 groups)
+#### paired Sharpe, agent minus baseline: all 60 (primary: time-block; secondary clusters need 5 groups)
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+*2026-11-14 (review C8): time-block intervals, re-measured; see the dated note in the [Summary](#summary).*
 
-| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 60 | -0.06 | -0.15 | 0.04 | 0.20 | 18 | clusters | 5 |  |
-| design | Buy&Hold | 60 | -0.01 | -0.13 | 0.07 | 0.81 | 29 | clusters | 5 |  |
-| design | KDJ+RSI | 60 | 0.12 | -0.33 | 0.36 | 0.49 | 42 | clusters | 5 |  |
-| design | MACD | 60 | 0.12 | -0.04 | 0.26 | 0.12 | 36 | clusters | 5 |  |
-| design | SMA(20/50) | 60 | 0.06 | -0.11 | 0.16 | 0.43 | 34 | clusters | 5 |  |
-| design | ZMR | 60 | 0.24 | -0.11 | 0.45 | 0.15 | 47 | clusters | 5 |  |
-| holdout | B&H vol-target | 60 | -0.05 | -0.15 | 0.00 | 0.07 | 20 | clusters | 5 |  |
-| holdout | Buy&Hold | 60 | -0.08 | -0.15 | -0.03 | 0.00 | 15 | clusters | 5 | yes |
-| holdout | KDJ+RSI | 60 | -0.06 | -0.22 | 0.09 | 0.37 | 26 | clusters | 5 |  |
-| holdout | MACD | 60 | 0.11 | -0.04 | 0.37 | 0.17 | 35 | clusters | 5 |  |
-| holdout | SMA(20/50) | 60 | 0.25 | 0.01 | 0.43 | 0.04 | 47 | clusters | 5 |  |
-| holdout | ZMR | 60 | 0.09 | -0.06 | 0.23 | 0.20 | 37 | clusters | 5 |  |
-| q1_2024 | B&H vol-target | 60 | -0.17 | -0.69 | 0.27 | 0.36 | 18 | clusters | 5 |  |
-| q1_2024 | Buy&Hold | 60 | -0.15 | -0.68 | 0.28 | 0.40 | 16 | clusters | 5 |  |
-| q1_2024 | KDJ+RSI | 60 | 0.60 | -0.77 | 1.46 | 0.34 | 31 | clusters | 5 |  |
-| q1_2024 | MACD | 60 | 1.19 | 0.52 | 1.85 | 0.00 | 47 | clusters | 5 | yes |
-| q1_2024 | SMA(20/50) | 60 | 0.63 | 0.04 | 1.86 | 0.03 | 37 | clusters | 5 |  |
-| q1_2024 | ZMR | 60 | 0.67 | -0.74 | 1.63 | 0.29 | 38 | clusters | 5 |  |
-| reserve | B&H vol-target | 60 | 0.04 | -0.16 | 0.27 | 0.73 | 22 | clusters | 5 |  |
-| reserve | Buy&Hold | 60 | 0.04 | -0.15 | 0.27 | 0.66 | 21 | clusters | 5 |  |
-| reserve | KDJ+RSI | 60 | -0.79 | -1.55 | -0.25 | 0.01 | 19 | clusters | 5 | yes |
-| reserve | MACD | 60 | 0.63 | -0.55 | 1.26 | 0.26 | 39 | clusters | 5 |  |
-| reserve | SMA(20/50) | 60 | 0.75 | 0.36 | 1.38 | 0.00 | 40 | clusters | 5 | yes |
-| reserve | ZMR | 60 | -0.50 | -0.95 | 0.23 | 0.17 | 22 | clusters | 5 |  |
+| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 60 | -0.07 | -0.20 | 0.07 | 0.32 | 17 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.14 | 0.04 | 0.12 | 5 |  |
+| design | Buy&Hold | 60 | -0.03 | -0.25 | 0.21 | 0.85 | 27 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.12 | 0.07 | 0.53 | 5 |  |
+| design | Carry | 60 | 0.50 | 0.18 | 0.82 | 0.00 | 50 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | 0.03 | 0.76 | 0.02 | 5 | yes |
+| design | KDJ+RSI | 60 | 0.10 | -0.27 | 0.44 | 0.56 | 42 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.33 | 0.34 | 0.52 | 5 |  |
+| design | MACD | 60 | 0.11 | -0.19 | 0.39 | 0.47 | 37 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.05 | 0.25 | 0.13 | 5 |  |
+| design | SMA(20/50) | 60 | 0.04 | -0.14 | 0.22 | 0.65 | 35 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.12 | 0.15 | 0.50 | 5 |  |
+| design | TSMOM(12-1) | 60 | 0.11 | -0.07 | 0.29 | 0.25 | 40 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.02 | 0.22 | 0.07 | 5 |  |
+| design | TSMOM(L/S) | 60 | 0.40 | 0.06 | 0.72 | 0.02 | 52 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | 0.12 | 0.55 | 0.00 | 5 |  |
+| design | ZMR | 60 | 0.22 | -0.17 | 0.57 | 0.24 | 47 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.12 | 0.43 | 0.10 | 5 |  |
+| holdout | B&H vol-target | 60 | -0.07 | -0.23 | 0.09 | 0.40 | 20 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.13 | -0.01 | 0.03 | 5 |  |
+| holdout | Buy&Hold | 60 | -0.10 | -0.31 | 0.10 | 0.32 | 21 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.17 | -0.01 | 0.01 | 5 |  |
+| holdout | Carry | 60 | 0.19 | -0.14 | 0.50 | 0.23 | 40 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.07 | 0.36 | 0.08 | 5 |  |
+| holdout | KDJ+RSI | 60 | -0.09 | -0.38 | 0.19 | 0.54 | 26 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.24 | 0.07 | 0.24 | 5 |  |
+| holdout | MACD | 60 | 0.08 | -0.19 | 0.37 | 0.55 | 32 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.08 | 0.37 | 0.47 | 5 |  |
+| holdout | SMA(20/50) | 60 | 0.22 | 0.01 | 0.44 | 0.04 | 44 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | 0.02 | 0.42 | 0.03 | 5 |  |
+| holdout | TSMOM(12-1) | 60 | 0.03 | -0.14 | 0.21 | 0.73 | 35 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.08 | 0.14 | 0.53 | 5 |  |
+| holdout | TSMOM(L/S) | 60 | 0.37 | 0.07 | 0.70 | 0.02 | 54 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | 0.16 | 0.48 | 0.00 | 5 |  |
+| holdout | ZMR | 60 | 0.07 | -0.23 | 0.36 | 0.66 | 35 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.07 | 0.22 | 0.34 | 5 |  |
+| q1_2024 | B&H vol-target | 60 | -0.20 | -0.47 | 0.06 | 0.13 | 19 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.71 | 0.24 | 0.30 | 5 |  |
+| q1_2024 | Buy&Hold | 60 | -0.19 | -0.51 | 0.12 | 0.22 | 19 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.70 | 0.26 | 0.33 | 5 |  |
+| q1_2024 | Carry | 60 | 1.03 | 0.40 | 1.70 | 0.00 | 40 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.75 | 2.04 | 0.15 | 5 | yes |
+| q1_2024 | KDJ+RSI | 60 | 0.55 | -0.17 | 1.34 | 0.16 | 31 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.80 | 1.43 | 0.30 | 5 |  |
+| q1_2024 | MACD | 60 | 1.15 | 0.14 | 2.10 | 0.03 | 44 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | 0.48 | 1.84 | 0.00 | 5 |  |
+| q1_2024 | SMA(20/50) | 60 | 0.57 | -0.24 | 1.44 | 0.20 | 38 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.03 | 1.85 | 0.18 | 5 |  |
+| q1_2024 | TSMOM(12-1) | 60 | -0.25 | -0.65 | 0.17 | 0.24 | 23 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -1.07 | 0.60 | 0.46 | 5 |  |
+| q1_2024 | TSMOM(L/S) | 60 | 1.05 | 0.64 | 1.53 | 0.00 | 47 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | 0.40 | 2.24 | 0.04 | 5 | yes |
+| q1_2024 | ZMR | 60 | 0.63 | -0.12 | 1.56 | 0.16 | 38 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.77 | 1.59 | 0.25 | 5 |  |
+| reserve | B&H vol-target | 60 | -0.04 | -0.52 | 0.46 | 0.89 | 22 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.29 | 0.23 | 0.73 | 5 |  |
+| reserve | Buy&Hold | 60 | -0.03 | -0.54 | 0.48 | 0.91 | 22 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.28 | 0.23 | 0.79 | 5 |  |
+| reserve | Carry | 60 | 0.03 | -0.62 | 0.61 | 0.93 | 30 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.62 | 0.70 | 0.92 | 5 |  |
+| reserve | KDJ+RSI | 60 | -0.87 | -1.98 | 0.32 | 0.15 | 20 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -1.68 | -0.30 | 0.02 | 5 |  |
+| reserve | MACD | 60 | 0.56 | -0.06 | 1.34 | 0.13 | 40 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.62 | 1.16 | 0.20 | 5 |  |
+| reserve | SMA(20/50) | 60 | 0.66 | -0.05 | 1.53 | 0.10 | 44 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | 0.28 | 1.26 | 0.02 | 5 |  |
+| reserve | TSMOM(12-1) | 60 | 0.01 | -0.31 | 0.37 | 0.96 | 21 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -0.27 | 0.52 | 0.96 | 5 |  |
+| reserve | TSMOM(L/S) | 60 | 0.91 | 0.14 | 1.76 | 0.02 | 45 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | 0.18 | 2.08 | 0.07 | 5 |  |
+| reserve | ZMR | 60 | -0.58 | -1.42 | 0.38 | 0.21 | 20 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (clusters) | -1.04 | 0.14 | 0.06 | 5 |  |
 
 **Reading it.**
 
-- **Per instrument, out of sample, the desk is below buy & hold on Sharpe, and below the
-  volatility-targeted control too.** Core holdout median Sharpe 0.30 (desk) against 0.51
-  (buy & hold) and 0.52 (vol-target); paired mean difference desk − B&H -0.10 [-0.21, -0.00]
-  p 0.04 and desk − vol-target -0.11 [-0.21, -0.00] p 0.04, neither BH-significant. Extended
-  holdout: 0.25 against 0.39 and 0.27; desk − B&H -0.07 [-0.12, -0.02] p 0.01,
-  **BH-significant**; desk − vol-target -0.03 [-0.09, +0.02] p 0.19, not BH-significant. All
-  60 (clusters): desk − B&H -0.08 [-0.15, -0.03] p 0.00, **BH-significant**; desk −
-  vol-target -0.05 [-0.15, 0.00] p 0.07, not significant. Design period, core: 0.67 against
-  0.73 and 0.69; desk − B&H +0.06 [-0.06, +0.17] p 0.29, not BH-significant. This is stronger
-  than v0.7's "noise either way": on the names no rule was chosen on, the deficit against buy
-  & hold clears the BH bar.
-- **It beats the signal-flipping baselines on most slices**: holdout, all 60, desk − SMA
-  +0.25 [+0.01, +0.43] p 0.04 (not BH-flagged); extended holdout desk − SMA +0.28
-  [+0.16, +0.41] p 0.00, BH-significant; core holdout desk − MACD +0.21 [-0.01, +0.40] p 0.05,
-  not significant. KDJ+RSI is the exception on the holdout (core -0.04 [-0.25, +0.20] p 0.68,
-  not BH-significant).
-- **The reserve period (three months) says little**: core desk median 0.81 against 1.05 for
-  both controls, extended -0.11 against -0.08 (buy & hold) and -0.11 (vol-target); paired
-  against the controls, core desk − B&H -0.06 [-0.21, +0.12] p 0.44 and extended +0.08
-  [-0.14, +0.33] p 0.54, not significant.
-- **Q1 2024 stays a weak test**: core medians 2.79 (desk), 2.81 (vol-target) and 2.62 (buy &
-  hold) in one quarter of a rally.
+- **Per instrument, the desk shows no Sharpe edge over the volatility-targeted control.**
+  All 60, time-block: design desk − vol-target -0.07 [-0.20, +0.07] p 0.32 and desk − B&H
+  -0.03 [-0.25, +0.21] p 0.85; holdout -0.07 [-0.23, +0.09] p 0.40 and -0.10 [-0.31, +0.10]
+  p 0.32. None is BH-significant. Core holdout median Sharpe 0.35 (desk) against 0.51 (buy &
+  hold) and 0.52 (vol-target); extended holdout 0.18 against 0.39 and 0.27.
+- **On the design period the only BH-significant difference on all 60 is against Carry**,
+  +0.50 [+0.18, +0.82] p 0.00. TSMOM(L/S) +0.40 [+0.06, +0.72] p 0.02 is not BH-significant
+  on all 60 (it is on core 15: +0.40 [+0.11, +0.66] p 0.00).
+- **On the holdout nothing is BH-significant on any universe.** All 60: desk − TSMOM(L/S)
+  +0.37 [+0.07, +0.70] p 0.02 and desk − SMA +0.22 [+0.01, +0.44] p 0.04, neither flagged.
+- **Q1 2024: on the extended universe the desk is significantly worse than both controls**,
+  desk − vol-target -0.30 [-0.48, -0.12] p 0.00 and desk − B&H -0.29 [-0.48, -0.13] p 0.00,
+  BH-significant; core medians 2.67 (desk), 2.81 (vol-target) and 2.62 (buy & hold), one
+  quarter of a rally.
+- **The reserve period (three months) says little against the controls**: all 60 desk − B&H
+  -0.03 [-0.54, +0.48] p 0.91; the only BH flag is core desk − TSMOM(L/S) +2.15 [+1.13, +3.06].
 
 ### 3. Portfolio view: 15 equal-capital sleeves, with intervals
 
@@ -1936,151 +1991,153 @@ holdout.
 
 #### paired MDD%, agent minus control: core (15)
 
-| period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 15 | -2.58 | -6.49 | 0.88 | 0.17 | 9 | instruments | 2 |  |
-| design | Buy&Hold | 15 | -15.24 | -19.36 | -11.62 | 0.00 | 0 | instruments | 2 | yes |
-| holdout | B&H vol-target | 15 | -1.58 | -4.33 | 1.14 | 0.27 | 8 | instruments | 2 |  |
-| holdout | Buy&Hold | 15 | -14.24 | -20.41 | -8.70 | 0.00 | 2 | instruments | 2 | yes |
-| q1_2024 | B&H vol-target | 15 | -0.66 | -1.13 | -0.22 | 0.00 | 2 | instruments | 2 | yes |
-| q1_2024 | Buy&Hold | 15 | -1.75 | -2.52 | -1.03 | 0.00 | 0 | instruments | 2 | yes |
-| reserve | B&H vol-target | 15 | 0.16 | -0.34 | 0.75 | 0.58 | 7 | instruments | 2 |  |
-| reserve | Buy&Hold | 15 | -3.18 | -4.87 | -1.76 | 0.00 | 0 | instruments | 2 | yes |
+| period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 15 | -6.75 | -10.42 | -3.64 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
+| design | Buy&Hold | 15 | -19.49 | -25.41 | -14.26 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
+| holdout | B&H vol-target | 15 | -5.73 | -8.44 | -2.73 | 0.00 | 3 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
+| holdout | Buy&Hold | 15 | -18.31 | -27.63 | -9.99 | 0.00 | 2 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
+| q1_2024 | B&H vol-target | 15 | -0.93 | -1.63 | -0.38 | 0.00 | 1 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
+| q1_2024 | Buy&Hold | 15 | -2.03 | -3.07 | -1.06 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
+| reserve | B&H vol-target | 15 | -0.51 | -0.79 | -0.26 | 0.00 | 1 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
+| reserve | Buy&Hold | 15 | -3.85 | -6.02 | -2.05 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
 
 #### paired MDD%, agent minus control: extended (45)
 
-| period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 45 | -2.40 | -4.20 | -0.76 | 0.00 | 18 | instruments | 3 | yes |
-| design | Buy&Hold | 45 | -14.21 | -17.93 | -10.81 | 0.00 | 3 | instruments | 3 | yes |
-| holdout | B&H vol-target | 45 | -4.33 | -6.10 | -2.55 | 0.00 | 7 | instruments | 3 | yes |
-| holdout | Buy&Hold | 45 | -10.93 | -13.41 | -8.64 | 0.00 | 2 | instruments | 3 | yes |
-| q1_2024 | B&H vol-target | 45 | -0.49 | -0.76 | -0.26 | 0.00 | 7 | instruments | 3 | yes |
-| q1_2024 | Buy&Hold | 45 | -1.25 | -1.88 | -0.76 | 0.00 | 3 | instruments | 3 | yes |
-| reserve | B&H vol-target | 45 | -1.01 | -1.56 | -0.49 | 0.00 | 8 | instruments | 3 | yes |
-| reserve | Buy&Hold | 45 | -3.45 | -4.42 | -2.57 | 0.00 | 1 | instruments | 3 | yes |
+| period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 45 | -4.44 | -6.07 | -2.90 | 0.00 | 8 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
+| design | Buy&Hold | 45 | -16.37 | -20.46 | -12.63 | 0.00 | 3 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
+| holdout | B&H vol-target | 45 | -5.29 | -7.09 | -3.53 | 0.00 | 6 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
+| holdout | Buy&Hold | 45 | -11.76 | -14.50 | -9.13 | 0.00 | 4 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
+| q1_2024 | B&H vol-target | 45 | -0.67 | -0.98 | -0.38 | 0.00 | 4 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
+| q1_2024 | Buy&Hold | 45 | -1.43 | -2.24 | -0.82 | 0.00 | 3 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
+| reserve | B&H vol-target | 45 | -1.48 | -2.03 | -0.99 | 0.00 | 4 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
+| reserve | Buy&Hold | 45 | -3.92 | -5.12 | -2.85 | 0.00 | 1 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
 
 #### paired Calmar, agent minus control: core (15)
 
-| period | baseline | n | mean Calmar diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 15 | -0.09 | -0.25 | 0.10 | 0.32 | 6 | instruments | 2 |  |
-| design | Buy&Hold | 15 | 0.10 | -0.01 | 0.24 | 0.07 | 11 | instruments | 2 |  |
-| holdout | B&H vol-target | 15 | -0.08 | -0.23 | 0.07 | 0.29 | 4 | instruments | 2 |  |
-| holdout | Buy&Hold | 15 | 0.03 | -0.12 | 0.15 | 0.72 | 10 | instruments | 2 |  |
-| q1_2024 | B&H vol-target | 15 | 0.77 | -1.89 | 3.52 | 0.59 | 7 | instruments | 2 |  |
-| q1_2024 | Buy&Hold | 15 | -5.92 | -18.29 | 1.65 | 0.27 | 5 | instruments | 2 |  |
-| reserve | B&H vol-target | 15 | -0.20 | -1.12 | 0.73 | 0.64 | 4 | instruments | 2 |  |
-| reserve | Buy&Hold | 15 | -1.12 | -3.29 | 0.22 | 0.21 | 6 | instruments | 2 |  |
+| period | baseline | n | mean Calmar diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 15 | 0.01 | -0.15 | 0.18 | 0.92 | 8 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 |  |
+| design | Buy&Hold | 15 | 0.20 | 0.08 | 0.34 | 0.00 | 11 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 | yes |
+| holdout | B&H vol-target | 15 | 0.02 | -0.17 | 0.20 | 0.80 | 8 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 |  |
+| holdout | Buy&Hold | 15 | 0.12 | -0.11 | 0.33 | 0.28 | 10 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 |  |
+| q1_2024 | B&H vol-target | 15 | 0.10 | -2.49 | 2.69 | 0.94 | 7 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 |  |
+| q1_2024 | Buy&Hold | 15 | -6.59 | -19.86 | 1.53 | 0.25 | 5 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 |  |
+| reserve | B&H vol-target | 15 | -1.79 | -4.33 | -0.12 | 0.09 | 5 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 |  |
+| reserve | Buy&Hold | 15 | -2.70 | -7.81 | 0.24 | 0.19 | 6 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 2 |  |
 
 #### paired Calmar, agent minus control: extended (45)
 
-| period | baseline | n | mean Calmar diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 45 | -0.08 | -0.14 | -0.03 | 0.00 | 16 | instruments | 3 | yes |
-| design | Buy&Hold | 45 | 0.03 | -0.01 | 0.07 | 0.14 | 27 | instruments | 3 |  |
-| holdout | B&H vol-target | 45 | 0.07 | 0.00 | 0.14 | 0.05 | 29 | instruments | 3 |  |
-| holdout | Buy&Hold | 45 | 0.11 | 0.03 | 0.19 | 0.00 | 32 | instruments | 3 | yes |
-| q1_2024 | B&H vol-target | 45 | -0.45 | -1.45 | 0.55 | 0.36 | 21 | instruments | 3 |  |
-| q1_2024 | Buy&Hold | 45 | -0.19 | -1.17 | 0.75 | 0.70 | 22 | instruments | 3 |  |
-| reserve | B&H vol-target | 45 | -0.17 | -1.07 | 0.79 | 0.69 | 21 | instruments | 3 |  |
-| reserve | Buy&Hold | 45 | -0.14 | -1.03 | 0.84 | 0.73 | 23 | instruments | 3 |  |
+| period | baseline | n | mean Calmar diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 45 | -0.07 | -0.11 | -0.02 | 0.01 | 17 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 | yes |
+| design | Buy&Hold | 45 | 0.05 | -0.01 | 0.10 | 0.09 | 26 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 |  |
+| holdout | B&H vol-target | 45 | 0.05 | -0.03 | 0.14 | 0.21 | 26 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 |  |
+| holdout | Buy&Hold | 45 | 0.08 | -0.02 | 0.18 | 0.12 | 25 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 |  |
+| q1_2024 | B&H vol-target | 45 | -0.23 | -1.28 | 0.85 | 0.67 | 21 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 |  |
+| q1_2024 | Buy&Hold | 45 | 0.03 | -1.06 | 1.11 | 0.95 | 20 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 |  |
+| reserve | B&H vol-target | 45 | -0.26 | -1.12 | 0.75 | 0.57 | 21 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 |  |
+| reserve | Buy&Hold | 45 | -0.23 | -1.34 | 0.94 | 0.69 | 24 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 3 |  |
 
 #### summary by asset class: core (15) equity (10), holdout
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| holdout | AgenticTrader | 10 | 0.45 | 61.38 | 22.11 | 16.15 | 58.05 |
-| holdout | B&H vol-target | 10 | 0.53 | 74.27 | 21.28 | 17.02 | 63.28 |
+| holdout | AgenticTrader | 10 | 0.49 | 56.58 | 15.73 | 12.72 | 46.36 |
+| holdout | B&H vol-target | 10 | 0.53 | 74.27 | 21.27 | 17.02 | 63.28 |
 | holdout | Buy&Hold | 10 | 0.52 | 131.34 | 40.24 | 30.99 | 100.00 |
-| holdout | KDJ+RSI | 10 | 0.52 | 68.10 | 27.87 | 21.76 | 40.17 |
-| holdout | MACD | 10 | 0.43 | 41.38 | 34.03 | 21.46 | 50.40 |
+| holdout | Carry | 10 | 0.00 | 19.47 | 0.00 | 0.00 | 0.00 |
+| holdout | KDJ+RSI | 10 | 0.53 | 68.10 | 27.87 | 21.75 | 40.17 |
+| holdout | MACD | 10 | 0.43 | 41.38 | 34.04 | 21.45 | 50.40 |
 | holdout | SMA(20/50) | 10 | 0.33 | 69.82 | 30.36 | 21.54 | 60.37 |
+| holdout | TSMOM(12-1) | 10 | 0.52 | 56.73 | 19.11 | 14.93 | 49.63 |
+| holdout | TSMOM(L/S) | 10 | 0.06 | 28.19 | 20.01 | 12.80 | 43.93 |
 | holdout | ZMR | 10 | 0.25 | 48.25 | 24.60 | 20.07 | 33.13 |
 
 #### paired Sharpe by asset class, agent minus control: core (15) equity (10)
 
-| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 10 | -0.05 | -0.12 | 0.04 | 0.22 | 2 | instruments | 1 |  |
-| design | Buy&Hold | 10 | 0.02 | -0.03 | 0.07 | 0.49 | 5 | instruments | 1 |  |
-| holdout | B&H vol-target | 10 | -0.09 | -0.14 | -0.03 | 0.00 | 2 | instruments | 1 | yes |
-| holdout | Buy&Hold | 10 | -0.07 | -0.12 | -0.02 | 0.01 | 1 | instruments | 1 | yes |
-| q1_2024 | B&H vol-target | 10 | -0.16 | -0.25 | -0.07 | 0.00 | 2 | instruments | 1 | yes |
-| q1_2024 | Buy&Hold | 10 | -0.09 | -0.19 | 0.01 | 0.08 | 3 | instruments | 1 |  |
-| reserve | B&H vol-target | 10 | -0.07 | -0.23 | 0.11 | 0.43 | 3 | instruments | 1 |  |
-| reserve | Buy&Hold | 10 | -0.07 | -0.15 | 0.01 | 0.10 | 1 | instruments | 1 |  |
+| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 10 | -0.08 | -0.18 | 0.04 | 0.18 | 2 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.16 | 0.03 | 0.12 | 1 |  |
+| design | Buy&Hold | 10 | -0.01 | -0.28 | 0.27 | 0.97 | 6 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.09 | 0.08 | 0.92 | 1 |  |
+| holdout | B&H vol-target | 10 | -0.05 | -0.24 | 0.12 | 0.56 | 3 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.15 | 0.05 | 0.30 | 1 |  |
+| holdout | Buy&Hold | 10 | -0.04 | -0.31 | 0.24 | 0.81 | 5 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.18 | 0.10 | 0.63 | 1 |  |
+| q1_2024 | B&H vol-target | 10 | -0.25 | -0.60 | 0.09 | 0.15 | 3 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.47 | -0.07 | 0.01 | 1 |  |
+| q1_2024 | Buy&Hold | 10 | -0.18 | -0.54 | 0.29 | 0.38 | 5 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.45 | 0.05 | 0.14 | 1 |  |
+| reserve | B&H vol-target | 10 | -0.27 | -0.53 | 0.03 | 0.06 | 3 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.53 | -0.01 | 0.04 | 1 |  |
+| reserve | Buy&Hold | 10 | -0.27 | -0.63 | 0.15 | 0.17 | 3 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.52 | -0.05 | 0.02 | 1 |  |
 
 #### paired MDD% by asset class, agent minus control: core (15) equity (10)
 
-| period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 10 | 0.73 | -3.38 | 3.62 | 0.60 | 9 | instruments | 1 |  |
-| design | Buy&Hold | 10 | -18.29 | -22.98 | -14.60 | 0.00 | 0 | instruments | 1 | yes |
-| holdout | B&H vol-target | 10 | 0.83 | -1.63 | 3.21 | 0.50 | 7 | instruments | 1 |  |
-| holdout | Buy&Hold | 10 | -18.13 | -25.66 | -10.72 | 0.00 | 1 | instruments | 1 | yes |
-| q1_2024 | B&H vol-target | 10 | -0.55 | -1.11 | -0.03 | 0.03 | 2 | instruments | 1 |  |
-| q1_2024 | Buy&Hold | 10 | -2.19 | -3.15 | -1.26 | 0.00 | 0 | instruments | 1 | yes |
-| reserve | B&H vol-target | 10 | 0.47 | -0.23 | 1.27 | 0.21 | 7 | instruments | 1 |  |
-| reserve | Buy&Hold | 10 | -4.53 | -6.49 | -2.81 | 0.00 | 0 | instruments | 1 | yes |
+| period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 10 | -5.43 | -10.36 | -2.00 | 0.02 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| design | Buy&Hold | 10 | -24.46 | -30.93 | -18.79 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| holdout | B&H vol-target | 10 | -5.54 | -9.01 | -1.73 | 0.00 | 2 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| holdout | Buy&Hold | 10 | -24.51 | -35.93 | -13.30 | 0.00 | 1 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| q1_2024 | B&H vol-target | 10 | -0.97 | -1.94 | -0.26 | 0.03 | 1 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| q1_2024 | Buy&Hold | 10 | -2.61 | -3.96 | -1.32 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| reserve | B&H vol-target | 10 | -0.52 | -0.92 | -0.16 | 0.01 | 1 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| reserve | Buy&Hold | 10 | -5.52 | -8.13 | -3.30 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
 
 #### summary by asset class: core (15) fx (5), holdout
 
 | period | strategy | n | median Sharpe | mean CR% | mean MDD% | mean Vol% | mean Exp% |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| holdout | AgenticTrader | 5 | 0.06 | 25.82 | 8.00 | 6.17 | 65.43 |
-| holdout | B&H vol-target | 5 | -0.11 | 33.36 | 14.40 | 8.33 | 94.43 |
-| holdout | Buy&Hold | 5 | -0.05 | 32.54 | 14.45 | 8.20 | 92.17 |
-| holdout | KDJ+RSI | 5 | 0.21 | 27.40 | 16.05 | 8.98 | 101.75 |
-| holdout | MACD | 5 | 0.02 | 15.57 | 14.51 | 8.66 | 98.95 |
-| holdout | SMA(20/50) | 5 | 0.38 | 16.74 | 14.39 | 8.54 | 98.21 |
-| holdout | ZMR | 5 | -0.04 | 16.36 | 15.95 | 7.91 | 82.45 |
+| holdout | AgenticTrader | 5 | 0.06 | 24.37 | 8.10 | 6.20 | 66.02 |
+| holdout | B&H vol-target | 5 | -0.11 | 30.50 | 14.20 | 8.15 | 92.08 |
+| holdout | Buy&Hold | 5 | -0.05 | 29.15 | 14.01 | 7.86 | 88.30 |
+| holdout | Carry | 5 | 0.17 | 24.55 | 4.83 | 3.26 | 31.93 |
+| holdout | KDJ+RSI | 5 | 0.22 | 28.24 | 15.63 | 8.91 | 101.17 |
+| holdout | MACD | 5 | 0.02 | 15.43 | 14.51 | 8.66 | 98.88 |
+| holdout | SMA(20/50) | 5 | 0.38 | 16.24 | 14.43 | 8.50 | 97.82 |
+| holdout | TSMOM(12-1) | 5 | 0.21 | 27.24 | 12.03 | 8.32 | 96.70 |
+| holdout | TSMOM(L/S) | 5 | 0.22 | 23.55 | 7.10 | 6.32 | 65.42 |
+| holdout | ZMR | 5 | -0.04 | 16.62 | 15.82 | 7.90 | 82.26 |
 
 #### paired Sharpe by asset class, agent minus control: core (15) fx (5)
 
-| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 5 | 0.16 | -0.21 | 0.46 | 0.30 | 4 | instruments | 1 |  |
-| design | Buy&Hold | 5 | 0.15 | -0.21 | 0.44 | 0.34 | 4 | instruments | 1 |  |
-| holdout | B&H vol-target | 5 | -0.15 | -0.43 | 0.14 | 0.33 | 2 | instruments | 1 |  |
-| holdout | Buy&Hold | 5 | -0.16 | -0.45 | 0.13 | 0.23 | 2 | instruments | 1 |  |
-| q1_2024 | B&H vol-target | 5 | 0.72 | -1.32 | 2.75 | 0.54 | 2 | instruments | 1 |  |
-| q1_2024 | Buy&Hold | 5 | 0.72 | -1.32 | 2.75 | 0.54 | 2 | instruments | 1 |  |
-| reserve | B&H vol-target | 5 | -0.04 | -0.44 | 0.47 | 0.80 | 1 | instruments | 1 |  |
-| reserve | Buy&Hold | 5 | -0.04 | -0.44 | 0.47 | 0.80 | 1 | instruments | 1 |  |
+| period | baseline | n | mean Sharpe diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 5 | 0.18 | -0.40 | 0.80 | 0.56 | 4 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.16 | 0.47 | 0.25 | 1 |  |
+| design | Buy&Hold | 5 | 0.16 | -0.41 | 0.78 | 0.59 | 4 | time-block | 1564 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.18 | 0.45 | 0.30 | 1 |  |
+| holdout | B&H vol-target | 5 | -0.15 | -0.93 | 0.60 | 0.73 | 2 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.43 | 0.13 | 0.28 | 1 |  |
+| holdout | Buy&Hold | 5 | -0.17 | -0.94 | 0.57 | 0.68 | 2 | time-block | 1167 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.46 | 0.11 | 0.20 | 1 |  |
+| q1_2024 | B&H vol-target | 5 | 0.74 | -2.01 | 3.38 | 0.58 | 2 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -1.28 | 2.81 | 0.53 | 1 |  |
+| q1_2024 | Buy&Hold | 5 | 0.74 | -2.01 | 3.38 | 0.58 | 2 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -1.28 | 2.81 | 0.53 | 1 |  |
+| reserve | B&H vol-target | 5 | -0.04 | -2.48 | 2.80 | 0.98 | 1 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.46 | 0.48 | 0.86 | 1 |  |
+| reserve | Buy&Hold | 5 | -0.04 | -2.48 | 2.80 | 0.98 | 1 | time-block | 62 | cross-instrument, conditional on the realised time path (instruments resampled, days fixed) (instruments) | -0.46 | 0.48 | 0.86 | 1 |  |
 
 #### paired MDD% by asset class, agent minus control: core (15) fx (5)
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+| period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | days | secondary | secondary ci95 low | secondary ci95 high | secondary p | groups | significant |
+|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|:--|--:|--:|--:|--:|--:|
+| design | B&H vol-target | 5 | -9.38 | -14.64 | -5.74 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| design | Buy&Hold | 5 | -9.57 | -14.79 | -5.96 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| holdout | B&H vol-target | 5 | -6.10 | -10.30 | -1.55 | 0.00 | 1 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| holdout | Buy&Hold | 5 | -5.92 | -10.33 | -1.36 | 0.01 | 1 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| q1_2024 | B&H vol-target | 5 | -0.86 | -1.85 | -0.20 | 0.03 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| q1_2024 | Buy&Hold | 5 | -0.86 | -1.85 | -0.20 | 0.03 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| reserve | B&H vol-target | 5 | -0.49 | -0.64 | -0.38 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
+| reserve | Buy&Hold | 5 | -0.49 | -0.64 | -0.38 | 0.00 | 0 | cross-instrument (instruments); fallback: metric is not Sharpe |  |  |  |  |  | 1 | yes |
 
-| period | baseline | n | mean MDD% diff | ci95 low | ci95 high | p | wins | scheme | groups | significant |
-|:--|:--|--:|--:|--:|--:|--:|--:|:--|--:|--:|
-| design | B&H vol-target | 5 | -9.22 | -14.75 | -5.72 | 0.00 | 0 | instruments | 1 | yes |
-| design | Buy&Hold | 5 | -9.15 | -14.46 | -5.67 | 0.00 | 0 | instruments | 1 | yes |
-| holdout | B&H vol-target | 5 | -6.40 | -10.32 | -2.09 | 0.00 | 1 | instruments | 1 | yes |
-| holdout | Buy&Hold | 5 | -6.46 | -10.34 | -2.14 | 0.00 | 1 | instruments | 1 | yes |
-| q1_2024 | B&H vol-target | 5 | -0.88 | -1.82 | -0.25 | 0.00 | 0 | instruments | 1 | yes |
-| q1_2024 | Buy&Hold | 5 | -0.88 | -1.82 | -0.25 | 0.00 | 0 | instruments | 1 | yes |
-| reserve | B&H vol-target | 5 | -0.48 | -0.59 | -0.38 | 0.00 | 0 | instruments | 1 | yes |
-| reserve | Buy&Hold | 5 | -0.48 | -0.59 | -0.38 | 0.00 | 0 | instruments | 1 | yes |
-
-**Reading it.** "About half the drawdown" is true against plain buy & hold and is almost
-entirely volatility scaling. Core holdout mean MDD 17.40% (desk) against 31.64% (buy & hold)
-and 18.98% (vol-target); paired desk − B&H -14.24 points [-20.41, -8.70] p 0.00,
-BH-significant; desk − vol-target -1.58 [-4.33, +1.14] p 0.27, not significant. On the core
-*equities* — the names the rules were tuned on — the holdout drawdown is 22.11% against
-40.24% and 21.28%, and desk − vol-target is **+0.83 [-1.63, +3.21] p 0.50, not
-BH-significant**: the desk's drawdown is not lower than the fair control's there, and its
-Sharpe is below it (-0.09 [-0.14, -0.03] p 0.00, BH-significant). On the extended universe
-(45) the holdout is 15.46% against 26.39% and 19.79%; desk − vol-target -4.33 [-6.10, -2.55]
-p 0.00, BH-significant; desk − B&H -10.93 [-13.41, -8.64] p 0.00, BH-significant. **On FX
-the comparison has essentially no control:** the vol-target baseline sits at the shared 1.0
-position cap most of the time, so its rows coincide with buy & hold's — on the core FX pairs
-the q1_2024 and reserve rows against the two are identical, and the holdout rows are -6.40
-[-10.32, -2.09] against vol-target and -6.46 [-10.34, -2.14] against buy & hold. Calmar:
-extended holdout desk − B&H +0.11 [+0.03, +0.19] p 0.00, BH-significant; desk − vol-target
-+0.07 [0.00, +0.14] p 0.05, not flagged; core holdout desk − vol-target -0.08 [-0.23, +0.07]
-p 0.29 and desk − B&H +0.03 [-0.12, +0.15] p 0.72, neither BH-significant.
+**Reading it.** "About half the drawdown" is true against plain buy & hold and is mostly
+volatility scaling. These rows use the cross-instrument interval (fallback: metric is not
+Sharpe). Core holdout mean MDD 13.19% (desk) against 31.50% (buy & hold) and 18.92%
+(vol-target); paired desk − B&H -18.31 points [-27.63, -9.99] p 0.00, BH-significant; desk −
+vol-target -5.73 [-8.44, -2.73] p 0.00, BH-significant. On the ten core equities the holdout
+drawdown is 15.73% against 40.24% and 21.27%; desk − vol-target -5.54 [-9.01, -1.73] p 0.00,
+BH-significant, while the equity Sharpe difference against the control is -0.05 [-0.24,
++0.12] p 0.56, not significant. On the extended universe (45) the holdout is 14.42% against
+26.18% and 19.72%; desk − vol-target -5.29 [-7.09, -3.53] p 0.00, desk − B&H -11.76 [-14.50,
+-9.13] p 0.00, both BH-significant. **On FX the comparison has essentially no control:** the
+vol-target baseline sits at the shared 1.0 position cap most of the time, so its rows nearly
+coincide with buy & hold's (core FX holdout -6.10 [-10.30, -1.55] against vol-target and
+-5.92 [-10.33, -1.36] against buy & hold). Calmar on the holdout: core desk − vol-target +0.02
+[-0.17, +0.20] p 0.80 and desk − B&H +0.12 [-0.11, +0.33] p 0.28; extended +0.05 [-0.03,
++0.14] p 0.21 and +0.08 [-0.02, +0.18] p 0.12; none BH-significant.
 
 ### 6. Impact, and execution algorithms at the sleeve's capital
 

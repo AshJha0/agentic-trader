@@ -162,6 +162,11 @@ checkpoint header fingerprints the script, `backtest.py`, the package version, p
 period and trial list; a mismatch is refused. The final files are built only from the
 checkpoint, so a resumed run writes the same bytes as an uninterrupted one.
 
+The Yahoo run finished on 2026-11-13 on 3f80a69 and is published in
+[docs/results/v17_exec_lag](../results/v17_exec_lag/trials_lag_yahoo.md): no trial beats the
+control at any timing (all p > 0.16); the adopted FX carry delta is +0.038 / +0.022 / +0.015
+at lag 0 / lag 1 / next open.
+
 Two limits: the fingerprint does not cover the downloaded bars, so a Yahoo revision between
 sessions is not detected; and it hashes only the script and `backtest.py`, not every engine
 module. Before v0.19 the script wrote everything at the end and a kill lost the whole run.

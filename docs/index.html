@@ -460,7 +460,7 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
          against the control, not. On the 10 core equities the desk's drawdown is not lower than the
          control's (+0.83 [−1.63, +3.21] p 0.50, not BH-significant); on the 45 extended names it is (−4.33 [−6.10, −2.55] p 0.00,
          BH-significant). On FX the control sits at the shared position cap, so there is no control.</p>
-      <p class="caption"><em>Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.</em></p></div>
+      <p class="caption"><em>Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (results/v08_c8_fixed/tables_render.md) is in the <a href="evaluation/evaluation.md#summary">evaluation summary</a>: no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.</em></p></div>
     <div class="card"><h3>Retracted</h3>
       <p>The v0.7 stratified bootstrap (it could only narrow intervals; replaced by the cluster bootstrap);
          the v0.7 execution-algorithm magnitudes (every sleeve was charged √15× too much — re-measured at the
@@ -532,7 +532,7 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
      fundamentals and filings, FRED point-in-time FX carry and 3-month bill, costs included, rules frozen before the run.
      Portfolio = 15 equal-capital sleeves. Every cell is copied from <code>results/v08/tables.md</code>
      (sections "portfolio: holdout", "cash leg on vs off: holdout", "portfolio Sharpe difference: holdout").</p>
-  <p class="caption"><em>Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.</em></p>
+  <p class="caption"><em>Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (results/v08_c8_fixed/tables_render.md) is in the <a href="evaluation/evaluation.md#summary">evaluation summary</a>: no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.</em></p>
   <div class="tablewrap"><table class="results">
     <tr><th>Portfolio (holdout)</th><th>Sharpe</th><th>t(SR)</th><th>Return</th><th>Max DD</th><th>Exposure</th><th>Sharpe, cash leg off</th><th>Desk − this, Sharpe [95% CI], p</th></tr>
     <tr class="agent"><td>AgenticTrader v0.8</td><td>0.80</td><td>1.70</td><td>50.62%</td><td>7.80%</td><td>59.10%</td><td>1.04</td><td>—</td></tr>
@@ -607,7 +607,7 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
   <p class="caption">v0.8: holdout median Sharpe 0.25 vs 0.39, desk − buy &amp; hold −0.07 [−0.12, −0.02] p 0.01 and
      BH-significant — the "noise" reading of this table does not survive; the drawdown gap against the fair control
      does (−4.33 [−6.10, −2.55] p 0.00, BH-significant).</p>
-  <p class="caption"><em>Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.</em></p>
+  <p class="caption"><em>Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (results/v08_c8_fixed/tables_render.md) is in the <a href="evaluation/evaluation.md#summary">evaluation summary</a>: no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.</em></p>
   <p class="caption">The cross-sectional analyst under the v0.6 measurement (per-instrument Sharpe with the analyst
      minus without, both with EDGAR).</p>
   <div class="tablewrap"><table class="results">

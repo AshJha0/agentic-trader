@@ -1,10 +1,24 @@
 # Changelog
 
-## Unreleased
+## v0.19.0 — 2026-11-14: Round 3 part 3
 
-Round 3 part 3 (next): exec-lag (C7) tables from the final run, the C8 time-block evaluation pages,
-README/LEARN/COOKBOOK result numbers, and the first-pass re-score after the report's price-vintage
-fix. Then v0.19.0.
+Round 3 part 3. Paper engine re-frozen as `v09-engine-8` (C8 code fix) and `v09-engine-9` (version string only).
+
+- Evaluation significance (review C8): the paired Sharpe bootstrap now uses the time-block
+  interval as primary on every slice (returns are passed into the core, extended and all-60
+  slices) and daily series are excess over the cash rate, which removes the degenerate Carry
+  row. `docs/evaluation/evaluation.md` tables and headlines, README and the "Under review"
+  notes in LEARN and `docs/index.html` updated from `results/v08_c8_fixed/tables_render.md`
+  (run 2026-11-14 on bee26ad). Result: no Sharpe edge over the vol-target control.
+- Exec-lag (C7) final results published in `docs/results/v17_exec_lag` with a provenance note
+  (run on 3f80a69): no registered trial beats the vol-target control at lag 0, lag 1 or next
+  open (all p > 0.16); adopted FX carry delta +0.038 / +0.022 / +0.015. The "queued" mentions in
+  README, LEARN, `docs/operations/long_runs.md` and `docs/review/PLAN.md` are replaced.
+- `llm_study.py --report` checks stored closes against one common per-symbol adjustment factor
+  (2 tests). The stopped first pass is re-scored with the corrected scoring in
+  `docs/results/v17/llm_study_rescore_2026-11-14.md` (descriptive): `local_analysts` IC minus
+  rules -0.030 [-0.140, +0.089].
+- README "not known yet" list updated for the FX re-runs of rc3.
 
 ## v0.19.0rc3 — 2026-11-13 (release candidate): Round 3 part 2
 

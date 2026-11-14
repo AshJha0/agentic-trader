@@ -1,0 +1,79 @@
+{
+ "amendment": "v0.17 R1.1 / review Q1-B2, round 2 C7/D1: execution timing sensitivity of registered trials",
+ "provider": "yahoo",
+ "period": [
+  "2016-01-04",
+  "2021-12-31"
+ ],
+ "universe": "core",
+ "rebalance_every": 5,
+ "lags": [
+  0,
+  1,
+  "next_open"
+ ],
+ "fills": {
+  "0": "close",
+  "1": "close",
+  "next_open": "next_open"
+ },
+ "control": "B&H vol-target",
+ "statistic": "design-period equal-capital portfolio Sharpe",
+ "p_value": "paired circular block bootstrap (block 10, 5000 resamples, seed 0)",
+ "llm_provider": "offline (rules only)",
+ "trials": [
+  "v0.2 (control)",
+  "+ 12-1 month time-series momentum",
+  "+ trend-filtered reversal",
+  "+ abstain without data",
+  "+ no-trade band 0.10",
+  "+ intraday stops",
+  "signal changes (momentum + filter + abstain)",
+  "signal changes + band",
+  "all five",
+  "strategic equity weight 0.25",
+  "strategic equity weight 0.50",
+  "strategic equity weight 1.00",
+  "strategic 0.50 + band",
+  "strategic 0.50 + signal changes + band",
+  "strategic 0.50 + abstain + band",
+  "frozen v0.3: strategic 1.00 + band",
+  "+ alpha analyst (significance-gated, 900-day window)",
+  "FX carry / 4, cap 0.5",
+  "FX carry / 2, cap 0.5 (adopted)",
+  "FX carry / 4, cap 1.0",
+  "FX carry / 8, cap 0.25",
+  "+ cross-sectional alpha analyst",
+  "EDGAR filings off",
+  "track-record size cut off",
+  "aggressive stance at the cap (v0.8 rule)",
+  "news confidence by count (v0.8 rule)",
+  "strategic equity weight 0.8 (symmetric tilt)",
+  "v0.14 IC-weighted combination (window 504)",
+  "v0.14 IC combination + HMM regime conditioning",
+  "v0.14 IC combination + conformal interval sizing",
+  "v0.17 IC combination + conformal interval sizing (non-overlapping, vol-scaled calibration)"
+ ],
+ "checkpoint": "checkpoint_yahoo.jsonl",
+ "checkpoint_fingerprint": "02a0aab26a56fe0b6b89fd795fbde9e7e69e4755587c1a4ee90d9bde97431682",
+ "seconds_this_session": 7366.3,
+ "provenance": {
+  "version": "0.19.0rc2",
+  "git_commit": "e96f05334a2831196077015a64dbcab17f68a76c",
+  "git_dirty": false,
+  "quant_backend": "cpp",
+  "python": "3.12.10",
+  "implementation": "CPython",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "machine": "AMD64",
+  "executable": "C:\\Work\\Claude\\AgenticTrader\\.venv\\Scripts\\python.exe",
+  "dependencies": {
+   "numpy": "2.5.3",
+   "pandas": "3.0.6",
+   "anthropic": "1.8.0",
+   "yfinance": "1.7.0",
+   "pybind11": "3.1.0",
+   "hypothesis": "6.168.1"
+  }
+ }
+}

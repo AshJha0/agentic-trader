@@ -875,7 +875,7 @@ interval, p and Benjamini-Hochberg flag; the bootstrap resamples instruments
 first (`scheme=clusters`, 5 groups: core equities, core FX, extended equities, macro ETFs,
 FX crosses) on all 60 (section 33).
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+*Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (`results/v08_c8_fixed/tables_render.md`) is in the [evaluation summary](docs/evaluation/evaluation.md#summary): no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.*
 
 - **Per instrument, out of sample, the desk is below buy & hold on Sharpe, and below the
   vol-targeted control too.** Core 15 holdout median Sharpe 0.30 (desk) against 0.51 (buy &
@@ -987,7 +987,7 @@ weight, yet counted as two of the four confirmations. The rule stays because it 
 under the protocol as it stood; what changed is what the record says about how much it
 proved.
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+*Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (`results/v08_c8_fixed/tables_render.md`) is in the [evaluation summary](docs/evaluation/evaluation.md#summary): no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.*
 
 **Numbers** (v0.8; `results/v08/tables.md`, "summary: extended (45), holdout", the paired
 Sharpe and MDD% tables and "summary: extended (45), reserve"; `scheme=instruments`). The
@@ -1299,7 +1299,7 @@ the holdout, neither BH-significant — the noise floor the earlier concepts est
 measured. The contrast is the same comparison over all 60 under the cluster scheme (5
 groups): holdout desk minus buy & hold −0.08 [−0.15, −0.03], p 0.00, BH-significant.
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+*Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (`results/v08_c8_fixed/tables_render.md`) is in the [evaluation summary](docs/evaluation/evaluation.md#summary): no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.*
 
 **Instruments are not exchangeable, and the v0.7 fix made it worse.** The plain bootstrap
 assumes the instruments are independent draws. Nine rate, credit and commodity ETFs that
@@ -1571,7 +1571,7 @@ portfolio comparison lacked, all added in v0.8.
   equities (10) alone +0.83 [−1.63, +3.21], p 0.50, not BH-significant — the desk draws down no less than the
   fair control on the names it was tuned on (section 26).
 
-*Under review (2026-11-13, review C8): this significance used the cross-instrument interval; the time-block re-run is pending.*
+*Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (`results/v08_c8_fixed/tables_render.md`) is in the [evaluation summary](docs/evaluation/evaluation.md#summary): no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.*
 
 **What did not change.** The rules. No parameter of the desk was re-fitted to the new
 engine; the same frozen rules were re-measured under the corrected conventions, and
@@ -2307,7 +2307,7 @@ claimed 1.21. A signal equal to `sign(r[t+1])` has Sharpe above 10 at lag 0 and 
 absolute value at lag 1 (`tests/test_exec_lag.py`).
 
 **In the repo.** `agentic_trader/quant/pycore.py`, `cpp/src/backtest.cpp`,
-`scripts/v17_exec_lag.py` (registered trials at lag 0 and 1; queued). Evidence class: tested on
+`scripts/v17_exec_lag.py` (registered trials at lag 0, lag 1 and next open; run 2026-11-13: no trial beats the control at any timing, all p > 0.16; [results](docs/results/v17_exec_lag/trials_lag_yahoo.md)). Evidence class: tested on
 the numpy backend; the C++ parity cases run in CI.
 
 **Questions.**

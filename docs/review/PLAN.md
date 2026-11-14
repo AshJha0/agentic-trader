@@ -181,7 +181,7 @@ First review, quant, code and ops (Appendix B):
 | A5 financing on leverage | partial | 48534af: `financing.py` post-hoc; in-loop field in both engines is L9a |
 | A6 `var_next` drops NaNs | done | 48534af |
 | B1 purged CV is a relabel, low power | done | 2c7fdfb: NW t, MDE, `ic_blocked_folds`; table refresh needs Yahoo (queued) |
-| B2 no fill-lag sensitivity | queued-run | 1d353ea: `scripts/v17_exec_lag.py`; Yahoo run queued |
+| B2 no fill-lag sensitivity | done | `scripts/v17_exec_lag.py`; Yahoo run on 3f80a69 published in `docs/results/v17_exec_lag/` (no trial beats control at any timing, all p > 0.16) |
 | B3 DSR ignores pre-registry trials | partial | 2c7fdfb: estimate 64 and `selection_report(pre_registry_trials=)`; render scripts not wired |
 | B4 vintage is a hash | done | fd681be: raw bars and actions stored per session locally (replaced by N2q: not published) |
 | B5 fetch before the bar is final | partial | fd681be: finality assert and same-day revision alert; cron left at 21:30 UTC until revisions show on live runs |

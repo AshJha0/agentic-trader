@@ -664,9 +664,15 @@ def horizon_returns(rows: list[dict[str, Any]], prices: PriceFn,
                     horizon: int = HORIZON_DAYS) -> tuple[dict[tuple[str, str], float], list[str]]:
     """Forward simple return over ``horizon`` trading bars from each decision's close.
 
-    Returns ({(symbol, as_of): return}, problems). A decision whose stored close disagrees with
-    the provider's close on that date (relative 1e-6) is left out and listed in ``problems``:
-    the report is then reading a different price source from the run, and says so."""
+    Returns ({(symbol, as_of): return}, problems). Adjusted closes are vintage-dependent: a
+    provider that re-adjusts for a dividend or split paid after the run scales every earlier
+    close of that symbol by one common factor ``k``, which leaves the forward return unchanged.
+    So the check is on ``k = provider close / stored close``: every decision of a symbol must
+    share the same ``k`` (relative 1e-6, against the symbol's median ``k``). A decision whose
+    ``k`` differs is left out and listed in ``problems``: the report is then reading a
+    different price source (for example ``--data synthetic`` on rows the run made with Yahoo)
+    or a different adjustment basis from the run, and says so. Both ends of the return come
+    from the provider series, so both sit on the same basis."""
     from agentic_trader.nyse_calendar import is_session
     out: dict[tuple[str, str], float] = {}
     problems: list[str] = []
@@ -677,6 +683,7 @@ def horizon_returns(rows: list[dict[str, Any]], prices: PriceFn,
         # different cross-section from the rest (review C6, owner decision D1).
         k = sum(1 for _, x in stored if x == d)
         problems.append(f"{d}: not an NYSE session, design date dropped for all {k} names")
+    fetched: dict[str, list[tuple[str, float, float, float]]] = {}
     for (sym, d), close in sorted(stored.items()):
         if d in closed:
             continue
@@ -689,10 +696,19 @@ def horizon_returns(rows: list[dict[str, Any]], prices: PriceFn,
         if len(px) <= horizon:
             problems.append(f"{sym} {d}: fewer than {horizon} bars after the decision")
             continue
-        if not close or abs(float(px.iloc[0]) / float(close) - 1.0) > 1e-6:
-            problems.append(f"{sym} {d}: provider close {float(px.iloc[0]):.6g} != stored close {close}")
+        if not close or not float(close) > 0:
+            problems.append(f"{sym} {d}: no stored close")
             continue
-        out[(sym, d)] = float(px.iloc[horizon] / px.iloc[0] - 1.0)
+        p0 = float(px.iloc[0])
+        fetched.setdefault(sym, []).append((d, p0, float(close), float(px.iloc[horizon] / px.iloc[0] - 1.0)))
+    for sym, items in fetched.items():
+        k_ref = float(np.median([p0 / c for _, p0, c, _ in items]))
+        for d, p0, c, ret in items:
+            if abs((p0 / c) / k_ref - 1.0) > 1e-6:
+                problems.append(f"{sym} {d}: provider close {p0:.6g} != stored close {c:.6g} x "
+                                f"common factor {k_ref:.6g} (different source or adjustment basis)")
+                continue
+            out[(sym, d)] = ret
     return out, problems
 
 
