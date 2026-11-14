@@ -875,32 +875,34 @@ interval, p and Benjamini-Hochberg flag; the bootstrap resamples instruments
 first (`scheme=clusters`, 5 groups: core equities, core FX, extended equities, macro ETFs,
 FX crosses) on all 60 (section 33).
 
-*Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (`results/v08_c8_fixed/tables_render.md`) is in the [evaluation summary](docs/evaluation/evaluation.md#summary): no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.*
+*Updated 2026-11-14 (review C8): numbers re-measured with the time-block bootstrap; see the [evaluation summary](docs/evaluation/evaluation.md#summary).*
 
-- **Per instrument, out of sample, the desk is below buy & hold on Sharpe, and below the
-  vol-targeted control too.** Core 15 holdout median Sharpe 0.30 (desk) against 0.51 (buy &
-  hold) and 0.52 (vol-target); desk minus buy & hold −0.10 [−0.21, −0.00], p 0.04, not
-  BH-significant; desk minus vol-target −0.11 [−0.21, −0.00], p 0.04, not BH-significant.
-  Extended 45 holdout 0.25 against 0.39 and 0.27; desk minus buy & hold −0.07 [−0.12,
-  −0.02], p 0.01, BH-significant; desk minus vol-target −0.03 [−0.09, +0.02], p 0.19, not
-  BH-significant. All 60 (clusters): desk minus buy & hold −0.08 [−0.15, −0.03], p 0.00,
-  BH-significant; desk minus vol-target −0.05 [−0.15, 0.00], p 0.07, not BH-significant.
-  Design period, core: 0.67 against 0.73 and 0.69; desk minus buy & hold +0.06 [−0.06,
-  +0.17], p 0.29, not BH-significant. On the extended names, which no rule was tuned on, the Sharpe deficit against buy &
-  hold clears the BH bar, which is more than v0.7's "noise either way". The desk does beat
-  the signal-flipping baselines on most slices (holdout, all 60, desk minus SMA +0.25
-  [+0.01, +0.43], p 0.04, not BH-flagged; extended +0.28 [+0.16, +0.41], p 0.00,
-  BH-significant).
-- **Drawdown: lower than plain buy & hold's, and almost all of it is volatility scaling.**
-  Core holdout mean maximum drawdown 17.40% (desk) against 31.64% (buy & hold) and 18.98%
-  (vol-target); paired desk minus buy & hold −14.24 points [−20.41, −8.70], p 0.00,
-  BH-significant; desk minus vol-target −1.58 [−4.33, +1.14], p 0.27, not significant. On
-  the core equities (10), the names the desk was tuned on, holdout 22.11% against 40.24%
-  and 21.28%, desk minus vol-target +0.83 [−1.63, +3.21], p 0.50, not BH-significant: no
-  lower than the fair control's. On the extended 45 the gap against the fair control is real
-  but a fraction of the gap against buy & hold: 15.46% against 26.39% and 19.79%; desk minus
-  vol-target −4.33 [−6.10, −2.55], p 0.00, BH-significant; desk minus buy & hold −10.93
-  [−13.41, −8.64], p 0.00, BH-significant. On FX there is essentially no control: the
+- **Per instrument, the desk has no Sharpe edge over buy & hold or the vol-targeted
+  control, in or out of sample** (time-block bootstrap over shared days, re-measured
+  2026-11-14, `results/v08_c8_fixed/tables_render.md`). Core 15 holdout median Sharpe 0.35
+  (desk) against 0.51 (buy & hold) and 0.52 (vol-target); desk minus buy & hold −0.08
+  [−0.46, +0.27], p 0.65; desk minus vol-target −0.08 [−0.41, +0.21], p 0.60. Extended 45
+  holdout 0.18 against 0.39 and 0.27; desk minus buy & hold −0.10 [−0.29, +0.07], p 0.25;
+  desk minus vol-target −0.06 [−0.20, +0.08], p 0.38. All 60 holdout: desk minus buy & hold
+  −0.10 [−0.31, +0.10], p 0.32; desk minus vol-target −0.07 [−0.23, +0.09], p 0.40. Design
+  period, all 60: −0.03 [−0.25, +0.21] and −0.07 [−0.20, +0.07]. None is BH-significant. The
+  cross-instrument interval used before (instruments resampled, days fixed) was too narrow
+  and had made the extended-names deficit look BH-significant; with the shared days
+  resampled it is inside the noise. Against the signal-flipping baselines the desk is ahead
+  on most slices but rarely by a BH-significant margin (holdout, all 60, desk minus SMA +0.22
+  [+0.01, +0.44], p 0.04, not BH-significant); on all 60 the only BH-significant
+  design-period difference is against Carry, +0.50 [+0.18, +0.82].
+- **Drawdown: lower than plain buy & hold's, and most of it is volatility scaling.**
+  Core holdout mean maximum drawdown 13.19% (desk) against 31.50% (buy & hold) and 18.92%
+  (vol-target); paired desk minus buy & hold −18.31 points [−27.63, −9.99], p 0.00,
+  BH-significant; desk minus vol-target −5.73 [−8.44, −2.73], p 0.00, BH-significant. On
+  the core equities (10), the names the desk was tuned on, holdout 15.73% against 40.24%
+  and 21.27%, desk minus vol-target −5.54 [−9.01, −1.73], p 0.00, BH-significant. On the
+  extended 45 the gap against the fair control is real but a fraction of the gap against buy
+  & hold: 14.42% against 26.18% and 19.72%; desk minus vol-target −5.29 [−7.09, −3.53], p
+  0.00, BH-significant; desk minus buy & hold −11.76 [−14.50, −9.13], p 0.00, BH-significant.
+  Drawdown intervals use the cross-instrument scheme (the time-block bootstrap is for Sharpe
+  only). On FX there is essentially no control: the
   vol-target weight is capped at 1.0 and FX volatility sits below the 15% target nearly
   always, so the core FX (5) rows against vol-target and against buy & hold differ only in
   the second decimal (holdout −6.40 [−10.32, −2.09] against vol-target and −6.46 [−10.34,
@@ -987,24 +989,21 @@ weight, yet counted as two of the four confirmations. The rule stays because it 
 under the protocol as it stood; what changed is what the record says about how much it
 proved.
 
-*Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (`results/v08_c8_fixed/tables_render.md`) is in the [evaluation summary](docs/evaluation/evaluation.md#summary): no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.*
-
-**Numbers** (v0.8; `results/v08/tables.md`, "summary: extended (45), holdout", the paired
-Sharpe and MDD% tables and "summary: extended (45), reserve"; `scheme=instruments`). The
-extended universe is a harder test: on its holdout the desk's median Sharpe is 0.25
-against 0.39 for buy & hold and 0.27 for the vol-targeted control (core: 0.30 against 0.51
-and 0.52), the paired mean difference against buy & hold is −0.07 [−0.12, −0.02], p 0.01,
-BH-significant, and against vol-target −0.03 [−0.09, +0.02], p 0.19, not BH-significant; it
-beats buy & hold on 12 of 45 names. Its mean drawdown is 15.46% against 26.39% for plain buy
-& hold — the control section 26 explains is automatic to beat — and 19.79% for the fair
-control, a paired −4.33 points [−6.10, −2.55], p 0.00, BH-significant, against −10.93
-[−13.41, −8.64] for buy & hold. The reserve period says little: core median 0.81 against
-1.05 for both controls, extended −0.11 against −0.08 and −0.11, with paired differences
-whose intervals cover zero (core desk minus buy & hold −0.06 [−0.21, +0.12], p 0.44;
-extended +0.08 [−0.14, +0.33], p 0.54; neither BH-significant). The story from the core
-universe (no Sharpe edge per instrument, a drawdown that is mostly volatility scaling)
-survives on the extended names, which no rule was tuned on, and gets one notch worse: there the Sharpe deficit against buy
-& hold clears the BH bar.
+**Numbers** (re-measured 2026-11-14, `results/v08_c8_fixed/tables_render.md`, "summary:
+extended (45), holdout", the paired Sharpe and MDD% tables and "summary: extended (45),
+reserve"; Sharpe intervals by time-block bootstrap, drawdown intervals cross-instrument). On
+the extended holdout the desk's median Sharpe is 0.18 against 0.39 for buy & hold and 0.27
+for the vol-targeted control (core: 0.35 against 0.51 and 0.52); the paired mean difference
+against buy & hold is −0.10 [−0.29, +0.07], p 0.25, and against vol-target −0.06 [−0.20,
++0.08], p 0.38; neither is BH-significant. Its mean drawdown is 14.42% against 26.18% for
+plain buy & hold — the control section 26 explains is automatic to beat — and 19.72% for the
+fair control, a paired −5.29 points [−7.09, −3.53], p 0.00, BH-significant, against −11.76
+[−14.50, −9.13] for buy & hold. The reserve period says little: core median 0.68 against
+1.05 for both controls, extended −0.17 against −0.09 and −0.11, with paired differences
+whose intervals cover zero (core desk minus buy & hold −0.19 [−1.13, +0.86], p 0.69;
+extended +0.02 [−0.41, +0.42], p 0.92). The story from the core universe (no Sharpe edge
+per instrument, a drawdown that is mostly volatility scaling) holds on the extended names,
+which no rule was tuned on.
 
 **Questions.**
 - The reserve period grows every month, but every bar of it up to 2026-09-25 has been
@@ -1299,7 +1298,7 @@ the holdout, neither BH-significant — the noise floor the earlier concepts est
 measured. The contrast is the same comparison over all 60 under the cluster scheme (5
 groups): holdout desk minus buy & hold −0.08 [−0.15, −0.03], p 0.00, BH-significant.
 
-*Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (`results/v08_c8_fixed/tables_render.md`) is in the [evaluation summary](docs/evaluation/evaluation.md#summary): no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.*
+*Since 2026-11-14 (review C8) the primary Sharpe interval is a time-block bootstrap over shared days, which carries common shocks across all instruments; the cluster bootstrap below is the secondary column. See the [evaluation summary](docs/evaluation/evaluation.md#summary).*
 
 **Instruments are not exchangeable, and the v0.7 fix made it worse.** The plain bootstrap
 assumes the instruments are independent draws. Nine rate, credit and commodity ETFs that
@@ -1565,13 +1564,14 @@ portfolio comparison lacked, all added in v0.8.
   not exist it says so: on FX the vol-target weight `min(1.0, 0.15 / vol)` is 1.0 whenever
   trailing volatility is below 15%, which for the major pairs is nearly always, so the
   "control" row equals buy & hold and the drawdown comparison has no control there.
-  Measured ("paired MDD%, agent minus control"): core 15 holdout desk minus vol-target
-  −1.58 [−4.33, +1.14], p 0.27, not BH-significant, against −14.24 [−20.41, −8.70] for buy
-  & hold; extended 45 holdout −4.33 [−6.10, −2.55], p 0.00, BH-significant; on the core
-  equities (10) alone +0.83 [−1.63, +3.21], p 0.50, not BH-significant — the desk draws down no less than the
-  fair control on the names it was tuned on (section 26).
+  Measured ("paired MDD%, agent minus control", re-measured 2026-11-14 in
+  `results/v08_c8_fixed/tables_render.md`): core 15 holdout desk minus vol-target −5.73
+  [−8.44, −2.73], p 0.00, BH-significant, against −18.31 [−27.63, −9.99] for buy & hold;
+  extended 45 holdout −5.29 [−7.09, −3.53], p 0.00, BH-significant; on the core equities (10)
+  alone −5.54 [−9.01, −1.73], p 0.00, BH-significant. (The v0.8 run printed −1.58 and +0.83
+  for core and core equities; the re-run on the C8-fixed code gives the numbers above.)
 
-*Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (`results/v08_c8_fixed/tables_render.md`) is in the [evaluation summary](docs/evaluation/evaluation.md#summary): no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.*
+*The toggle comparisons below are unchanged by the 2026-11-14 C8 fix; the per-instrument headline is in the [evaluation summary](docs/evaluation/evaluation.md#summary).*
 
 **What did not change.** The rules. No parameter of the desk was re-fitted to the new
 engine; the same frozen rules were re-measured under the corrected conventions, and

@@ -99,16 +99,16 @@ Every number below is copied from `results/v08/tables.md`, rendered from `result
 paired tables the mean difference with its 95% bootstrap interval (scheme `instruments` on
 core and extended, `clusters` on all 60), its p-value and the Benjamini-Hochberg flag.
 
-Out of sample the rule-based desk is below buy and hold on Sharpe per instrument, and below
-the volatility-targeted control: core holdout median 0.30 against 0.51 (buy and hold) and
-0.52 (vol-target); paired desk minus buy and hold -0.10 [-0.21, -0.00] p 0.04, not
-BH-significant; on the extended universe -0.07 [-0.12, -0.02] p 0.01, BH-significant; on all
-60 -0.08 [-0.15, -0.03] p 0.00, BH-significant (clusters). Its drawdown is about half of
-plain buy and hold's (core holdout mean 17.40% against 31.64%; paired -14.24 points [-20.41,
--8.70] p 0.00, BH-significant) but not below the fair control's on the core names: against
-the vol-targeted control -1.58 [-4.33, +1.14] p 0.27 on core, not BH-significant, and
-+0.83 [-1.63, +3.21] p 0.50, not BH-significant, on the ten core equities, the names it was tuned on; on the
-extended universe it is below it, -4.33 [-6.10, -2.55] p 0.00, BH-significant; on FX the
+Out of sample the rule-based desk has no Sharpe edge over buy and hold or the
+volatility-targeted control per instrument (re-measured 2026-11-14 with a time-block
+bootstrap over shared days): core holdout median 0.35 against 0.51 (buy and hold) and 0.52
+(vol-target); paired desk minus buy and hold -0.08 [-0.46, +0.27] p 0.65; on the extended
+universe -0.10 [-0.29, +0.07] p 0.25; on all 60 -0.10 [-0.31, +0.10] p 0.32; none
+BH-significant. Its drawdown is well under half of plain buy and hold's (core holdout mean
+13.19% against 31.50%; paired -18.31 points [-27.63, -9.99] p 0.00, BH-significant) and also
+below the fair control's: against the vol-targeted control -5.73 [-8.44, -2.73] p 0.00 on
+core, -5.54 [-9.01, -1.73] p 0.00 on the ten core equities and -5.29 [-7.09, -3.53] p 0.00
+on the extended universe, all BH-significant; on FX the
 control coincides with buy and hold. As a 15-sleeve equal-capital portfolio it beats
 neither: holdout Sharpe 0.80 against 0.86 (buy and hold) and 0.99
 (vol-target); paired block bootstrap over days, desk minus buy and hold -0.06 [-0.41,

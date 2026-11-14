@@ -485,7 +485,9 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
-## v0.19 (release candidates v0.19.0rc1 and rc2, 2026-11-12): long runs that survive, skips that are counted
+## v0.19 (v0.19.0, 2026-11-14; release candidates rc1 to rc3, 2026-11-12/13): long runs that survive, skips that are counted
+
+The final release adds the C8 re-measurement (time-block bootstrap on every slice; no Sharpe edge over the vol-target control), the execution-lag results and the first-pass re-score; see the [changelog](CHANGELOG.md).
 
 Evidence class: code and offline tests (fakes only); no model was run. Running study chains
 keep their start-of-run code.
@@ -569,12 +571,12 @@ ranking of names. The Sharpe ratios are noisier still (local_analysts minus cont
   (the technical analyst on all 300 decisions, the FX macro analyst on 100, sentiment on 4);
   news and fundamentals ran on rules throughout. "0.0% fallback" counts failed model calls,
   not this. The result speaks to the technical and FX macro analysts only.
-- **The scoring has since been corrected and this table has not been re-scored.** It ranks
-  equities and FX pairs together, and two of the 20 design dates (2016-01-01, 2017-11-23) are
-  NYSE closures on which only the five FX pairs were scored; the report's reason for the 20
-  left-out decisions ("without 20 forward bars") was wrong. From 2026-11-12 the report ranks
-  within asset class and drops closed dates for every name. The re-scored table follows when
-  the remaining cells finish.
+- **The scoring has since been corrected.** The table above ranks equities and FX pairs
+  together, and two of the 20 design dates (2016-01-01, 2017-11-23) are NYSE closures on
+  which only the five FX pairs were scored. Re-scored on 2026-11-14 with ranking within asset
+  class and closed dates dropped for every name, the IC difference for `local_analysts` is
+  −0.030 [−0.140, +0.089], still descriptive
+  ([re-score](docs/results/v17/llm_study_rescore_2026-11-14.md)).
 - **The study was stopped on 2026-11-12.** `local_all` reached 59 of 300 decisions and
   `critic_on` never started; both would have measured the desk as it was before that day's
   critic and weight-bound fixes ([status](docs/evaluation/v16_prereg_status_2026-11-12.md)).
