@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.19.1 — 2026-11-14: quality
+
+No new results. Paper engine re-frozen as `v09-engine-11` (formatting only) and `v09-engine-12`
+(`study_lineage.stamp` adds `data_provider`).
+
+- Whole repo formatted with `ruff format` in one commit, listed in `.git-blame-ignore-revs`
+  (use `git config blame.ignoreRevsFile .git-blame-ignore-revs`). Five multi-line imports had
+  their `noqa` comments moved back to the opening line.
+- `scripts/llm_study.py`: rows record `data_provider`; `--report` reads it and prints it, so
+  `--data` is only needed for rows written before v0.19.1. A `--data` that disagrees with the
+  rows, or rows recording two providers, is refused.
+
 ## v0.19.0 — 2026-11-14: Round 3 part 3
 
 Round 3 part 3. Paper engine re-frozen as `v09-engine-8` (C8 code fix) and `v09-engine-9` (version string only). Then `v09-engine-10` (agent knowledge doc text only).

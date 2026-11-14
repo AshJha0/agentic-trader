@@ -2854,6 +2854,11 @@ python scripts/llm_study.py --report --out results/p2/first_pass.jsonl --data ya
 python scripts/llm_study.py --report --out results/p2/first_pass.jsonl --data yahoo --horizon 10
 ```
 
+Since v0.19.1 each row records `data_provider` (copied from the run header by
+`study_lineage.stamp`), and `--report` prices returns with that provider, printing it at the top.
+`--data` is then optional; given, it must match the rows or the report refuses. The first-pass
+file predates the field, so it still needs `--data yahoo` as above.
+
 The first table is the primary read: per-date cross-sectional rank IC of `target_weight`
 against the 20-bar forward return, the hit rate, and IC minus the `rules` cell, each with a 95%
 date bootstrap. The Sharpe table below it is secondary. `--data` must be the provider the run
