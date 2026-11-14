@@ -2,9 +2,17 @@
 
 ## Unreleased
 
-Round 3 part 3 (next): exec-lag (C7) tables from the final run, the C8 time-block evaluation pages,
-README/LEARN/COOKBOOK result numbers, and the first-pass re-score after the report's price-vintage
-fix. Then v0.19.0.
+Round 3 part 3:
+
+- Exec-lag (C7) final results published in `docs/results/v17_exec_lag` with a provenance note
+  (run on 3f80a69): no registered trial beats the vol-target control at lag 0, lag 1 or next
+  open (all p > 0.16); adopted FX carry delta +0.038 / +0.022 / +0.015. The "queued" mentions in
+  README, LEARN, `docs/operations/long_runs.md` and `docs/review/PLAN.md` are replaced.
+- `llm_study.py --report` checks stored closes against one common per-symbol adjustment factor
+  (2 tests). The stopped first pass is re-scored with the corrected scoring in
+  `docs/results/v17/llm_study_rescore_2026-11-14.md` (descriptive): `local_analysts` IC minus
+  rules -0.030 [-0.140, +0.089].
+- README "not known yet" list updated for the FX re-runs of rc3.
 
 ## v0.19.0rc3 — 2026-11-13 (release candidate): Round 3 part 2
 

@@ -38,14 +38,15 @@ with no desk beside every claim).
   time on one laptop and the owner stopped the study the same day
   ([status](docs/evaluation/v16_prereg_status_2026-11-12.md)). There is no pre-registered
   finding about the model, only a signed design.
-- A lag-1 version of every published Sharpe. The registered rules trials were re-run at lag 0,
+- A lag-1 version of most published Sharpes. The registered rules trials were re-run at lag 0,
   lag 1 and next open (2026-11-13): no trial beats the vol-target control at any timing (all
   p > 0.16), so the conclusions do not depend on the same-close fill
   ([exec-lag results](docs/results/v17_exec_lag/trials_lag_yahoo.md)). The other published
   Sharpes still fill at the close the signal saw.
-- Corrected FX tables. FX P&L was converted to the USD account on 2026-11-12 and the
-  published FX numbers have not been re-run
-  ([changelog](CHANGELOG.md)).
+- Corrected FX numbers everywhere. FX P&L was converted to the USD account on 2026-11-12. The
+  v0.9 design, v0.9 holdout and v0.12 pages were rebuilt from clean re-runs on 3f80a69 and no
+  headline conclusion changed (every desk-minus-control interval still contains zero); other
+  pages that hold FX books have not been re-run ([changelog](CHANGELOG.md)).
 - Anything the forward paper record could decide. It has run daily since 2026-09-29
   ([results/paper/](https://github.com/AshJha0/agentic-trader/tree/paper-ledger/results/paper)); its pre-registered look at about 3,600 sessions
   (2040) has 50 % power for a 0.2 Sharpe difference, and 80 % power would need about 29 years
