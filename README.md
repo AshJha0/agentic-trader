@@ -484,6 +484,13 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
+## v0.19.1 (2026-11-14): quality, no new results
+
+The repo is formatted with `ruff format` (one commit, listed in `.git-blame-ignore-revs`);
+four modules gained offline tests (`cli/evaluate`, `cli/decisions`, `agentic/redteam_v2`,
+`data/__init__`, each at 97 % or more in their own test runs); `scripts/llm_study.py` rows now
+record `data_provider` and `--report` reads it. Details in the CHANGELOG.
+
 ## v0.19 (v0.19.0, 2026-11-14; release candidates rc1 to rc3, 2026-11-12/13): long runs that survive, skips that are counted
 
 The final release adds the C8 re-measurement (time-block bootstrap on every slice; no Sharpe edge over the vol-target control), the execution-lag results and the first-pass re-score; see the [changelog](CHANGELOG.md).

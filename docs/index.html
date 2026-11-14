@@ -100,9 +100,9 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 <div class="wrap">
 
 <!-- current state -->
-  <h2 id="now">Where the project stands (v0.19.0)</h2>
+  <h2 id="now">Where the project stands (v0.19.1)</h2>
   <div class="state">
-    <p>The current release is v0.19.0 (2026-11-14; <code>pyproject.toml</code>); the work since v0.16.0 is in the
+    <p>The current release is v0.19.1 (2026-11-14; <code>pyproject.toml</code>; a quality release with no new results on top of v0.19.0); the work since v0.16.0 is in the
        <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a> under v0.19.0 and its release candidates rc1 to rc3 (they include the v0.17 and v0.18 work, which was never tagged on its own). v0.19.0 re-measures the per-instrument evaluation with a time-block bootstrap (no Sharpe edge over the vol-target control), publishes the execution-lag results (no trial beats the control at any timing) and re-scores the stopped first pass of the LLM study (descriptive). The robustness round
        makes long local-model runs survivable: resumable checkpoints, bounded retries, and provider misses
        recorded as counted skips, with a cell that skips more than 10% of its units ruled inadmissible by the
