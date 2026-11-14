@@ -192,6 +192,6 @@ def test_horizon_metrics_work_on_stored_first_pass_rows(tmp_path: Path, capsys: 
     out = tmp_path / "r.jsonl"
     cfg = make_config(study.STUDY_BASE)
     study.run_study(["AAPL", "MSFT", "SPY"], study.design_dates(20)[1:5], 1, [study.CELLS[0]], cfg, out, None, lambda s: None)
-    assert study.main(["--report", "--out", str(out)]) == 0
+    assert study.main(["--report", "--data", "synthetic", "--out", str(out)]) == 0
     text = capsys.readouterr().out
     assert "Descriptive (per decision, 20-bar forward return" in text and "Left out" not in text

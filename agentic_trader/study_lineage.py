@@ -175,6 +175,8 @@ def stamp(row: dict[str, Any], header: dict[str, Any]) -> dict[str, Any]:
     row["header_id"] = header.get("header_id")
     row["git_sha"] = header.get("git_sha")
     row["model_digest"] = header.get("model_digest")
+    if header.get("data") is not None:  # v0.19.1: the price source, so --report can read it back
+        row["data_provider"] = header["data"]
     return row
 
 

@@ -211,7 +211,7 @@ def test_main_refuses_without_server_and_reports(tmp_path: Path, capsys: pytest.
     assert "refusing --smoke" in capsys.readouterr().err
     out = tmp_path / "r.jsonl"
     study.run_study(NAMES, study.design_dates(20)[1:4], 1, [_cell("rules")], _cfg(), out, None, lambda s: None)
-    assert study.main(["--report", "--out", str(out)]) == 0
+    assert study.main(["--report", "--data", "synthetic", "--out", str(out)]) == 0
     assert "| rules |" in capsys.readouterr().out
 
 
@@ -229,3 +229,31 @@ def test_skip_cap_makes_a_cell_inadmissible(tmp_path: Path) -> None:
     other = [{"cell": "local_all", "skipped": True}]  # another cell's skip: ignored
     assert study.cell_metrics(rows, _cfg(), skips=other)[0]["admissible"]
     assert "| skipped |" in study.render_metrics([m], [])
+
+
+def test_report_provider_reads_rows_and_refuses_mismatch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from agentic_trader.study_lineage import stamp
+
+    assert stamp({}, {"data": "yahoo"})["data_provider"] == "yahoo"
+    assert "data_provider" not in stamp({}, {})
+    rp = study.report_provider
+    assert rp([{"data_provider": "yahoo"}], None) == "yahoo"
+    assert rp([{"data_provider": "yahoo"}], "yahoo") == "yahoo"
+    assert rp([{}], "csv") == "csv"
+    for rows, flag, msg in [
+        ([{"data_provider": "yahoo"}], "synthetic", "does not match"),
+        ([{"data_provider": "yahoo"}, {"data_provider": "csv"}], None, "more than one"),
+        ([{"data_provider": "yahoo"}, {}], None, "give --data"),
+        ([], None, "give --data"),
+    ]:
+        with pytest.raises(ValueError, match=msg):
+            rp(rows, flag)
+    out = tmp_path / "r.jsonl"
+    study.run_study(NAMES, study.design_dates(20)[1:4], 1, [_cell("rules")], _cfg(), out, None, lambda s: None)
+    with pytest.raises(SystemExit):
+        study.main(["--report", "--out", str(out)])
+    assert "give --data" in capsys.readouterr().err
+    rows = [dict(json.loads(line), data_provider="synthetic") for line in out.read_text().splitlines() if line.strip()]
+    out.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert study.main(["--report", "--out", str(out)]) == 0
+    assert "Data provider: synthetic" in capsys.readouterr().out

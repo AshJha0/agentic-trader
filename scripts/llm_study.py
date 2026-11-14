@@ -396,6 +396,25 @@ def _key(row: dict[str, Any]) -> tuple[str, int, str, str]:
     return (row["cell"], int(row["seed"]), row["symbol"], row["as_of"])
 
 
+def report_provider(rows: list[dict[str, Any]], flag: str | None) -> str:
+    """The data provider ``--report`` should price returns with (v0.19.1).
+
+    Rows written since v0.19.1 carry ``data_provider`` (from the run header). ``--data`` stays as
+    an override but must agree with every recorded value; rows without the field (older runs)
+    need ``--data`` to be given. Raises ``ValueError`` with the reason otherwise."""
+    recorded = {r.get("data_provider") for r in rows}
+    known = recorded - {None}
+    if len(known) > 1:
+        raise ValueError(f"rows record more than one data provider: {sorted(known)}")
+    if flag is not None and known and flag not in known:
+        raise ValueError(f"--data {flag} does not match the provider the rows record ({next(iter(known))})")
+    if flag is not None:
+        return flag
+    if None in recorded or not known:
+        raise ValueError("some rows do not record their data provider (written before v0.19.1); give --data")
+    return next(iter(known))
+
+
 def load_rows(path: Path) -> list[dict[str, Any]]:
     """Decision rows of a checkpoint file; a torn last line (killed mid-write) is ignored."""
     rows = []
@@ -1150,7 +1169,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--horizon", type=int, default=HORIZON_DAYS, help="--report: forward-return horizon in trading bars for IC and hit rate"
     )
-    ap.add_argument("--data", default="synthetic", help="data provider (synthetic | yahoo | csv)")
+    ap.add_argument(
+        "--data",
+        default=None,
+        help="data provider (synthetic | yahoo | csv; default synthetic). --report reads it from the rows; "
+        "giving it there is an override that must match",
+    )
     ap.add_argument("--model", help="Ollama model name (--live, --smoke)")
     ap.add_argument("--url", help="Ollama URL (default config local_llm_url)")
     ap.add_argument("--out", default="results/llm_study.jsonl")
@@ -1162,6 +1186,14 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING)
     names = [n.strip() for n in args.names.split(",") if n.strip()]
+    report_rows: list[dict[str, Any]] = []
+    if args.report:
+        report_rows = load_rows(Path(args.out))
+        try:
+            args.data = report_provider(report_rows, args.data)
+        except ValueError as e:
+            ap.error(str(e))
+    args.data = args.data or "synthetic"
     config = make_config(STUDY_BASE, data_provider=args.data, local_llm_temperature=args.temperature)
     cells = CELLS
     if args.first_pass:
@@ -1189,7 +1221,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"- {r['cell']}: {wall_clock(r['calls_per_decision'], r['decisions'])}")
         return 0
     if args.report:
-        rows = load_rows(Path(args.out))
+        rows = report_rows
+        print(f"Data provider: {args.data}\n")
         fwd, problems = horizon_returns(rows, provider_prices(config), args.horizon)
         print(render_horizon(horizon_metrics(rows, fwd, args.horizon), problems))
         print("\nSecondary (each weight held to the next design date):\n")
