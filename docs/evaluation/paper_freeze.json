@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-9",
+  "vintage_id": "v09-engine-10",
   "frozen_on": "2026-11-14",
   "freeze_session": "2026-09-29",
-  "reason": "version 0.19.0 (pyproject version only, no logic change)",
+  "reason": "agent knowledge doc evaluation_protocol.md updated to the C8 re-measurement (text only, no logic change)",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
@@ -93,6 +93,12 @@
       "engine_hash": "98388729207d7f2c2b98ad75a7e2c362ff348e12da4f149635cd74736e3717ba",
       "frozen_on": "2026-11-14",
       "reason": "C8 evaluation fixes"
+    },
+    {
+      "vintage_id": "v09-engine-9",
+      "engine_hash": "98388729207d7f2c2b98ad75a7e2c362ff348e12da4f149635cd74736e3717ba",
+      "frozen_on": "2026-11-14",
+      "reason": "version 0.19.0 (pyproject version only, no logic change)"
     }
   ]
 }

@@ -79,7 +79,8 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
        core, an alpha library, execution algorithms and portfolio construction.
        Python · C++17 · pybind11 · MCP · FastAPI · Claude (Anthropic SDK) · FRED · SEC EDGAR · walk-forward backtesting.</p>
     <nav>
-      <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md">Learn (guide)</a>
+      <a href="learn.html">Learning hub</a>
+      <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md">Learn (guide)</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md">Cookbook</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md">AI learning path</a>
       <a class="secondary" href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md">How the AI works</a>
@@ -99,10 +100,10 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
 <div class="wrap">
 
 <!-- current state -->
-  <h2 id="now">Where the project stands (v0.19.0rc2)</h2>
+  <h2 id="now">Where the project stands (v0.19.0)</h2>
   <div class="state">
-    <p>The last full release is v0.16.0 (2026-11-09) and the current version is the release candidate v0.19.0rc2 (<code>pyproject.toml</code>); the work since v0.16.0 is in the
-       <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a> under v0.19.0rc1 and v0.19.0rc2 (they include the v0.17 and v0.18 work, which was never tagged on its own). The current round
+    <p>The current release is v0.19.0 (2026-11-14; <code>pyproject.toml</code>); the work since v0.16.0 is in the
+       <a href="https://github.com/AshJha0/agentic-trader/blob/main/CHANGELOG.md">changelog</a> under v0.19.0 and its release candidates rc1 to rc3 (they include the v0.17 and v0.18 work, which was never tagged on its own). v0.19.0 re-measures the per-instrument evaluation with a time-block bootstrap (no Sharpe edge over the vol-target control), publishes the execution-lag results (no trial beats the control at any timing) and re-scores the stopped first pass of the LLM study (descriptive). The robustness round
        makes long local-model runs survivable: resumable checkpoints, bounded retries, and provider misses
        recorded as counted skips, with a cell that skips more than 10% of its units ruled inadmissible by the
        <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_preregistration.md">pre-registration</a>, which the owner signed on 2026-11-12 before any row of its decisive test existed. A flagged critic alarm now cuts the weight and never adds exposure.
@@ -139,7 +140,7 @@ footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
           model cell 404 of 1,200 analyst outputs came from the model (technical on every decision, FX macro
           on 100); the rest came from rules, so the result is about those two analysts. No model call failed.
           The table predates the 2026-11-12 scoring correction (ranking within asset class, two closed dates
-          dropped) and has not been re-scored.
+          dropped); re-scored with the corrected scoring on 2026-11-14 it reads −0.030 [−0.140, +0.089], still descriptive.
           The study was stopped on 2026-11-12: <code>local_all</code> reached 59 of 300 decisions, <code>critic_on</code>
           never started, and the pre-registered decisive test has no rows. There is a signed design, not a finding
           (<a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_interim_report.md">report</a>).</li>
@@ -214,6 +215,7 @@ flowchart TB
 
 <!-- AI learning path -->
   <h2>AI learning path</h2>
+  <div class="honest"><strong><a href="learn.html">Open the learning hub</a></strong>: an ordered AI track and quant track, a map of every cookbook recipe group and LEARN.md part, 18 rendered diagrams and the current results in one table.</div>
   <p>Ten short modules on the kinds of AI this project really uses, each with a plain idea, the
      formal statement, a worked example from the repository, an offline exercise that runs in CI,
      pitfalls and self-check questions. <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md">Start the path</a>.</p>
@@ -222,7 +224,7 @@ flowchart TB
      <a href="https://ashjha0.github.io/AgenticAICashEquities/">AgenticAICashEquities</a> (its lesson pages are coming).</p>
 
 <!-- v0.19 strip -->
-  <h2>What changed recently (v0.14 to v0.19.0rc2)</h2>
+  <h2>What changed recently (v0.14 to v0.19.0)</h2>
   <div class="grid">
     <div class="card"><h3>v0.19: long runs</h3>
       <p>Resumable checkpoints, bounded retries for the local model, provider misses recorded as
@@ -455,12 +457,11 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
          The order is the same either way, so the v0.7 "beats plain buy &amp; hold" (1.09 vs 1.06) is
          <strong>retracted</strong>.</p></div>
     <div class="card"><h3>Drawdown against the fair control</h3>
-      <p>Core holdout mean max drawdown 17.40% (desk) vs 31.64% (buy &amp; hold) vs 18.98% (vol-target):
-         −14.24 points [−20.41, −8.70] p 0.00 against buy &amp; hold, BH-significant; −1.58 [−4.33, +1.14] p 0.27
-         against the control, not. On the 10 core equities the desk's drawdown is not lower than the
-         control's (+0.83 [−1.63, +3.21] p 0.50, not BH-significant); on the 45 extended names it is (−4.33 [−6.10, −2.55] p 0.00,
-         BH-significant). On FX the control sits at the shared position cap, so there is no control.</p>
-      <p class="caption"><em>Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (results/v08_c8_fixed/tables_render.md) is in the <a href="evaluation/evaluation.md#summary">evaluation summary</a>: no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.</em></p></div>
+      <p>Core holdout mean max drawdown 13.19% (desk) vs 31.50% (buy &amp; hold) vs 18.92% (vol-target):
+         −18.31 points [−27.63, −9.99] p 0.00 against buy &amp; hold and −5.73 [−8.44, −2.73] p 0.00 against the
+         control, both BH-significant (re-measured 2026-11-14). On the 10 core equities −5.54 [−9.01, −1.73] p 0.00
+         and on the 45 extended names −5.29 [−7.09, −3.53] p 0.00 against the control, both BH-significant. On FX the control sits at the shared position cap, so there is no control.</p>
+      <p class="caption"><em>Re-measured 2026-11-14 (review C8; <code>results/v08_c8_fixed/tables_render.md</code>): per instrument the desk has no Sharpe edge over the vol-target control (all 60, design −0.07 [−0.20, +0.07] p 0.32); see the <a href="evaluation/evaluation.md#summary">evaluation summary</a>.</em></p>
     <div class="card"><h3>Retracted</h3>
       <p>The v0.7 stratified bootstrap (it could only narrow intervals; replaced by the cluster bootstrap);
          the v0.7 execution-algorithm magnitudes (every sleeve was charged √15× too much — re-measured at the
@@ -502,15 +503,15 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
     and a shell command, and a model that returns a 5.0 weight, and checks that each is contained.
     The performance figures above are from the <em>rule-based</em> desk, re-measured in v0.8 with idle
     cash credited at the 3-month bill and Sharpe on excess returns (every number is copied from
-    <code>results/v08/tables.md</code>). Out of sample it is <strong>below buy &amp; hold on Sharpe</strong>:
-    per instrument on the 15 names its rules were chosen on (core holdout median 0.30 vs 0.51; mean
-    difference −0.10 [−0.21, −0.00] p 0.04, not BH-significant, bootstrap over instruments) and on the 45
-    names it was never tuned on, where the deficit clears the BH bar (0.25 vs 0.39; −0.07 [−0.12, −0.02]
-    p 0.01), and as a 15-sleeve portfolio inside the noise (0.80 vs 0.86; −0.06 [−0.41, +0.30] p 0.748,
-    block bootstrap over days). It takes about half of buy &amp; hold's drawdown (core holdout 17.40% vs
-    31.64%; −14.24 points [−20.41, −8.70] p 0.00, BH-significant), which buy &amp; hold scaled to the same
-    volatility also achieves (18.98%; desk − vol-target −1.58 [−4.33, +1.14] p 0.27); on the core equities
-    the desk's drawdown is not lower than that control's (+0.83 [−1.63, +3.21] p 0.50, not BH-significant). The v0.7 claim that
+    <code>results/v08/tables.md</code>). Out of sample it has <strong>no Sharpe edge over buy &amp; hold</strong>
+    (re-measured 2026-11-14 with a time-block bootstrap over shared days, <code>results/v08_c8_fixed/</code>):
+    per instrument on the 15 names its rules were chosen on (core holdout median 0.35 vs 0.51; mean
+    difference −0.08 [−0.46, +0.27] p 0.65) and on the 45 names it was never tuned on (0.18 vs 0.39;
+    −0.10 [−0.29, +0.07] p 0.25), neither BH-significant, and as a 15-sleeve portfolio inside the noise
+    (0.80 vs 0.86; −0.06 [−0.41, +0.30] p 0.748, block bootstrap over days). It takes well under half of buy
+    &amp; hold's drawdown (core holdout 13.19% vs 31.50%; −18.31 points [−27.63, −9.99] p 0.00,
+    BH-significant), and most of that buy &amp; hold scaled to the same volatility also achieves (18.92%;
+    desk − vol-target −5.73 [−8.44, −2.73] p 0.00, BH-significant). The v0.7 claim that
     the portfolio beat plain buy &amp; hold (1.09 vs 1.06) is retracted; with the cash leg off the holdout
     order is the same (1.04 / 1.05 / 1.24). Giving its untuned fundamentals and news rules point-in-time
     filings adds exposure and drawdown on the core names for about no Sharpe (+0.01 [−0.03, +0.04] p 0.72
@@ -532,7 +533,7 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
      fundamentals and filings, FRED point-in-time FX carry and 3-month bill, costs included, rules frozen before the run.
      Portfolio = 15 equal-capital sleeves. Every cell is copied from <code>results/v08/tables.md</code>
      (sections "portfolio: holdout", "cash leg on vs off: holdout", "portfolio Sharpe difference: holdout").</p>
-  <p class="caption"><em>Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (results/v08_c8_fixed/tables_render.md) is in the <a href="evaluation/evaluation.md#summary">evaluation summary</a>: no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.</em></p>
+  <p class="caption"><em>This portfolio test (paired block bootstrap over days) is unchanged by the 2026-11-14 C8 fix.</em></p>
   <div class="tablewrap"><table class="results">
     <tr><th>Portfolio (holdout)</th><th>Sharpe</th><th>t(SR)</th><th>Return</th><th>Max DD</th><th>Exposure</th><th>Sharpe, cash leg off</th><th>Desk − this, Sharpe [95% CI], p</th></tr>
     <tr class="agent"><td>AgenticTrader v0.8</td><td>0.80</td><td>1.70</td><td>50.62%</td><td>7.80%</td><td>59.10%</td><td>1.04</td><td>—</td></tr>
@@ -546,24 +547,24 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
      rebalance phase (offsets 0–4) moves the desk's holdout Sharpe across 0.80 / 0.85 / 0.86 / 0.80 / 0.84
      (spread 0.06) against a fixed 0.99 and 0.86: the cadence noise floor is as large as the differences quoted.</p>
   <p class="caption">The 15 core instruments every rule choice was made on, median Sharpe and means over instruments,
-     with the paired bootstrap of the desk minus each control (<code>scheme=instruments</code>, 2 groups; "BH" is the
+     with the paired bootstrap of the desk minus each control (Sharpe: time-block bootstrap over days; drawdown: over instruments; re-measured 2026-11-14 in <code>results/v08_c8_fixed/tables_render.md</code>; "BH" is the
      Benjamini–Hochberg flag on the unrounded p across the table). Sections "summary: core (15), design / holdout",
      "head to head: core (15)", "paired Sharpe ... core (15)", "paired MDD% ... core (15)".</p>
   <div class="tablewrap"><table class="results">
     <tr><th>Core universe, 15 names</th><th>Design median Sharpe</th><th>Holdout median Sharpe</th><th>Holdout mean max DD</th><th>Holdout mean exposure</th><th>Desk beats it on Sharpe (holdout)</th><th>Desk − this, holdout Sharpe [95% CI], p, BH</th><th>Desk − this, holdout max DD (pts) [95% CI], p, BH</th></tr>
-    <tr class="agent"><td>AgenticTrader v0.8</td><td>0.67</td><td>0.30</td><td>17.40%</td><td>60.51%</td><td>—</td><td>—</td><td>—</td></tr>
-    <tr><td>Buy &amp; hold</td><td>0.73</td><td>0.51</td><td>31.64%</td><td>97.39%</td><td>3 / 15</td><td>−0.10 [−0.21, −0.00], 0.04, not significant</td><td>−14.24 [−20.41, −8.70], 0.00, significant</td></tr>
-    <tr><td>B&amp;H vol-target (fair control)</td><td>0.69</td><td>0.52</td><td>18.98%</td><td>73.67%</td><td>4 / 15</td><td>−0.11 [−0.21, −0.00], 0.04, not significant</td><td>−1.58 [−4.33, +1.14], 0.27, not significant</td></tr>
+    <tr class="agent"><td>AgenticTrader v0.8</td><td>0.55</td><td>0.35</td><td>13.19%</td><td>52.91%</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Buy &amp; hold</td><td>0.73</td><td>0.51</td><td>31.50%</td><td>96.10%</td><td>7 / 15</td><td>−0.08 [−0.46, +0.27], 0.65, not significant</td><td>−18.31 [−27.63, −9.99], 0.00, significant</td></tr>
+    <tr><td>B&amp;H vol-target (fair control)</td><td>0.69</td><td>0.52</td><td>18.92%</td><td>72.88%</td><td>5 / 15</td><td>−0.08 [−0.41, +0.21], 0.60, not significant</td><td>−5.73 [−8.44, −2.73], 0.00, significant</td></tr>
   </table></div>
   <p class="caption">The 45 extended instruments no rule was tuned on (they were consulted for the v0.5.1 and v0.6
-     decisions; nothing remains unseen), same layout (<code>scheme=instruments</code>, 3 groups). Sections "summary:
+     decisions; nothing remains unseen), same layout and schemes. Sections "summary:
      extended (45), design / holdout", "head to head: extended (45)", "paired Sharpe ... extended (45)",
      "paired MDD% ... extended (45)".</p>
   <div class="tablewrap"><table class="results">
     <tr><th>Extended universe, 45 names</th><th>Design median Sharpe</th><th>Holdout median Sharpe</th><th>Holdout mean max DD</th><th>Holdout mean exposure</th><th>Desk beats it on Sharpe (holdout)</th><th>Desk − this, holdout Sharpe [95% CI], p, BH</th><th>Desk − this, holdout max DD (pts) [95% CI], p, BH</th></tr>
-    <tr class="agent"><td>AgenticTrader v0.8</td><td>0.51</td><td>0.25</td><td>15.46%</td><td>64.73%</td><td>—</td><td>—</td><td>—</td></tr>
-    <tr><td>Buy &amp; hold</td><td>0.55</td><td>0.39</td><td>26.39%</td><td>97.87%</td><td>12 / 45</td><td>−0.07 [−0.12, −0.02], 0.01, significant</td><td>−10.93 [−13.41, −8.64], 0.00, significant</td></tr>
-    <tr><td>B&amp;H vol-target (fair control)</td><td>0.58</td><td>0.27</td><td>19.79%</td><td>81.32%</td><td>16 / 45</td><td>−0.03 [−0.09, +0.02], 0.19, not significant</td><td>−4.33 [−6.10, −2.55], 0.00, significant</td></tr>
+    <tr class="agent"><td>AgenticTrader v0.8</td><td>0.46</td><td>0.18</td><td>14.42%</td><td>59.69%</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Buy &amp; hold</td><td>0.55</td><td>0.39</td><td>26.18%</td><td>96.22%</td><td>14 / 45</td><td>−0.10 [−0.29, +0.07], 0.25, not significant</td><td>−11.76 [−14.50, −9.13], 0.00, significant</td></tr>
+    <tr><td>B&amp;H vol-target (fair control)</td><td>0.58</td><td>0.27</td><td>19.72%</td><td>80.74%</td><td>15 / 45</td><td>−0.06 [−0.20, +0.08], 0.38, not significant</td><td>−5.29 [−7.09, −3.53], 0.00, significant</td></tr>
   </table></div>
   <p class="caption">The cross-sectional analyst under the protocol, re-measured: per-instrument Sharpe with the analyst
      minus without (both with EDGAR), <code>scheme=instruments</code>; the on/off tables print p without a BH flag.
@@ -604,10 +605,9 @@ $ curl -s http://127.0.0.1:8000/approvals -H "X-API-Key: dev-risk-key"      # qu
     <tr><td>Buy &amp; hold</td><td>0.56</td><td>0.50</td><td>27.2%</td><td>—</td><td>—</td><td>—</td></tr>
     <tr><td>B&amp;H vol-target (fair control)</td><td>0.61</td><td>0.47</td><td>21.1%</td><td>—</td><td>—</td><td>—</td></tr>
   </table></div>
-  <p class="caption">v0.8: holdout median Sharpe 0.25 vs 0.39, desk − buy &amp; hold −0.07 [−0.12, −0.02] p 0.01 and
-     BH-significant — the "noise" reading of this table does not survive; the drawdown gap against the fair control
-     does (−4.33 [−6.10, −2.55] p 0.00, BH-significant).</p>
-  <p class="caption"><em>Superseded 2026-11-14 (review C8): the Sharpe significance below used the cross-instrument interval; the time-block re-measurement (results/v08_c8_fixed/tables_render.md) is in the <a href="evaluation/evaluation.md#summary">evaluation summary</a>: no Sharpe edge over the vol-target control; on all 60 the only BH-significant design-period difference is against Carry.</em></p>
+  <p class="caption">Re-measured 2026-11-14 (time-block bootstrap): holdout median Sharpe 0.18 vs 0.39, desk − buy &amp; hold
+     −0.10 [−0.29, +0.07] p 0.25, not BH-significant — the "noise" reading of this table stands; the drawdown gap
+     against the fair control is real (−5.29 [−7.09, −3.53] p 0.00, BH-significant).</p>
   <p class="caption">The cross-sectional analyst under the v0.6 measurement (per-instrument Sharpe with the analyst
      minus without, both with EDGAR).</p>
   <div class="tablewrap"><table class="results">

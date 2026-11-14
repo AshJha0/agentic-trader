@@ -2,7 +2,11 @@
 
 ## v0.19.0 — 2026-11-14: Round 3 part 3
 
-Round 3 part 3. Paper engine re-frozen as `v09-engine-8` (C8 code fix) and `v09-engine-9` (version string only).
+Round 3 part 3. Paper engine re-frozen as `v09-engine-8` (C8 code fix) and `v09-engine-9` (version string only). Then `v09-engine-10` (agent knowledge doc text only).
+
+- Site: new learning hub page `docs/learn.html` (AI and quant tracks, cookbook and LEARN maps, 18 Mermaid diagrams, current results), linked from `docs/index.html`.
+
+- Docs brought to the C8 re-measurement everywhere: LEARN.md (per-instrument and drawdown sections, extended-universe numbers, method notes), the site page (status, summary paragraph, core and extended tables, captions), README (v0.19 heading, re-score caution) and the agents' knowledge doc `evaluation_protocol.md`. On the core equities the desk's drawdown is now BH-significantly below the vol-target control's (−5.54 [−9.01, −1.73]), which reverses the v0.8 "no lower" reading.
 
 - Evaluation significance (review C8): the paired Sharpe bootstrap now uses the time-block
   interval as primary on every slice (returns are passed into the core, extended and all-60
