@@ -5,7 +5,9 @@
 No new results. Paper engine re-frozen as `v09-engine-11` (formatting only), `v09-engine-12`
 (`study_lineage.stamp` adds `data_provider`), `v09-engine-13` (two `type: ignore` comments
 moved back onto the lines mypy reports, after the formatter split them) and `v09-engine-14`
-(version string 0.19.1 only).
+(version string 0.19.1 only) and `v09-engine-15` (eval baseline `prompt_bundle_hash` updated:
+  the hash covers class source, which the formatter re-laid; every system prompt is byte-identical
+  to v0.19.0).
 
 - Whole repo formatted with `ruff format` in one commit, listed in `.git-blame-ignore-revs`
   (use `git config blame.ignoreRevsFile .git-blame-ignore-revs`). Five multi-line imports had

@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-14",
+  "vintage_id": "v09-engine-15",
   "frozen_on": "2026-11-14",
   "freeze_session": "2026-09-29",
-  "reason": "version string 0.19.1 only",
+  "reason": "eval baseline prompt_bundle_hash after ruff format (prompt text unchanged), v0.19.1",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
@@ -123,6 +123,12 @@
       "engine_hash": "d34affc67de53bfd19dcd199646177d8428db88d8950b4aac9d6fe617f545e0b",
       "frozen_on": "2026-11-14",
       "reason": "type: ignore comments moved back after ruff format split their lines (comments only), v0.19.1"
+    },
+    {
+      "vintage_id": "v09-engine-14",
+      "engine_hash": "d34affc67de53bfd19dcd199646177d8428db88d8950b4aac9d6fe617f545e0b",
+      "frozen_on": "2026-11-14",
+      "reason": "version string 0.19.1 only"
     }
   ]
 }
