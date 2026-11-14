@@ -4,6 +4,12 @@
 
 Round 3 part 3:
 
+- Evaluation significance (review C8): the paired Sharpe bootstrap now uses the time-block
+  interval as primary on every slice (returns are passed into the core, extended and all-60
+  slices) and daily series are excess over the cash rate, which removes the degenerate Carry
+  row. `docs/evaluation/evaluation.md` tables and headlines, README and the "Under review"
+  notes in LEARN and `docs/index.html` updated from `results/v08_c8_fixed/tables_render.md`
+  (run 2026-11-14 on bee26ad). Result: no Sharpe edge over the vol-target control.
 - Exec-lag (C7) final results published in `docs/results/v17_exec_lag` with a provenance note
   (run on 3f80a69): no registered trial beats the vol-target control at lag 0, lag 1 or next
   open (all p > 0.16); adopted FX carry delta +0.038 / +0.022 / +0.015. The "queued" mentions in
