@@ -484,6 +484,14 @@ of the last one.
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
 
+## v0.20.0 (2026-11-14): Round 4 stopped, no new results
+
+Round 4 was registered and signed before any data, then stopped by the owner before any score:
+the checker-versus-human validation (Part A) was not done, so the deterministic checker remains
+unvalidated; the memorisation test (Part B) ran 217 of 2,700 decisions, none after the model's
+cutoff, so it has no result. The memorisation code ships as a tested tool. See the
+[registration and its amendments](docs/evaluation/v19_round4_registration.md).
+
 ## v0.19.1 (2026-11-14): quality, no new results
 
 The repo is formatted with `ruff format` (one commit, listed in `.git-blame-ignore-revs`);

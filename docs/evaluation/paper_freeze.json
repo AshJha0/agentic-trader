@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-15",
+  "vintage_id": "v09-engine-17",
   "frozen_on": "2026-11-14",
   "freeze_session": "2026-09-29",
-  "reason": "eval baseline prompt_bundle_hash after ruff format (prompt text unchanged), v0.19.1",
+  "reason": "version string 0.20.0 only",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
@@ -44,7 +44,7 @@
     "max_debate_rounds",
     "max_risk_discuss_rounds"
   ],
-  "engine_hash": "d34affc67de53bfd19dcd199646177d8428db88d8950b4aac9d6fe617f545e0b",
+  "engine_hash": "ae249e27a5e9b46db9302444bd2ea9aa545affa2b126f124082e18747fd54813",
   "history": [
     {
       "vintage_id": "v09-engine-1",
@@ -129,6 +129,18 @@
       "engine_hash": "d34affc67de53bfd19dcd199646177d8428db88d8950b4aac9d6fe617f545e0b",
       "frozen_on": "2026-11-14",
       "reason": "version string 0.19.1 only"
+    },
+    {
+      "vintage_id": "v09-engine-15",
+      "engine_hash": "d34affc67de53bfd19dcd199646177d8428db88d8950b4aac9d6fe617f545e0b",
+      "frozen_on": "2026-11-14",
+      "reason": "eval baseline prompt_bundle_hash after ruff format (prompt text unchanged), v0.19.1"
+    },
+    {
+      "vintage_id": "v09-engine-16",
+      "engine_hash": "ae249e27a5e9b46db9302444bd2ea9aa545affa2b126f124082e18747fd54813",
+      "frozen_on": "2026-11-14",
+      "reason": "Round 4 part B: memorisation module, study_design.decide extracted from run_cell (same rows)"
     }
   ]
 }

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.20.0 — 2026-11-14: Round 4 (stopped, no new results)
+
+Paper engine re-frozen as `v09-engine-16` (`study_design.decide` extracted, rows unchanged) and
+`v09-engine-17` (version string 0.20.0 only).
+
+- Round 4 registration signed before any row existed (`docs/evaluation/v19_round4_registration.md`),
+  then amended twice before any score: Part A (checker vs owner labels) withdrawn as a
+  validation, so the checker stays **unvalidated**; Part B (memorisation pair) stopped at
+  217 of 2,700 rows, all pre-cutoff, so it is not scorable and not scored.
+- New `agentic_trader/memorisation.py` and `scripts/v16_local_study.py memo` (`--dry-run`,
+  `--smoke`, `--score`): the paired named/anonymised design with a moving-block bootstrap
+  difference in differences. Refuses to run without a signed registration and refuses
+  `--limit`. Tested on synthetic rows only (96 %).
+
 ## v0.19.1 — 2026-11-14: quality
 
 No new results. Paper engine re-frozen as `v09-engine-11` (formatting only), `v09-engine-12`

@@ -569,6 +569,62 @@ def forward_return(provider: Any, instrument: Any, bar_date: date, horizon: int)
     return float(c.iloc[horizon] / c.iloc[0] - 1.0), str(c.index[horizon].date())
 
 
+def decide(graph: Any, llm: Any, symbol: str, d: date, horizon: int, *, named: bool = False) -> dict[str, Any]:
+    """One technical-analyst decision on the point-in-time state of ``symbol`` at ``d``: the
+    model's signal (``None`` when the call fell back), the rule signal from the same analyst on
+    the same state, and the forward return over ``horizon`` bars (scoring only).
+
+    ``named=False`` installs the desk's ``Anonymizer`` (aliases, date offsets, close rebased to
+    100), as every registered cell does. ``named=True`` leaves it off, so the prompt carries the
+    real symbol, date and price level: the memorisation arm of Round 4 and nothing else."""
+    from .agents.analysts import TechnicalAnalyst
+    from .anonymize import Anonymizer
+    from .study_lineage import market_lineage, prompt_sha256
+
+    state = graph.prepare(symbol, d)
+    state.anon = None if named else Anonymizer(state.instrument, state.as_of, state.last_price)
+    seen: list[tuple[str, str]] = []
+
+    class _Rec:
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        def __getattr__(self, a: str) -> Any:
+            return getattr(self.inner, a)
+
+        def complete_json(self, system: str, prompt: str, *, deep: bool, schema: Any) -> Any:
+            seen.append((system, prompt))
+            return self.inner.complete_json(system, prompt, deep=deep, schema=schema)
+
+        def complete(self, system: str, prompt: str, *, deep: bool) -> Any:
+            seen.append((system, prompt))
+            return self.inner.complete(system, prompt, deep=deep)
+
+    rep = TechnicalAnalyst(_Rec(llm) if llm is not None else None, graph.config).run(state, graph.provider)
+    bar = state.history.index[-1].date()
+    fwd, fwd_end = forward_return(graph.provider, state.instrument, bar, horizon)
+    ev = getattr(llm, "last_call", None) if llm is not None else None
+    ev = ev if isinstance(ev, dict) else {}
+    model_ok = rep.source == "llm"
+    return {
+        "symbol": symbol,
+        "as_of": d.isoformat(),
+        "signal_model": float(rep.signal) if model_ok else None,
+        "signal_rule": float(rep.rule_signal if model_ok and rep.rule_signal is not None else rep.signal),
+        "source": rep.source,
+        "abstained": bool(rep.abstained),
+        "fwd_ret": fwd,
+        "fwd_end": fwd_end,
+        "prompt_sha256": prompt_sha256(*seen[-1]) if seen else None,
+        "prompt_eval_count": ev.get("prompt_eval_count"),
+        "eval_count": ev.get("eval_count"),
+        "truncated": ev.get("truncated"),
+        "stop_reason": ev.get("stop_reason"),
+        "model_served": ev.get("model_served"),
+        **market_lineage(state.history, None),
+    }
+
+
 def run_cell(
     cell: DesignCell,
     names: Sequence[str],
@@ -586,9 +642,7 @@ def run_cell(
     from the same analyst on the same state, forward return scored from the bars after the
     decision. Checkpointed JSONL with lineage (``study_lineage``); resume skips done keys.
     ``header`` must already have passed ``study_lineage.check_resume``."""
-    from .agents.analysts import TechnicalAnalyst
-    from .anonymize import Anonymizer
-    from .study_lineage import market_lineage, prompt_sha256, stamp
+    from .study_lineage import stamp
 
     out.parent.mkdir(parents=True, exist_ok=True)
     done = set()
@@ -609,51 +663,9 @@ def run_cell(
         for k, (d, n) in enumerate(grid, 1):
             if (n, d.isoformat()) in done:
                 continue
-            state = graph.prepare(n, d)
-            state.anon = Anonymizer(state.instrument, state.as_of, state.last_price)
-            seen: list[tuple[str, str]] = []
-
-            class _Rec:
-                _seen = seen  # bound now, per grid cell
-
-                def __init__(self, inner):
-                    self.inner = inner
-
-                def __getattr__(self, a):
-                    return getattr(self.inner, a)
-
-                def complete_json(self, system, prompt, *, deep, schema):
-                    self._seen.append((system, prompt))
-                    return self.inner.complete_json(system, prompt, deep=deep, schema=schema)
-
-                def complete(self, system, prompt, *, deep):
-                    self._seen.append((system, prompt))
-                    return self.inner.complete(system, prompt, deep=deep)
-
-            rep = TechnicalAnalyst(_Rec(llm) if llm is not None else None, graph.config).run(state, graph.provider)
-            bar = state.history.index[-1].date()
-            fwd, fwd_end = forward_return(graph.provider, state.instrument, bar, cell.horizon_days)
-            ev = getattr(llm, "last_call", None) if llm is not None else None
-            ev = ev if isinstance(ev, dict) else {}
-            model_ok = rep.source == "llm"
-            row = {
-                "cell": cell.name,
-                "symbol": n,
-                "as_of": d.isoformat(),
-                "signal_model": float(rep.signal) if model_ok else None,
-                "signal_rule": float(rep.rule_signal if model_ok and rep.rule_signal is not None else rep.signal),
-                "source": rep.source,
-                "abstained": bool(rep.abstained),
-                "fwd_ret": fwd,
-                "fwd_end": fwd_end,
-                "prompt_sha256": prompt_sha256(*seen[-1]) if seen else None,
-                "prompt_eval_count": ev.get("prompt_eval_count"),
-                "eval_count": ev.get("eval_count"),
-                "truncated": ev.get("truncated"),
-                "stop_reason": ev.get("stop_reason"),
-                "model_served": ev.get("model_served"),
-                **market_lineage(state.history, None),
-            }
+            row = decide(graph, llm, n, d, cell.horizon_days)
+            row = {"cell": cell.name, **row}
+            fwd = row["fwd_ret"]
             row["horizon_days"] = cell.horizon_days
             stamp(row, header)
             fh.write(json.dumps(row, default=str) + "\n")
