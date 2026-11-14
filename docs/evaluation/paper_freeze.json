@@ -1,8 +1,8 @@
 {
-  "vintage_id": "v09-engine-12",
+  "vintage_id": "v09-engine-13",
   "frozen_on": "2026-11-14",
   "freeze_session": "2026-09-29",
-  "reason": "llm_study rows record data_provider (study_lineage.stamp), v0.19.1",
+  "reason": "type: ignore comments moved back after ruff format split their lines (comments only), v0.19.1",
   "engine_files": [
     "CMakeLists.txt",
     "agentic_trader/**/*.py",
@@ -44,7 +44,7 @@
     "max_debate_rounds",
     "max_risk_discuss_rounds"
   ],
-  "engine_hash": "62f8a05be3c1cbf6f532a42a4422f1dc987dede9e3ddfc3454abe86fd7bcddf1",
+  "engine_hash": "d34affc67de53bfd19dcd199646177d8428db88d8950b4aac9d6fe617f545e0b",
   "history": [
     {
       "vintage_id": "v09-engine-1",
@@ -111,6 +111,12 @@
       "engine_hash": "f751056bf4791e226b414b95ce2592465cd30a873ce62b9f9a3d9e70916f6aa6",
       "frozen_on": "2026-11-14",
       "reason": "ruff format only, no behaviour change (v0.19.1)"
+    },
+    {
+      "vintage_id": "v09-engine-12",
+      "engine_hash": "62f8a05be3c1cbf6f532a42a4422f1dc987dede9e3ddfc3454abe86fd7bcddf1",
+      "frozen_on": "2026-11-14",
+      "reason": "llm_study rows record data_provider (study_lineage.stamp), v0.19.1"
     }
   ]
 }

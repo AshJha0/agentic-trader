@@ -607,7 +607,7 @@ def construct(
         alloc,
         w,
         method,
-        rc["vol"],
+        rc["vol"],  # type: ignore[arg-type]  # numpy scalars; float() could change repr
         contrib,
         rc["diversification_ratio"],  # type: ignore[arg-type]  # numpy scalars; float() could change repr
         corr,

@@ -122,8 +122,8 @@ def governance_report(rows: list[OutcomeRow], checks: Iterable[str] | None = Non
             "scored": len(rs),
             "hits": hits,
             "hit_rate": _rate(hits, len(rs)),
-            "avg_pnl": (sum(r.pnl for r in rs) / len(rs)) if rs else None,
-        }  # type: ignore[misc]
+            "avg_pnl": (sum(r.pnl for r in rs) / len(rs)) if rs else None,  # type: ignore[misc]
+        }
     names = sorted(set(checks or ()) | {c for r in rows for c in r.failed_checks})
     by_check: dict[str, dict[str, Any]] = {}
     for name in names:
