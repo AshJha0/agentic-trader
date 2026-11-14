@@ -2307,7 +2307,7 @@ claimed 1.21. A signal equal to `sign(r[t+1])` has Sharpe above 10 at lag 0 and 
 absolute value at lag 1 (`tests/test_exec_lag.py`).
 
 **In the repo.** `agentic_trader/quant/pycore.py`, `cpp/src/backtest.cpp`,
-`scripts/v17_exec_lag.py` (registered trials at lag 0 and 1; queued). Evidence class: tested on
+`scripts/v17_exec_lag.py` (registered trials at lag 0, lag 1 and next open; run 2026-11-13: no trial beats the control at any timing, all p > 0.16; [results](docs/results/v17_exec_lag/trials_lag_yahoo.md)). Evidence class: tested on
 the numpy backend; the C++ parity cases run in CI.
 
 **Questions.**

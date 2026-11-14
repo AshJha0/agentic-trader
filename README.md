@@ -38,8 +38,11 @@ with no desk beside every claim).
   time on one laptop and the owner stopped the study the same day
   ([status](docs/evaluation/v16_prereg_status_2026-11-12.md)). There is no pre-registered
   finding about the model, only a signed design.
-- Results at a one-bar execution lag. Every published Sharpe fills at the close the signal
-  saw; the lag comparison is written and not yet run.
+- A lag-1 version of every published Sharpe. The registered rules trials were re-run at lag 0,
+  lag 1 and next open (2026-11-13): no trial beats the vol-target control at any timing (all
+  p > 0.16), so the conclusions do not depend on the same-close fill
+  ([exec-lag results](docs/results/v17_exec_lag/trials_lag_yahoo.md)). The other published
+  Sharpes still fill at the close the signal saw.
 - Corrected FX tables. FX P&L was converted to the USD account on 2026-11-12 and the
   published FX numbers have not been re-run
   ([changelog](CHANGELOG.md)).
