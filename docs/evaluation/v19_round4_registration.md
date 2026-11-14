@@ -94,3 +94,19 @@ no names or dates) should show no such gap.
   reported as descriptive only, marked **unvalidated**. No claim that the checker agrees with a
   human is made in any release note, README or LEARN page.
 - Part B is unchanged.
+
+## Amendment 2 (2026-11-14, about 20:30 UTC, before any Part B score was computed)
+
+- Decision: Part B is stopped and not scored. The owner judged that the registered design is
+  too weak to justify the remaining laptop time (session chat, 2026-11-14: "not sure if we
+  need to run this project after tonight PR"). Reasons recorded: low power (18 scoreable
+  pre-cutoff dates, 15 names), a 7B model whose null would say little about larger models,
+  and a named arm that changes price level and date as well as the name.
+- State at stop: `results/v19_r4/memo.jsonl` holds 217 of 2,700 rows, all in the pre-cutoff
+  window (the grid runs pre before post), 2 of them errors (JPM, 2016-01-01, a market
+  holiday). No post-cutoff row exists, so the difference in differences cannot be computed
+  and no partial score is reported.
+- The rows are kept (git-ignored) and the run is resumable with the same command; resuming
+  would need a new amendment, signed before any score.
+- The code (`agentic_trader/memorisation.py`, `memo` subcommand) ships, tested on synthetic
+  rows, as a reusable tool.
