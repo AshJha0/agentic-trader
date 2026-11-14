@@ -1,5 +1,6 @@
 """v0.8 data-layer fixes (review findings 7, 8, 15, 34, 35, 36, 37, 68, 69, 88 and the cash-leg
 contract of finding 14), each with the case that failed on v0.7 code."""
+
 import json
 import os
 import sys
@@ -24,8 +25,8 @@ from agentic_trader.evaluation import UNIVERSES
 from agentic_trader.sentiment import score_fx_headline
 
 NAN = float("nan")
-G = "RevenueFromContractWithCustomerExcludingAssessedTax"   # rank 0 in REVENUE_TAGS
-N = "Revenues"                                              # rank 1
+G = "RevenueFromContractWithCustomerExcludingAssessedTax"  # rank 0 in REVENUE_TAGS
+N = "Revenues"  # rank 1
 EDGAR_CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build", "edgar_cache")
 
 
@@ -46,8 +47,10 @@ def _edgar(facts_by_tag: dict, cik: str = "0000000777", ticker: str = "TST") -> 
     payloads = {
         edgar_mod.TICKERS_URL: {"0": {"cik_str": int(cik), "ticker": ticker, "title": "Test"}},
         edgar_mod.SUBMISSIONS_URL.format(name=f"CIK{cik}.json"): {
-            "name": "Test", "sic": "3571",
-            "filings": {"recent": {"form": [], "filingDate": [], "accessionNumber": []}}},
+            "name": "Test",
+            "sic": "3571",
+            "filings": {"recent": {"form": [], "filingDate": [], "accessionNumber": []}},
+        },
         edgar_mod.FACTS_URL.format(cik=cik): {"facts": {"us-gaap": us_gaap, "dei": dei}},
     }
     return EdgarClient(user_agent="t t@x", fetch=lambda u: json.dumps(payloads[u]).encode(), min_interval=0)
@@ -60,8 +63,12 @@ def _known(c: EdgarClient, as_of: date, ticker: str = "TST") -> pd.DataFrame:
 
 def _quarters(tag_prefix, year, vals, filed, forms=("10-Q", "10-Q", "10-Q", "10-K")):
     """Direct quarterly spans of a calendar year (Q4 as a direct span inside the 10-K)."""
-    q = [(f"{year}-01-01", f"{year}-03-31"), (f"{year}-04-01", f"{year}-06-30"),
-         (f"{year}-07-01", f"{year}-09-30"), (f"{year}-10-01", f"{year}-12-31")]
+    q = [
+        (f"{year}-01-01", f"{year}-03-31"),
+        (f"{year}-04-01", f"{year}-06-30"),
+        (f"{year}-07-01", f"{year}-09-30"),
+        (f"{year}-10-01", f"{year}-12-31"),
+    ]
     return [_f(s, e, v, f, fm) for (s, e), v, f, fm in zip(q, vals, filed, forms)]
 
 
@@ -71,15 +78,15 @@ def _ma_shaped(fy2022_under_gross: bool = False):
     under ``Revenues``; the 10-K carries only ``Revenues`` (net)."""
     filed21 = ["2021-04-29", "2021-07-29", "2021-10-28", "2022-02-15"]
     filed22 = ["2022-04-28", "2022-07-28", "2022-10-27", "2023-02-14"]
-    gross = (_quarters(G, 2021, [7.0, 7.6, 8.2, 8.372], filed21) +
-             _quarters(G, 2022, [8.025, 8.704, 9.167], filed22[:3]))
-    gross += [_f("2022-01-01", "2022-09-30", 25.896, "2022-10-27")]                 # gross nine months
+    gross = _quarters(G, 2021, [7.0, 7.6, 8.2, 8.372], filed21) + _quarters(G, 2022, [8.025, 8.704, 9.167], filed22[:3])
+    gross += [_f("2022-01-01", "2022-09-30", 25.896, "2022-10-27")]  # gross nine months
     gross += [_f("2021-01-01", "2021-12-31", 31.172, "2022-02-15", "10-K")]
-    net = (_quarters(N, 2021, [4.2, 4.5, 5.0, 5.2], filed21) +
-           _quarters(N, 2022, [5.167, 5.497, 5.756], filed22[:3]))
-    net += [_f("2022-01-01", "2022-09-30", 16.420, "2022-10-27"),                    # net nine months
-            _f("2021-01-01", "2021-12-31", 18.9, "2022-02-15", "10-K"),
-            _f("2022-01-01", "2022-12-31", 22.237, "2023-02-14", "10-K")]
+    net = _quarters(N, 2021, [4.2, 4.5, 5.0, 5.2], filed21) + _quarters(N, 2022, [5.167, 5.497, 5.756], filed22[:3])
+    net += [
+        _f("2022-01-01", "2022-09-30", 16.420, "2022-10-27"),  # net nine months
+        _f("2021-01-01", "2021-12-31", 18.9, "2022-02-15", "10-K"),
+        _f("2022-01-01", "2022-12-31", 22.237, "2023-02-14", "10-K"),
+    ]
     if fy2022_under_gross:
         gross += [_f("2022-01-01", "2022-12-31", 35.0, "2023-02-14", "10-K")]
     return {G: gross, N: net}
@@ -91,12 +98,12 @@ def test_quarters_are_reconstructed_per_tag_and_one_concept_per_window():
     # v0.7: Q4-2022 = 22.237 (net 10-K) - 25.896 (gross 9M) = -3.659 and a 22.237 TTM stitched
     # from four quarters of two concepts. Now: no negative quarter, one tag per window.
     assert (t["val"] > 0).all()
-    assert set(t["tag"]) == {N}                                   # gross has no Q4 -> the net tag covers
+    assert set(t["tag"]) == {N}  # gross has no Q4 -> the net tag covers
     assert t.loc[pd.Timestamp("2022-12-31"), "val"] == pytest.approx(22.237 - 16.420)
     assert ttm(t["val"]) == pytest.approx(22.237) and ttm(t["val"], back=4) == pytest.approx(18.9)
     f = c.fundamentals("TST", date(2023, 3, 1))
     assert f["revenue_ttm"] == pytest.approx(22.237)
-    assert f["revenue_growth_yoy"] == pytest.approx(22.237 / 18.9 - 1, abs=1e-4)   # net vs net, not net vs gross
+    assert f["revenue_growth_yoy"] == pytest.approx(22.237 / 18.9 - 1, abs=1e-4)  # net vs net, not net vs gross
     # With the 10-K also printing the preferred tag, that tag covers and wins by rank.
     c2 = _edgar(_ma_shaped(fy2022_under_gross=True))
     t2 = quarterly_table(_known(c2, date(2023, 3, 1)), edgar_mod.REVENUE_TAGS, positive=True)
@@ -108,10 +115,16 @@ def test_year_to_date_spans_of_another_tag_are_not_stitched_into_a_window():
     took Q3 from it (45.4B) and the other three quarters from ``Revenues``."""
     filed = ["2018-05-07", "2018-08-06", "2018-11-05", "2019-02-25"]
     rev = _quarters(N, 2018, [58.473, 62.200, 63.450, 63.714], filed) + [
-        _f("2018-01-01", "2018-06-30", 120.673, filed[1]), _f("2018-01-01", "2018-09-30", 184.123, filed[2]),
-        _f("2018-01-01", "2018-12-31", 247.837, filed[3], "10-K")]
-    other = [_f("2018-01-01", "2018-06-30", 85.764, filed[1]), _f("2018-01-01", "2018-09-30", 131.191, filed[2]),
-             _f("2018-07-01", "2018-09-30", 45.427, filed[2]), _f("2018-01-01", "2018-12-31", 175.445, filed[3], "10-K")]
+        _f("2018-01-01", "2018-06-30", 120.673, filed[1]),
+        _f("2018-01-01", "2018-09-30", 184.123, filed[2]),
+        _f("2018-01-01", "2018-12-31", 247.837, filed[3], "10-K"),
+    ]
+    other = [
+        _f("2018-01-01", "2018-06-30", 85.764, filed[1]),
+        _f("2018-01-01", "2018-09-30", 131.191, filed[2]),
+        _f("2018-07-01", "2018-09-30", 45.427, filed[2]),
+        _f("2018-01-01", "2018-12-31", 175.445, filed[3], "10-K"),
+    ]
     c = _edgar({N: rev, G: other})
     t = quarterly_table(_known(c, date(2019, 3, 1)), edgar_mod.REVENUE_TAGS, positive=True)
     assert set(t["tag"]) == {N} and len(t) == 4
@@ -122,11 +135,13 @@ def test_year_to_date_spans_of_another_tag_are_not_stitched_into_a_window():
 def test_non_positive_reconstructed_revenue_quarter_is_rejected_not_reported():
     filed = ["2022-04-28", "2022-07-28", "2022-10-27", "2023-02-14"]
     bad = _quarters(G, 2022, [8.025, 8.704, 9.167], filed[:3]) + [
-        _f("2022-01-01", "2022-09-30", 25.896, filed[2]), _f("2022-01-01", "2022-12-31", 22.237, filed[3], "10-K")]
+        _f("2022-01-01", "2022-09-30", 25.896, filed[2]),
+        _f("2022-01-01", "2022-12-31", 22.237, filed[3], "10-K"),
+    ]
     known = _known(_edgar({G: bad}), date(2023, 3, 1))
-    assert quarterly_table(known, edgar_mod.REVENUE_TAGS, positive=True).empty        # no window survives
+    assert quarterly_table(known, edgar_mod.REVENUE_TAGS, positive=True).empty  # no window survives
     assert "revenue_ttm" not in _edgar({G: bad}).fundamentals("TST", date(2023, 3, 1))
-    q = quarterly_table(known, edgar_mod.REVENUE_TAGS, positive=False)["val"]           # a signed flow may be negative
+    q = quarterly_table(known, edgar_mod.REVENUE_TAGS, positive=False)["val"]  # a signed flow may be negative
     assert q.loc[pd.Timestamp("2022-12-31")] == pytest.approx(22.237 - 25.896)
 
 
@@ -136,21 +151,32 @@ def _jnj_shaped(restate_2022_in_10k: bool = True):
     on the continuing basis (with restated Q3/9M-2022 comparatives), the FY2023 10-K restating
     Q1/Q2-2023, FY2022 and (optionally) the 2022 quarters."""
     r = _quarters(G, 2022, [23.4, 24.0, 23.8], ["2022-04-26", "2022-07-26", "2022-10-25"]) + [
-        _f("2022-01-01", "2022-06-30", 47.4, "2022-07-26"), _f("2022-01-01", "2022-09-30", 71.2, "2022-10-25"),
+        _f("2022-01-01", "2022-06-30", 47.4, "2022-07-26"),
+        _f("2022-01-01", "2022-09-30", 71.2, "2022-10-25"),
         _f("2022-01-01", "2022-12-31", 94.9, "2023-02-16", "10-K"),
-        _f("2023-01-01", "2023-03-31", 24.7, "2023-04-25"), _f("2023-04-01", "2023-06-30", 25.5, "2023-07-25"),
+        _f("2023-01-01", "2023-03-31", 24.7, "2023-04-25"),
+        _f("2023-04-01", "2023-06-30", 25.5, "2023-07-25"),
         _f("2023-01-01", "2023-06-30", 50.2, "2023-07-25"),
         # Q3-2023 10-Q: continuing operations, comparatives restated
-        _f("2023-07-01", "2023-09-30", 21.35, "2023-10-27"), _f("2023-01-01", "2023-09-30", 63.75, "2023-10-27"),
-        _f("2022-07-01", "2022-09-30", 20.0, "2023-10-27"), _f("2022-01-01", "2022-09-30", 60.04, "2023-10-27"),
+        _f("2023-07-01", "2023-09-30", 21.35, "2023-10-27"),
+        _f("2023-01-01", "2023-09-30", 63.75, "2023-10-27"),
+        _f("2022-07-01", "2022-09-30", 20.0, "2023-10-27"),
+        _f("2022-01-01", "2022-09-30", 60.04, "2023-10-27"),
         # FY2023 10-K: full year plus quarterly data on the continuing basis
         _f("2023-01-01", "2023-12-31", 85.15, "2024-02-16", "10-K"),
-        _f("2023-01-01", "2023-03-31", 20.9, "2024-02-16", "10-K"), _f("2023-04-01", "2023-06-30", 21.5, "2024-02-16", "10-K"),
-        _f("2023-07-01", "2023-09-30", 21.35, "2024-02-16", "10-K"), _f("2023-10-01", "2023-12-31", 21.4, "2024-02-16", "10-K"),
-        _f("2022-01-01", "2022-12-31", 79.94, "2024-02-16", "10-K")]
+        _f("2023-01-01", "2023-03-31", 20.9, "2024-02-16", "10-K"),
+        _f("2023-04-01", "2023-06-30", 21.5, "2024-02-16", "10-K"),
+        _f("2023-07-01", "2023-09-30", 21.35, "2024-02-16", "10-K"),
+        _f("2023-10-01", "2023-12-31", 21.4, "2024-02-16", "10-K"),
+        _f("2022-01-01", "2022-12-31", 79.94, "2024-02-16", "10-K"),
+    ]
     if restate_2022_in_10k:
-        r += [_f("2022-01-01", "2022-03-31", 19.84, "2024-02-16", "10-K"), _f("2022-04-01", "2022-06-30", 20.2, "2024-02-16", "10-K"),
-              _f("2022-07-01", "2022-09-30", 20.0, "2024-02-16", "10-K"), _f("2022-10-01", "2022-12-31", 19.9, "2024-02-16", "10-K")]
+        r += [
+            _f("2022-01-01", "2022-03-31", 19.84, "2024-02-16", "10-K"),
+            _f("2022-04-01", "2022-06-30", 20.2, "2024-02-16", "10-K"),
+            _f("2022-07-01", "2022-09-30", 20.0, "2024-02-16", "10-K"),
+            _f("2022-10-01", "2022-12-31", 19.9, "2024-02-16", "10-K"),
+        ]
     return {G: r}
 
 
@@ -180,13 +206,14 @@ def test_restated_comparatives_public_at_as_of_are_used_and_bases_are_never_mixe
 
 
 def test_small_revision_replaces_earlier_print_material_one_opens_a_new_basis():
-    base = (_quarters(G, 2022, [100, 110, 120, 130], ["2022-04-28", "2022-07-28", "2022-10-27", "2023-02-01"]) +
-            _quarters(G, 2023, [140, 150, 160, 170], ["2023-04-27", "2023-07-27", "2023-10-26", "2024-02-01"]))
-    mild = base + [_f("2022-04-01", "2022-06-30", 111, "2023-07-27")]      # Q2-22 comparative revised by 0.9%
+    base = _quarters(G, 2022, [100, 110, 120, 130], ["2022-04-28", "2022-07-28", "2022-10-27", "2023-02-01"]) + _quarters(
+        G, 2023, [140, 150, 160, 170], ["2023-04-27", "2023-07-27", "2023-10-26", "2024-02-01"]
+    )
+    mild = base + [_f("2022-04-01", "2022-06-30", 111, "2023-07-27")]  # Q2-22 comparative revised by 0.9%
     f = _edgar({G: mild}).fundamentals("TST", date(2024, 3, 1))
     assert f["revenue_ttm"] == 140 + 150 + 160 + 170
-    assert f["revenue_growth_yoy"] == pytest.approx(620 / (100 + 111 + 120 + 130) - 1, abs=1e-4)   # latest print
-    material = base + [_f("2022-04-01", "2022-06-30", 90, "2023-07-27")]   # -18%: a recast, not a revision
+    assert f["revenue_growth_yoy"] == pytest.approx(620 / (100 + 111 + 120 + 130) - 1, abs=1e-4)  # latest print
+    material = base + [_f("2022-04-01", "2022-06-30", 90, "2023-07-27")]  # -18%: a recast, not a revision
     g = _edgar({G: material}).fundamentals("TST", date(2024, 3, 1))
     # Q2/Q3/Q4-2023 are on the new basis and Q1-2023 only on the old one: no trailing year of 2023
     # is on one basis, so the latest single-basis year is reported and no growth across bases.
@@ -210,13 +237,19 @@ def _nvda_shaped(h1_reprint=2.230, q3_reprint=2.636):
     span 2017-01..06 as 2.230 (the second quarter's value; every other print is 4.167), a lone
     erroneous fact, and everything else unchanged."""
     r = _quarters(G, 2016, [1.305, 1.428, 2.004, 2.173], ["2016-05-20", "2016-08-19", "2016-11-22", "2017-03-01"])
-    r += [_f("2016-01-01", "2016-12-31", 6.910, "2017-03-01", "10-K"),
-          _f("2017-01-01", "2017-03-31", 1.937, "2017-05-23"),
-          _f("2017-04-01", "2017-06-30", 2.230, "2017-08-23"), _f("2017-01-01", "2017-06-30", 4.167, "2017-08-23"),
-          _f("2017-07-01", "2017-09-30", 2.636, "2017-11-21"), _f("2017-01-01", "2017-09-30", 6.803, "2017-11-21"),
-          _f("2017-01-01", "2017-12-31", 9.714, "2018-02-28", "10-K"), _f("2017-10-01", "2017-12-31", 2.911, "2018-02-28", "10-K"),
-          _f("2017-01-01", "2017-03-31", 1.937, "2018-02-28", "10-K"), _f("2017-07-01", "2017-09-30", q3_reprint, "2018-02-28", "10-K"),
-          _f("2017-01-01", "2017-06-30", h1_reprint, "2018-02-28", "10-K")]
+    r += [
+        _f("2016-01-01", "2016-12-31", 6.910, "2017-03-01", "10-K"),
+        _f("2017-01-01", "2017-03-31", 1.937, "2017-05-23"),
+        _f("2017-04-01", "2017-06-30", 2.230, "2017-08-23"),
+        _f("2017-01-01", "2017-06-30", 4.167, "2017-08-23"),
+        _f("2017-07-01", "2017-09-30", 2.636, "2017-11-21"),
+        _f("2017-01-01", "2017-09-30", 6.803, "2017-11-21"),
+        _f("2017-01-01", "2017-12-31", 9.714, "2018-02-28", "10-K"),
+        _f("2017-10-01", "2017-12-31", 2.911, "2018-02-28", "10-K"),
+        _f("2017-01-01", "2017-03-31", 1.937, "2018-02-28", "10-K"),
+        _f("2017-07-01", "2017-09-30", q3_reprint, "2018-02-28", "10-K"),
+        _f("2017-01-01", "2017-06-30", h1_reprint, "2018-02-28", "10-K"),
+    ]
     return {G: r}
 
 
@@ -241,14 +274,23 @@ def _q1_restatement():
     """A basis change effective from the first quarter: the Q1-2022 10-Q restates its single
     comparative (Q1-2021, -20%) alongside the new quarter; later filings restate the rest."""
     r = _quarters(G, 2021, [10, 11, 12, 13], ["2021-04-28", "2021-07-28", "2021-10-27", "2022-02-01"])
-    r += [_f("2021-01-01", "2021-12-31", 46, "2022-02-01", "10-K"),
-          _f("2022-01-01", "2022-03-31", 9, "2022-04-28"), _f("2021-01-01", "2021-03-31", 8, "2022-04-28"),
-          _f("2022-04-01", "2022-06-30", 9.5, "2022-07-28"), _f("2022-01-01", "2022-06-30", 18.5, "2022-07-28"),
-          _f("2021-04-01", "2021-06-30", 8.8, "2022-07-28"), _f("2021-01-01", "2021-06-30", 16.8, "2022-07-28"),
-          _f("2022-07-01", "2022-09-30", 10, "2022-10-27"), _f("2022-01-01", "2022-09-30", 28.5, "2022-10-27"),
-          _f("2021-07-01", "2021-09-30", 9.6, "2022-10-27"), _f("2021-01-01", "2021-09-30", 26.4, "2022-10-27"),
-          _f("2022-01-01", "2022-12-31", 39, "2023-02-01", "10-K"), _f("2022-10-01", "2022-12-31", 10.5, "2023-02-01", "10-K"),
-          _f("2021-01-01", "2021-12-31", 36.8, "2023-02-01", "10-K"), _f("2021-10-01", "2021-12-31", 10.4, "2023-02-01", "10-K")]
+    r += [
+        _f("2021-01-01", "2021-12-31", 46, "2022-02-01", "10-K"),
+        _f("2022-01-01", "2022-03-31", 9, "2022-04-28"),
+        _f("2021-01-01", "2021-03-31", 8, "2022-04-28"),
+        _f("2022-04-01", "2022-06-30", 9.5, "2022-07-28"),
+        _f("2022-01-01", "2022-06-30", 18.5, "2022-07-28"),
+        _f("2021-04-01", "2021-06-30", 8.8, "2022-07-28"),
+        _f("2021-01-01", "2021-06-30", 16.8, "2022-07-28"),
+        _f("2022-07-01", "2022-09-30", 10, "2022-10-27"),
+        _f("2022-01-01", "2022-09-30", 28.5, "2022-10-27"),
+        _f("2021-07-01", "2021-09-30", 9.6, "2022-10-27"),
+        _f("2021-01-01", "2021-09-30", 26.4, "2022-10-27"),
+        _f("2022-01-01", "2022-12-31", 39, "2023-02-01", "10-K"),
+        _f("2022-10-01", "2022-12-31", 10.5, "2023-02-01", "10-K"),
+        _f("2021-01-01", "2021-12-31", 36.8, "2023-02-01", "10-K"),
+        _f("2021-10-01", "2021-12-31", 10.4, "2023-02-01", "10-K"),
+    ]
     r += _quarters(G, 2022, [9, 9.5, 10], ["2023-02-01"] * 3, ["10-K"] * 3)
     r += _quarters(G, 2021, [8, 8.8, 9.6], ["2023-02-01"] * 3, ["10-K"] * 3)
     return {G: r}
@@ -275,16 +317,26 @@ def _amzn_shaped(consistent_10k=False):
     y11 = [9.857, 9.913, 10.876, 17.431]
     y12 = [13.185, 12.834, 13.806, 21.268]
     r = _quarters("SalesRevenueNet", 2011, y11, ["2011-04-27", "2011-07-27", "2011-10-26", "2012-02-01"])
-    r += [_f("2011-01-01", "2011-12-31", 48.077, "2012-02-01", "10-K"),
-          _f("2012-01-01", "2012-03-31", 13.185, "2012-04-27"),
-          _f("2012-04-01", "2012-06-30", 12.834, "2012-07-27"), _f("2012-01-01", "2012-06-30", 26.019, "2012-07-27"),
-          _f("2012-07-01", "2012-09-30", 13.806, "2012-10-26"), _f("2012-01-01", "2012-09-30", 39.825, "2012-10-26"),
-          _f("2012-01-01", "2012-12-31", 61.093, "2013-01-30", "10-K"), _f("2011-01-01", "2011-12-31", 48.077, "2013-01-30", "10-K")]
+    r += [
+        _f("2011-01-01", "2011-12-31", 48.077, "2012-02-01", "10-K"),
+        _f("2012-01-01", "2012-03-31", 13.185, "2012-04-27"),
+        _f("2012-04-01", "2012-06-30", 12.834, "2012-07-27"),
+        _f("2012-01-01", "2012-06-30", 26.019, "2012-07-27"),
+        _f("2012-07-01", "2012-09-30", 13.806, "2012-10-26"),
+        _f("2012-01-01", "2012-09-30", 39.825, "2012-10-26"),
+        _f("2012-01-01", "2012-12-31", 61.093, "2013-01-30", "10-K"),
+        _f("2011-01-01", "2011-12-31", 48.077, "2013-01-30", "10-K"),
+    ]
     r += _quarters("SalesRevenueNet", 2012, y12 if consistent_10k else y11, ["2013-01-30"] * 4, ["10-K"] * 4)
     r += _quarters("SalesRevenueNet", 2011, y11 if consistent_10k else y12, ["2013-01-30"] * 4, ["10-K"] * 4)
-    r += [_f("2013-01-01", "2013-03-31", 16.070, "2013-04-26"), _f("2012-01-01", "2012-03-31", 13.185, "2013-04-26"),
-          _f("2013-04-01", "2013-06-30", 15.704, "2013-07-26"), _f("2013-01-01", "2013-06-30", 31.774, "2013-07-26"),
-          _f("2012-04-01", "2012-06-30", 12.834, "2013-07-26"), _f("2012-01-01", "2012-06-30", 26.019, "2013-07-26")]
+    r += [
+        _f("2013-01-01", "2013-03-31", 16.070, "2013-04-26"),
+        _f("2012-01-01", "2012-03-31", 13.185, "2013-04-26"),
+        _f("2013-04-01", "2013-06-30", 15.704, "2013-07-26"),
+        _f("2013-01-01", "2013-06-30", 31.774, "2013-07-26"),
+        _f("2012-04-01", "2012-06-30", 12.834, "2013-07-26"),
+        _f("2012-01-01", "2012-06-30", 26.019, "2013-07-26"),
+    ]
     return {"SalesRevenueNet": r}
 
 
@@ -322,13 +374,19 @@ def _ko_shaped():
     f18 = ["2018-04-25", "2018-07-26", "2018-10-30", "2019-02-21"]
     f19 = ["2019-04-25", "2019-07-25", "2019-10-24", "2020-02-24"]
     r = _quarters(N, 2018, [7.626, 8.927, 8.245], f18[:3]) + [
-        _f("2018-01-01", "2018-09-30", 24.798, f18[2]), _f("2018-01-01", "2018-12-31", 31.856, f18[3], "10-K"),
-        _f("2019-01-01", "2019-03-31", 8.020, f19[0]), _f("2019-04-01", "2019-06-30", 9.997, f19[1]),
+        _f("2018-01-01", "2018-09-30", 24.798, f18[2]),
+        _f("2018-01-01", "2018-12-31", 31.856, f18[3], "10-K"),
+        _f("2019-01-01", "2019-03-31", 8.020, f19[0]),
+        _f("2019-04-01", "2019-06-30", 9.997, f19[1]),
         _f("2019-01-01", "2019-06-30", 18.017, f19[1]),
-        _f("2018-01-01", "2018-12-31", 34.300, "2019-09-20", "8-K"),                # the lone re-print
-        _f("2019-07-01", "2019-09-30", 9.507, f19[2]), _f("2019-01-01", "2019-09-30", 28.198, f19[2]),
-        _f("2018-07-01", "2018-09-30", 8.775, f19[2]), _f("2018-01-01", "2018-09-30", 26.494, f19[2]),
-        _f("2019-01-01", "2019-12-31", 37.266, f19[3], "10-K"), _f("2018-01-01", "2018-12-31", 34.300, f19[3], "10-K")]
+        _f("2018-01-01", "2018-12-31", 34.300, "2019-09-20", "8-K"),  # the lone re-print
+        _f("2019-07-01", "2019-09-30", 9.507, f19[2]),
+        _f("2019-01-01", "2019-09-30", 28.198, f19[2]),
+        _f("2018-07-01", "2018-09-30", 8.775, f19[2]),
+        _f("2018-01-01", "2018-09-30", 26.494, f19[2]),
+        _f("2019-01-01", "2019-12-31", 37.266, f19[3], "10-K"),
+        _f("2018-01-01", "2018-12-31", 34.300, f19[3], "10-K"),
+    ]
     r += _quarters(N, 2019, [8.694, 9.997, 9.507, 9.068], [f19[3]] * 4, ["10-K"] * 4)
     r += _quarters(N, 2018, [8.303, 9.416, 8.775, 7.806], [f19[3]] * 4, ["10-K"] * 4)
     ni = _quarters("NetIncomeLoss", 2018, [1.4, 2.3, 1.9, 0.9], f18) + _quarters("NetIncomeLoss", 2019, [1.7, 2.6, 2.6, 2.0], f19)
@@ -369,14 +427,21 @@ def _jpm_shaped(reprint=4.924, repeat=None):
     f12 = ["2012-05-10", "2012-08-09", "2012-11-08", "2013-02-28"]
     f13 = ["2013-05-08", "2013-08-07", "2013-11-01"]
     ni = _quarters(ni_tag, 2011, [5.555, 5.431, 4.262, 3.728], f11)
-    ni += [_f("2012-01-01", "2012-03-31", 5.383, f12[0]),
-           _f("2012-01-01", "2012-03-31", reprint, "2012-08-09", "10-Q/A"),
-           _f("2012-04-01", "2012-06-30", 4.960, f12[1]), _f("2012-01-01", "2012-06-30", 9.884, f12[1]),
-           _f("2012-07-01", "2012-09-30", 5.708, f12[2]), _f("2012-01-01", "2012-09-30", 15.592, f12[2]),
-           _f("2012-01-01", "2012-12-31", 21.284, f12[3], "10-K"),                     # Q4 = 5.692
-           _f("2013-01-01", "2013-03-31", 6.529, f13[0]), _f("2012-01-01", "2012-03-31", reprint if repeat is None else repeat, f13[0]),
-           _f("2013-04-01", "2013-06-30", 6.496, f13[1]), _f("2012-04-01", "2012-06-30", 4.960, f13[1]),
-           _f("2013-07-01", "2013-09-30", -0.380, f13[2]), _f("2012-07-01", "2012-09-30", 5.708, f13[2])]
+    ni += [
+        _f("2012-01-01", "2012-03-31", 5.383, f12[0]),
+        _f("2012-01-01", "2012-03-31", reprint, "2012-08-09", "10-Q/A"),
+        _f("2012-04-01", "2012-06-30", 4.960, f12[1]),
+        _f("2012-01-01", "2012-06-30", 9.884, f12[1]),
+        _f("2012-07-01", "2012-09-30", 5.708, f12[2]),
+        _f("2012-01-01", "2012-09-30", 15.592, f12[2]),
+        _f("2012-01-01", "2012-12-31", 21.284, f12[3], "10-K"),  # Q4 = 5.692
+        _f("2013-01-01", "2013-03-31", 6.529, f13[0]),
+        _f("2012-01-01", "2012-03-31", reprint if repeat is None else repeat, f13[0]),
+        _f("2013-04-01", "2013-06-30", 6.496, f13[1]),
+        _f("2012-04-01", "2012-06-30", 4.960, f13[1]),
+        _f("2013-07-01", "2013-09-30", -0.380, f13[2]),
+        _f("2012-07-01", "2012-09-30", 5.708, f13[2]),
+    ]
     rev = _quarters(N, 2011, [24.0] * 4, f11) + _quarters(N, 2012, [24.0] * 4, f12) + _quarters(N, 2013, [24.0] * 3, f13)
     return {ni_tag: ni, N: rev}
 
@@ -402,7 +467,9 @@ def test_correction_confirmed_by_repetition_is_taken_in_place_and_opens_no_gener
     assert t.loc[pd.Timestamp("2012-12-31"), "val"] == pytest.approx(21.284 - 15.592)
     assert f["report_period_end"] == "2013-03-31" and "net_income_period_end" not in f
     assert f["net_margin"] == pytest.approx((4.960 + 5.708 + 5.692 + 6.529) / 96, abs=1e-4)
-    assert c.fundamentals("TST", date(2013, 11, 15))["net_margin"] == pytest.approx((5.692 + 6.529 + 6.496 - 0.380) / 96, abs=1e-4)
+    assert c.fundamentals("TST", date(2013, 11, 15))["net_margin"] == pytest.approx(
+        (5.692 + 6.529 + 6.496 - 0.380) / 96, abs=1e-4
+    )
     msgs = [r.getMessage() for r in caplog.records if "2012-01-01..2012-03-31" in r.getMessage()]
     assert len(msgs) == 2 and "ignored" in msgs[0] and "2012-08-09" in msgs[0]
     assert "confirmed by repetition" in msgs[1] and "2013-05-08" in msgs[1] and "4.924" in msgs[1]
@@ -422,12 +489,18 @@ def _near_zero_recast(new18_q4=241e6):
     f18 = ["2018-04-25", "2018-07-26", "2018-10-30", "2019-02-21"]
     f19 = ["2019-04-25", "2019-07-25", "2019-10-24", "2020-02-24"]
     facts = _quarters(ni, 2018, [400e6, -900e6, 300e6, 180e6], f18) + [
-        _f("2018-01-01", "2018-09-30", -200e6, f18[2]), _f("2018-01-01", "2018-12-31", -20e6, f18[3], "10-K"),
+        _f("2018-01-01", "2018-09-30", -200e6, f18[2]),
+        _f("2018-01-01", "2018-12-31", -20e6, f18[3], "10-K"),
         _f("2019-01-01", "2019-03-31", 500e6, f19[0]),
-        _f("2019-04-01", "2019-06-30", -700e6, f19[1]), _f("2019-01-01", "2019-06-30", -200e6, f19[1]),
-        _f("2019-07-01", "2019-09-30", 250e6, f19[2]), _f("2019-01-01", "2019-09-30", 50e6, f19[2]),
-        _f("2019-01-01", "2019-12-31", 130e6, f19[3], "10-K"), _f("2018-01-01", "2018-12-31", -8e6, f19[3], "10-K"),
-        _f("2019-01-01", "2019-09-30", 30e6, f19[3], "10-K"), _f("2018-01-01", "2018-09-30", -250e6, f19[3], "10-K")]
+        _f("2019-04-01", "2019-06-30", -700e6, f19[1]),
+        _f("2019-01-01", "2019-06-30", -200e6, f19[1]),
+        _f("2019-07-01", "2019-09-30", 250e6, f19[2]),
+        _f("2019-01-01", "2019-09-30", 50e6, f19[2]),
+        _f("2019-01-01", "2019-12-31", 130e6, f19[3], "10-K"),
+        _f("2018-01-01", "2018-12-31", -8e6, f19[3], "10-K"),
+        _f("2019-01-01", "2019-09-30", 30e6, f19[3], "10-K"),
+        _f("2018-01-01", "2018-09-30", -250e6, f19[3], "10-K"),
+    ]
     facts += _quarters(ni, 2019, [420e6, -600e6, 210e6, 100e6], [f19[3]] * 4, ["10-K"] * 4)
     facts += _quarters(ni, 2018, [300e6, -800e6, 250e6, new18_q4], [f19[3]] * 4, ["10-K"] * 4)
     rev = _quarters(N, 2018, [8e9] * 4, f18) + _quarters(N, 2019, [8.5e9] * 4, f19)
@@ -442,10 +515,17 @@ def test_near_zero_annual_figure_is_reconciled_on_the_scale_of_its_quarters(capl
     fragility: it overrode the printed 241M Q4-2018 with 242M (AMZN NetIncomeLoss Q4-2012, 97M
     printed, was served as 98M with a warning at every cutoff from 2014)."""
     d = pd.Timestamp("2018-01-01") - pd.Timestamp("1970-01-01")
-    y = [(d.days, d.days + 364, -8.0), (d.days, d.days + 89, 300.0), (d.days + 90, d.days + 180, -800.0),
-         (d.days + 181, d.days + 272, 250.0), (d.days + 273, d.days + 364, 241.0)]
+    y = [
+        (d.days, d.days + 364, -8.0),
+        (d.days, d.days + 89, 300.0),
+        (d.days + 90, d.days + 180, -800.0),
+        (d.days + 181, d.days + 272, 250.0),
+        (d.days + 273, d.days + 364, 241.0),
+    ]
     assert edgar_mod._inconsistent(y, additive=True) == []
-    assert edgar_mod._inconsistent(y[:-1] + [(d.days + 273, d.days + 364, 141.0)], additive=True) == [(d.days, d.days + 364, -109.0, -8.0)]
+    assert edgar_mod._inconsistent(y[:-1] + [(d.days + 273, d.days + 364, 141.0)], additive=True) == [
+        (d.days, d.days + 364, -109.0, -8.0)
+    ]
     c = _edgar(_near_zero_recast())
     with caplog.at_level("WARNING", logger="agentic_trader.data.edgar"):
         f = c.fundamentals("TST", date(2020, 3, 1))
@@ -474,9 +554,9 @@ def test_mis_tagged_recast_is_rejected_and_never_manufactures_a_quarter(caplog):
     assert t.loc["2011"]["val"].round(3).tolist() == [9.857, 9.913, 10.876, 17.431]
     assert t.loc["2012"]["val"].round(3).tolist() == [13.185, 12.834, 13.806, 21.268]
     assert set(t["gen"]) == {0} and not {8.252, 30.447} & set(t["val"].round(3))
-    assert f["revenue_growth_yoy"] == pytest.approx(0.2446, abs=0.01)            # v0.8 second cut: +33.1%
+    assert f["revenue_growth_yoy"] == pytest.approx(0.2446, abs=0.01)  # v0.8 second cut: +33.1%
     msgs = [r.getMessage() for r in caplog.records if r.name == "agentic_trader.data.edgar"]
-    assert len(msgs) == 1 and "mis-tagged" in msgs[0]                          # no "Q4 taken as" note either
+    assert len(msgs) == 1 and "mis-tagged" in msgs[0]  # no "Q4 taken as" note either
 
 
 def _eps_shaped(swap=False):
@@ -489,7 +569,9 @@ def _eps_shaped(swap=False):
     f2 = ["2017-04-25", "2017-07-25", "2017-10-24", "2018-02-21"]
     e = _quarters("EarningsPerShareDiluted", 2016, y1, f1) + [_f("2016-01-01", "2016-12-31", 5.93, f1[3], "10-K")]
     e += _quarters("EarningsPerShareDiluted", 2017, y2[:3], f2[:3]) + [
-        _f("2017-01-01", "2017-09-30", 4.38, f2[2]), _f("2017-01-01", "2017-12-31", 0.47, f2[3], "10-K")]
+        _f("2017-01-01", "2017-09-30", 4.38, f2[2]),
+        _f("2017-01-01", "2017-12-31", 0.47, f2[3], "10-K"),
+    ]
     e += _quarters("EarningsPerShareDiluted", 2017, y1 if swap else y2, [f2[3]] * 4, ["10-K"] * 4)
     e += _quarters("EarningsPerShareDiluted", 2016, y2 if swap else y1, [f2[3]] * 4, ["10-K"] * 4)
     rev = _quarters(N, 2016, [17.0] * 4, f1) + _quarters(N, 2017, [19.0] * 4, f2)
@@ -531,11 +613,16 @@ def _lly_shaped(recast=N, cash=False):
         series += [(OCF, 0.3e9), (CAPEX, 0.1e9)]
     for tag, scale in series:
         v = [x * scale for x in (5.2, 5.8, 5.7, 6.2, 5.70, 6.36, 6.06, 6.44, 6.0, 6.3)]
-        facts[tag] = _quarters(tag, 2017, v[:4], f17) + _quarters(tag, 2018, v[4:8], f18) + [
-            _f("2019-01-01", "2019-03-31", v[8], "2019-04-30"), _f("2019-04-01", "2019-06-30", v[9], "2019-08-01")]
+        facts[tag] = (
+            _quarters(tag, 2017, v[:4], f17)
+            + _quarters(tag, 2018, v[4:8], f18)
+            + [_f("2019-01-01", "2019-03-31", v[8], "2019-04-30"), _f("2019-04-01", "2019-06-30", v[9], "2019-08-01")]
+        )
         if tag == recast:
-            facts[tag] += [_f("2018-01-01", "2018-03-31", 0.87 * v[4], "2019-04-30"),
-                           _f("2018-04-01", "2018-06-30", 0.87 * v[5], "2019-08-01")]
+            facts[tag] += [
+                _f("2018-01-01", "2018-03-31", 0.87 * v[4], "2019-04-30"),
+                _f("2018-04-01", "2018-06-30", 0.87 * v[5], "2019-08-01"),
+            ]
     facts["dei:EntityCommonStockSharesOutstanding"] = [_f(None, "2019-06-30", 1e9, "2019-08-01")]
     return facts
 
@@ -547,7 +634,7 @@ def test_live_series_with_a_lagging_window_is_kept_and_flagged_not_dropped_as_de
     # and was dropped as "stopped being reported" although the Q2 10-Q had just printed revenue.
     assert f["report_period_end"] == "2019-06-30" and f["revenue_period_end"] == "2018-12-31"
     assert f["revenue_ttm"] == pytest.approx(5.70 + 6.36 + 6.06 + 6.44)
-    assert f["revenue_growth_yoy"] == pytest.approx(24.56 / 22.9 - 1, abs=1e-4)      # both years on the held basis
+    assert f["revenue_growth_yoy"] == pytest.approx(24.56 / 22.9 - 1, abs=1e-4)  # both years on the held basis
     assert "net_margin" not in f and f["eps_ttm"] == pytest.approx(0.02 * (6.06 + 6.44 + 6.0 + 6.3))
     # the lag of another series is reported under its own key, and the margin is never mixed
     g = _edgar(_lly_shaped(recast="NetIncomeLoss")).fundamentals("TST", date(2019, 8, 3), price=100.0)
@@ -595,11 +682,18 @@ def _renamed_tag(shared_q3=4.726, shared_q2=None):
     date), the 10-K prints the annual span and one quarter (optionally two) under the new tag only."""
     filed20 = ["2020-05-21", "2020-08-19", "2020-11-18", "2021-02-26"]
     n = _quarters(N, 2019, [3.0, 3.1, 3.0, 3.1], ["2019-05-20", "2019-08-20", "2019-11-20", "2020-02-20"])
-    n += [_f("2019-01-01", "2019-12-31", 12.2, "2020-02-20", "10-K"),
-          _f("2020-01-01", "2020-03-31", 3.08, filed20[0]),
-          _f("2020-04-01", "2020-06-30", 3.866, filed20[1]), _f("2020-01-01", "2020-06-30", 6.946, filed20[1]),
-          _f("2020-07-01", "2020-09-30", 4.726, filed20[2]), _f("2020-01-01", "2020-09-30", 11.672, filed20[2])]
-    g = [_f("2020-01-01", "2020-12-31", 16.675, filed20[3], "10-K"), _f("2020-07-01", "2020-09-30", shared_q3, filed20[3], "10-K")]
+    n += [
+        _f("2019-01-01", "2019-12-31", 12.2, "2020-02-20", "10-K"),
+        _f("2020-01-01", "2020-03-31", 3.08, filed20[0]),
+        _f("2020-04-01", "2020-06-30", 3.866, filed20[1]),
+        _f("2020-01-01", "2020-06-30", 6.946, filed20[1]),
+        _f("2020-07-01", "2020-09-30", 4.726, filed20[2]),
+        _f("2020-01-01", "2020-09-30", 11.672, filed20[2]),
+    ]
+    g = [
+        _f("2020-01-01", "2020-12-31", 16.675, filed20[3], "10-K"),
+        _f("2020-07-01", "2020-09-30", shared_q3, filed20[3], "10-K"),
+    ]
     if shared_q2 is not None:
         g.append(_f("2020-04-01", "2020-06-30", shared_q2, filed20[3], "10-K"))
     return {N: n, G: g}
@@ -613,7 +707,7 @@ def test_tag_rename_with_an_identical_span_is_one_concept_gross_and_net_are_not(
     # trailing year stayed at the September window (14.772) for as long as the 10-K was the
     # only source of Q4.
     assert t.loc[pd.Timestamp("2020-12-31"), "val"] == pytest.approx(16.675 - 11.672)
-    assert set(t["tag"]) == {G} and len(t) == 8                     # one concept, labelled by its best-ranked tag
+    assert set(t["tag"]) == {G} and len(t) == 8  # one concept, labelled by its best-ranked tag
     f = c.fundamentals("TST", date(2021, 3, 1))
     assert f["revenue_ttm"] == pytest.approx(16.675) and f["revenue_growth_yoy"] == pytest.approx(16.675 / 12.2 - 1, abs=1e-4)
     sub = edgar_mod._pick(known, edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"])
@@ -621,15 +715,17 @@ def test_tag_rename_with_an_identical_span_is_one_concept_gross_and_net_are_not(
     # a shared span that differs by 3% is another concept: the tags stay apart and Q4 is not built
     d = _edgar(_renamed_tag(shared_q3=4.726 * 1.03))
     kd = _known(d, date(2021, 3, 1))
-    assert edgar_mod._tag_classes(edgar_mod._pick(kd, edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"]),
-                                  edgar_mod.REVENUE_TAGS) == [[G], [N]]
+    assert edgar_mod._tag_classes(
+        edgar_mod._pick(kd, edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"]), edgar_mod.REVENUE_TAGS
+    ) == [[G], [N]]
     assert d.fundamentals("TST", date(2021, 3, 1))["revenue_ttm"] == pytest.approx(3.1 + 3.08 + 3.866 + 4.726)
     # ...and so do tags that agree on one shared span but not on another (net income with and
     # without the non-controlling interest, which is nil in some quarters): every shared span must agree
     e = _edgar(_renamed_tag(shared_q2=3.866 * 1.03))
     ke = _known(e, date(2021, 3, 1))
-    assert edgar_mod._tag_classes(edgar_mod._pick(ke, edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"]),
-                                  edgar_mod.REVENUE_TAGS) == [[G], [N]]
+    assert edgar_mod._tag_classes(
+        edgar_mod._pick(ke, edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"]), edgar_mod.REVENUE_TAGS
+    ) == [[G], [N]]
     assert e.fundamentals("TST", date(2021, 3, 1))["revenue_ttm"] == pytest.approx(3.1 + 3.08 + 3.866 + 4.726)
     # Mastercard's gross and net tags share every quarter span and agree on none of them
     ma = edgar_mod._pick(_known(_edgar(_ma_shaped()), date(2023, 3, 1)), edgar_mod.REVENUE_TAGS, None).dropna(subset=["start"])
@@ -642,11 +738,19 @@ def test_concept_is_stable_across_consecutive_filings():
     rev = []
     for y, base in ((2016, 50.0), (2017, 54.0), (2018, 58.0)):
         rev += _quarters(N, y, [base, base + 1, base + 2, base + 3], [f"{y}-05-06", f"{y}-08-06", f"{y}-11-05", f"{y + 1}-02-25"])
-    rev += [_f("2019-01-01", "2019-03-31", 63.0, "2019-05-06"), _f("2019-04-01", "2019-06-30", 64.0, "2019-08-05"),
-            _f("2019-07-01", "2019-09-30", 65.0, "2019-11-04")]
-    other = [_f("2018-04-01", "2018-06-30", 0.7 * 59, "2018-08-06"), _f("2018-07-01", "2018-09-30", 0.7 * 60, "2018-11-05"),
-             _f("2018-10-01", "2018-12-31", 0.7 * 61, "2019-02-25", "10-K"), _f("2019-01-01", "2019-03-31", 0.7 * 63, "2019-05-06"),
-             _f("2019-04-01", "2019-06-30", 0.7 * 64, "2019-08-05"), _f("2019-07-01", "2019-09-30", 0.7 * 65, "2019-11-04")]
+    rev += [
+        _f("2019-01-01", "2019-03-31", 63.0, "2019-05-06"),
+        _f("2019-04-01", "2019-06-30", 64.0, "2019-08-05"),
+        _f("2019-07-01", "2019-09-30", 65.0, "2019-11-04"),
+    ]
+    other = [
+        _f("2018-04-01", "2018-06-30", 0.7 * 59, "2018-08-06"),
+        _f("2018-07-01", "2018-09-30", 0.7 * 60, "2018-11-05"),
+        _f("2018-10-01", "2018-12-31", 0.7 * 61, "2019-02-25", "10-K"),
+        _f("2019-01-01", "2019-03-31", 0.7 * 63, "2019-05-06"),
+        _f("2019-04-01", "2019-06-30", 0.7 * 64, "2019-08-05"),
+        _f("2019-07-01", "2019-09-30", 0.7 * 65, "2019-11-04"),
+    ]
     c = _edgar({N: rev, G: other})
     seen = []
     for d in (date(2019, 3, 1), date(2019, 5, 8), date(2019, 8, 10), date(2019, 11, 10)):
@@ -664,8 +768,13 @@ def test_concept_is_stable_across_consecutive_filings():
 
 
 # =================================================== finding 8: recency / share class
-def _brk_shaped(share_end="2011-04-29", share_filed="2011-05-06", eps_years=(2013,), shares=941_481.0,
-                eps_vals=(2977.0, 2763.0, 3074.0, 3035.0)):
+def _brk_shaped(
+    share_end="2011-04-29",
+    share_filed="2011-05-06",
+    eps_years=(2013,),
+    shares=941_481.0,
+    eps_vals=(2977.0, 2763.0, 3074.0, 3035.0),
+):
     rev, ni, ocf, eps = [], [], [], []
     for y in range(2012, 2024):
         filed = [f"{y}-05-05", f"{y}-08-05", f"{y}-11-05", f"{y + 1}-02-25"]
@@ -674,19 +783,26 @@ def _brk_shaped(share_end="2011-04-29", share_filed="2011-05-06", eps_years=(201
         ocf += _quarters("NetCashProvidedByUsedInOperatingActivities", y, [9e9, 9e9, 9e9, 9e9], filed)
         if y in eps_years:
             eps += _quarters("EarningsPerShareBasic", y, list(eps_vals), filed)
-    return {N: rev, "NetIncomeLoss": ni, "NetCashProvidedByUsedInOperatingActivities": ocf,
-            "EarningsPerShareBasic": eps,
-            "dei:EntityCommonStockSharesOutstanding": [_f(None, share_end, shares, share_filed)]}
+    return {
+        N: rev,
+        "NetIncomeLoss": ni,
+        "NetCashProvidedByUsedInOperatingActivities": ocf,
+        "EarningsPerShareBasic": eps,
+        "dei:EntityCommonStockSharesOutstanding": [_f(None, share_end, shares, share_filed)],
+    }
 
 
 def test_decade_old_share_count_and_dead_eps_series_yield_no_per_share_ratios():
     c = _edgar(_brk_shaped())
     f = c.fundamentals("TST", date(2024, 3, 1), price=300.0)
     assert f["report_period_end"] == "2023-12-31" and f["revenue_ttm"] == pytest.approx(246e9)
-    assert "fcf_yield" not in f and "eps_ttm" not in f and "pe_ratio" not in f    # v0.7: fcf_yield 105, P/E 0.03
+    assert "fcf_yield" not in f and "eps_ttm" not in f and "pe_ratio" not in f  # v0.7: fcf_yield 105, P/E 0.03
     # a current share count restores the FCF yield; a current EPS window restores the P/E
-    g = _edgar(_brk_shaped(share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9,
-                           eps_vals=(2.0, 1.8, 2.1, 2.0)))
+    g = _edgar(
+        _brk_shaped(
+            share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9, eps_vals=(2.0, 1.8, 2.1, 2.0)
+        )
+    )
     h = g.fundamentals("TST", date(2024, 3, 1), price=300.0)
     assert h["fcf_yield"] == pytest.approx(36e9 / (300.0 * 1.4e9), abs=1e-4)
     assert h["eps_ttm"] == pytest.approx(7.9)
@@ -708,32 +824,41 @@ def test_market_cap_and_eps_sanity_checks_drop_other_class_ratios(monkeypatch):
 
 
 def test_stale_capex_removes_fcf_rather_than_capex():
-    current = dict(share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9, eps_vals=(2.0, 1.8, 2.1, 2.0))
+    current = dict(
+        share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9, eps_vals=(2.0, 1.8, 2.1, 2.0)
+    )
     capex = "PaymentsToAcquirePropertyPlantAndEquipment"
     dead = []
     for y in range(2012, 2022):
         dead += _quarters(capex, y, [1e9] * 4, [f"{y}-05-05", f"{y}-08-05", f"{y}-11-05", f"{y + 1}-02-25"])
     facts = _brk_shaped(**current)
-    facts[capex] = dead                                             # last capex quarter 2021-12-31, OCF runs to 2023-12-31
+    facts[capex] = dead  # last capex quarter 2021-12-31, OCF runs to 2023-12-31
     f = _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)
-    assert "fcf_yield" not in f                                     # v0.8 first cut: OCF alone, 36e9 / market cap
+    assert "fcf_yield" not in f  # v0.8 first cut: OCF alone, 36e9 / market cap
     assert f["eps_ttm"] == pytest.approx(7.9) and f["revenue_ttm"] == pytest.approx(246e9)
-    facts[capex] = dead + [q for y in (2022, 2023) for q in
-                           _quarters(capex, y, [1e9] * 4, [f"{y}-05-05", f"{y}-08-05", f"{y}-11-05", f"{y + 1}-02-25"])]
+    facts[capex] = dead + [
+        q
+        for y in (2022, 2023)
+        for q in _quarters(capex, y, [1e9] * 4, [f"{y}-05-05", f"{y}-08-05", f"{y}-11-05", f"{y + 1}-02-25"])
+    ]
     g = _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)
     assert g["fcf_yield"] == pytest.approx((36e9 - 4e9) / (300.0 * 1.4e9), abs=1e-4)
-    del facts[capex]                                                # never reported: free cash flow is operating cash flow
-    assert _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)["fcf_yield"] == pytest.approx(36e9 / (300.0 * 1.4e9), abs=1e-4)
+    del facts[capex]  # never reported: free cash flow is operating cash flow
+    assert _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)["fcf_yield"] == pytest.approx(
+        36e9 / (300.0 * 1.4e9), abs=1e-4
+    )
 
 
 def test_net_margin_needs_revenue_and_net_income_windows_ending_together():
-    current = dict(share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9, eps_vals=(2.0, 1.8, 2.1, 2.0))
+    current = dict(
+        share_end="2023-12-31", share_filed="2024-02-25", eps_years=(2023,), shares=1.4e9, eps_vals=(2.0, 1.8, 2.1, 2.0)
+    )
     facts = _brk_shaped(**current)
-    facts[N] = [r for r in facts[N] if r["end"] <= "2023-09-30"]   # Q4-2023 revenue not printed yet, net income is
+    facts[N] = [r for r in facts[N] if r["end"] <= "2023-09-30"]  # Q4-2023 revenue not printed yet, net income is
     f = _edgar(facts).fundamentals("TST", date(2024, 3, 1), price=300.0)
     assert f["report_period_end"] == "2023-12-31" and f["revenue_period_end"] == "2023-09-30"
     assert f["revenue_ttm"] == pytest.approx(246e9) and "revenue_growth_yoy" in f
-    assert "net_margin" not in f                                    # v0.8 first cut: NI to December over revenue to September
+    assert "net_margin" not in f  # v0.8 first cut: NI to December over revenue to September
     g = _edgar(_brk_shaped(**current)).fundamentals("TST", date(2024, 3, 1), price=300.0)
     assert g["net_margin"] == pytest.approx(20e9 / 246e9, abs=1e-4) and "revenue_period_end" not in g
 
@@ -743,15 +868,17 @@ def test_share_class_ratio_by_normalised_ticker_and_one_warning_per_kind(monkeyp
     monkeypatch.setitem(edgar_mod.SHARE_CLASS_RATIO, "TS-T", 1500.0)
     c = _edgar(facts, ticker="TS-T")
     dash = c.fundamentals("TS-T", date(2024, 3, 1), price=300.0)
-    dot = c.fundamentals("ts.t", date(2024, 3, 1), price=300.0)      # Instrument.parse keeps BRK.B as typed
+    dot = c.fundamentals("ts.t", date(2024, 3, 1), price=300.0)  # Instrument.parse keeps BRK.B as typed
     assert dash["eps_ttm"] == pytest.approx(11849 / 1500, abs=1e-4)
-    assert dot["eps_ttm"] == dash["eps_ttm"] and dot["fcf_yield"] == dash["fcf_yield"]   # v0.8 first cut: no ratio for the dotted spelling
-    d = _edgar(facts)                                               # no ratio: both sanity checks trip on every bar
+    assert (
+        dot["eps_ttm"] == dash["eps_ttm"] and dot["fcf_yield"] == dash["fcf_yield"]
+    )  # v0.8 first cut: no ratio for the dotted spelling
+    d = _edgar(facts)  # no ratio: both sanity checks trip on every bar
     with caplog.at_level("WARNING", logger="agentic_trader.data.edgar"):
         for i, p in enumerate([300.0, 301.0, 302.5, 299.0, 310.0]):
             d.fundamentals("TST", date(2024, 3, 1) + timedelta(days=i), price=p)
     msgs = [r.getMessage() for r in caplog.records if r.name == "agentic_trader.data.edgar"]
-    assert sum("market cap" in m for m in msgs) == 1                 # v0.8 first cut: once per distinct price
+    assert sum("market cap" in m for m in msgs) == 1  # v0.8 first cut: once per distinct price
     assert sum("trailing EPS" in m for m in msgs) == 1
 
 
@@ -768,40 +895,59 @@ def test_balance_sheet_instants_older_than_400_days_are_not_current():
 @pytest.mark.skipif(not os.path.isdir(EDGAR_CACHE), reason="no offline EDGAR cache in build/")
 def test_cached_filers_offline_regression():
     """MA / BRK-B / JNJ from the frozen companyfacts cache, no network (the fetch raises)."""
+
     def no_net(url):
         raise AssertionError("network blocked")
-    c = EdgarClient(user_agent="offline offline@example.com", cache_dir=EDGAR_CACHE, fetch=no_net,
-                    cache_max_age_days=None, ciks={"MA": "0001141391", "BRK-B": "0001067983", "JNJ": "0000200406",
-                                                   "NVDA": "0001045810", "AMZN": "0001018724", "CVX": "0000093410",
-                                                   "PG": "0000080424", "XOM": "0000034088", "KO": "0000021344",
-                                                   "LLY": "0000059478", "JPM": "0000019617", "MSFT": "0000789019",
-                                                   "MRK": "0000310158"})
+
+    c = EdgarClient(
+        user_agent="offline offline@example.com",
+        cache_dir=EDGAR_CACHE,
+        fetch=no_net,
+        cache_max_age_days=None,
+        ciks={
+            "MA": "0001141391",
+            "BRK-B": "0001067983",
+            "JNJ": "0000200406",
+            "NVDA": "0001045810",
+            "AMZN": "0001018724",
+            "CVX": "0000093410",
+            "PG": "0000080424",
+            "XOM": "0000034088",
+            "KO": "0000021344",
+            "LLY": "0000059478",
+            "JPM": "0000019617",
+            "MSFT": "0000789019",
+            "MRK": "0000310158",
+        },
+    )
     try:
         ma = c.fundamentals("MA", date(2023, 3, 1))
     except AssertionError:
         pytest.skip("cache incomplete")
-    assert ma["revenue_ttm"] == pytest.approx(22.237e9, rel=1e-4)                # one concept
-    assert ma["revenue_growth_yoy"] == pytest.approx(0.178, abs=0.01)             # reported +17.8%, v0.7 gave -25.5%
+    assert ma["revenue_ttm"] == pytest.approx(22.237e9, rel=1e-4)  # one concept
+    assert ma["revenue_growth_yoy"] == pytest.approx(0.178, abs=0.01)  # reported +17.8%, v0.7 gave -25.5%
     q = quarterly_table(_known(c, date(2023, 3, 1), "MA"), edgar_mod.REVENUE_TAGS, positive=True)
     assert (q["val"] > 0).all() and q["tag"].iloc[-8:].nunique() == 1 and q["gen"].iloc[-8:].nunique() == 1
     brk = c.fundamentals("BRK-B", date(2024, 3, 1), price=300.0)
     assert brk["revenue_ttm"] > 2e11 and "pe_ratio" not in brk and "fcf_yield" not in brk and "eps_ttm" not in brk
     assert c.fundamentals("BRK-B", date(2019, 3, 1))["revenue_ttm"] == pytest.approx(247.837e9, rel=1e-4)
     jnj = c.fundamentals("JNJ", date(2024, 3, 1))
-    assert jnj["revenue_ttm"] == pytest.approx(85.159e9, rel=1e-4)              # v0.7: 93.022e9 on two bases
+    assert jnj["revenue_ttm"] == pytest.approx(85.159e9, rel=1e-4)  # v0.7: 93.022e9 on two bases
     assert jnj["revenue_growth_yoy"] == pytest.approx(0.0646, abs=2e-3)
     # (d) the concept already reported is kept while it covers: no flip to a tag with four quarters
     b19 = c.fundamentals("BRK-B", date(2019, 5, 8))
-    assert b19["revenue_ttm"] == pytest.approx(250.042e9, rel=1e-3) and "revenue_growth_yoy" in b19   # was 176.3e9, no growth
+    assert b19["revenue_ttm"] == pytest.approx(250.042e9, rel=1e-3) and "revenue_growth_yoy" in b19  # was 176.3e9, no growth
     ma19 = c.fundamentals("MA", date(2019, 2, 15))
-    assert ma19["revenue_ttm"] == pytest.approx(14.95e9, rel=1e-3) and "revenue_growth_yoy" in ma19    # net revenue as reported; was 21.8e9 gross
+    assert (
+        ma19["revenue_ttm"] == pytest.approx(14.95e9, rel=1e-3) and "revenue_growth_yoy" in ma19
+    )  # net revenue as reported; was 21.8e9 gross
     cvx = c.fundamentals("CVX", date(2019, 5, 10))
-    assert cvx["revenue_ttm"] == pytest.approx(163.775e9, rel=1e-3) and "revenue_growth_yoy" in cvx    # was 157.1e9, no growth
+    assert cvx["revenue_ttm"] == pytest.approx(163.775e9, rel=1e-3) and "revenue_growth_yoy" in cvx  # was 157.1e9, no growth
     # (a) NVDA FY2018: the 10-K's one erroneous six-month print is a revision, not a basis change
     nv = c.fundamentals("NVDA", date(2018, 5, 15))
     assert nv["revenue_ttm"] == pytest.approx(9.714e9, rel=1e-4) and nv["revenue_growth_yoy"] == pytest.approx(0.4058, abs=2e-3)
     # (c) the FY2020 annual span under the new tag completes Q4 with the nine months under the old one
-    assert c.fundamentals("NVDA", date(2020, 11, 15))["revenue_ttm"] == pytest.approx(13.065e9, rel=1e-3)   # was absent
+    assert c.fundamentals("NVDA", date(2020, 11, 15))["revenue_ttm"] == pytest.approx(13.065e9, rel=1e-3)  # was absent
     # (b) AMZN FY2012 10-K with the 2011/2012 quarter values swapped: the audited annual figure governs
     am = c.fundamentals("AMZN", date(2013, 2, 15))
     assert am["revenue_ttm"] == pytest.approx(61.093e9, rel=1e-4) and am["revenue_growth_yoy"] == pytest.approx(0.2707, abs=2e-3)
@@ -833,15 +979,22 @@ def test_cached_filers_offline_regression():
     # against an annual 0.47 (was -3.91, with a warning asserting mis-tagged comparatives)
     assert c.fundamentals("JNJ", date(2018, 3, 1))["eps_ttm"] == pytest.approx(0.39)
     # (k) JNJ / Kenvue: revenue is served at every filing cutoff through the transition
-    assert all(c.fundamentals("JNJ", cut).get("revenue_ttm") for cut in
-               (date(2023, 8, 1), date(2023, 10, 28), date(2024, 2, 17), date(2024, 5, 2)))
+    assert all(
+        c.fundamentals("JNJ", cut).get("revenue_ttm")
+        for cut in (date(2023, 8, 1), date(2023, 10, 28), date(2024, 2, 17), date(2024, 5, 2))
+    )
     # Final review of v0.8:
     # (l) a single-quarter restatement repeated by later filings is a confirmed correction: the
     # Q1 10-Q re-printing it beside its new quarter opens no generation, so the net income
     # window is current and the margin served (the round-2 code lost these nine cutoffs)
-    for ticker, cut, margin, eps in (("JPM", date(2013, 5, 15), 0.2382, 5.59), ("JPM", date(2013, 11, 15), 0.1888, 4.41),
-                                     ("MSFT", date(2016, 10, 21), 0.1942, 2.08), ("MSFT", date(2017, 4, 28), 0.2042, 2.26),
-                                     ("NVDA", date(2017, 5, 24), 0.2605, 3.02), ("NVDA", date(2017, 11, 22), 0.2878, 4.03)):
+    for ticker, cut, margin, eps in (
+        ("JPM", date(2013, 5, 15), 0.2382, 5.59),
+        ("JPM", date(2013, 11, 15), 0.1888, 4.41),
+        ("MSFT", date(2016, 10, 21), 0.1942, 2.08),
+        ("MSFT", date(2017, 4, 28), 0.2042, 2.26),
+        ("NVDA", date(2017, 5, 24), 0.2605, 3.02),
+        ("NVDA", date(2017, 11, 22), 0.2878, 4.03),
+    ):
         r = c.fundamentals(ticker, cut, price=100.0)
         assert r["report_period_end"] > "2013" and "net_income_period_end" not in r and "eps_period_end" not in r, (ticker, cut)
         assert r["net_margin"] == pytest.approx(margin, abs=2e-4) and r["eps_ttm"] == pytest.approx(eps, abs=1e-2), (ticker, cut)
@@ -876,6 +1029,7 @@ def fake_fred(monkeypatch):
         if sid == "DTB3":
             return pd.DataFrame({"DTB3": 5.0}, index=dff_idx)
         raise RuntimeError(f"{sid} unavailable")
+
     client = FredClient(fetch=fetch)
     monkeypatch.setattr(fred_mod, "_default", client)
     return client
@@ -927,7 +1081,7 @@ def test_risk_free_series_modes_and_point_in_time_tbill(monkeypatch):
     obs = pd.DataFrame({"DTB3": [5.20, 5.25, 5.30]}, index=pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-05"]))
     client = FredClient(fetch=lambda url: obs)
     monkeypatch.setattr(fred_mod, "_default", client)
-    rf = _RealWorldSynthetic(cfg).risk_free_series(dates)                       # auto -> FRED on real-world data
+    rf = _RealWorldSynthetic(cfg).risk_free_series(dates)  # auto -> FRED on real-world data
     assert np.isnan(rf[0])
     assert rf[1:].tolist() == pytest.approx([0.0520, 0.0525, 0.0525, 0.0530])
     assert CASH_SERIES["USD"].series_id == "DTB3" and CASH_SERIES["USD"].lag_days == 1
@@ -962,6 +1116,7 @@ def test_fred_disk_cache_expires_and_stale_cache_no_longer_yields_static_rates(t
     def fetch(url):
         calls.append(url)
         return _dff(today - timedelta(days=1))
+
     # a cache written 200 days ago (an old `evaluate --fred-cache` run)
     old = FredClient(cache_dir=tmp_path, fetch=lambda url: _dff(march))
     assert old.rate("USD", march) == 4.33
@@ -970,12 +1125,12 @@ def test_fred_disk_cache_expires_and_stale_cache_no_longer_yields_static_rates(t
     # v0.7: served forever -> rate None today -> fx_macro fell back to the static table
     fresh = FredClient(cache_dir=tmp_path, fetch=fetch)
     assert fresh.rate("USD", today) == 4.33 and len(calls) == 1
-    assert (time.time() - (tmp_path / "DFF.csv").stat().st_mtime) < 60          # rewritten
+    assert (time.time() - (tmp_path / "DFF.csv").stat().st_mtime) < 60  # rewritten
     again = FredClient(cache_dir=tmp_path, fetch=fetch)
-    assert again.rate("USD", today) == 4.33 and len(calls) == 1                  # within the day: no download
+    assert again.rate("USD", today) == 4.33 and len(calls) == 1  # within the day: no download
     forever = FredClient(cache_dir=tmp_path, fetch=fetch, cache_max_age_days=None)
     os.utime(tmp_path / "DFF.csv", (stamp, stamp))
-    assert forever.rate("USD", today) == 4.33 and len(calls) == 1                # None keeps files forever
+    assert forever.rate("USD", today) == 4.33 and len(calls) == 1  # None keeps files forever
     # the config key reaches default_client and is part of its identity
     monkeypatch.setattr(fred_mod, "_default", None)
     monkeypatch.setattr(fred_mod, "_defaults", {})
@@ -983,22 +1138,26 @@ def test_fred_disk_cache_expires_and_stale_cache_no_longer_yields_static_rates(t
     b = default_client(make_config(fred_cache_dir=str(tmp_path), fred_cache_max_age_days=None))
     assert a.cache_max_age_days == 1.0 and b.cache_max_age_days is None and a is not b
     # and a live EURUSD decision on a stale cache with no download possible has no macro at all
-    monkeypatch.setattr(fred_mod, "_default", FredClient(cache_dir=tmp_path, fetch=lambda u: (_ for _ in ()).throw(RuntimeError("offline"))))
+    monkeypatch.setattr(
+        fred_mod, "_default", FredClient(cache_dir=tmp_path, fetch=lambda u: (_ for _ in ()).throw(RuntimeError("offline")))
+    )
     os.utime(tmp_path / "DFF.csv", (stamp, stamp))
     assert fx_macro(Instrument.parse("EURUSD"), today, make_config(), real_world=True) == {}
 
 
 def test_fred_download_is_validated_before_it_is_persisted(tmp_path):
     import io
+
     html = "<!DOCTYPE html>\n<html><head><title>Service Unavailable</title></head><body><h1>down</h1></body></html>\n"
     n = []
 
     def html_fetch(url):
         n.append(url)
-        return pd.read_csv(io.StringIO(html), index_col=0, parse_dates=True)   # what a 200 HTML body parses to
+        return pd.read_csv(io.StringIO(html), index_col=0, parse_dates=True)  # what a 200 HTML body parses to
+
     c = FredClient(cache_dir=tmp_path, fetch=html_fetch)
     assert c.rate("USD", date.today()) is None and len(n) == 1
-    assert not (tmp_path / "DFF.csv").exists()                                  # v0.7 wrote the poison file
+    assert not (tmp_path / "DFF.csv").exists()  # v0.7 wrote the poison file
     good = FredClient(cache_dir=tmp_path, fetch=lambda url: _dff(date.today() - timedelta(days=1)))
     assert good.rate("USD", date.today()) == 4.33 and (tmp_path / "DFF.csv").exists()
     empty = FredClient(cache_dir=tmp_path / "e", fetch=lambda url: pd.DataFrame({"X": []}, index=pd.DatetimeIndex([])))
@@ -1032,6 +1191,7 @@ def test_http_fetch_uses_a_timeout(monkeypatch):
     def fake_urlopen(req, timeout=None):
         seen["timeout"] = timeout
         return _Resp()
+
     monkeypatch.setattr(fred_mod, "urlopen", fake_urlopen)
     df = fred_mod._http_fetch("https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFF")
     assert seen["timeout"] and seen["timeout"] > 0
@@ -1092,12 +1252,13 @@ class _FakeYF:
         s, e = pd.Timestamp(start), pd.Timestamp(end)
         last = min(e - pd.Timedelta(days=1), pd.Timestamp(self.today) - pd.Timedelta(days=1))
         idx = pd.bdate_range(s, last)
-        if e > pd.Timestamp(self.today):                       # the session in progress today
+        if e > pd.Timestamp(self.today):  # the session in progress today
             idx = idx.append(pd.DatetimeIndex([pd.Timestamp(self.today)]))
         n = len(idx)
         close = 100.0 + 0.01 * np.arange(n)
-        df = pd.DataFrame({"Open": close, "High": close + 1, "Low": close - 1, "Close": close,
-                           "Volume": np.full(n, 5e7)}, index=idx)
+        df = pd.DataFrame(
+            {"Open": close, "High": close + 1, "Low": close - 1, "Close": close, "Volume": np.full(n, 5e7)}, index=idx
+        )
         if not auto_adjust:
             df["Stock Splits"] = 0.0
         if n and idx[-1].date() == self.today:
@@ -1111,11 +1272,12 @@ class _FakeYF:
 
 @pytest.fixture
 def fake_yahoo(monkeypatch):
-    today = date(2026, 9, 23)                                   # a Wednesday
+    today = date(2026, 9, 23)  # a Wednesday
     yf = _FakeYF(today)
     monkeypatch.setitem(sys.modules, "yfinance", yf)
     monkeypatch.setattr(yahoo_mod, "_today", lambda: yf.today)
     from agentic_trader.data.yahoo import YahooProvider
+
     p = YahooProvider(make_config(data_provider="yahoo", edgar=False))
     return p, yf
 
@@ -1141,7 +1303,7 @@ def test_yahoo_never_serves_or_caches_todays_partial_bar(fake_yahoo):
     yf.today = today + timedelta(days=1)
     h3 = p.history(ins, today - timedelta(days=120), yf.today)
     assert len(yf.calls) == 2 and h3.index[-1].date() == today
-    assert float(h3["Close"].iloc[-1]) != 137.0                # the complete bar, not the morning stub
+    assert float(h3["Close"].iloc[-1]) != 137.0  # the complete bar, not the morning stub
     assert p.history(ins, today - timedelta(days=120), yf.today).index[-1].date() == today and len(yf.calls) == 2
 
 
@@ -1153,10 +1315,10 @@ def test_yahoo_corporate_actions_refresh_daily_and_exclude_today(fake_yahoo):
     assert a.index[-1].date() == today - timedelta(days=1) and len(yf.calls) == 1
     assert p.as_traded_close(ins, today) == float(a["RawClose"].iloc[-1])
     p.as_traded_close(ins, today)
-    assert len(yf.calls) == 1                                    # same day: cached
+    assert len(yf.calls) == 1  # same day: cached
     yf.today = today + timedelta(days=1)
     b = p._corporate_actions(ins.yahoo_symbol)
-    assert len(yf.calls) == 2 and b.index[-1].date() == today   # new day: refreshed, yesterday now complete
+    assert len(yf.calls) == 2 and b.index[-1].date() == today  # new day: refreshed, yesterday now complete
     # a table supplied directly (tests, replays) is trusted as is
     p._actions[ins.yahoo_symbol] = pd.DataFrame({"RawClose": [1.0], "Split": [0.0]}, index=pd.to_datetime(["2024-01-02"]))
     p._actions_day.pop(ins.yahoo_symbol)
@@ -1174,7 +1336,7 @@ def test_csv_adj_close_without_close_drops_raw_ohl(tmp_path, caplog):
     with caplog.at_level("WARNING"):
         h = CSVProvider(make_config(csv_dir=str(tmp_path))).history(Instrument.parse("XYZ"), date(2024, 1, 1), date(2024, 1, 31))
     assert (h["Open"] == h["Close"]).all() and (h["High"] == h["Close"]).all() and (h["Low"] == h["Close"]).all()
-    assert h["Close"].iloc[0] == pytest.approx(60.6)                           # v0.7: Open 100 / Close 60.6
+    assert h["Close"].iloc[0] == pytest.approx(60.6)  # v0.7: Open 100 / Close 60.6
     assert any("intraday levels are unavailable" in r.message for r in caplog.records)
 
 
@@ -1187,8 +1349,12 @@ def test_csv_close_and_adj_close_put_every_price_column_on_the_adjusted_basis(tm
     assert (h["High"] / h["Close"]).round(6).tolist() == pytest.approx([(104 + i) / (101 + i) for i in range(10)])
     assert (h["Low"] / h["Close"]).round(6).tolist() == pytest.approx([(98 + i) / (101 + i) for i in range(10)])
     # Close only: served as is
-    _write(tmp_path, "RAW.csv", [f"2024-01-{i + 1:02d},{100 + i},{104 + i},{98 + i},{101 + i}" for i in range(3)],
-           "Date,Open,High,Low,Close")
+    _write(
+        tmp_path,
+        "RAW.csv",
+        [f"2024-01-{i + 1:02d},{100 + i},{104 + i},{98 + i},{101 + i}" for i in range(3)],
+        "Date,Open,High,Low,Close",
+    )
     r = CSVProvider(make_config(csv_dir=str(tmp_path))).history(Instrument.parse("RAW"), date(2024, 1, 1), date(2024, 1, 31))
     assert r["Close"].tolist() == [101, 102, 103] and r["Open"].tolist() == [100, 101, 102]
 
@@ -1202,46 +1368,51 @@ def test_synthetic_fx_spread_is_sane_for_every_pair_and_classic_pairs_are_unchan
     for sym in [s for s in UNIVERSES["all"] if Instrument.parse(s).is_fx] + ["NZDJPY", "CHFJPY"]:
         ins = Instrument.parse(sym)
         p0 = float(p.history(ins, start, date(2022, 3, 1))["Close"].iloc[0])
-        half_spread_bps = pips * ins.pip_size / p0 * 1e4 / 2                    # backtest_config_for's formula
-        assert 0.1 <= half_spread_bps <= 2.0, (sym, p0, half_spread_bps)      # v0.7: GBPJPY 45 bp, AUDJPY 38, CADJPY 24
+        half_spread_bps = pips * ins.pip_size / p0 * 1e4 / 2  # backtest_config_for's formula
+        assert 0.1 <= half_spread_bps <= 2.0, (sym, p0, half_spread_bps)  # v0.7: GBPJPY 45 bp, AUDJPY 38, CADJPY 24
     for sym in ("GBPJPY", "AUDJPY", "CADJPY", "NZDJPY", "CHFJPY", "USDSEK", "USDNOK", "EURAUD"):
         ins = Instrument.parse(sym)
         level = fx_start_level(ins, 1.0)
         assert (60 < level < 250) if ins.quote == "JPY" else (0.4 < level < 12), (sym, level)
     # the classic pairs start where they did, so every published synthetic path is unchanged
-    first = {s: round(float(p.history(Instrument.parse(s), start, date(2022, 3, 1))["Close"].iloc[0]), 4)
-             for s in ("EURUSD", "USDJPY", "GBPUSD", "EURJPY", "EURGBP")}
+    first = {
+        s: round(float(p.history(Instrument.parse(s), start, date(2022, 3, 1))["Close"].iloc[0]), 4)
+        for s in ("EURUSD", "USDJPY", "GBPUSD", "EURJPY", "EURGBP")
+    }
     assert first == {"EURUSD": 1.0102, "USDJPY": 160.0664, "GBPUSD": 0.9468, "EURJPY": 133.535, "EURGBP": 0.825}
 
 
 # ================================================== finding 69: FX headline subjects
-@pytest.mark.parametrize("headline,base,quote,sign", [
-    ("Dollar surges as Fed signals further tightening", "EUR", "USD", -1),
-    ("Yen weakens as BoJ stays dovish", "USD", "JPY", +1),
-    ("Dollar weakens; yen strengthens on hawkish BoJ", "USD", "JPY", -1),
-    ("Greenback gains; euro falls to two-week low", "EUR", "USD", -1),
-    ("Euro strengthens vs dollar", "EUR", "USD", +1),
-    ("Sterling falls after BoE cuts", "GBP", "USD", -1),
-    ("Pound rallies as Bank of England hikes", "EUR", "GBP", -1),
-    ("Loonie gains as Bank of Canada hikes", "USD", "CAD", -1),
-    ("Aussie weakens after RBA cuts", "AUD", "USD", -1),
-    ("Kiwi surges on hawkish RBNZ", "NZD", "USD", +1),
-    ("Swiss franc strengthens as SNB tightens", "USD", "CHF", -1),
-    ("Krona slumps after Riksbank eases", "USD", "SEK", +1),
-    ("Norges Bank hikes; krone climbs", "EUR", "NOK", -1),
-    ("Fed cuts rates; dollar tumbles", "EUR", "USD", +1),
-    ("ECB hikes as euro area growth beats", "EUR", "USD", +1),
-    ("Australian dollar slides as US dollar firms", "AUD", "USD", -1),
-    ("USD/JPY drops amid recession fears", "USD", "JPY", -1),
-    ("JPY weakens after dovish comments", "USD", "JPY", +1),
-    ("USD strengthens on strong data", "USD", "JPY", +1),
-])
+@pytest.mark.parametrize(
+    "headline,base,quote,sign",
+    [
+        ("Dollar surges as Fed signals further tightening", "EUR", "USD", -1),
+        ("Yen weakens as BoJ stays dovish", "USD", "JPY", +1),
+        ("Dollar weakens; yen strengthens on hawkish BoJ", "USD", "JPY", -1),
+        ("Greenback gains; euro falls to two-week low", "EUR", "USD", -1),
+        ("Euro strengthens vs dollar", "EUR", "USD", +1),
+        ("Sterling falls after BoE cuts", "GBP", "USD", -1),
+        ("Pound rallies as Bank of England hikes", "EUR", "GBP", -1),
+        ("Loonie gains as Bank of Canada hikes", "USD", "CAD", -1),
+        ("Aussie weakens after RBA cuts", "AUD", "USD", -1),
+        ("Kiwi surges on hawkish RBNZ", "NZD", "USD", +1),
+        ("Swiss franc strengthens as SNB tightens", "USD", "CHF", -1),
+        ("Krona slumps after Riksbank eases", "USD", "SEK", +1),
+        ("Norges Bank hikes; krone climbs", "EUR", "NOK", -1),
+        ("Fed cuts rates; dollar tumbles", "EUR", "USD", +1),
+        ("ECB hikes as euro area growth beats", "EUR", "USD", +1),
+        ("Australian dollar slides as US dollar firms", "AUD", "USD", -1),
+        ("USD/JPY drops amid recession fears", "USD", "JPY", -1),
+        ("JPY weakens after dovish comments", "USD", "JPY", +1),
+        ("USD strengthens on strong data", "USD", "JPY", +1),
+    ],
+)
 def test_fx_headlines_name_currencies_in_words_with_the_right_sign(headline, base, quote, sign):
     assert np.sign(score_fx_headline(headline, base, quote)) == sign, headline
 
 
 def test_fx_currency_codes_match_whole_words_only():
-    assert score_fx_headline("Audit finds strong growth at Cadence", "USD", "CAD") > 0   # "CADENCE" is not CAD
+    assert score_fx_headline("Audit finds strong growth at Cadence", "USD", "CAD") > 0  # "CADENCE" is not CAD
     assert score_fx_headline("CAD strengthens on strong jobs data", "USD", "CAD") < 0
     assert score_fx_headline("Traders await USD inflation data", "EUR", "USD") == 0.0
     assert score_fx_headline("Hawkish JPY policymakers boost JPY, pressuring USD/JPY", "USD", "JPY") < 0
@@ -1258,19 +1429,29 @@ def test_synthetic_valuation_is_not_a_function_of_volatility():
             continue
         h = p.history(ins, date(2023, 2, 15), as_of)
         f = p.fundamentals(ins, as_of)
-        rows.append((float(np.log(h["Close"]).diff().std() * np.sqrt(252)), float(h["Close"].iloc[0]),
-                     f["pe_ratio"], f["revenue_growth_yoy"]))
+        rows.append(
+            (
+                float(np.log(h["Close"]).diff().std() * np.sqrt(252)),
+                float(h["Close"].iloc[0]),
+                f["pe_ratio"],
+                f["revenue_growth_yoy"],
+            )
+        )
     df = pd.DataFrame(rows, columns=["rvol", "p0", "pe", "g"])
     rho_pe = df["rvol"].rank().corr(df["pe"].rank())
     rho_g = df["p0"].rank().corr(df["g"].rank())
     assert len(df) == 45
-    assert abs(rho_pe) < 0.3, rho_pe                            # v0.7: 0.76 (P/E was an affine map of base vol)
-    assert abs(rho_g) < 0.3, rho_g                              # v0.7: 0.53 (growth was an affine map of p0)
+    assert abs(rho_pe) < 0.3, rho_pe  # v0.7: 0.76 (P/E was an affine map of base vol)
+    assert abs(rho_g) < 0.3, rho_g  # v0.7: 0.53 (growth was an affine map of p0)
     # not monotone: the P/E ranking is not the volatility ranking in either direction
     assert not df.sort_values("rvol")["pe"].is_monotonic_increasing
     assert not df.sort_values("rvol")["pe"].is_monotonic_decreasing
     # still deterministic and seed-sensitive, with the publication lag intact
-    assert p.fundamentals(Instrument.parse("MSFT"), as_of) == SyntheticProvider(make_config()).fundamentals(Instrument.parse("MSFT"), as_of)
+    assert p.fundamentals(Instrument.parse("MSFT"), as_of) == SyntheticProvider(make_config()).fundamentals(
+        Instrument.parse("MSFT"), as_of
+    )
     assert p.fundamentals(Instrument.parse("MSFT"), as_of)["report_period_end"] == "2023-12-31"
-    assert SyntheticProvider(make_config(synthetic_seed=8)).fundamentals(Instrument.parse("MSFT"), as_of)["pe_ratio"] != \
-        p.fundamentals(Instrument.parse("MSFT"), as_of)["pe_ratio"]
+    assert (
+        SyntheticProvider(make_config(synthetic_seed=8)).fundamentals(Instrument.parse("MSFT"), as_of)["pe_ratio"]
+        != p.fundamentals(Instrument.parse("MSFT"), as_of)["pe_ratio"]
+    )

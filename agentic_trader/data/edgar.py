@@ -33,6 +33,7 @@ conservative tone score, periodic reports and ownership filings are announced as
 events, and insider (Form 4) filings are counted. Social media has no free
 point-in-time archive, so that analyst still abstains on real data.
 """
+
 from __future__ import annotations
 
 import json
@@ -70,6 +71,7 @@ def edgar_user_agent(config: dict | None = None) -> str | None:
     """
     ua = (config or {}).get("edgar_user_agent") or os.environ.get(USER_AGENT_ENV)
     return ua if ua and "@" in ua else None
+
 
 # 8-K items (17 CFR 249.308) -> (headline, tone in [-1, 1]). Tone is deliberately
 # mild: the filing says *that* something happened, rarely whether it was good.
@@ -121,22 +123,33 @@ OTHER_FORMS: dict[str, tuple[str, float]] = {
 }
 INSIDER_FORMS = ("4", "4/A")
 
-REVENUE_TAGS = ("RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet",
-                "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueGoodsNet",
-                "RevenuesNetOfInterestExpense")   # banks and brokers
+REVENUE_TAGS = (
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "Revenues",
+    "SalesRevenueNet",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
+    "SalesRevenueGoodsNet",
+    "RevenuesNetOfInterestExpense",
+)  # banks and brokers
 NET_INCOME_TAGS = ("NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic")
-EPS_TAGS = ("EarningsPerShareDiluted", "EarningsPerShareBasic",
-            "IncomeLossFromContinuingOperationsPerDilutedShare", "IncomeLossFromContinuingOperationsPerBasicShare")
-OCF_TAGS = ("NetCashProvidedByUsedInOperatingActivities",
-            "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations")
+EPS_TAGS = (
+    "EarningsPerShareDiluted",
+    "EarningsPerShareBasic",
+    "IncomeLossFromContinuingOperationsPerDilutedShare",
+    "IncomeLossFromContinuingOperationsPerBasicShare",
+)
+OCF_TAGS = ("NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations")
 CAPEX_TAGS = ("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets")
 EQUITY_TAGS = ("StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
 DEBT_TAGS = ("LongTermDebt", "LongTermDebtNoncurrent", "DebtInstrumentCarryingAmount", "LongTermDebtAndCapitalLeaseObligations")
-SHARES_TAGS = ("dei:EntityCommonStockSharesOutstanding", "WeightedAverageNumberOfDilutedSharesOutstanding",
-               "CommonStockSharesOutstanding")
+SHARES_TAGS = (
+    "dei:EntityCommonStockSharesOutstanding",
+    "WeightedAverageNumberOfDilutedSharesOutstanding",
+    "CommonStockSharesOutstanding",
+)
 
 # Tickers whose current SEC filer is a new holding company; history is under the predecessor.
-PREDECESSOR_CIKS: dict[str, str] = {"XOM": "0000034088"}   # Exxon Mobil Corp -> ExxonMobil Holdings (2026)
+PREDECESSOR_CIKS: dict[str, str] = {"XOM": "0000034088"}  # Exxon Mobil Corp -> ExxonMobil Holdings (2026)
 
 # Multi-class filers whose non-dimensional per-share facts (companyfacts drops the
 # per-class dimension) are stated per share of a *different* class than the ticker:
@@ -149,7 +162,7 @@ SHARE_CLASS_RATIO: dict[str, float] = {"BRK-B": 1500.0}
 _QUARTER = (75, 120)
 # Filers that are funds or trusts, not operating companies: their XBRL facts are not
 # fundamentals in the analyst's sense, so they return nothing rather than nonsense.
-MARKET_CLOSE_ET = 16          # a filing accepted after 16:00 Eastern is public from the next session
+MARKET_CLOSE_ET = 16  # a filing accepted after 16:00 Eastern is public from the next session
 
 
 def visible_dates(filed: pd.Series, accepted: pd.Series | None) -> pd.Series:
@@ -170,12 +183,12 @@ def visible_dates(filed: pd.Series, accepted: pd.Series | None) -> pd.Series:
     known = acc.notna()
     day = acc.dt.normalize()
     late = known & ((acc.dt.hour >= MARKET_CLOSE_ET) | (day > filed))
-    after = (day.where(known, filed) + pd.offsets.BDay(1))
+    after = day.where(known, filed) + pd.offsets.BDay(1)
     out = np.where(late, after, filed)
     return pd.Series(out, index=filed.index).astype("datetime64[ns]")
 
 
-NON_OPERATING_SIC = {"6221"}   # commodity contracts brokers & dealers (GLD, SLV, USO, DBC)
+NON_OPERATING_SIC = {"6221"}  # commodity contracts brokers & dealers (GLD, SLV, USO, DBC)
 _YEAR = (350, 380)
 # Four consecutive quarters span this many days from the first end to the last.
 _TTM_SPAN = (240, 300)
@@ -222,9 +235,15 @@ def _http_fetch(url: str, user_agent: str, timeout: float = 30.0) -> bytes:
 class EdgarClient:
     """Cached EDGAR reader. ``fetch(url) -> bytes`` can be injected for tests."""
 
-    def __init__(self, user_agent: str | None = None, cache_dir: str | os.PathLike | None = None,
-                 fetch: Callable[[str], bytes] | None = None, min_interval: float = 0.11,
-                 ciks: dict[str, str] | None = None, cache_max_age_days: float | None = 7.0):
+    def __init__(
+        self,
+        user_agent: str | None = None,
+        cache_dir: str | os.PathLike | None = None,
+        fetch: Callable[[str], bytes] | None = None,
+        min_interval: float = 0.11,
+        ciks: dict[str, str] | None = None,
+        cache_max_age_days: float | None = 7.0,
+    ):
         self.user_agent = user_agent or edgar_user_agent()
         # A cached endpoint file older than this is re-fetched: the ticker table, the filing
         # index and the company facts all change daily, so a reused cache directory would
@@ -236,8 +255,10 @@ class EdgarClient:
         # under the predecessor's CIK, which is what a backtest needs.
         self.ciks = {k.upper(): v for k, v in {**PREDECESSOR_CIKS, **(ciks or {})}.items()}
         if self.user_agent is None and fetch is None:
-            raise ValueError(f"EDGAR needs a contact User-Agent: set {USER_AGENT_ENV}=\"Name email@domain\" "
-                             "(in .env or the environment) or config['edgar_user_agent']")
+            raise ValueError(
+                f'EDGAR needs a contact User-Agent: set {USER_AGENT_ENV}="Name email@domain" '
+                "(in .env or the environment) or config['edgar_user_agent']"
+            )
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self._fetch = fetch
         self.min_interval = min_interval
@@ -255,11 +276,18 @@ class EdgarClient:
             return None
         ua = edgar_user_agent(config)
         if ua is None:
-            log.warning("EDGAR fundamentals/news disabled: set %s=\"Name email@domain\" (the SEC requires "
-                        "a contact) or config['edgar_user_agent']", USER_AGENT_ENV)
+            log.warning(
+                'EDGAR fundamentals/news disabled: set %s="Name email@domain" (the SEC requires '
+                "a contact) or config['edgar_user_agent']",
+                USER_AGENT_ENV,
+            )
             return None
-        return cls(user_agent=ua, cache_dir=config.get("edgar_cache_dir"), ciks=config.get("edgar_ciks"),
-                   cache_max_age_days=config.get("edgar_cache_max_age_days", 7.0))
+        return cls(
+            user_agent=ua,
+            cache_dir=config.get("edgar_cache_dir"),
+            ciks=config.get("edgar_ciks"),
+            cache_max_age_days=config.get("edgar_cache_max_age_days", 7.0),
+        )
 
     # ------------------------------------------------------------ transport
     def _get_json(self, url: str) -> Any:
@@ -269,9 +297,11 @@ class EdgarClient:
             if key in self._mem:
                 return self._mem[key]
             path = self.cache_dir / key if self.cache_dir else None
-            fresh = (path is not None and path.exists()
-                     and (self.cache_max_age_days is None
-                          or time.time() - path.stat().st_mtime <= self.cache_max_age_days * 86400.0))
+            fresh = (
+                path is not None
+                and path.exists()
+                and (self.cache_max_age_days is None or time.time() - path.stat().st_mtime <= self.cache_max_age_days * 86400.0)
+            )
             if fresh and path is not None:
                 data = json.loads(path.read_text(encoding="utf-8"))
             else:
@@ -284,11 +314,11 @@ class EdgarClient:
                 try:
                     raw = (self._fetch or (lambda u: _http_fetch(u, self.user_agent)))(url)  # type: ignore[arg-type]  # user_agent checked at construction
                 except HTTPError as e:
-                    if e.code != 404:   # an index fund has no company facts: that is "no data"
+                    if e.code != 404:  # an index fund has no company facts: that is "no data"
                         raise
                     raw, missing = b"{}", True
                 data = json.loads(raw)
-                if path is not None and not missing:   # a 404 is remembered for this process only
+                if path is not None and not missing:  # a 404 is remembered for this process only
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(json.dumps(data), encoding="utf-8")
             self._mem[key] = data
@@ -315,8 +345,16 @@ class EdgarClient:
         if cik is None:
             return {}
         sub = self._get_json(SUBMISSIONS_URL.format(name=f"CIK{cik}.json"))
-        return {"name": sub.get("name"), "sic": str(sub.get("sic") or ""), "sic_description": sub.get("sicDescription"),
-                "fiscal_year_end": sub.get("fiscalYearEnd")} if sub else {}
+        return (
+            {
+                "name": sub.get("name"),
+                "sic": str(sub.get("sic") or ""),
+                "sic_description": sub.get("sicDescription"),
+                "fiscal_year_end": sub.get("fiscalYearEnd"),
+            }
+            if sub
+            else {}
+        )
 
     def filings(self, ticker: str) -> pd.DataFrame:
         """All filings for ``ticker``: form, filed, report, items, accession, accepted (the SEC
@@ -340,16 +378,23 @@ class EdgarClient:
             frames = []
             for p in pages:
                 p = p.get("filings", {}).get("recent", p) if "form" not in p else p
-                if not p or "form" not in p:   # a missing or malformed page loses its filings, not the ticker
+                if not p or "form" not in p:  # a missing or malformed page loses its filings, not the ticker
                     log.warning("EDGAR submissions page for CIK %s is missing or malformed; skipped", cik)
                     continue
                 n = len(p["form"])
                 accepted = pd.to_datetime(p.get("acceptanceDateTime", [None] * n), errors="coerce")
-                frames.append(pd.DataFrame({
-                    "form": p["form"], "filed": pd.to_datetime(p["filingDate"]),
-                    "report": pd.to_datetime(p.get("reportDate", [""] * n), errors="coerce"),
-                    "items": p.get("items", [""] * n), "accession": p["accessionNumber"],
-                    "accepted": accepted}))
+                frames.append(
+                    pd.DataFrame(
+                        {
+                            "form": p["form"],
+                            "filed": pd.to_datetime(p["filingDate"]),
+                            "report": pd.to_datetime(p.get("reportDate", [""] * n), errors="coerce"),
+                            "items": p.get("items", [""] * n),
+                            "accession": p["accessionNumber"],
+                            "accepted": accepted,
+                        }
+                    )
+                )
             if not frames:
                 self._mem[key] = pd.DataFrame(columns=["form", "filed", "report", "items", "accession"])
                 return self._mem[key]
@@ -372,8 +417,20 @@ class EdgarClient:
                     name = tag if taxonomy == "us-gaap" else f"{taxonomy}:{tag}"
                     for unit, entries in body.get("units", {}).items():
                         for e in entries:
-                            rows.append((name, unit, e.get("start"), e["end"], e["val"], e["filed"],
-                                         e.get("form", ""), e.get("fy"), e.get("fp", ""), e.get("accn", "")))
+                            rows.append(
+                                (
+                                    name,
+                                    unit,
+                                    e.get("start"),
+                                    e["end"],
+                                    e["val"],
+                                    e["filed"],
+                                    e.get("form", ""),
+                                    e.get("fy"),
+                                    e.get("fp", ""),
+                                    e.get("accn", ""),
+                                )
+                            )
             df = pd.DataFrame(rows, columns=["tag", "unit", "start", "end", "val", "filed", "form", "fy", "fp", "accn"])
             for c in ("start", "end", "filed"):
                 df[c] = pd.to_datetime(df[c], errors="coerce")
@@ -410,28 +467,35 @@ class EdgarClient:
         out: list[NewsItem] = []
         insiders: dict[date, int] = {}
         for r in win.itertuples(index=False):
-            d = getattr(r, "visible", r.filed).date()     # the session whose close could know it
+            d = getattr(r, "visible", r.filed).date()  # the session whose close could know it
             if r.form == "8-K" or r.form == "8-K/A":
                 codes = [c.strip() for c in str(r.items or "").split(",") if c.strip()]
                 codes = [c for c in codes if c not in _EXHIBIT_ONLY] or codes
                 for c in codes:
                     text, tone = ITEM_8K.get(c, (f"8-K item {c}", 0.0))
-                    out.append(NewsItem(d, f"8-K: {text}", source="SEC EDGAR", sentiment=tone,
-                                        tags=["8-K", c, r.accession]))
+                    out.append(NewsItem(d, f"8-K: {text}", source="SEC EDGAR", sentiment=tone, tags=["8-K", c, r.accession]))
             elif r.form in INSIDER_FORMS:
                 insiders[d] = insiders.get(d, 0) + 1
             elif r.form in OTHER_FORMS:
                 text, tone = OTHER_FORMS[r.form]
                 out.append(NewsItem(d, text, source="SEC EDGAR", sentiment=tone, tags=[r.form, r.accession]))
         for d, n in sorted(insiders.items()):
-            out.append(NewsItem(d, f"{n} insider transaction filing{'s' if n > 1 else ''} (Form 4)",
-                                source="SEC EDGAR", sentiment=0.0, tags=["4"]))
+            out.append(
+                NewsItem(
+                    d,
+                    f"{n} insider transaction filing{'s' if n > 1 else ''} (Form 4)",
+                    source="SEC EDGAR",
+                    sentiment=0.0,
+                    tags=["4"],
+                )
+            )
         out.sort(key=lambda i: i.published, reverse=True)
         return out
 
     # -------------------------------------------------------- fundamentals
-    def fundamentals(self, ticker: str, as_of: date, price: float | None = None,
-                     splits: dict[date, float] | None = None) -> dict[str, Any]:
+    def fundamentals(
+        self, ticker: str, as_of: date, price: float | None = None, splits: dict[date, float] | None = None
+    ) -> dict[str, Any]:
         """Fundamentals known at ``as_of`` (facts filed on or before it; a span's value is its
         latest print within one reporting basis, see ``quarterly_table``).
 
@@ -459,8 +523,11 @@ class EdgarClient:
         cutoff = df.loc[df["filed"] <= pd.Timestamp(as_of), "filed"].max()
         if pd.isna(cutoff):
             return {}
-        past_splits = sorted((pd.Timestamp(d), float(r)) for d, r in (splits or {}).items()
-                             if pd.Timestamp(d) <= pd.Timestamp(as_of) and r and r > 0)
+        past_splits = sorted(
+            (pd.Timestamp(d), float(r))
+            for d, r in (splits or {}).items()
+            if pd.Timestamp(d) <= pd.Timestamp(as_of) and r and r > 0
+        )
         key = f"fund:{ticker.upper()}:{cutoff.date().isoformat()}:{len(past_splits)}"
         core = self._mem.get(key)
         if core is None:
@@ -475,36 +542,56 @@ class EdgarClient:
             kind, tag = note[0], note[1]
             if kind == "annual":
                 _, _, end, quarters, annual = note
-                self._warn_once(ticker, f"annual-mismatch:{tag}:{end}",
-                                f"{tag} quarters of the year ending {end} sum to {quarters:.4g} against an annual span "
-                                f"of {annual:.4g}: Q4 taken as the annual figure less the three quarters")
+                self._warn_once(
+                    ticker,
+                    f"annual-mismatch:{tag}:{end}",
+                    f"{tag} quarters of the year ending {end} sum to {quarters:.4g} against an annual span "
+                    f"of {annual:.4g}: Q4 taken as the annual figure less the three quarters",
+                )
             elif kind == "ignored":
                 _, _, start, end, held, printed, filed = note
-                self._warn_once(ticker, f"ignored-reprint:{tag}:{start}:{end}:{filed}",
-                                f"{tag} {start}..{end} re-printed as {printed:.4g} on {filed} against {held:.4g} held: "
-                                "a material change no other span corroborates; ignored")
+                self._warn_once(
+                    ticker,
+                    f"ignored-reprint:{tag}:{start}:{end}:{filed}",
+                    f"{tag} {start}..{end} re-printed as {printed:.4g} on {filed} against {held:.4g} held: "
+                    "a material change no other span corroborates; ignored",
+                )
             elif kind == "confirmed":
                 _, _, start, end, held, printed, filed = note
-                self._warn_once(ticker, f"confirmed-reprint:{tag}:{start}:{end}:{filed}",
-                                f"{tag} {start}..{end} re-printed as {printed:.4g} on {filed}, repeating a print ignored "
-                                f"earlier: a correction confirmed by repetition; taken in place of {held:.4g}")
+                self._warn_once(
+                    ticker,
+                    f"confirmed-reprint:{tag}:{start}:{end}:{filed}",
+                    f"{tag} {start}..{end} re-printed as {printed:.4g} on {filed}, repeating a print ignored "
+                    f"earlier: a correction confirmed by repetition; taken in place of {held:.4g}",
+                )
             else:
                 _, _, filed, end, quarters, annual = note
-                self._warn_once(ticker, f"rejected-recast:{tag}:{filed}",
-                                f"{tag} comparatives recast on {filed} do not reconcile: its quarters of the year ending "
-                                f"{end} sum to {quarters:.4g} against its own annual span of {annual:.4g}: mis-tagged; ignored")
+                self._warn_once(
+                    ticker,
+                    f"rejected-recast:{tag}:{filed}",
+                    f"{tag} comparatives recast on {filed} do not reconcile: its quarters of the year ending "
+                    f"{end} sum to {quarters:.4g} against its own annual span of {annual:.4g}: mis-tagged; ignored",
+                )
         ratio = SHARE_CLASS_RATIO.get(ticker.upper().replace(".", "-"))
         if ratio:
             eps_ttm = None if eps_ttm is None else eps_ttm / ratio
             shares = None if shares is None else shares * ratio
         rev_ttm = out.get("revenue_ttm")
         if price and shares and rev_ttm and price * shares < 0.01 * rev_ttm:
-            self._warn_once(ticker, "market-cap", f"market cap {price * shares:.3g} below 1% of trailing revenue "
-                            f"{rev_ttm:.3g}: the share count is not this ticker's class; per-share ratios dropped")
+            self._warn_once(
+                ticker,
+                "market-cap",
+                f"market cap {price * shares:.3g} below 1% of trailing revenue "
+                f"{rev_ttm:.3g}: the share count is not this ticker's class; per-share ratios dropped",
+            )
             shares = None
         if price and eps_ttm is not None and eps_ttm > 0.5 * price:
-            self._warn_once(ticker, "eps-class", f"trailing EPS {eps_ttm:.4g} above half the price {price:.4g}: "
-                            "the EPS facts are not per share of this ticker's class; P/E dropped")
+            self._warn_once(
+                ticker,
+                "eps-class",
+                f"trailing EPS {eps_ttm:.4g} above half the price {price:.4g}: "
+                "the EPS facts are not per share of this ticker's class; P/E dropped",
+            )
             eps_ttm = None
         if eps_ttm is not None:
             out["eps_ttm"] = round(eps_ttm, 4)
@@ -520,8 +607,7 @@ class EdgarClient:
             self._warned.add(key)
             log.warning("EDGAR %s: %s", ticker.upper(), msg)
 
-    def _fundamentals_core(self, known: pd.DataFrame,
-                           past_splits: Sequence[tuple[pd.Timestamp, float]] = ()) -> dict[str, Any]:
+    def _fundamentals_core(self, known: pd.DataFrame, past_splits: Sequence[tuple[pd.Timestamp, float]] = ()) -> dict[str, Any]:
         """The price-independent fundamentals from the facts known at a cutoff, per-share
         facts rescaled to the share basis after ``past_splits``."""
         if known.empty:
@@ -536,7 +622,7 @@ class EdgarClient:
         capex = quarterly_series(known, CAPEX_TAGS, notes=notes)
         capex_reported = bool(known["tag"].isin(CAPEX_TAGS).any())
         rev, ni = rev_t["val"], ni_t["val"]
-        if rev.empty and ni.empty:   # no income statement at all: not an operating company
+        if rev.empty and ni.empty:  # no income statement at all: not an operating company
             return {}
         ends = [s.index.max() for s in (rev, ni, eps) if not s.empty]
         period_end = max(ends)
@@ -548,7 +634,9 @@ class EdgarClient:
         out: dict[str, Any] = {
             "report_period_end": period_end.date().isoformat(),
             "filed": latest_filed.date().isoformat() if pd.notna(latest_filed) else None,
-            "sector_pe": None, "eps_surprise": None, "insider_net_buying": None,
+            "sector_pe": None,
+            "eps_surprise": None,
+            "insider_net_buying": None,
             "source": "sec_edgar (point-in-time, as known at as_of)",
         }
 
@@ -562,9 +650,16 @@ class EdgarClient:
             printed = _pick(known, tags, units).dropna(subset=["start"])["filed"].max()
             return s if (newest_filing - printed).days <= MAX_FLOW_LAG_DAYS else pd.Series(dtype=float)
 
-        rev, ni, eps, ocf, capex = (fresh(s, t, u) for s, t, u in (
-            (rev, REVENUE_TAGS, None), (ni, NET_INCOME_TAGS, None), (eps, EPS_TAGS, ("USD/shares",)),
-            (ocf, OCF_TAGS, None), (capex, CAPEX_TAGS, None)))
+        rev, ni, eps, ocf, capex = (
+            fresh(s, t, u)
+            for s, t, u in (
+                (rev, REVENUE_TAGS, None),
+                (ni, NET_INCOME_TAGS, None),
+                (eps, EPS_TAGS, ("USD/shares",)),
+                (ocf, OCF_TAGS, None),
+                (capex, CAPEX_TAGS, None),
+            )
+        )
         rev_ttm, rev_prev = ttm(rev), ttm(rev, back=4)
         ni_ttm = ttm(ni)
         eps_ttm = ttm(eps)
@@ -572,8 +667,12 @@ class EdgarClient:
         # tag change not yet covering the newest quarters): say so rather than pass it off as
         # the period's figure, and never divide it into a figure from another window.
         ocf_ttm, capex_ttm = ttm(ocf), ttm(capex)
-        for name, s, total in (("revenue", rev, rev_ttm), ("net_income", ni, ni_ttm), ("eps", eps, eps_ttm),
-                               ("ocf", ocf, ocf_ttm)):
+        for name, s, total in (
+            ("revenue", rev, rev_ttm),
+            ("net_income", ni, ni_ttm),
+            ("eps", eps, eps_ttm),
+            ("ocf", ocf, ocf_ttm),
+        ):
             if total is not None and s.index.max() != period_end:
                 out[f"{name}_period_end"] = s.index.max().date().isoformat()
         if rev_ttm is not None:
@@ -596,8 +695,11 @@ class EdgarClient:
         # with the operating cash flow window (a dead or renamed tag, a recast of one series)
         # has no free cash flow figure: neither operating cash flow alone nor a difference of
         # two windows. Only a filer that never reports capex has free cash flow equal to it.
-        if ocf_ttm is not None and shares and (not capex_reported
-                                               or (capex_ttm is not None and capex.index.max() == ocf.index.max())):
+        if (
+            ocf_ttm is not None
+            and shares
+            and (not capex_reported or (capex_ttm is not None and capex.index.max() == ocf.index.max()))
+        ):
             out["_fcf_ttm"], out["_shares"] = ocf_ttm - (capex_ttm or 0.0), shares
         if notes:
             out["_notes"] = notes
@@ -641,8 +743,12 @@ def _inconsistent(rows: list[tuple[int, int, float]], additive: bool) -> list[tu
         if not _YEAR[0] <= e - s <= _YEAR[1]:
             continue
         inside = [q for q in quarters if s <= q[0] and q[1] <= e]
-        if (len(inside) != 4 or inside[-1][1] != e or inside[0][0] - s > 3
-                or not all(0 <= b[0] - a[1] <= 3 for a, b in zip(inside, inside[1:]))):
+        if (
+            len(inside) != 4
+            or inside[-1][1] != e
+            or inside[0][0] - s > 3
+            or not all(0 <= b[0] - a[1] <= 3 for a, b in zip(inside, inside[1:]))
+        ):
             continue
         total = sum(vals[q] for q in inside)
         scale = max(abs(v), sum(abs(vals[q]) for q in inside))
@@ -652,8 +758,15 @@ def _inconsistent(rows: list[tuple[int, int, float]], additive: bool) -> list[tu
     return bad
 
 
-def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: list[int],
-                  positive: bool, notes: list[tuple] | None = None, additive: bool = True) -> dict[int, dict[int, float]]:
+def _tag_quarters(
+    starts: list[int],
+    ends: list[int],
+    vals: list[float],
+    filed: list[int],
+    positive: bool,
+    notes: list[tuple] | None = None,
+    additive: bool = True,
+) -> dict[int, dict[int, float]]:
     """Quarter candidates of one concept: ``{period_end_day: {generation: value}}``.
 
     *Generations.* Prints are replayed filing by filing. Within a generation the latest
@@ -708,23 +821,24 @@ def _tag_quarters(starts: list[int], ends: list[int], vals: list[float], filed: 
         recast = {(s, e) for s, e, v in rows if g in spans.get((s, e), {}) and _material(spans[(s, e)][g], v)}
         # A material re-print agreeing with one ignored earlier is a correction two filings
         # confirm: taken in place, and never the comparative a basis change is read from.
-        confirmed = {(s, e) for s, e, v in rows if (s, e) in recast
-                     and any(not _material(u, v) for u in ignored.get((s, e), ()))}
+        confirmed = {(s, e) for s, e, v in rows if (s, e) in recast and any(not _material(u, v) for u in ignored.get((s, e), ()))}
         if notes is not None:
             notes.extend(("confirmed", s, e, spans[(s, e)][g], v, f) for s, e, v in rows if (s, e) in confirmed)
         recast -= confirmed
         if recast:
             first = [(s, e) for s, e, _ in rows if (s, e) not in spans]
-            corroborated = (len(recast) >= BASIS_CHANGE_MIN_SPANS
-                            or any(_comparative(r, n) for r in recast for n in first))
+            corroborated = len(recast) >= BASIS_CHANGE_MIN_SPANS or any(_comparative(r, n) for r in recast for n in first)
             bad = _inconsistent(rows, additive) if corroborated else []
             if corroborated and not bad:
                 g += 1
             else:
                 # Neither the material re-prints nor, in a mis-tagged year, the filing's own
                 # quarter prints are taken: its Q4 comes from the annual span less what is held.
-                drop = recast | {(s, e) for s, e, _ in rows if _QUARTER[0] <= e - s <= _QUARTER[1]
-                                 and any(ys <= s and e <= ye for ys, ye, _, _ in bad)}
+                drop = recast | {
+                    (s, e)
+                    for s, e, _ in rows
+                    if _QUARTER[0] <= e - s <= _QUARTER[1] and any(ys <= s and e <= ye for ys, ye, _, _ in bad)
+                }
                 if notes is not None:
                     if bad:
                         notes.append(("rejected", f, *bad[0][1:]))
@@ -793,11 +907,14 @@ def _tag_classes(sub: pd.DataFrame, tags: tuple[str, ...]) -> list[list[str]]:
             t = parent[t]
         return t
 
-    latest = (sub[["tag", "start", "end", "val", "filed"]].sort_values("filed", kind="stable")
-              .drop_duplicates(["tag", "start", "end"], keep="last"))
+    latest = (
+        sub[["tag", "start", "end", "val", "filed"]]
+        .sort_values("filed", kind="stable")
+        .drop_duplicates(["tag", "start", "end"], keep="last")
+    )
     for i, a in enumerate(present):
         ra = latest[latest["tag"] == a]
-        for b in present[i + 1:]:
+        for b in present[i + 1 :]:
             m = ra.merge(latest[latest["tag"] == b], on=["start", "end"], suffixes=("_a", "_b"))
             if m.empty:
                 continue
@@ -834,8 +951,13 @@ def _window(quarters: dict[int, dict[int, float]], anchor: int) -> tuple[list[in
     return ends, max(gens)
 
 
-def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,
-                    positive: bool = False, notes: list[tuple] | None = None) -> pd.DataFrame:
+def quarterly_table(
+    known: pd.DataFrame,
+    tags: tuple[str, ...],
+    units: tuple[str, ...] | None = None,
+    positive: bool = False,
+    notes: list[tuple] | None = None,
+) -> pd.DataFrame:
     """Quarterly values by period end with the tag and basis generation each came from.
 
     Each concept is reconstructed on its own (``_tag_quarters``): a concept is one tag, or
@@ -860,8 +982,7 @@ def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str
     Columns: ``val``; ``tag`` (the best-ranked tag of the concept); ``gen`` (0 = the filer's
     original basis, +1 per change).
     """
-    empty = pd.DataFrame({"val": pd.Series(dtype=float), "tag": pd.Series(dtype=object),
-                          "gen": pd.Series(dtype=int)})
+    empty = pd.DataFrame({"val": pd.Series(dtype=float), "tag": pd.Series(dtype=object), "gen": pd.Series(dtype=int)})
     sub = _pick(known, tags, units)
     sub = sub.dropna(subset=["start"])
     if sub.empty:
@@ -877,9 +998,15 @@ def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str
         # The preferred tag's print of a span comes last within a filing, so it is the one kept.
         rows = sub[sub["tag"].isin(members)].sort_values("_rank", ascending=False, kind="stable")
         found: list[tuple] = []
-        q = _tag_quarters(((rows["start"] - epoch).dt.days).tolist(), ((rows["end"] - epoch).dt.days).tolist(),
-                          rows["val"].astype(float).tolist(), ((rows["filed"] - epoch).dt.days).tolist(), positive, found,
-                          additive)
+        q = _tag_quarters(
+            ((rows["start"] - epoch).dt.days).tolist(),
+            ((rows["end"] - epoch).dt.days).tolist(),
+            rows["val"].astype(float).tolist(),
+            ((rows["filed"] - epoch).dt.days).tolist(),
+            positive,
+            found,
+            additive,
+        )
         if notes is not None:
             for n in found:
                 if n[0] == "annual":
@@ -919,18 +1046,26 @@ def quarterly_table(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str
         for e in ends:
             result[e] = (quarters[tag][e][g], tag, g)
     keys = sorted(result)
-    return pd.DataFrame({"val": [result[k][0] for k in keys], "tag": [result[k][1] for k in keys],
-                         "gen": [result[k][2] for k in keys]}, index=pd.to_datetime(keys, unit="D"))
+    return pd.DataFrame(
+        {"val": [result[k][0] for k in keys], "tag": [result[k][1] for k in keys], "gen": [result[k][2] for k in keys]},
+        index=pd.to_datetime(keys, unit="D"),
+    )
 
 
-def quarterly_series(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,
-                     positive: bool = False, notes: list[tuple] | None = None) -> pd.Series:
+def quarterly_series(
+    known: pd.DataFrame,
+    tags: tuple[str, ...],
+    units: tuple[str, ...] | None = None,
+    positive: bool = False,
+    notes: list[tuple] | None = None,
+) -> pd.Series:
     """Quarterly values by period end: the ``val`` column of ``quarterly_table``."""
     return quarterly_table(known, tags, units, positive, notes)["val"]
 
 
-def latest_instant(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None,
-                   not_before: pd.Timestamp | None = None) -> float | None:
+def latest_instant(
+    known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str, ...] | None = None, not_before: pd.Timestamp | None = None
+) -> float | None:
     """Latest print of the most recent balance-sheet instant, or None when the most recent
     instant is dated before ``not_before`` (the fact has stopped being reported)."""
     sub = _pick(known, tags, units)
@@ -942,11 +1077,13 @@ def latest_instant(known: pd.DataFrame, tags: tuple[str, ...], units: tuple[str,
     if not_before is not None and latest_end < not_before:
         return None
     at_end = sub[sub["end"] == latest_end].sort_values(["filed", "_rank"], ascending=[True, False], kind="stable")
-    return float(at_end.iloc[-1]["val"])   # latest print; the preferred tag on the same day
+    return float(at_end.iloc[-1]["val"])  # latest print; the preferred tag on the same day
 
 
-PER_SHARE_DURATION_TAGS = set(EPS_TAGS) | {"WeightedAverageNumberOfDilutedSharesOutstanding",
-                                          "WeightedAverageNumberOfBasicSharesOutstanding"}
+PER_SHARE_DURATION_TAGS = set(EPS_TAGS) | {
+    "WeightedAverageNumberOfDilutedSharesOutstanding",
+    "WeightedAverageNumberOfBasicSharesOutstanding",
+}
 SHARE_INSTANT_TAGS = {"dei:EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"}
 
 
@@ -999,5 +1136,17 @@ def ttm(q: pd.Series, back: int = 0) -> float | None:
 # contract is importable as ``agentic_trader.data.edgar.FilingSection`` / ``EdgarProvider``.
 from .edgar_text import EdgarProvider, FilingSection, fence  # noqa: E402
 
-__all__ = ["EdgarClient", "EdgarProvider", "FilingSection", "fence", "ITEM_8K", "OTHER_FORMS", "quarterly_series", "quarterly_table", "latest_instant",
-           "ttm", "rebase_per_share", "SHARE_CLASS_RATIO"]
+__all__ = [
+    "EdgarClient",
+    "EdgarProvider",
+    "FilingSection",
+    "fence",
+    "ITEM_8K",
+    "OTHER_FORMS",
+    "quarterly_series",
+    "quarterly_table",
+    "latest_instant",
+    "ttm",
+    "rebase_per_share",
+    "SHARE_CLASS_RATIO",
+]

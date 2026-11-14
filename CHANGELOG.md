@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.19.1 — 2026-11-14: quality
+
+No new results. Paper engine re-frozen as `v09-engine-11` (formatting only), `v09-engine-12`
+(`study_lineage.stamp` adds `data_provider`), `v09-engine-13` (two `type: ignore` comments
+moved back onto the lines mypy reports, after the formatter split them) and `v09-engine-14`
+(version string 0.19.1 only) and `v09-engine-15` (eval baseline `prompt_bundle_hash` updated:
+  the hash covers class source, which the formatter re-laid; every system prompt is byte-identical
+  to v0.19.0).
+
+- Whole repo formatted with `ruff format` in one commit, listed in `.git-blame-ignore-revs`
+  (use `git config blame.ignoreRevsFile .git-blame-ignore-revs`). Five multi-line imports had
+  their `noqa` comments moved back to the opening line.
+- Tests (offline fakes only): `tests/test_v0191_cli_coverage.py` covers the remaining branches
+  of `cli/evaluate` (100 %) and `cli/decisions` (99 %); `tests/test_v0191_module_coverage.py`
+  covers `agentic/redteam_v2` helpers, `StateProviders` and `main` (97 % with the existing
+  red-team tests) and `data.get_provider` (100 %). Measured with `coverage run` on those files.
+- `scripts/llm_study.py`: rows record `data_provider`; `--report` reads it and prints it, so
+  `--data` is only needed for rows written before v0.19.1. A `--data` that disagrees with the
+  rows, or rows recording two providers, is refused.
+
 ## v0.19.0 — 2026-11-14: Round 3 part 3
 
 Round 3 part 3. Paper engine re-frozen as `v09-engine-8` (C8 code fix) and `v09-engine-9` (version string only). Then `v09-engine-10` (agent knowledge doc text only).

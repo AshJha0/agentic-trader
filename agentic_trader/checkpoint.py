@@ -14,6 +14,7 @@ and the count of skipped lines is reported (``Checkpoint.skipped_lines``).
 Final outputs should be rebuilt from :meth:`Checkpoint.rows` in a fixed unit order, so a
 resumed run writes byte-identical files to an uninterrupted one.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -54,7 +55,7 @@ class Checkpoint:
         self.header = header
         self.fp = fingerprint(header)
         self._rows: dict[str, dict] = {}
-        self.skipped_lines = 0       # corrupt lines skipped by the last open (review D11)
+        self.skipped_lines = 0  # corrupt lines skipped by the last open (review D11)
         if fresh and self.path.exists():
             self.path.unlink()
         if self.path.exists():
@@ -75,7 +76,7 @@ class Checkpoint:
         the file is restarted, as before."""
         raw = self.path.read_bytes()
         lines = raw.split(NL)
-        complete = lines[:-1]         # anything after the final newline is a partial write
+        complete = lines[:-1]  # anything after the final newline is a partial write
         partial = bool(lines[-1].strip())
         kept: list[bytes] = []
         skipped = 0
@@ -88,7 +89,7 @@ class Checkpoint:
                     key, row = str(obj["key"]), obj["row"]
             except (ValueError, KeyError):
                 if i == 0:
-                    break             # no readable header: restart below
+                    break  # no readable header: restart below
                 skipped += 1
                 continue
             if i == 0:
@@ -96,12 +97,13 @@ class Checkpoint:
                     raise CheckpointMismatch(
                         f"{self.path} was written for different inputs "
                         f"(fingerprint {obj.get('fingerprint')!r} != {self.fp!r}); "
-                        "rerun with --fresh or point --out elsewhere")
+                        "rerun with --fresh or point --out elsewhere"
+                    )
             else:
                 self._rows[key] = row
             kept.append(line)
         self.skipped_lines = skipped
-        if not kept:                  # not even a header survived
+        if not kept:  # not even a header survived
             self._rows.clear()
             self.path.unlink()
             self._append({"header": self.header, "fingerprint": self.fp})

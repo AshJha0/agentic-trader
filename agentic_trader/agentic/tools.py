@@ -22,6 +22,7 @@ The **ToolExecutor** is the only way agents reach data. Every call:
 A timed-out worker cannot be killed in-process; it is abandoned (it never blocks
 another call, its result is discarded) and counted in ``tool_calls_abandoned_total``.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -34,16 +35,26 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Callable
 
-from .domain import (Capability, Evidence, EvidenceType, PolicyOutcome, RiskLevel, Role,
-                     ToolAnnotations, ToolDescriptor, ToolRequest, ToolResult, new_id)
+from .domain import (
+    Capability,
+    Evidence,
+    EvidenceType,
+    PolicyOutcome,
+    RiskLevel,
+    Role,
+    ToolAnnotations,
+    ToolDescriptor,
+    ToolRequest,
+    ToolResult,
+    new_id,
+)
 from .evidence import EvidenceStore
 from .policy import ApprovalGateway, AutoApprovalGateway, PolicyEngine
 from .tracing import Tracer
 
 log = logging.getLogger(__name__)
 
-_JSON_TYPES = {int: "integer", float: "number", str: "string", bool: "boolean",
-               list: "array", dict: "object", date: "string"}
+_JSON_TYPES = {int: "integer", float: "number", str: "string", bool: "boolean", list: "array", dict: "object", date: "string"}
 
 
 def schema_from_signature(fn: Callable[..., Any]) -> dict[str, Any]:
@@ -115,8 +126,12 @@ def coerce_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[
             if not isinstance(out[k], date):
                 raise ValueError(f"argument {k} must be a date")
         elif t == "integer":
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or (isinstance(v, float) and not math.isfinite(v)) \
-                    or int(v) != v:
+            if (
+                isinstance(v, bool)
+                or not isinstance(v, (int, float))
+                or (isinstance(v, float) and not math.isfinite(v))
+                or int(v) != v
+            ):
                 raise ValueError(f"argument {k} must be a finite integer")
             out[k] = int(v)
         elif t == "number":
@@ -154,27 +169,45 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, RegisteredTool] = {}
 
-    def register(self, server: str, fn: Callable[..., Any], name: str | None = None,
-                 annotations: ToolAnnotations | None = None,
-                 description: str | None = None) -> ToolDescriptor:
+    def register(
+        self,
+        server: str,
+        fn: Callable[..., Any],
+        name: str | None = None,
+        annotations: ToolAnnotations | None = None,
+        description: str | None = None,
+    ) -> ToolDescriptor:
         short = name or fn.__name__
         full = f"{server}.{short}"
         if full in self._tools:
             raise ValueError(f"tool {full} already registered")
-        desc = ToolDescriptor(full, server, (description or inspect.getdoc(fn) or short).strip(),
-                              schema_from_signature(fn), annotations or ToolAnnotations())
+        desc = ToolDescriptor(
+            full,
+            server,
+            (description or inspect.getdoc(fn) or short).strip(),
+            schema_from_signature(fn),
+            annotations or ToolAnnotations(),
+        )
         self._tools[full] = RegisteredTool(desc, fn)
         return desc
 
-    def tool(self, server: str, *, read_only: bool = True, risk: RiskLevel = RiskLevel.LOW,
-             required: frozenset[Capability] | set[Capability] = frozenset({Capability.READ_MARKET_DATA}),
-             evidence_type: EvidenceType = EvidenceType.DATA, name: str | None = None):
+    def tool(
+        self,
+        server: str,
+        *,
+        read_only: bool = True,
+        risk: RiskLevel = RiskLevel.LOW,
+        required: frozenset[Capability] | set[Capability] = frozenset({Capability.READ_MARKET_DATA}),
+        evidence_type: EvidenceType = EvidenceType.DATA,
+        name: str | None = None,
+    ):
         """Decorator form of ``register``."""
         ann = ToolAnnotations(read_only, risk, frozenset(required), evidence_type)
 
         def deco(fn):
             self.register(server, fn, name, ann)
             return fn
+
         return deco
 
     def register_descriptor(self, descriptor: ToolDescriptor, fn: Callable[..., Any]) -> ToolDescriptor:
@@ -201,10 +234,17 @@ class ToolRegistry:
 
     def catalogue(self) -> list[dict[str, Any]]:
         """JSON-ready listing for the planner prompt and the API."""
-        return [{"name": d.name, "description": d.description, "input_schema": d.input_schema,
-                 "read_only": d.annotations.read_only, "risk": d.annotations.risk.value,
-                 "required": sorted(c.value for c in d.annotations.required)}
-                for d in self.descriptors()]
+        return [
+            {
+                "name": d.name,
+                "description": d.description,
+                "input_schema": d.input_schema,
+                "read_only": d.annotations.read_only,
+                "risk": d.annotations.risk.value,
+                "required": sorted(c.value for c in d.annotations.required),
+            }
+            for d in self.descriptors()
+        ]
 
     def __len__(self) -> int:
         return len(self._tools)
@@ -217,8 +257,7 @@ class ToolTimeout(Exception):
     pass
 
 
-def invoke_with_deadline(fn: Callable[..., Any], args: dict[str, Any], timeout_s: float,
-                         name: str = "tool") -> Any:
+def invoke_with_deadline(fn: Callable[..., Any], args: dict[str, Any], timeout_s: float, name: str = "tool") -> Any:
     """Run ``fn(**args)`` on a fresh daemon thread and wait at most ``timeout_s``.
 
     Raises ``ToolTimeout`` when the deadline passes; the worker is then abandoned
@@ -253,6 +292,7 @@ class ExecutorConfig:
 @dataclass
 class ToolExecutor:
     """Policy-gated, traced, evidence-producing tool calls."""
+
     registry: ToolRegistry
     policy: PolicyEngine
     evidence: EvidenceStore
@@ -264,8 +304,7 @@ class ToolExecutor:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     pending_approval: bool = False
 
-    def call(self, name: str, correlation_id: str | None = None, requested_by: str = "harness",
-             **arguments: Any) -> ToolResult:
+    def call(self, name: str, correlation_id: str | None = None, requested_by: str = "harness", **arguments: Any) -> ToolResult:
         cid = correlation_id or new_id("CID")
         req = ToolRequest(name, dict(arguments), cid, requested_by)
         with self.tracer.span(f"tool:{name}", tool=name, correlation_id=cid) as span:
@@ -280,32 +319,48 @@ class ToolExecutor:
             span.set(policy=decision.outcome.value, rule=decision.rule)
             if decision.outcome is PolicyOutcome.DENY:
                 self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="denied")
-                return self._fail(req, f"denied by policy ({decision.rule}): {decision.reason}",
-                                  evidence_type=tool.descriptor.annotations.evidence_type)
+                return self._fail(
+                    req,
+                    f"denied by policy ({decision.rule}): {decision.reason}",
+                    evidence_type=tool.descriptor.annotations.evidence_type,
+                )
             # Bind the arguments before the approval decision: a request the tool cannot
             # accept is refused as an argument-guard denial, never parked for a person.
             try:
                 args = coerce_arguments(tool.descriptor.input_schema, req.arguments)
-            except (ValueError, TypeError, OverflowError) as e:   # any coercion failure is a bad argument, never a crash
+            except (ValueError, TypeError, OverflowError) as e:  # any coercion failure is a bad argument, never a crash
                 span.fail(str(e))
                 span.set(policy=PolicyOutcome.DENY.value, rule="argument_guard")
                 self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="bad_arguments")
-                return self._fail(req, f"denied by policy (argument_guard): bad arguments: {e}",
-                                  evidence_type=tool.descriptor.annotations.evidence_type)
+                return self._fail(
+                    req,
+                    f"denied by policy (argument_guard): bad arguments: {e}",
+                    evidence_type=tool.descriptor.annotations.evidence_type,
+                )
             if decision.outcome is PolicyOutcome.REQUIRE_APPROVAL:
                 verdict = self.gateway.decide(self.task_id, req, decision.reason)
                 if verdict is None:
                     self.pending_approval = True
                     self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="awaiting_approval")
-                    return self._fail(req, f"awaiting approval ({decision.rule}): {decision.reason}",
-                                      evidence_type=tool.descriptor.annotations.evidence_type)
+                    return self._fail(
+                        req,
+                        f"awaiting approval ({decision.rule}): {decision.reason}",
+                        evidence_type=tool.descriptor.annotations.evidence_type,
+                    )
                 if verdict is False:
                     self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="rejected")
-                    return self._fail(req, f"approval rejected ({decision.rule}): {decision.reason}",
-                                      evidence_type=tool.descriptor.annotations.evidence_type)
-                self.evidence.record(EvidenceType.APPROVAL, self.gateway.name,
-                                     f"approved {name} ({decision.rule})", {"request": req.request_id,
-                                                                            "reason": decision.reason}, cid)
+                    return self._fail(
+                        req,
+                        f"approval rejected ({decision.rule}): {decision.reason}",
+                        evidence_type=tool.descriptor.annotations.evidence_type,
+                    )
+                self.evidence.record(
+                    EvidenceType.APPROVAL,
+                    self.gateway.name,
+                    f"approved {name} ({decision.rule})",
+                    {"request": req.request_id, "reason": decision.reason},
+                    cid,
+                )
 
             t0 = time.perf_counter()
             payload, error, attempts = None, None, 0
@@ -337,17 +392,30 @@ class ToolExecutor:
                 self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="error")
                 return self._fail(req, error, elapsed, attempts, tool.descriptor.annotations.evidence_type)
 
-            ev = self.evidence.record(tool.descriptor.annotations.evidence_type, name,
-                                      _summarise(name, args, payload), payload, cid, args)
+            ev = self.evidence.record(
+                tool.descriptor.annotations.evidence_type, name, _summarise(name, args, payload), payload, cid, args
+            )
             span.set(evidence=ev.id, elapsed_ms=round(elapsed, 1))
             self.tracer.metrics.inc("tool_calls_total", tool=name, outcome="ok")
             return ToolResult(req, True, payload, None, elapsed, attempts)
 
-    def _fail(self, req: ToolRequest, error: str, elapsed: float = 0.0, attempts: int = 1,
-              evidence_type: EvidenceType = EvidenceType.DATA) -> ToolResult:
+    def _fail(
+        self,
+        req: ToolRequest,
+        error: str,
+        elapsed: float = 0.0,
+        attempts: int = 1,
+        evidence_type: EvidenceType = EvidenceType.DATA,
+    ) -> ToolResult:
         # A failed call is evidence too: the report can say what was *not* available.
-        self.evidence.record(evidence_type, req.tool, f"FAILED {req.tool}: {error[:120]}",
-                             {"error": error, "arguments": req.arguments}, req.correlation_id, req.arguments)
+        self.evidence.record(
+            evidence_type,
+            req.tool,
+            f"FAILED {req.tool}: {error[:120]}",
+            {"error": error, "arguments": req.arguments},
+            req.correlation_id,
+            req.arguments,
+        )
         log.info("tool %s failed: %s", req.tool, error)
         return ToolResult(req, False, None, error, elapsed, attempts)
 

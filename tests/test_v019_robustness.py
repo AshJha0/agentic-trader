@@ -1,5 +1,6 @@
 """v0.19 lane B: local-model retry, provider-miss skips, k/N progress. Fakes only (no Ollama,
 no network)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -29,8 +30,7 @@ OK = {"model": "m", "message": {"content": "hi"}, "done_reason": "stop"}
 
 
 def _llm(budget: float = 30.0) -> tuple[LocalLLM, list[float], list[str]]:
-    m = LocalLLM({"local_llm_model": "m", "local_llm_seed": 7, "local_llm_retry_budget_s": budget,
-                  "local_llm_retry_base_s": 1.0})
+    m = LocalLLM({"local_llm_model": "m", "local_llm_seed": 7, "local_llm_retry_budget_s": budget, "local_llm_retry_base_s": 1.0})
     sleeps: list[float] = []
     m._sleep = sleeps.append
     bodies: list[str] = []
@@ -43,6 +43,7 @@ def _poster(bodies: list[str], fails: list[BaseException]) -> Any:
         if fails:
             raise fails.pop(0)
         return OK
+
     return post
 
 
@@ -66,13 +67,13 @@ def test_retry_then_success_same_body(monkeypatch: pytest.MonkeyPatch) -> None:
     fails: list[BaseException] = [urllib.error.URLError(ConnectionRefusedError()), TimeoutError("hang")]
     monkeypatch.setattr(m, "_post", _poster(bodies, fails))
     assert m.complete("s", "p", deep=False) == "hi"
-    assert sleeps == [1.0, 2.0] and len(bodies) == 3 and len(set(bodies)) == 1   # digest unchanged
+    assert sleeps == [1.0, 2.0] and len(bodies) == 3 and len(set(bodies)) == 1  # digest unchanged
     assert m.usage.retries == 2 and m.usage.errors == 0
     assert m.usage.summary()["retries"] == 2
 
 
 def test_retry_exhausted_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    m, sleeps, bodies = _llm(budget=7.0)            # delays 1, 2, 4 -> 4 attempts
+    m, sleeps, bodies = _llm(budget=7.0)  # delays 1, 2, 4 -> 4 attempts
     monkeypatch.setattr(m, "_post", _poster(bodies, [TimeoutError("hang")] * 10))
     with pytest.raises(LocalLLMUnavailable):
         m.complete("s", "p", deep=False)
@@ -80,8 +81,13 @@ def test_retry_exhausted_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     assert m.usage.errors == 1
 
 
-@pytest.mark.parametrize("exc", [urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO()),  # type: ignore[arg-type]
-                                 ValueError("reply body is not a JSON object")])
+@pytest.mark.parametrize(
+    "exc",
+    [
+        urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO()),  # type: ignore[arg-type]
+        ValueError("reply body is not a JSON object"),
+    ],
+)
 def test_4xx_and_parse_error_not_retried(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> None:
     m, sleeps, bodies = _llm()
     monkeypatch.setattr(m, "_post", _poster(bodies, [exc]))
@@ -104,10 +110,10 @@ def test_retry_provider() -> None:
         if n["k"] < 3:
             raise ValueError("no Yahoo data")
         return 5
+
     assert retry_provider(flaky, tries=3, sleep=lambda s: None) == 5
     with pytest.raises(ProviderMiss) as e:
-        retry_provider(lambda: (_ for _ in ()).throw(ValueError("no Yahoo data for GOOGL")), tries=2,
-                       sleep=lambda s: None)
+        retry_provider(lambda: (_ for _ in ()).throw(ValueError("no Yahoo data for GOOGL")), tries=2, sleep=lambda s: None)
     assert e.value.tries == 2 and "GOOGL" in e.value.reason
 
 
@@ -116,8 +122,7 @@ def graph() -> Any:
     return v16.make_graph("synthetic")
 
 
-def test_recall2_skips_provider_miss_and_counts_progress(graph: Any, tmp_path: Path,
-                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+def test_recall2_skips_provider_miss_and_counts_progress(graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     real_init = v16.FrozenState.__init__
     bad: dict[str, Any] = {}
 
@@ -127,11 +132,13 @@ def test_recall2_skips_provider_miss_and_counts_progress(graph: Any, tmp_path: P
         if (symbol, as_of) == bad["key"] and placebo_seed is None:
             raise ValueError(f"no Yahoo data for {symbol} between x and y")
         real_init(self, g, symbol, as_of, placebo_seed)
+
     monkeypatch.setattr(v16.FrozenState, "__init__", init)
     lines: list[str] = []
     out = tmp_path / "r2.json"
-    res = v16.run_recall2(FakeFirst(), graph, out, header=_hdr(), limit=6, placebo_n=3, log=lines.append,
-                          provider_tries=2, sleep=lambda s: None)
+    res = v16.run_recall2(
+        FakeFirst(), graph, out, header=_hdr(), limit=6, placebo_n=3, log=lines.append, provider_tries=2, sleep=lambda s: None
+    )
     sk = res["skipped"]
     assert sk["units"] == 15 and sk["n"] == 2 and sk["by_kind"] == {"real": 1, "placebo": 0, "leak": 1}
     assert all("no Yahoo data" in r["reason"] for r in sk["rows"])
@@ -164,16 +171,27 @@ def test_llm_study_skip_row_recorded_and_counted(tmp_path: Path, monkeypatch: py
         if d == dates[0]:
             raise ValueError(f"no Yahoo data for {name} between a and b")
         return real(self, name, d)
+
     monkeypatch.setattr(study.StudyGraph, "propagate", prop)
     echoed: list[str] = []
-    rows = study.run_study(["AAPL"], dates, 1, [cell], make_config(study.STUDY_BASE), out, None,
-                           echoed.append, header=_hdr(), provider_tries=2, sleep=lambda s: None)
+    rows = study.run_study(
+        ["AAPL"],
+        dates,
+        1,
+        [cell],
+        make_config(study.STUDY_BASE),
+        out,
+        None,
+        echoed.append,
+        header=_hdr(),
+        provider_tries=2,
+        sleep=lambda s: None,
+    )
     assert len(rows) == 1 and rows[0]["as_of"] == dates[1].isoformat()
     skips = study.load_skips(out)
     assert len(skips) == 1 and "no Yahoo data" in skips[0]["skip_reason"] and skips[0]["header_id"]
     assert echoed[0].startswith("[1/2]") and "SKIPPED" in echoed[0] and echoed[1].startswith("[2/2]")
     monkeypatch.setattr(study.StudyGraph, "propagate", real)
-    rows = study.run_study(["AAPL"], dates, 1, [cell], make_config(study.STUDY_BASE), out, None,
-                           lambda s: None, header=_hdr())
+    rows = study.run_study(["AAPL"], dates, 1, [cell], make_config(study.STUDY_BASE), out, None, lambda s: None, header=_hdr())
     assert len(rows) == 2 and study.load_skips(out) == []
     assert lin.stamp({}, _hdr())["header_id"]

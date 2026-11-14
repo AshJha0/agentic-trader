@@ -10,6 +10,7 @@ Ranking is plain and deterministic: query terms are matched against each tool's 
 and description (name hits weigh 3, server 2, description 1); ties break on the name. An exact
 tool name always ranks first. No model and no embedding is involved.
 """
+
 from __future__ import annotations
 
 import re
@@ -33,7 +34,7 @@ class DeferredToolCatalog:
         self._lock = threading.Lock()
         self._loaded: set[str] = set()
         for name in preloaded:
-            self.registry.get(name)        # KeyError for an unknown tool
+            self.registry.get(name)  # KeyError for an unknown tool
             self._loaded.add(name)
 
     def names(self) -> list[str]:
@@ -91,8 +92,9 @@ def _chars_tokens(text: str) -> int:
     return -(-len(text) // 4)
 
 
-def token_saving(registry: ToolRegistry, queries: tuple[str, ...] = ("price history", "submit order"),
-                 limit: int = 5) -> dict[str, Any]:
+def token_saving(
+    registry: ToolRegistry, queries: tuple[str, ...] = ("price history", "submit order"), limit: int = 5
+) -> dict[str, Any]:
     """Measured context cost of up-front vs deferred tool listing on ``registry``.
 
     ``full`` is the JSON of every descriptor (what an eager client holds); ``deferred`` is the
@@ -100,6 +102,7 @@ def token_saving(registry: ToolRegistry, queries: tuple[str, ...] = ("price hist
     each, deduplicated). Same estimator on both sides: ``ceil(chars / 4)``.
     """
     import json
+
     full = _chars_tokens(json.dumps(registry.catalogue(), sort_keys=True))
     cat = DeferredToolCatalog(registry)
     names = _chars_tokens(json.dumps(cat.names()))
@@ -108,6 +111,12 @@ def token_saving(registry: ToolRegistry, queries: tuple[str, ...] = ("price hist
         for e in cat.search(q, limit, load=False):
             loaded[e["name"]] = e
     after = names + _chars_tokens(json.dumps(sorted(loaded.values(), key=lambda e: e["name"]), sort_keys=True))
-    return {"tools": len(registry), "full_tokens": full, "names_tokens": names,
-            "deferred_tokens_after_search": after, "loaded_tools": len(loaded),
-            "saving_tokens": full - after, "saving_share": (full - after) / full if full else 0.0}
+    return {
+        "tools": len(registry),
+        "full_tokens": full,
+        "names_tokens": names,
+        "deferred_tokens_after_search": after,
+        "loaded_tools": len(loaded),
+        "saving_tokens": full - after,
+        "saving_share": (full - after) / full if full else 0.0,
+    }

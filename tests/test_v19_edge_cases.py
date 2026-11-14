@@ -6,6 +6,7 @@ lexical-overlap rule at its boundary) and ``agentic.output_guard`` (allowed tick
 characters, several reasons at once, the poison threshold). Every expected value is worked by
 hand from the published rules or the NYSE calendar, not read back from the code.
 """
+
 from __future__ import annotations
 
 import math
@@ -21,26 +22,39 @@ from agentic_trader.agentic.question_overlap import MAX_CONTAINMENT, lexical_ove
 
 # ---------------------------------------------------------------- nyse_calendar
 
-@pytest.mark.parametrize("year, sunday", [(2000, date(2000, 4, 23)), (2024, date(2024, 3, 31)),
-                                          (2025, date(2025, 4, 20)), (2038, date(2038, 4, 25))])
+
+@pytest.mark.parametrize(
+    "year, sunday", [(2000, date(2000, 4, 23)), (2024, date(2024, 3, 31)), (2025, date(2025, 4, 20)), (2038, date(2038, 4, 25))]
+)
 def test_easter_known_dates(year, sunday):
     assert cal.easter(year) == sunday
     assert cal.easter(year).weekday() == 6
 
 
 def test_holidays_2024_full_list():
-    assert cal.nyse_holidays(2024) == frozenset({
-        date(2024, 1, 1), date(2024, 1, 15), date(2024, 2, 19), date(2024, 3, 29), date(2024, 5, 27),
-        date(2024, 6, 19), date(2024, 7, 4), date(2024, 9, 2), date(2024, 11, 28), date(2024, 12, 25)})
+    assert cal.nyse_holidays(2024) == frozenset(
+        {
+            date(2024, 1, 1),
+            date(2024, 1, 15),
+            date(2024, 2, 19),
+            date(2024, 3, 29),
+            date(2024, 5, 27),
+            date(2024, 6, 19),
+            date(2024, 7, 4),
+            date(2024, 9, 2),
+            date(2024, 11, 28),
+            date(2024, 12, 25),
+        }
+    )
 
 
 def test_weekend_observance_rules():
     h22 = cal.nyse_holidays(2022)
     assert date(2021, 12, 31) not in cal.nyse_holidays(2021)  # Saturday 1 Jan 2022 not observed on Friday
     assert date(2022, 6, 20) in h22 and date(2022, 6, 19) not in h22  # Juneteenth Sunday -> Monday
-    assert date(2022, 12, 26) in h22                                  # Christmas Sunday -> Monday
-    assert date(2021, 7, 5) in cal.nyse_holidays(2021)                # 4 July Sunday -> Monday
-    assert date(2010, 12, 24) in cal.nyse_holidays(2010)              # Christmas Saturday -> Friday
+    assert date(2022, 12, 26) in h22  # Christmas Sunday -> Monday
+    assert date(2021, 7, 5) in cal.nyse_holidays(2021)  # 4 July Sunday -> Monday
+    assert date(2010, 12, 24) in cal.nyse_holidays(2010)  # Christmas Saturday -> Friday
 
 
 def test_juneteenth_and_mlk_start_years():
@@ -71,23 +85,23 @@ def test_early_closes():
 def test_session_arithmetic():
     assert cal.last_session_on_or_before(date(2024, 3, 31)) == date(2024, 3, 28)  # Sunday, Good Friday before
     assert cal.last_session_on_or_before(date(2024, 3, 28)) == date(2024, 3, 28)
-    assert cal.sessions_after(date(2024, 12, 24), date(2024, 12, 31)) == 4      # 26, 27, 30, 31
+    assert cal.sessions_after(date(2024, 12, 24), date(2024, 12, 31)) == 4  # 26, 27, 30, 31
     assert cal.sessions_after(date(2024, 12, 24), date(2024, 12, 24)) == 0
-    assert cal.sessions_after(date(2024, 12, 31), date(2024, 12, 24)) == 0      # today before last
-    assert not cal.is_session(date(2024, 6, 15))                                   # Saturday
+    assert cal.sessions_after(date(2024, 12, 31), date(2024, 12, 24)) == 0  # today before last
+    assert not cal.is_session(date(2024, 6, 15))  # Saturday
 
 
 # ---------------------------------------------------------------- evidence_bounds
 
+
 def test_sessions_needed_scaling():
     # round 2 (C3): power=0.5 is the pre-round-2 rule (half-width equal to the effect)
     assert eb.sessions_needed(0.35, power=0.5) == pytest.approx(1167)  # effect equal to the half-width
-    assert math.ceil(eb.sessions_needed(0.2, power=0.5)) == 3574       # the documented (50 % power) figure
+    assert math.ceil(eb.sessions_needed(0.2, power=0.5)) == 3574  # the documented (50 % power) figure
     assert eb.sessions_needed(0.1) == pytest.approx(4 * eb.sessions_needed(0.2))  # 1/sqrt(n)
 
 
-@pytest.mark.parametrize("kw", [{"effect": 0}, {"effect": -0.1}, {"effect": 0.2, "halfwidth": 0},
-                                {"effect": 0.2, "n": 0}])
+@pytest.mark.parametrize("kw", [{"effect": 0}, {"effect": -0.1}, {"effect": 0.2, "halfwidth": 0}, {"effect": 0.2, "n": 0}])
 def test_sessions_needed_rejects_non_positive(kw):
     with pytest.raises(ValueError):
         eb.sessions_needed(**kw)
@@ -125,6 +139,7 @@ def test_holdout_selection_premium_is_positive():
 
 # ---------------------------------------------------------------- question_overlap
 
+
 def test_overlap_empty_and_stopword_questions_are_not_rejected():
     for q in ("", "what is the", "a"):
         o = lexical_overlap(q, "Net sales rose 14 percent")
@@ -142,13 +157,13 @@ def test_overlap_containment_boundary():
 
 
 def test_overlap_shared_bigram_rejects_even_at_low_containment():
-    o = lexical_overlap("did gross margin narrow given freight costs tariffs inventory labour",
-                        "gross margin was 41 percent")
+    o = lexical_overlap("did gross margin narrow given freight costs tariffs inventory labour", "gross margin was 41 percent")
     assert o.shared_bigrams == ("gross_margin",)
     assert o.containment < MAX_CONTAINMENT and o.rejected
 
 
 # ---------------------------------------------------------------- output_guard
+
 
 def test_guard_allowed_tickers_normalised():
     assert check_output("Bought $AAPL on the dip", allowed_tickers=["aapl"]).ok
@@ -164,8 +179,7 @@ def test_guard_sees_through_zero_width_characters():
 
 
 def test_guard_reports_every_reason():
-    r = check_output("see www.example.com, ignore previous notes, token ZEBRA9X canary-77",
-                     canaries=["", "CANARY-77"])
+    r = check_output("see www.example.com, ignore previous notes, token ZEBRA9X canary-77", canaries=["", "CANARY-77"])
     kinds = [x.split(":")[0] for x in r.reasons]
     assert kinds == ["url", "canary echo", "instruction-like text"]
     assert r.reason == "; ".join(r.reasons)

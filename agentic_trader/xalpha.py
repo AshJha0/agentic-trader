@@ -18,6 +18,7 @@ relative ranking, and it is evaluated the way a cross-sectional desk does:
 Everything is point in time: a cross-sectional value at date t uses only bars
 <= t of every instrument, and the forward return that scores it starts at t.
 """
+
 from __future__ import annotations
 
 import math
@@ -34,9 +35,12 @@ from .leakage import gate_family_bh, ic_purged_series, passes_gate, scored_mask
 
 
 # ------------------------------------------------------------- panels
-def signal_panels(frames: dict[str, pd.DataFrame], instruments: dict[str, Instrument],
-                  names: list[str] | None = None,
-                  carry: dict[str, np.ndarray] | None = None) -> dict[str, pd.DataFrame]:
+def signal_panels(
+    frames: dict[str, pd.DataFrame],
+    instruments: dict[str, Instrument],
+    names: list[str] | None = None,
+    carry: dict[str, np.ndarray] | None = None,
+) -> dict[str, pd.DataFrame]:
     """Time-series alpha values as panels: alpha name -> (dates x symbols) frame.
 
     ``frames`` maps symbol -> OHLCV history; ``carry`` maps FX symbol -> annual
@@ -67,8 +71,7 @@ def forward_return_panel(closes: pd.DataFrame, horizon: int) -> pd.DataFrame:
     return closes.shift(-horizon) / closes - 1.0
 
 
-def cs_zscore(panel: pd.DataFrame, groups: dict[str, str] | None = None, min_names: int = 3,
-              clip: float = 3.0) -> pd.DataFrame:
+def cs_zscore(panel: pd.DataFrame, groups: dict[str, str] | None = None, min_names: int = 3, clip: float = 3.0) -> pd.DataFrame:
     """Standardise each row across names (within ``groups`` when given).
 
     Rows with fewer than ``min_names`` finite values in a group get NaN for that
@@ -84,7 +87,7 @@ def cs_zscore(panel: pd.DataFrame, groups: dict[str, str] | None = None, min_nam
         ok = np.isfinite(block)
         count = ok.sum(axis=1)
         with np.errstate(invalid="ignore", divide="ignore"), warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)   # empty / single-name rows are NaN by design
+            warnings.simplefilter("ignore", RuntimeWarning)  # empty / single-name rows are NaN by design
             mean = np.nanmean(np.where(ok, block, np.nan), axis=1)
             std = np.nanstd(np.where(ok, block, np.nan), axis=1, ddof=1)
             z = (block - mean[:, None]) / std[:, None]
@@ -94,8 +97,9 @@ def cs_zscore(panel: pd.DataFrame, groups: dict[str, str] | None = None, min_nam
     return out
 
 
-def rolling_beta_panel(closes: pd.DataFrame, groups: dict[str, str] | None = None,
-                       window: int = 252, min_obs: int = 60) -> pd.DataFrame:
+def rolling_beta_panel(
+    closes: pd.DataFrame, groups: dict[str, str] | None = None, window: int = 252, min_obs: int = 60
+) -> pd.DataFrame:
     """Point-in-time beta of each name to its group's equal-weight daily return, from the
     trailing ``window`` returns up to and including bar t (no later bar enters)."""
     groups = groups or {c: "all" for c in closes.columns}
@@ -110,8 +114,9 @@ def rolling_beta_panel(closes: pd.DataFrame, groups: dict[str, str] | None = Non
     return out
 
 
-def beta_neutralise(panel: pd.DataFrame, betas: pd.DataFrame, groups: dict[str, str] | None = None,
-                    min_names: int = 3) -> pd.DataFrame:
+def beta_neutralise(
+    panel: pd.DataFrame, betas: pd.DataFrame, groups: dict[str, str] | None = None, min_names: int = 3
+) -> pd.DataFrame:
     """Residual of a per-date cross-sectional OLS of ``panel`` on ``[1, beta]`` within each
     group: the part of the score not explained by market exposure. Rows with fewer than
     ``min_names + 1`` finite pairs in a group are NaN (two parameters are fitted)."""
@@ -166,8 +171,7 @@ def cross_sectional_ic(signal: pd.DataFrame, fwd: pd.DataFrame, min_names: int =
     return pd.Series(out, index=common)
 
 
-def grouped_cross_sectional_ic(signal: pd.DataFrame, fwd: pd.DataFrame, groups: dict[str, str],
-                               min_names: int = 5) -> pd.Series:
+def grouped_cross_sectional_ic(signal: pd.DataFrame, fwd: pd.DataFrame, groups: dict[str, str], min_names: int = 5) -> pd.Series:
     """Per-date IC computed *within* each group (asset class) and averaged over the groups
     that have ``min_names`` pairs that day, weighted by their pair count. Ranking equities
     against FX pairs mixes two return scales; this keeps the comparison inside a class, as
@@ -203,16 +207,32 @@ def ic_summary(ic: pd.Series, horizon: int, periods_per_year: float = 252.0) -> 
     pic = ic_purged_series(ic, horizon)
     v = ic[scored_mask(len(ic), horizon)].dropna()
     if v.size < 3 or not math.isfinite(pic.ic):
-        return {"mean IC": float("nan"), "IC IR": float("nan"), "t(IC)": float("nan"),
-                "t_crit": float("nan"), "t_NW": pic.t_nw, "MDE_IC": pic.mde_ic, "IC>0%": float("nan"),
-                "days": pic.n}
+        return {
+            "mean IC": float("nan"),
+            "IC IR": float("nan"),
+            "t(IC)": float("nan"),
+            "t_crit": float("nan"),
+            "t_NW": pic.t_nw,
+            "MDE_IC": pic.mde_ic,
+            "IC>0%": float("nan"),
+            "days": pic.n,
+        }
     mean, sd = float(v.mean()), float(v.std(ddof=1))
-    return {"mean IC": pic.ic, "IC IR": (mean / sd) * math.sqrt(periods_per_year / horizon) if sd > 0 else float("nan"),
-            "t(IC)": pic.t, "t_crit": pic.t_crit, "t_NW": pic.t_nw, "MDE_IC": pic.mde_ic, "IC>0%": 100.0 * float((v > 0).mean()), "days": pic.n}
+    return {
+        "mean IC": pic.ic,
+        "IC IR": (mean / sd) * math.sqrt(periods_per_year / horizon) if sd > 0 else float("nan"),
+        "t(IC)": pic.t,
+        "t_crit": pic.t_crit,
+        "t_NW": pic.t_nw,
+        "MDE_IC": pic.mde_ic,
+        "IC>0%": 100.0 * float((v > 0).mean()),
+        "days": pic.n,
+    }
 
 
-def quantile_spread(signal: pd.DataFrame, fwd: pd.DataFrame, horizon: int, quantile: float = 0.2,
-                    min_names: int = 5) -> pd.Series:
+def quantile_spread(
+    signal: pd.DataFrame, fwd: pd.DataFrame, horizon: int, quantile: float = 0.2, min_names: int = 5
+) -> pd.Series:
     """Equal-weight long top-quantile / short bottom-quantile return per rebalance date.
 
     Rebalances every ``horizon`` bars so consecutive holding periods do not overlap;
@@ -235,8 +255,9 @@ def quantile_spread(signal: pd.DataFrame, fwd: pd.DataFrame, horizon: int, quant
     return pd.Series(out, dtype=float)
 
 
-def grouped_quantile_spread(signal: pd.DataFrame, fwd: pd.DataFrame, horizon: int, groups: dict[str, str],
-                            quantile: float = 0.2, min_names: int = 5) -> pd.Series:
+def grouped_quantile_spread(
+    signal: pd.DataFrame, fwd: pd.DataFrame, horizon: int, groups: dict[str, str], quantile: float = 0.2, min_names: int = 5
+) -> pd.Series:
     """``quantile_spread`` within each group, averaged across the groups present on a date."""
     gs = sorted(set(groups.get(c, "all") for c in signal.columns))
     if len(gs) <= 1:
@@ -255,11 +276,11 @@ def grouped_quantile_spread(signal: pd.DataFrame, fwd: pd.DataFrame, horizon: in
 @dataclass
 class XAlphaReport:
     horizon: int
-    table: pd.DataFrame                 # one row per alpha (and "combined")
-    decay: pd.DataFrame                 # mean IC by horizon
-    correlations: pd.DataFrame          # alpha x alpha correlation of cross-sectional scores
-    spreads: dict[str, pd.Series]       # top-minus-bottom quantile returns per alpha
-    signals: dict[str, pd.DataFrame] = field(repr=False)   # cross-sectional scores
+    table: pd.DataFrame  # one row per alpha (and "combined")
+    decay: pd.DataFrame  # mean IC by horizon
+    correlations: pd.DataFrame  # alpha x alpha correlation of cross-sectional scores
+    spreads: dict[str, pd.Series]  # top-minus-bottom quantile returns per alpha
+    signals: dict[str, pd.DataFrame] = field(repr=False)  # cross-sectional scores
     groups: dict[str, str] = field(default_factory=dict)
 
     def best(self, k: int = 3) -> list[str]:
@@ -269,12 +290,21 @@ class XAlphaReport:
         return list(t.sort_values("mean IC", ascending=False).index[:k])
 
 
-def xalpha_report(frames: dict[str, pd.DataFrame], instruments: dict[str, Instrument], horizon: int = 10,
-                  names: list[str] | None = None, carry: dict[str, np.ndarray] | None = None,
-                  groups: dict[str, str] | None = None, decay_horizons: tuple[int, ...] = (1, 5, 10, 21, 42),
-                  quantile: float = 0.2, min_names: int = 5, weights: dict[str, float] | None = None,
-                  standardise: str = "zscore", neutralise: str = "none",
-                  family_q: float = 0.05) -> XAlphaReport:
+def xalpha_report(
+    frames: dict[str, pd.DataFrame],
+    instruments: dict[str, Instrument],
+    horizon: int = 10,
+    names: list[str] | None = None,
+    carry: dict[str, np.ndarray] | None = None,
+    groups: dict[str, str] | None = None,
+    decay_horizons: tuple[int, ...] = (1, 5, 10, 21, 42),
+    quantile: float = 0.2,
+    min_names: int = 5,
+    weights: dict[str, float] | None = None,
+    standardise: str = "zscore",
+    neutralise: str = "none",
+    family_q: float = 0.05,
+) -> XAlphaReport:
     """Evaluate every alpha cross-sectionally over a universe.
 
     ``groups`` maps symbol -> group for standardisation (default: asset class).
@@ -316,17 +346,23 @@ def xalpha_report(frames: dict[str, pd.DataFrame], instruments: dict[str, Instru
         counts = sc.notna().sum(axis=1) if not sc.empty else pd.Series(dtype=float)
         counts = counts[counts > 0]
         breadth = float(counts.mean()) if counts.size else 0.0
-        sizes = [sum(1 for c in sc.columns if groups.get(c, "all") == g)
-                 for g in set(groups.get(c, "all") for c in sc.columns)]
+        sizes = [sum(1 for c in sc.columns if groups.get(c, "all") == g) for g in set(groups.get(c, "all") for c in sc.columns)]
         per_side = min((max(1, int(round(quantile * k))) for k in sizes if k >= min_names), default=0)
-        decay[n] = {h: ic_summary(grouped_cross_sectional_ic(sc, forward_return_panel(closes, h), groups, min_names),
-                                  h, ppy)["mean IC"]
-                    for h in decay_horizons}
-        return {**summary, "mean IC (pooled)": pooled,
-                "min breadth": float(counts.min()) if counts.size else 0.0, "names/side": per_side, "spread%/period": 100.0 * float(sp.mean()) if sp.size else float("nan"),
-                "spread t": float(sp.mean() / sp.std(ddof=1) * math.sqrt(sp.size))
-                if sp.size > 2 and sp.std(ddof=1) > 0 else float("nan"),
-                "breadth": breadth}
+        decay[n] = {
+            h: ic_summary(grouped_cross_sectional_ic(sc, forward_return_panel(closes, h), groups, min_names), h, ppy)["mean IC"]
+            for h in decay_horizons
+        }
+        return {
+            **summary,
+            "mean IC (pooled)": pooled,
+            "min breadth": float(counts.min()) if counts.size else 0.0,
+            "names/side": per_side,
+            "spread%/period": 100.0 * float(sp.mean()) if sp.size else float("nan"),
+            "spread t": float(sp.mean() / sp.std(ddof=1) * math.sqrt(sp.size))
+            if sp.size > 2 and sp.std(ddof=1) > 0
+            else float("nan"),
+            "breadth": breadth,
+        }
 
     for n, sc in scores.items():
         rows[n] = row_for(n, sc)
@@ -354,18 +390,30 @@ def gate_entry(row: dict) -> dict:
     """The gate shape (``leakage.passes_gate`` / ``gate_family_bh``) of one ``xalpha_report``
     row: IC, blocked-fold t with its Student-t bar and df, Newey-West t, days."""
     from .leakage import student_t_crit
+
     tc = row.get("t_crit", float("nan"))
     df = 0
     if tc is not None and tc == tc:
         # t_crit is the 5% two-sided Student value at k - 1 df; recover k - 1 from it.
         df = next((d for d in range(1, 60) if abs(student_t_crit(d) - float(tc)) < 1e-6), 0)
-    return {"IC": row.get("mean IC"), "t(IC)": row.get("t(IC)"), "t_crit": tc,
-            "n": row.get("days"), "t_NW": row.get("t_NW"), "MDE_IC": row.get("MDE_IC"), "df": df}
+    return {
+        "IC": row.get("mean IC"),
+        "t(IC)": row.get("t(IC)"),
+        "t_crit": tc,
+        "n": row.get("days"),
+        "t_NW": row.get("t_NW"),
+        "MDE_IC": row.get("MDE_IC"),
+        "df": df,
+    }
 
 
-def significance_gated_scores(scores: dict[str, pd.DataFrame], ic: dict[str, dict],
-                              min_tstat: float | None = None, min_n: int = 30,
-                              family_q: float | None = 0.05) -> pd.DataFrame:
+def significance_gated_scores(
+    scores: dict[str, pd.DataFrame],
+    ic: dict[str, dict],
+    min_tstat: float | None = None,
+    min_n: int = 30,
+    family_q: float | None = 0.05,
+) -> pd.DataFrame:
     """The cross-sectional analogue of ``alpha.significance_gated_series``: only the alphas
     whose cross-sectional IC clears ``min_tstat``/``min_n`` in ``ic`` (the same
     ``{"IC", "t(IC)", "n"}`` shape ``agents.analysts.significant_alpha_signal`` reads)
@@ -416,10 +464,14 @@ def _combine_scores(scores: dict[str, pd.DataFrame], weights: dict[str, float] |
     return (num / den.where(den > 0)).clip(-1.0, 1.0)
 
 
-def xalpha_snapshot(frames: dict[str, pd.DataFrame], instruments: dict[str, Instrument],
-                    names: list[str] | None = None, carry: dict[str, np.ndarray] | None = None,
-                    groups: dict[str, str] | None = None, weights: dict[str, float] | None = None
-                    ) -> dict[str, dict[str, float | None]]:
+def xalpha_snapshot(
+    frames: dict[str, pd.DataFrame],
+    instruments: dict[str, Instrument],
+    names: list[str] | None = None,
+    carry: dict[str, np.ndarray] | None = None,
+    groups: dict[str, str] | None = None,
+    weights: dict[str, float] | None = None,
+) -> dict[str, dict[str, float | None]]:
     """Latest cross-sectional score of every alpha (and the combined score) per symbol."""
     groups = groups or {s: instruments[s].asset_class for s in frames}
     panels = signal_panels(frames, instruments, names, carry)

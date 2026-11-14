@@ -6,6 +6,7 @@ caller records a *skipped* row with the reason, and the pre-registered summary r
 skip count and the skipped ids. Nothing is dropped silently, and a skipped item is retried
 on the next resume (it is not counted as done).
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,9 +29,14 @@ class ProviderMiss(Exception):
         self.reason, self.tries = reason, tries
 
 
-def retry_provider(fn: Callable[[], T], *, label: str = "", tries: int = PROVIDER_TRIES,
-                   delay_s: float = PROVIDER_DELAY_S,
-                   sleep: Callable[[float], None] = time.sleep) -> T:
+def retry_provider(
+    fn: Callable[[], T],
+    *,
+    label: str = "",
+    tries: int = PROVIDER_TRIES,
+    delay_s: float = PROVIDER_DELAY_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> T:
     """``fn()``, retried on ``ValueError`` (the provider's "no data" signal) up to ``tries``
     times with ``delay_s`` between tries; raises ``ProviderMiss`` when every try failed.
     Other exceptions propagate at once (they are bugs or a dead model server, not a miss)."""

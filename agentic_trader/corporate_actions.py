@@ -20,6 +20,7 @@ Hook. ``oms.OMS`` keeps ``positions`` (shares) and ``cash_flows``; the session r
 ``cash_flow_rows`` to ``oms.cash_flows``. That call sits in the paper-session code, which is
 another lane's file in v0.17; the one-line hook is in docs/review/v017_notes/L8_quant_rest.md.
 """
+
 from __future__ import annotations
 
 import math
@@ -33,10 +34,10 @@ import pandas as pd
 class ActionEvent:
     symbol: str
     ex_date: date
-    kind: str          # "split" | "dividend" | "cash_in_lieu"
-    before: float      # shares before
-    after: float       # shares after
-    cash: float        # cash booked (account currency, positive = received)
+    kind: str  # "split" | "dividend" | "cash_in_lieu"
+    before: float  # shares before
+    after: float  # shares after
+    cash: float  # cash booked (account currency, positive = received)
 
 
 def _actions_in(actions: pd.DataFrame, after: date | None, through: date) -> pd.DataFrame:
@@ -47,9 +48,14 @@ def _actions_in(actions: pd.DataFrame, after: date | None, through: date) -> pd.
     return actions.loc[keep].sort_index()
 
 
-def apply_actions(positions: dict[str, float], actions: dict[str, pd.DataFrame], through: date,
-                  after: date | None = None, prices: dict[str, float] | None = None,
-                  whole_shares: bool = True) -> tuple[dict[str, float], float, list[ActionEvent]]:
+def apply_actions(
+    positions: dict[str, float],
+    actions: dict[str, pd.DataFrame],
+    through: date,
+    after: date | None = None,
+    prices: dict[str, float] | None = None,
+    whole_shares: bool = True,
+) -> tuple[dict[str, float], float, list[ActionEvent]]:
     """Apply every action with ex-date in ``(after, through]`` to ``positions`` (shares).
 
     ``actions[sym]`` is indexed by ex-date with optional columns ``Split`` (ratio; 0 or 1 = no
@@ -80,8 +86,9 @@ def apply_actions(positions: dict[str, float], actions: dict[str, pd.DataFrame],
                     if abs(frac) > 1e-9:
                         px = (prices or {}).get(sym)
                         if px is None:
-                            raise ValueError(f"{sym}: split on {d} leaves {frac:g} fractional shares "
-                                             "and no price for cash in lieu")
+                            raise ValueError(
+                                f"{sym}: split on {d} leaves {frac:g} fractional shares and no price for cash in lieu"
+                            )
                         cash += frac * px
                         events.append(ActionEvent(sym, d, "cash_in_lieu", new, whole, frac * px))
                     new = whole
@@ -98,6 +105,13 @@ def apply_actions(positions: dict[str, float], actions: dict[str, pd.DataFrame],
 
 def cash_flow_rows(events: list[ActionEvent], currency: str = "USD") -> list[dict]:
     """``oms.OMS.cash_flows``-shaped rows for the cash an action list booked."""
-    return [{"currency": currency, "amount": e.cash, "settle_date": e.ex_date,
-             "client_order_id": f"corp-{e.kind}-{e.symbol}-{e.ex_date.isoformat()}"}
-            for e in events if e.cash != 0.0]
+    return [
+        {
+            "currency": currency,
+            "amount": e.cash,
+            "settle_date": e.ex_date,
+            "client_order_id": f"corp-{e.kind}-{e.symbol}-{e.ex_date.isoformat()}",
+        }
+        for e in events
+        if e.cash != 0.0
+    ]

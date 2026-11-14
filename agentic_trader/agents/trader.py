@@ -1,4 +1,5 @@
 """Trader: turns the debate verdict into a concrete, sized trade proposal."""
+
 from __future__ import annotations
 
 import logging
@@ -35,8 +36,7 @@ def atr14(state: TradingState) -> float:
     return v if v > 0 and not math.isnan(v) else state.last_price * 0.02
 
 
-def protective_levels(direction: float, entry: float, atr: float,
-                      risk: dict) -> tuple[float | None, float | None]:
+def protective_levels(direction: float, entry: float, atr: float, risk: dict) -> tuple[float | None, float | None]:
     """ATR-based stop and target for a direction (+1 long, -1 short, 0 flat)."""
     if direction == 0:
         return None, None
@@ -45,8 +45,9 @@ def protective_levels(direction: float, entry: float, atr: float,
     return (stop if stop > 0 else None), (take if take > 0 else None)
 
 
-def sane_levels(direction: float, entry: float, stop: float | None, take: float | None,
-                fallback: tuple[float | None, float | None]) -> tuple[float | None, float | None]:
+def sane_levels(
+    direction: float, entry: float, stop: float | None, take: float | None, fallback: tuple[float | None, float | None]
+) -> tuple[float | None, float | None]:
     """Keep model-supplied levels only when they sit on the correct side of the entry.
 
     A long needs stop < entry < take; a short needs take < entry < stop. Anything
@@ -65,9 +66,11 @@ def sane_levels(direction: float, entry: float, stop: float | None, take: float 
 class Trader(Agent):
     name = "trader"
     deep = True
-    role = ("Trader. You synthesise the analyst reports and the researchers' debate verdict "
-            "into a concrete trade: direction, position size (as a fraction of capital), "
-            "stop-loss, take-profit and holding horizon.")
+    role = (
+        "Trader. You synthesise the analyst reports and the researchers' debate verdict "
+        "into a concrete trade: direction, position size (as a fraction of capital), "
+        "stop-loss, take-profit and holding horizon."
+    )
 
     def run(self, state: TradingState) -> TradeProposal:
         cfg, risk = self.config, self.config["risk"]
@@ -90,7 +93,7 @@ class Trader(Agent):
             macro = state.reports.get("macro")
             rd = macro.facts.get("rate_diff") if macro is not None else None
             if rd is not None:
-                scale = float(risk.get("fx_carry_neutral_scale", 4.0))   # % p.a. per unit of weight
+                scale = float(risk.get("fx_carry_neutral_scale", 4.0))  # % p.a. per unit of weight
                 cap = float(risk.get("fx_carry_neutral_cap", 0.5))
                 neutral = clip(float(rd) / scale, -cap, cap)
         fc = state.forecast
@@ -98,38 +101,55 @@ class Trader(Agent):
             # combination.method "ic": the estimated mean-variance tilt replaces the 2x tilt on
             # the consensus score, less the exact turnover-penalty margin around the tilt held.
             from ..combine import turnover_penalised
+
             comb = cfg["combination"]
             held = (state.current_weight - neutral) if state.current_weight is not None else 0.0
-            var = fc.sigma ** 2 if fc.sigma == fc.sigma else 0.0
+            var = fc.sigma**2 if fc.sigma == fc.sigma else 0.0
             fc.neutral = neutral
-            w = clip(neutral + turnover_penalised(fc.tilt, held, var, float(comb["risk_aversion"]),
-                                                  float(comb["turnover_penalty"])), -1, 1)
+            w = clip(
+                neutral + turnover_penalised(fc.tilt, held, var, float(comb["risk_aversion"]), float(comb["turnover_penalty"])),
+                -1,
+                1,
+            )
         else:
             w = clip(neutral + 2.0 * score, -1, 1) if abs(score) > thr else neutral
         if not shorts:
             w = max(w, 0.0)
         hit = state.track_record.get("hit_rate")
-        if (cfg.get("rules", {}).get("track_record_cut", True) and hit is not None
-                and state.track_record.get("n", 0) >= 5 and hit < 0.4):
+        if (
+            cfg.get("rules", {}).get("track_record_cut", True)
+            and hit is not None
+            and state.track_record.get("n", 0) >= 5
+            and hit < 0.4
+        ):
             w *= 0.75  # recent calls on this instrument have been poor: trade smaller
         d = float(np.sign(w))
         stop, tp = protective_levels(d, price, atr, risk)
-        rationale = (f"Debate verdict {debate.winner} (score {score:+.2f}, conviction "
-                     f"{debate.conviction:.2f}) -> target weight {w:+.2f}"
-                     + (f" (strategic weight {neutral:+.2f} plus tilt)" if neutral else "")
-                     + f". Stops at {risk['stop_atr_mult']}x ATR (ATR = {atr / price:.2%} of price).")
+        rationale = (
+            f"Debate verdict {debate.winner} (score {score:+.2f}, conviction "
+            f"{debate.conviction:.2f}) -> target weight {w:+.2f}"
+            + (f" (strategic weight {neutral:+.2f} plus tilt)" if neutral else "")
+            + f". Stops at {risk['stop_atr_mult']}x ATR (ATR = {atr / price:.2%} of price)."
+        )
         if hit is not None:
             rationale += f" Track record hit rate {hit:.0%} over {int(state.track_record['n'])} calls."
         untrusted = state.untrusted_inputs or debate.untrusted
-        proposal = TradeProposal(action_for(w, score, thr), w, debate.conviction, price, stop, tp,
-                                 10, rationale, untrusted=untrusted)
+        proposal = TradeProposal(
+            action_for(w, score, thr), w, debate.conviction, price, stop, tp, 10, rationale, untrusted=untrusted
+        )
 
-        facts = {"last_close": state.px(price), "atr14": state.px(atr), "short_selling_allowed": shorts,
-                 "max_position": risk["max_position"], "debate_winner": debate.winner,
-                 "debate_score": score, "debate_conviction": debate.conviction,
-                 "current_position": state.current_weight,
-                 "strategic_weight_when_neutral": neutral,
-                 **{f"track_{k}": v for k, v in state.track_record.items()}}
+        facts = {
+            "last_close": state.px(price),
+            "atr14": state.px(atr),
+            "short_selling_allowed": shorts,
+            "max_position": risk["max_position"],
+            "debate_winner": debate.winner,
+            "debate_score": score,
+            "debate_conviction": debate.conviction,
+            "current_position": state.current_weight,
+            "strategic_weight_when_neutral": neutral,
+            **{f"track_{k}": v for k, v in state.track_record.items()},
+        }
         prompt = (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}), as of "
             f"{state.as_of.isoformat()}.\n\nAnalyst reports:\n{state.reports_digest()}\n\n"
@@ -137,13 +157,17 @@ class Trader(Agent):
             + state.lessons_block()
             + policy_passages(state)
             + '\nJSON keys: "action" ("BUY", "SELL" or "HOLD"), "target_weight" (signed '
-              'fraction of capital in [-1, 1]; negative = short), "confidence" ([0, 1]), '
-              '"stop_loss" (price or null), "take_profit" (price or null), "horizon_days" '
-              '(int, trading days), "rationale" (2-4 sentences).'
+            'fraction of capital in [-1, 1]; negative = short), "confidence" ([0, 1]), '
+            '"stop_loss" (price or null), "take_profit" (price or null), "horizon_days" '
+            '(int, trading days), "rationale" (2-4 sentences).'
         )
-        data = self.ask_json(prompt, ("action", "target_weight", "rationale"), state=state,
-                             numeric=("target_weight", "confidence", "stop_loss", "take_profit",
-                                      "horizon_days"), schema=contracts.TRADER)
+        data = self.ask_json(
+            prompt,
+            ("action", "target_weight", "rationale"),
+            state=state,
+            numeric=("target_weight", "confidence", "stop_loss", "take_profit", "horizon_days"),
+            schema=contracts.TRADER,
+        )
         if data:
             # Round 1 (review A3): the model may move the trader's weight at most
             # risk.trader_model_band (default: risk.pm_model_band, 0.25) from the rules weight
@@ -157,22 +181,38 @@ class Trader(Agent):
                 raise ValueError(f"risk.trader_model_band {band} and risk.pm_model_flag {flag} must be finite and >= 0")
             w = min(rule_w + band, max(rule_w - band, model_w))
             if abs(model_w - rule_w) > flag + 1e-12:
-                gap_note = (f" [trader model weight {model_w:+.2f} vs rules {rule_w:+.2f}"
-                            + (f"; bounded to {w:+.2f} (band {band:.2f})" if abs(w - model_w) > 1e-12 else "") + "]")
+                gap_note = (
+                    f" [trader model weight {model_w:+.2f} vs rules {rule_w:+.2f}"
+                    + (f"; bounded to {w:+.2f} (band {band:.2f})" if abs(w - model_w) > 1e-12 else "")
+                    + "]"
+                )
                 log.warning("%s %s:%s", state.instrument.symbol, state.as_of, gap_note)
             if not shorts:
                 w = max(w, 0.0)
             d = float(np.sign(w))
             # The model saw (possibly rebased) prices: map its levels back to real ones.
-            stop, tp = sane_levels(d, price, state.unpx(_price_or_none(data.get("stop_loss"))),
-                                   state.unpx(_price_or_none(data.get("take_profit"))),
-                                   protective_levels(d, price, atr, risk))
+            stop, tp = sane_levels(
+                d,
+                price,
+                state.unpx(_price_or_none(data.get("stop_loss"))),
+                state.unpx(_price_or_none(data.get("take_profit"))),
+                protective_levels(d, price, atr, risk),
+            )
             act = str(data["action"]).upper()
             proposal = TradeProposal(
                 Action(act) if act in Action.__members__ else action_for(w, score, thr),
-                w, clip(data.get("confidence"), 0, 1, debate.conviction), price, stop, tp,
-                int(clip(data.get("horizon_days"), 1, 90, 10)), str(data["rationale"]),
-                source="llm", untrusted=untrusted, rule_weight=round(rule_w, 6), model_weight=round(model_w, 6))
+                w,
+                clip(data.get("confidence"), 0, 1, debate.conviction),
+                price,
+                stop,
+                tp,
+                int(clip(data.get("horizon_days"), 1, 90, 10)),
+                str(data["rationale"]),
+                source="llm",
+                untrusted=untrusted,
+                rule_weight=round(rule_w, 6),
+                model_weight=round(model_w, 6),
+            )
         state.proposal = proposal
         return proposal
 
@@ -181,8 +221,7 @@ def policy_passages(state: TradingState) -> str:
     """Firm policy passages retrieved by the agentic harness (knowledge.search), if any."""
     if not state.knowledge:
         return ""
-    lines = [f"- {k.get('title', '')} / {k.get('heading', '')}: {str(k.get('text', ''))[:400]}"
-             for k in state.knowledge[:3]]
+    lines = [f"- {k.get('title', '')} / {k.get('heading', '')}: {str(k.get('text', ''))[:400]}" for k in state.knowledge[:3]]
     return "\nFirm policy (retrieved passages, follow them):\n" + "\n".join(lines) + "\n"
 
 

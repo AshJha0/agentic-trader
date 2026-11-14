@@ -6,6 +6,7 @@ documentation pastes them. Sections whose inputs are missing are skipped with a 
 
     .venv\\Scripts\\python.exe scripts/render_v08_tables.py [--in results/v08] [--section name]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,7 +26,7 @@ from agentic_trader.stats import paired_bootstrap, selection_report  # noqa: E40
 
 PERIODS = ("design", "holdout", "q1_2024", "reserve")
 BASELINES = ("Buy&Hold", "B&H vol-target", "SMA(20/50)", "MACD", "KDJ+RSI", "ZMR", "TSMOM(12-1)", "Carry")
-CONTROLS = ("Buy&Hold", "B&H vol-target")   # the two rows the control tables print; BH runs over them alone
+CONTROLS = ("Buy&Hold", "B&H vol-target")  # the two rows the control tables print; BH runs over them alone
 OUT: list[str] = []
 
 
@@ -38,8 +39,10 @@ def md(df: pd.DataFrame, index: bool = True, floatfmt: str = ".2f") -> str:
     if index:
         df = df.reset_index()
     cols = list(df.columns)
-    lines = ["| " + " | ".join(str(c) for c in cols) + " |",
-             "|" + "|".join("--:" if pd.api.types.is_numeric_dtype(df[c]) else ":--" for c in cols) + "|"]
+    lines = [
+        "| " + " | ".join(str(c) for c in cols) + " |",
+        "|" + "|".join("--:" if pd.api.types.is_numeric_dtype(df[c]) else ":--" for c in cols) + "|",
+    ]
     for _, row in df.iterrows():
         cells = []
         for c in cols:
@@ -68,8 +71,7 @@ def subset(res: EvaluationResult, universes: tuple[str, ...] | None) -> Evaluati
         return res
     # Keep the daily returns: paired_table selects the slice's columns from them, and
     # dropping them silently forced the core/extended slices onto the cross-instrument fallback.
-    return EvaluationResult(res.rows[res.rows["universe"].isin(universes)].reset_index(drop=True), res.meta,
-                            res.returns)
+    return EvaluationResult(res.rows[res.rows["universe"].isin(universes)].reset_index(drop=True), res.meta, res.returns)
 
 
 # The documentation's three slices: the 15 instruments every rule choice was made on, the 45
@@ -87,11 +89,13 @@ def section_headline(res: EvaluationResult) -> None:
         emit(f"head to head: {label}", md(view.head_to_head(), index=False))
     for label, universes in SLICES:
         view = subset(res, universes)
-        emit(f"paired Sharpe, agent minus baseline: {label} (primary: time-block; secondary clusters need 5 groups)",
-             md(view.paired_table("Sharpe"), index=False))
+        emit(
+            f"paired Sharpe, agent minus baseline: {label} (primary: time-block; secondary clusters need 5 groups)",
+            md(view.paired_table("Sharpe"), index=False),
+        )
     for metric in ("MDD%", "Calmar"):
         for label, universes in SLICES[:2]:
-            t = subset(res, universes).paired_table(metric, baselines=CONTROLS)   # BH over the two printed rows
+            t = subset(res, universes).paired_table(metric, baselines=CONTROLS)  # BH over the two printed rows
             emit(f"paired {metric}, agent minus control: {label}", md(t, index=False))
 
 
@@ -103,8 +107,7 @@ def section_asset_class(res: EvaluationResult) -> None:
     for label, universes in SLICES[:2]:
         view = subset(res, universes)
         for ac in sorted(view.rows["asset_class"].astype(str).unique()):
-            sub = EvaluationResult(view.rows[view.rows["asset_class"] == ac].reset_index(drop=True), view.meta,
-                                   view.returns)
+            sub = EvaluationResult(view.rows[view.rows["asset_class"] == ac].reset_index(drop=True), view.meta, view.returns)
             n = sub.rows["symbol"].nunique()
             for period in PERIODS:
                 s = sub.summary(period=period)
@@ -118,7 +121,8 @@ def section_asset_class(res: EvaluationResult) -> None:
 def agent_sharpe(res: EvaluationResult) -> pd.DataFrame:
     r = res.rows[res.rows["strategy"] == AGENT]
     return r.groupby(["period", "symbol"], as_index=False).agg(
-        Sharpe=("Sharpe", "mean"), asset_class=("asset_class", "first"), universe=("universe", "first"))
+        Sharpe=("Sharpe", "mean"), asset_class=("asset_class", "first"), universe=("universe", "first")
+    )
 
 
 def section_recheck(a: EvaluationResult, b: EvaluationResult, title: str, universes=("core", "extended")) -> None:
@@ -138,25 +142,39 @@ def section_recheck(a: EvaluationResult, b: EvaluationResult, title: str, univer
                 continue
             groups = (sub["asset_class"] + ":" + sub["universe"]).to_numpy()
             pb = paired_bootstrap(sub["Sharpe_a"].to_numpy(), sub["Sharpe_b"].to_numpy(), groups=groups)
-            rows.append({"period": period, "universe": universe, "n": pb.n,
-                         "mean Sharpe (a)": sub["Sharpe_a"].mean(), "mean Sharpe (b)": sub["Sharpe_b"].mean(),
-                         "mean diff": pb.mean_diff, "95% CI": f"[{pb.ci_low:+.2f}, {pb.ci_high:+.2f}]",
-                         "p": pb.p_value, "scheme": pb.scheme, "wins": f"{pb.wins} / {pb.n}"})
+            rows.append(
+                {
+                    "period": period,
+                    "universe": universe,
+                    "n": pb.n,
+                    "mean Sharpe (a)": sub["Sharpe_a"].mean(),
+                    "mean Sharpe (b)": sub["Sharpe_b"].mean(),
+                    "mean diff": pb.mean_diff,
+                    "95% CI": f"[{pb.ci_low:+.2f}, {pb.ci_high:+.2f}]",
+                    "p": pb.p_value,
+                    "scheme": pb.scheme,
+                    "wins": f"{pb.wins} / {pb.n}",
+                }
+            )
     emit(title, md(pd.DataFrame(rows), index=False))
 
 
 # --------------------------------------------------------------- portfolios
 def diff_line(d: dict) -> str:
-    return f"{d['diff']:+.2f} [{d['ci_low']:+.2f}, {d['ci_high']:+.2f}] p={d['p_value']:.3f} (n={d['n']} days, block {d['block']})"
+    return (
+        f"{d['diff']:+.2f} [{d['ci_low']:+.2f}, {d['ci_high']:+.2f}] p={d['p_value']:.3f} (n={d['n']} days, block {d['block']})"
+    )
 
 
 def section_portfolio(p: dict, title: str) -> None:
     t = pd.DataFrame(p["table"]).T
     emit(f"portfolio: {title}", md(t))
     if "sharpe_vs_vol_target" in p:
-        emit(f"portfolio Sharpe difference (paired block bootstrap over days): {title}",
-             f"- agent minus B&H vol-target: {diff_line(p['sharpe_vs_vol_target'])}\n"
-             f"- agent minus Buy&Hold: {diff_line(p['sharpe_vs_buy_hold'])}")
+        emit(
+            f"portfolio Sharpe difference (paired block bootstrap over days): {title}",
+            f"- agent minus B&H vol-target: {diff_line(p['sharpe_vs_vol_target'])}\n"
+            f"- agent minus Buy&Hold: {diff_line(p['sharpe_vs_buy_hold'])}",
+        )
 
 
 def section_cash_leg(on: dict, off: dict, title: str) -> None:
@@ -168,23 +186,35 @@ def section_cash_leg(on: dict, off: dict, title: str) -> None:
 
 def section_exec_algo(files: dict[str, dict]) -> None:
     from agentic_trader.instruments import Instrument
+
     rows = []
     for label, p in files.items():
         t = p["table"][AGENT]
         paying = [s[AGENT]["impact_paid"] for sym, s in p["sleeves"].items() if not Instrument.parse(sym).is_fx]
-        rows.append({"execution algo": label, "Sharpe": t["Sharpe"], "CR%": t["CR%"], "MDD%": t["MDD%"],
-                     "mean equity-sleeve impact paid %": 100 * float(np.mean(paying)) if paying else float("nan"),
-                     "equity sleeves": len(paying)})
-    emit("execution algorithm, $1B holdout portfolio (sleeve impact at the sleeve's capital; FX sleeves pay no impact "
-         "without costs.fx_adv_notional and are excluded from the mean)", md(pd.DataFrame(rows), index=False))
+        rows.append(
+            {
+                "execution algo": label,
+                "Sharpe": t["Sharpe"],
+                "CR%": t["CR%"],
+                "MDD%": t["MDD%"],
+                "mean equity-sleeve impact paid %": 100 * float(np.mean(paying)) if paying else float("nan"),
+                "equity sleeves": len(paying),
+            }
+        )
+    emit(
+        "execution algorithm, $1B holdout portfolio (sleeve impact at the sleeve's capital; FX sleeves pay no impact "
+        "without costs.fx_adv_notional and are excluded from the mean)",
+        md(pd.DataFrame(rows), index=False),
+    )
 
 
 def section_impact(main: EvaluationResult, sweeps: dict[str, EvaluationResult]) -> None:
     rows = []
     for strat in (AGENT, "B&H vol-target", "Buy&Hold", "SMA(20/50)", "MACD"):
         for period in ("design", "holdout"):
-            base = main.rows[(main.rows["strategy"] == strat) & (main.rows["period"] == period)
-                             & (main.rows["universe"] == "core")]
+            base = main.rows[
+                (main.rows["strategy"] == strat) & (main.rows["period"] == period) & (main.rows["universe"] == "core")
+            ]
             row = {"strategy": strat, "period": period, "Sharpe (off)": base["Sharpe"].mean()}
             for label, res in sweeps.items():
                 r = res.rows[(res.rows["strategy"] == strat) & (res.rows["period"] == period)]
@@ -195,17 +225,28 @@ def section_impact(main: EvaluationResult, sweeps: dict[str, EvaluationResult]) 
 
 
 def section_var(v: dict) -> None:
-    rows = [{"forecast": f"portfolio returns, {w}-day rolling historical VaR", **{k: r[k] for k in
-             ("n", "breaches", "breach_rate", "kupiec_p", "christoffersen_p", "conditional_coverage_p")}}
-            for w, r in v["portfolio"].items()]
-    emit("VaR coverage: rolling historical VaR of the 15-sleeve portfolio's own returns", md(pd.DataFrame(rows), index=False, floatfmt=".4f"))
-    rows = [{"instrument": s, **{k: r[k] for k in ("n", "breaches", "breach_rate", "kupiec_p", "christoffersen_p")}}
-            for s, r in v["instruments"].items()]
+    rows = [
+        {
+            "forecast": f"portfolio returns, {w}-day rolling historical VaR",
+            **{k: r[k] for k in ("n", "breaches", "breach_rate", "kupiec_p", "christoffersen_p", "conditional_coverage_p")},
+        }
+        for w, r in v["portfolio"].items()
+    ]
+    emit(
+        "VaR coverage: rolling historical VaR of the 15-sleeve portfolio's own returns",
+        md(pd.DataFrame(rows), index=False, floatfmt=".4f"),
+    )
+    rows = [
+        {"instrument": s, **{k: r[k] for k in ("n", "breaches", "breach_rate", "kupiec_p", "christoffersen_p")}}
+        for s, r in v["instruments"].items()
+    ]
     df = pd.DataFrame(rows)
     rejects = int((df["kupiec_p"] < 0.05).sum())
-    emit(f"VaR coverage: the desk's own per-instrument forecast ({v['desk_window']}-day historical VaR, "
-         f"agents/risk.py) vs next-day returns, holdout; Kupiec rejects at 5%: {rejects} of {len(df)}",
-         md(df, index=False, floatfmt=".4f"))
+    emit(
+        f"VaR coverage: the desk's own per-instrument forecast ({v['desk_window']}-day historical VaR, "
+        f"agents/risk.py) vs next-day returns, holdout; Kupiec rejects at 5%: {rejects} of {len(df)}",
+        md(df, index=False, floatfmt=".4f"),
+    )
 
 
 def trial_means(d: Path, name: str) -> dict:
@@ -217,7 +258,7 @@ def trial_means(d: Path, name: str) -> dict:
     return {f"design mean {c}": float(rows[c].mean()) for c in ("CR%", "MDD%", "Exp%", "Trades")} if len(rows) else {}
 
 
-PORTFOLIO_PPY = 260.0   # the 15-sleeve portfolio annualises at the largest sleeve ppy (FX present)
+PORTFOLIO_PPY = 260.0  # the 15-sleeve portfolio annualises at the largest sleeve ppy (FX present)
 
 
 def section_selection(trials: dict, design_csv: Path, d: Path) -> None:
@@ -235,33 +276,56 @@ def section_selection(trials: dict, design_csv: Path, d: Path) -> None:
     with_sharpe = [t for t in rows if t.get("portfolio_sharpe") is not None]
     # v0.17 N6: report the DSR at the registered count and at registered + pre-registry estimate
     # (evaluation.PRE_REGISTRY_TRIALS_ESTIMATE), so the honest trial count travels with the table.
-    rep = selection_report(excess, [t["portfolio_sharpe"] for t in with_sharpe], PORTFOLIO_PPY,
-                           n_trials=len(rows), pre_registry_trials=PRE_REGISTRY_TRIALS_ESTIMATE)
+    rep = selection_report(
+        excess,
+        [t["portfolio_sharpe"] for t in with_sharpe],
+        PORTFOLIO_PPY,
+        n_trials=len(rows),
+        pre_registry_trials=PRE_REGISTRY_TRIALS_ESTIMATE,
+    )
     rep["trials_in_registry"] = len(rows)
     rep["trials_without_portfolio_sharpe"] = [t["name"] for t in rows if t.get("portfolio_sharpe") is None]
-    t = pd.DataFrame([{"trial": t["name"], "version": t["version"],
-                       "design portfolio Sharpe": t.get("portfolio_sharpe"),
-                       "design mean Sharpe (v0.8 engine)": t["mean_sharpe"],
-                       "recorded (v0.3 engine)": t["recorded_mean_sharpe_v03_engine"],
-                       "re-measured": t["reproducible"], **trial_means(d, t["name"])} for t in rows])
+    t = pd.DataFrame(
+        [
+            {
+                "trial": t["name"],
+                "version": t["version"],
+                "design portfolio Sharpe": t.get("portfolio_sharpe"),
+                "design mean Sharpe (v0.8 engine)": t["mean_sharpe"],
+                "recorded (v0.3 engine)": t["recorded_mean_sharpe_v03_engine"],
+                "re-measured": t["reproducible"],
+                **trial_means(d, t["name"]),
+            }
+            for t in rows
+        ]
+    )
     emit(f"trials registry: {len(rows)} variants judged on the design period", md(t, index=False))
-    emit("selection statistics for the frozen rules (design-period 15-sleeve portfolio Sharpe, 260 periods/year, "
-         "every trial's portfolio Sharpe as the benchmark)",
-         "```json\n" + json.dumps(rep, indent=1, default=str) + "\n```")
+    emit(
+        "selection statistics for the frozen rules (design-period 15-sleeve portfolio Sharpe, 260 periods/year, "
+        "every trial's portfolio Sharpe as the benchmark)",
+        "```json\n" + json.dumps(rep, indent=1, default=str) + "\n```",
+    )
 
 
 def section_phase_sweep(ps: dict) -> None:
     rows = []
     for offset, r in ps["offsets"].items():
-        rows.append({"offset": int(offset), "agent Sharpe": r["table"][AGENT]["Sharpe"],
-                     "vol-target Sharpe": r["table"]["B&H vol-target"]["Sharpe"],
-                     "B&H Sharpe": r["table"]["Buy&Hold"]["Sharpe"],
-                     "agent - vol-target": diff_line(r["sharpe_vs_vol_target"]),
-                     "agent - B&H": diff_line(r["sharpe_vs_buy_hold"])})
+        rows.append(
+            {
+                "offset": int(offset),
+                "agent Sharpe": r["table"][AGENT]["Sharpe"],
+                "vol-target Sharpe": r["table"]["B&H vol-target"]["Sharpe"],
+                "B&H Sharpe": r["table"]["Buy&Hold"]["Sharpe"],
+                "agent - vol-target": diff_line(r["sharpe_vs_vol_target"]),
+                "agent - B&H": diff_line(r["sharpe_vs_buy_hold"]),
+            }
+        )
     df = pd.DataFrame(rows)
     spread = df["agent Sharpe"].max() - df["agent Sharpe"].min()
-    emit(f"rebalance-phase sweep, holdout portfolio (5-bar cadence, offsets 0-4): agent Sharpe spread {spread:.2f}",
-         md(df, index=False))
+    emit(
+        f"rebalance-phase sweep, holdout portfolio (5-bar cadence, offsets 0-4): agent Sharpe spread {spread:.2f}",
+        md(df, index=False),
+    )
 
 
 def main(argv=None) -> int:
@@ -280,11 +344,14 @@ def main(argv=None) -> int:
         section_headline(main_res)
     if want("asset_class"):
         section_asset_class(main_res)
-    rechecks = [("eval_noedgar", "EDGAR on (a) vs off (b)"), ("eval_rules_v03", "FX carry rule on (a) vs off (b)"),
-                ("eval_xalpha", "with the cross-sectional analyst (a) vs default (b)"),
-                ("eval_alpha", "with the alpha analyst, corrected gate (a) vs default (b)"),
-                ("eval_no_trackrecord_cut", "track-record size cut off (a) vs on (b)"),
-                ("eval_cash_leg_off", "cash leg off (a) vs on (b)")]
+    rechecks = [
+        ("eval_noedgar", "EDGAR on (a) vs off (b)"),
+        ("eval_rules_v03", "FX carry rule on (a) vs off (b)"),
+        ("eval_xalpha", "with the cross-sectional analyst (a) vs default (b)"),
+        ("eval_alpha", "with the alpha analyst, corrected gate (a) vs default (b)"),
+        ("eval_no_trackrecord_cut", "track-record size cut off (a) vs on (b)"),
+        ("eval_cash_leg_off", "cash leg off (a) vs on (b)"),
+    ]
     for name, title in rechecks:
         other = load_eval(d / f"{name}.json")
         if other is None:
@@ -304,11 +371,15 @@ def main(argv=None) -> int:
         off = load_json(d / f"{name}_cash_leg_off.json")
         if p is not None and off is not None and want("portfolio"):
             section_cash_leg(p, off, name.replace("portfolio_", ""))
-    algos = {label: load_json(d / f"portfolio_holdout_impact_1e9_{key}.json")
-             for key, label in (("vwap", "VWAP (default)"), ("twap", "TWAP"), ("ac", "Almgren-Chriss, kappa=5"))}
+    algos = {
+        label: load_json(d / f"portfolio_holdout_impact_1e9_{key}.json")
+        for key, label in (("vwap", "VWAP (default)"), ("twap", "TWAP"), ("ac", "Almgren-Chriss, kappa=5"))
+    }
     if all(v is not None for v in algos.values()) and want("execution"):
         section_exec_algo(algos)
-    sweeps = {label: load_eval(d / f"eval_impact_{key}.json") for key, label in (("1e5", "$100k"), ("1e7", "$10M"), ("1e9", "$1B"))}
+    sweeps = {
+        label: load_eval(d / f"eval_impact_{key}.json") for key, label in (("1e5", "$100k"), ("1e7", "$10M"), ("1e9", "$1B"))
+    }
     if all(v is not None for v in sweeps.values()) and want("impact"):
         section_impact(main_res, sweeps)
     v = load_json(d / "var_coverage.json")
@@ -321,7 +392,7 @@ def main(argv=None) -> int:
     if ps is not None and want("phase"):
         section_phase_sweep(ps)
     text = "\n".join(OUT)
-    if args.section is not None:                       # one section never overwrites the full tables
+    if args.section is not None:  # one section never overwrites the full tables
         out_path = d / f"tables_{args.section}.md"
         out_path.write_text(text, encoding="utf-8")
         print(f"wrote {out_path}")

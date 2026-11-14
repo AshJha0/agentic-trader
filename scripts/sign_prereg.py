@@ -19,6 +19,7 @@ It refuses when the signed file already exists, when the working tree has other 
 changes (so the signing commit holds the signature and nothing else), or when a ``decisive_ta``
 or ``postcutoff_ta`` rows file is found next to the first-pass rows.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,8 +37,15 @@ from agentic_trader.study_design import DESIGN_CELLS, PREREG_DRAFT, PREREG_SIGNE
 
 # Documents whose links follow the rename. Review notes and the changelog are history and keep
 # the old name.
-LINKING_DOCS = ("README.md", "LEARN.md", "COOKBOOK.md", "docs/ai/ai.md", "docs/index.html",
-                "docs/learn/ai_learning_path.md", "docs/evaluation/v16_prereg_amendment_2026-11-12.md")
+LINKING_DOCS = (
+    "README.md",
+    "LEARN.md",
+    "COOKBOOK.md",
+    "docs/ai/ai.md",
+    "docs/index.html",
+    "docs/learn/ai_learning_path.md",
+    "docs/evaluation/v16_prereg_amendment_2026-11-12.md",
+)
 TITLE_DRAFT = "# v0.16 pre-registration (DRAFT):"
 STATUS_DRAFT = "**Status: draft, not signed, not executed.**"
 BINDING_DRAFT = "This draft becomes binding only when the owner signs it:"
@@ -52,8 +60,9 @@ def _git(root: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
 
 
-def sign(root: Path, signer: str, on: date, model_digest: str, commit: str, trials: int, *,
-         use_git: bool = True) -> dict[str, str]:
+def sign(
+    root: Path, signer: str, on: date, model_digest: str, commit: str, trials: int, *, use_git: bool = True
+) -> dict[str, str]:
     """Write the signed document under ``root`` and return ``{"path", "sha256"}``."""
     draft, signed = root / PREREG_DRAFT, root / PREREG_SIGNED
     if signed.exists():
@@ -65,11 +74,12 @@ def sign(root: Path, signer: str, on: date, model_digest: str, commit: str, tria
     text = draft.read_text(encoding="utf-8")
     edits = [
         (TITLE_DRAFT, "# v0.16 pre-registration:"),
-        (STATUS_DRAFT, f"**Status: signed by {signer} on {on.isoformat()}; binding from the commit that adds "
-                       "this file.**"),
+        (STATUS_DRAFT, f"**Status: signed by {signer} on {on.isoformat()}; binding from the commit that adds this file.**"),
         (BINDING_DRAFT, "It was a draft until the owner signed it:"),
-        ("Filled by `python scripts/sign_prereg.py` when the owner signs; empty in the draft.",
-         "Filled by `python scripts/sign_prereg.py` at signing."),
+        (
+            "Filled by `python scripts/sign_prereg.py` when the owner signs; empty in the draft.",
+            "Filled by `python scripts/sign_prereg.py` at signing.",
+        ),
         ("- Signed by: (not signed)", f"- Signed by: {signer}"),
         ("- Signed on: (not signed)", f"- Signed on: {on.isoformat()}"),
         ("digest (filled at signing from the first-pass run header)", f"digest `{model_digest}`"),
@@ -104,8 +114,10 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     try:
         if _git(ROOT, "status", "--porcelain"):
-            raise SigningRefused("the working tree has uncommitted changes; commit or stash them first, so the "
-                                 "signing commit holds only the signature")
+            raise SigningRefused(
+                "the working tree has uncommitted changes; commit or stash them first, so the "
+                "signing commit holds only the signature"
+            )
         digest = a.model_digest
         if not digest:
             hp = ROOT / a.header
@@ -115,16 +127,21 @@ def main(argv: list[str] | None = None) -> int:
         for cell in DESIGN_CELLS:
             rows = (ROOT / a.header).parent / f"{cell.name}.jsonl"
             if rows.is_file() and rows.stat().st_size:
-                raise SigningRefused(f"{rows} already has rows: this cell ran before the signature. Do not sign "
-                                     "over it; record what happened in the document first.")
+                raise SigningRefused(
+                    f"{rows} already has rows: this cell ran before the signature. Do not sign "
+                    "over it; record what happened in the document first."
+                )
         from agentic_trader.evaluation import TRIALS
+
         res = sign(ROOT, a.signer, date.fromisoformat(a.date), digest, _git(ROOT, "rev-parse", "HEAD"), len(TRIALS))
     except (SigningRefused, subprocess.CalledProcessError) as e:
         print(f"not signed: {e}", file=sys.stderr)
         return 2
-    print(f"signed: {res['path']}\nsha256: {res['sha256']}\n\nRead the diff (git diff --staged; git diff), then:\n"
-          '  git add -A\n  git commit -m "Sign the v0.16 pre-registration"\n'
-          "The hash changes if the file is edited again before the commit; the runner records the hash it finds.")
+    print(
+        f"signed: {res['path']}\nsha256: {res['sha256']}\n\nRead the diff (git diff --staged; git diff), then:\n"
+        '  git add -A\n  git commit -m "Sign the v0.16 pre-registration"\n'
+        "The hash changes if the file is edited again before the commit; the runner records the hash it finds."
+    )
     return 0
 
 

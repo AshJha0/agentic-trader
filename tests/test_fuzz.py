@@ -8,6 +8,7 @@ huge, tiny) inputs:
 2. when the compiled extension is active, the C++ result equals the numpy twin's
    (NaN positions included).
 """
+
 import numpy as np
 import pytest
 
@@ -60,7 +61,7 @@ WINDOWED = ["sma", "ema", "rolling_std", "zscore", "rsi", "rolling_max", "rollin
 def test_windowed_indicators_survive_wild_input(name, x, n):
     out, err = _run(getattr(quant, name), x, n)
     ref, ref_err = _run(getattr(pycore, name), x, n)
-    assert (err is None) == (ref_err is None)          # both accept or both refuse
+    assert (err is None) == (ref_err is None)  # both accept or both refuse
     if err is None:
         assert len(out) == len(x) == len(ref)
 
@@ -122,8 +123,12 @@ def test_ohlc_indicators(n, data):
 @given(x=arrays, y=arrays, q=st.one_of(st.just(float("nan")), st.floats(-1, 2)))
 @FUZZ
 def test_scalar_functions_survive_wild_input(x, y, q):
-    for fn, args in ((quant.quantile, (x, q)), (quant.historical_var, (x, 0.95)),
-                     (quant.historical_cvar, (x, 0.95)), (quant.max_drawdown, (x,))):
+    for fn, args in (
+        (quant.quantile, (x, q)),
+        (quant.historical_var, (x, 0.95)),
+        (quant.historical_cvar, (x, 0.95)),
+        (quant.max_drawdown, (x,)),
+    ):
         out, err = _run(fn, *args)
         ref, ref_err = _run(getattr(pycore, fn.__name__), *args)
         assert (err is None) == (ref_err is None)
@@ -143,8 +148,12 @@ def test_scalar_functions_backends_agree(x, y, q):
     if quant.BACKEND != "cpp":
         pytest.skip("C++ extension not built")
     s = _scale(x)
-    for fn, args in ((quant.quantile, (x, q)), (quant.historical_var, (x, 0.95)),
-                     (quant.historical_cvar, (x, 0.95)), (quant.max_drawdown, (x,))):
+    for fn, args in (
+        (quant.quantile, (x, q)),
+        (quant.historical_var, (x, 0.95)),
+        (quant.historical_cvar, (x, 0.95)),
+        (quant.max_drawdown, (x,)),
+    ):
         out, ref = fn(*args), getattr(pycore, fn.__name__)(*args)
         assert (np.isnan(out) and np.isnan(ref)) or out == pytest.approx(ref, rel=1e-9, abs=1e-9 * max(1.0, s))
     if len(x) == len(y):
@@ -175,10 +184,13 @@ def test_backtester_never_crashes_and_stays_bounded(n, data):
     prices = data.draw(hnp.arrays(np.float64, n, elements=finite_pos))
     weights = data.draw(hnp.arrays(np.float64, n, elements=floats))
     impact = data.draw(hnp.arrays(np.float64, n, elements=st.one_of(st.just(float("nan")), st.floats(0, 0.05))))
-    cfg = quant.BacktestConfig(cost_bps=data.draw(st.floats(0, 50)), slippage_bps=data.draw(st.floats(0, 50)),
-                               max_leverage=data.draw(st.floats(0.1, 3.0)),
-                               allow_short=data.draw(st.booleans()),
-                               borrow_annual=data.draw(st.floats(0, 0.2)))
+    cfg = quant.BacktestConfig(
+        cost_bps=data.draw(st.floats(0, 50)),
+        slippage_bps=data.draw(st.floats(0, 50)),
+        max_leverage=data.draw(st.floats(0.1, 3.0)),
+        allow_short=data.draw(st.booleans()),
+        borrow_annual=data.draw(st.floats(0, 0.2)),
+    )
     r = quant.run_backtest(prices, weights, cfg, impact=impact)
     assert len(r.equity) == len(r.returns) == len(r.positions) == n
     assert np.all(np.isfinite(r.equity)) and np.all(r.equity >= 0)
@@ -194,8 +206,13 @@ def test_backtester_never_crashes_and_stays_bounded(n, data):
 @given(n=st.integers(1, 30), data=st.data())
 @FUZZ
 def test_backtester_rejects_bad_prices_and_lengths(n, data):
-    bad = data.draw(hnp.arrays(np.float64, n, elements=st.one_of(
-        st.just(float("nan")), st.just(float("inf")), st.floats(max_value=0.0, allow_nan=False))))
+    bad = data.draw(
+        hnp.arrays(
+            np.float64,
+            n,
+            elements=st.one_of(st.just(float("nan")), st.just(float("inf")), st.floats(max_value=0.0, allow_nan=False)),
+        )
+    )
     with pytest.raises(ValueError):
         quant.run_backtest(bad, np.ones(n))
     with pytest.raises(ValueError):
@@ -216,8 +233,8 @@ ratio = st.floats(0.5, 2.0, allow_nan=False, allow_infinity=False)
 
 def _optional_inputs(n, prices, data):
     """A full set of well-formed optional inputs, drawn around ``prices``."""
-    r = lambda: data.draw(hnp.arrays(np.float64, n, elements=ratio))                        # noqa: E731
-    mask = lambda: data.draw(hnp.arrays(np.bool_, n))                                       # noqa: E731
+    r = lambda: data.draw(hnp.arrays(np.float64, n, elements=ratio))  # noqa: E731
+    mask = lambda: data.draw(hnp.arrays(np.bool_, n))  # noqa: E731
     open_ = prices * r()
     high = np.maximum.reduce([open_, prices, prices * r()])
     low = np.minimum.reduce([open_, prices, prices * r()])
@@ -226,17 +243,26 @@ def _optional_inputs(n, prices, data):
     rebalance = mask().astype(float)
     carry = np.where(mask(), data.draw(hnp.arrays(np.float64, n, elements=st.floats(-1.0, 1.0))), np.nan)
     impact = np.where(mask(), data.draw(hnp.arrays(np.float64, n, elements=st.floats(0, 0.05))), np.nan)
-    return dict(carry=carry, open=open_, high=high, low=low, stop=stop, take=take,
-                rebalance=rebalance, impact=impact)
+    return dict(carry=carry, open=open_, high=high, low=low, stop=stop, take=take, rebalance=rebalance, impact=impact)
 
 
 def _metrics_finite(m) -> bool:
     # annualized_return (and so calmar) is +inf, not NaN, when a one-bar gain is too large to
     # annualise in float64 (e.g. 1 -> 17 over one of 252 periods is 17**252); documented in pycore.
-    return all(np.isfinite(getattr(m, f)) for f in ("cumulative_return", "annualized_vol",
-                                                   "sharpe", "sortino", "max_drawdown", "win_rate",
-                                                   "turnover", "avg_exposure", "sharpe_tstat")) \
-        and not any(np.isnan(getattr(m, f)) for f in ("annualized_return", "calmar"))
+    return all(
+        np.isfinite(getattr(m, f))
+        for f in (
+            "cumulative_return",
+            "annualized_vol",
+            "sharpe",
+            "sortino",
+            "max_drawdown",
+            "win_rate",
+            "turnover",
+            "avg_exposure",
+            "sharpe_tstat",
+        )
+    ) and not any(np.isnan(getattr(m, f)) for f in ("annualized_return", "calmar"))
 
 
 @given(n=st.integers(0, 80), data=st.data())
@@ -253,16 +279,21 @@ def test_backtester_with_every_optional_input_is_finite_and_backends_agree(n, da
         for k in ("open", "high", "low"):
             if extras[k] is None:
                 extras[k] = prices.copy()
-    cfg = quant.BacktestConfig(cost_bps=data.draw(st.floats(0, 50)), slippage_bps=data.draw(st.floats(0, 50)),
-                               max_leverage=data.draw(st.floats(0.1, 3.0)), allow_short=data.draw(st.booleans()),
-                               borrow_annual=data.draw(st.floats(0, 0.2)), carry_annual=data.draw(st.floats(-0.2, 0.2)))
+    cfg = quant.BacktestConfig(
+        cost_bps=data.draw(st.floats(0, 50)),
+        slippage_bps=data.draw(st.floats(0, 50)),
+        max_leverage=data.draw(st.floats(0.1, 3.0)),
+        allow_short=data.draw(st.booleans()),
+        borrow_annual=data.draw(st.floats(0, 0.2)),
+        carry_annual=data.draw(st.floats(-0.2, 0.2)),
+    )
     r = quant.run_backtest(prices, weights, cfg, **extras)
     assert len(r.equity) == len(r.returns) == len(r.positions) == n
     assert np.all(np.isfinite(r.equity)) and np.all(np.isfinite(r.returns))
     assert _metrics_finite(r.metrics)
     _positions_respect_cap_and_drift(r, prices, cfg)
     assert r.impact_paid >= 0 and np.isfinite(r.impact_paid)
-    levels = np.zeros(n, bool)                          # bars on which some protective level was armed
+    levels = np.zeros(n, bool)  # bars on which some protective level was armed
     for k in ("stop", "take"):
         if extras[k] is not None:
             levels |= ~np.isnan(extras[k])
@@ -292,17 +323,26 @@ def test_backtester_rejects_length_mismatch_of_every_optional_input(name):
         quant.run_backtest(p, np.ones(5), **kw)
     with pytest.raises(ValueError):
         pycore.run_backtest_ex(p, np.ones(5), quant.BacktestConfig(), **kw)
-    with pytest.raises(ValueError):                    # levels without bar ranges
+    with pytest.raises(ValueError):  # levels without bar ranges
         quant.run_backtest(p, np.ones(5), stop=np.full(5, 95.0))
 
 
 _INF, _NINF, _NAN = float("inf"), float("-inf"), float("nan")
-BAD_VALUES = [pytest.param(name, bad, id=f"{name}={bad}")
-              for name, bads in (("open", (_NAN, _INF, _NINF, 0.0, -1.0)), ("high", (_NAN, _INF, _NINF, 0.0, -1.0)),
-                                 ("low", (_NAN, _INF, _NINF, 0.0, -1.0)), ("stop", (_INF, _NINF)),
-                                 ("take", (_INF, _NINF)), ("carry", (_INF, _NINF)), ("impact", (_INF, _NINF, -1.0)),
-                                 ("rebalance", (_NAN, _INF)), ("cash_rate", (_INF, _NINF)))
-              for bad in bads]
+BAD_VALUES = [
+    pytest.param(name, bad, id=f"{name}={bad}")
+    for name, bads in (
+        ("open", (_NAN, _INF, _NINF, 0.0, -1.0)),
+        ("high", (_NAN, _INF, _NINF, 0.0, -1.0)),
+        ("low", (_NAN, _INF, _NINF, 0.0, -1.0)),
+        ("stop", (_INF, _NINF)),
+        ("take", (_INF, _NINF)),
+        ("carry", (_INF, _NINF)),
+        ("impact", (_INF, _NINF, -1.0)),
+        ("rebalance", (_NAN, _INF)),
+        ("cash_rate", (_INF, _NINF)),
+    )
+    for bad in bads
+]
 
 
 @pytest.mark.parametrize("name,bad", BAD_VALUES)
@@ -345,7 +385,7 @@ def test_backtester_rejects_multidimensional_optional_input():
                     violations.append(f"{label} {name}{shape}: accepted")
                 except ValueError:
                     pass
-                except Exception as e:                                  # noqa: BLE001
+                except Exception as e:  # noqa: BLE001
                     violations.append(f"{label} {name}{shape}: {type(e).__name__}")
     assert not violations, violations
 
@@ -355,16 +395,20 @@ def test_backtester_rejects_multidimensional_optional_input():
 def test_tsmom_survives_wild_input_and_backends_agree(x, hs, skip, short):
     out, err = _run(quant.strat_tsmom, x, hs, skip, short)
     ok = bool(hs) and min(hs) >= 1 and 0 <= skip < min(hs)
-    assert (err is None) == ok                          # refused exactly when the arguments are bad
+    assert (err is None) == ok  # refused exactly when the arguments are bad
     if err is None:
         assert len(out) == len(x) and np.all(np.abs(out) <= 1.0)
         assert short or np.all(out >= 0.0)
-        assert not np.any(out[:max(hs)])                # flat until the longest horizon exists
+        assert not np.any(out[: max(hs)])  # flat until the longest horizon exists
         _same(out, pycore.strat_tsmom(x, hs, skip, short))
 
 
-CLOSE_STRATEGIES = {"strat_buy_hold": (), "strat_sma_cross": (3, 7, True), "strat_macd": (3, 6, 2, True),
-                    "strat_zmr": (5, 1.0, 0.0, True)}
+CLOSE_STRATEGIES = {
+    "strat_buy_hold": (),
+    "strat_sma_cross": (3, 7, True),
+    "strat_macd": (3, 6, 2, True),
+    "strat_zmr": (5, 1.0, 0.0, True),
+}
 
 
 @pytest.mark.parametrize("name", sorted(CLOSE_STRATEGIES))
@@ -423,19 +467,32 @@ def test_almgren_chriss_survives_and_backends_agree(total, n, kappa):
     assert (err is None) == ok
     if err is None:
         assert len(out) == n and np.all(np.isfinite(out))
-        assert float(np.sum(out)) == pytest.approx(total, rel=1e-9, abs=1e-6)     # the slices add up to the order
+        assert float(np.sum(out)) == pytest.approx(total, rel=1e-9, abs=1e-6)  # the slices add up to the order
         _same(out, pycore.almgren_chriss(total, n, kappa), abs(total))
 
 
 fin = st.floats(-1e6, 1e6, allow_nan=False, allow_infinity=False)
 
 
-@given(p=st.floats(0, 1), b=fin, sig=st.floats(-1, 1), vol=st.one_of(st.just(float("nan")), fin),
-       tv=st.floats(0, 1), lev=st.floats(0, 10), eq=fin, rf=st.floats(0, 1), entry=fin, stop=fin)
+@given(
+    p=st.floats(0, 1),
+    b=fin,
+    sig=st.floats(-1, 1),
+    vol=st.one_of(st.just(float("nan")), fin),
+    tv=st.floats(0, 1),
+    lev=st.floats(0, 10),
+    eq=fin,
+    rf=st.floats(0, 1),
+    entry=fin,
+    stop=fin,
+)
 @FUZZ
 def test_sizing_functions_survive_and_backends_agree(p, b, sig, vol, tv, lev, eq, rf, entry, stop):
-    for fn, args in ((quant.kelly_fraction, (p, b)), (quant.vol_target_weight, (sig, vol, tv, lev)),
-                     (quant.position_units, (eq, rf, entry, stop))):
+    for fn, args in (
+        (quant.kelly_fraction, (p, b)),
+        (quant.vol_target_weight, (sig, vol, tv, lev)),
+        (quant.position_units, (eq, rf, entry, stop)),
+    ):
         out, ref = fn(*args), getattr(pycore, fn.__name__)(*args)
         assert isinstance(out, float) and _close(out, ref, abs(ref) if np.isfinite(ref) else 1.0)
     assert abs(quant.vol_target_weight(sig, vol, tv, lev)) <= lev

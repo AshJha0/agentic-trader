@@ -30,6 +30,7 @@ candidate later, the forward record has to clear the pre-registered bar on its o
 
     .venv\\Scripts\\python.exe scripts/paper_trade_v09.py [--as-of YYYY-MM-DD] [--out results/paper] [--data yahoo|synthetic]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -54,10 +55,16 @@ from agentic_trader.provenance import provenance  # noqa: E402
 from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_stats  # noqa: E402
 from agentic_trader.validate import read_ledger_csv, write_ledger_csv  # noqa: E402
 from agentic_trader.nyse_calendar import last_session_on_or_before  # noqa: E402
-from scripts.paper_ops import (VintageRecorder, engine_fingerprint, engine_patterns, ledger_chain,  # noqa: E402
-                               store_session_bars, vintage_hash)
+from scripts.paper_ops import (  # noqa: E402
+    VintageRecorder,
+    engine_fingerprint,
+    engine_patterns,
+    ledger_chain,
+    store_session_bars,
+    vintage_hash,
+)
 
-FREEZE = date(2026, 9, 29)          # the first session of the forward record (v0.9 pre-registration)
+FREEZE = date(2026, 9, 29)  # the first session of the forward record (v0.9 pre-registration)
 PPY = 260.0
 ETF11 = ["SPY", "EFA", "EEM", "IWM", "TLT", "IEF", "LQD", "HYG", "GLD", "DBC", "VNQ"]
 FX15 = CORE_UNIVERSE["fx"] + EXTENDED_UNIVERSE["fx"]
@@ -66,19 +73,24 @@ FX15 = CORE_UNIVERSE["fx"] + EXTENDED_UNIVERSE["fx"]
 BOOKS: dict[str, tuple[list[str], str, tuple[str, ...], dict[str, str]]] = {
     "core15": (UNIVERSES["core"], "equal", (AGENT, "B&H vol-target", "Buy&Hold"), {AGENT: "B&H vol-target"}),
     "etf11": (ETF11, "risk_parity", ("B&H vol-target", "Buy&Hold", "TSMOM(12-1)"), {"TSMOM(12-1)": "B&H vol-target"}),
-    "fx15": (FX15, "risk_parity", ("B&H vol-target", "Carry", "TSMOM(12-1)"),
-             {"Carry": "B&H vol-target", "TSMOM(12-1)": "B&H vol-target"}),
+    "fx15": (
+        FX15,
+        "risk_parity",
+        ("B&H vol-target", "Carry", "TSMOM(12-1)"),
+        {"Carry": "B&H vol-target", "TSMOM(12-1)": "B&H vol-target"},
+    ),
 }
-MIN_SESSIONS_FOR_INTERVALS = 60      # descriptive intervals appear after this many sessions
-DECISION_LOOK_SESSIONS = 3600         # the pre-registered single decision look (MDE 0.2 Sharpe at 95%)
+MIN_SESSIONS_FOR_INTERVALS = 60  # descriptive intervals appear after this many sessions
+DECISION_LOOK_SESSIONS = 3600  # the pre-registered single decision look (MDE 0.2 Sharpe at 95%)
 
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure: dict | None = None,
-              coverage: dict | None = None) -> pd.DataFrame:
+def recompute(
+    as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure: dict | None = None, coverage: dict | None = None
+) -> pd.DataFrame:
     """The whole forward record, freeze -> as_of, one column per ``book/stream`` plus ``rf``.
 
     When ``exposure`` is a dict it receives one frame with, per ``book/stream``, the gross
@@ -97,15 +109,18 @@ def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure:
     exp_cols = {}
     last_bars: dict[str, pd.Timestamp] = {}
     for book, (syms, weighting, streams, _) in BOOKS.items():
-        rep = run_portfolio_backtest(syms, freeze, as_of, cfg, rebalance_every=5, provider=provider,
-                                     weighting=weighting, cov_window=120)
+        rep = run_portfolio_backtest(
+            syms, freeze, as_of, cfg, rebalance_every=5, provider=provider, weighting=weighting, cov_window=120
+        )
         # a sleeve whose bars stop early would silently contribute 0 from then on (mixed-calendar
         # fill); a gap of more than a week before the book's last session is a data failure
         last = pd.Timestamp(rep.dates[-1])
         for sym, sleeve in rep.sleeves.items():
             if (last - pd.Timestamp(sleeve.dates[-1])).days > 7:
-                raise ValueError(f"{sym}: history stops at {sleeve.dates[-1].date()} while the book runs to "
-                                 f"{last.date()}; refusing to record a sleeve with missing sessions")
+                raise ValueError(
+                    f"{sym}: history stops at {sleeve.dates[-1].date()} while the book runs to "
+                    f"{last.date()}; refusing to record a sleeve with missing sessions"
+                )
             last_bars[f"{book}:{sym}"] = pd.Timestamp(sleeve.dates[-1])
         for s in streams:
             cols[f"{book}/{s}"] = rep.returns[s]
@@ -134,8 +149,7 @@ def recompute(as_of: date, cfg: dict, provider, freeze: date = FREEZE, exposure:
     if complete is not None:
         for d in frame.index[frame.index > complete]:
             behind = sorted(k for k, v in last_bars.items() if v < d)
-            skipped.append({"date": d.date().isoformat(),
-                            "reason": f"incomplete session: no bar yet for {', '.join(behind)}"})
+            skipped.append({"date": d.date().isoformat(), "reason": f"incomplete session: no bar yet for {', '.join(behind)}"})
         frame = frame.loc[frame.index <= complete]
     if coverage is not None:
         coverage["skipped"] = skipped
@@ -161,7 +175,9 @@ def revisions(old: pd.DataFrame | None, new: pd.DataFrame) -> dict:
                 when = diff.idxmax()
                 changed[c] = {"max_abs": float(diff.max()), "date": when.date().isoformat()}
                 for d in diff.index[diff > 1e-12]:
-                    cells.append({"date": d.date().isoformat(), "column": c, "old": float(old.loc[d, c]), "new": float(new.loc[d, c])})
+                    cells.append(
+                        {"date": d.date().isoformat(), "column": c, "old": float(old.loc[d, c]), "new": float(new.loc[d, c])}
+                    )
     last = new.index[-1] if len(new) else None
     dropped = [d.date().isoformat() for d in old.index.difference(new.index) if last is not None and d <= last]
     return {"changed": changed, "cells": cells, "dropped": dropped}
@@ -183,9 +199,11 @@ def check_freeze(freeze_file: Path, cfg: dict) -> str:
     spec = json.loads(freeze_file.read_text(encoding="utf-8"))
     have = engine_fingerprint(ROOT, engine_patterns(spec["engine_files"]), cfg, spec["config_keys"], BOOKS)
     if have != spec["engine_hash"]:
-        raise SystemExit(f"engine changed since freeze vintage {spec['vintage_id']} ({freeze_file.name}: "
-                         f"{spec['engine_hash'][:12]}, now {have[:12]}); refusing to record. A deliberate change "
-                         f"needs a re-freeze: --refreeze NEW_ID --reason TEXT (see docs/evaluation/paper_freeze.md)")
+        raise SystemExit(
+            f"engine changed since freeze vintage {spec['vintage_id']} ({freeze_file.name}: "
+            f"{spec['engine_hash'][:12]}, now {have[:12]}); refusing to record. A deliberate change "
+            f"needs a re-freeze: --refreeze NEW_ID --reason TEXT (see docs/evaluation/paper_freeze.md)"
+        )
     return str(spec["vintage_id"])
 
 
@@ -198,9 +216,14 @@ def refreeze(freeze_file: Path, cfg: dict, vintage_id: str, reason: str, today: 
         raise SystemExit(f"re-freeze needs a new vintage id (used: {sorted(used)}) and a reason")
     old = {k: spec[k] for k in ("vintage_id", "engine_hash", "frozen_on", "reason") if k in spec}
     patterns = engine_patterns(spec["engine_files"])
-    spec.update(history=[*spec.get("history", []), old], vintage_id=vintage_id, frozen_on=today.isoformat(),
-                reason=reason, engine_files=patterns,
-                engine_hash=engine_fingerprint(ROOT, patterns, cfg, spec["config_keys"], BOOKS))
+    spec.update(
+        history=[*spec.get("history", []), old],
+        vintage_id=vintage_id,
+        frozen_on=today.isoformat(),
+        reason=reason,
+        engine_files=patterns,
+        engine_hash=engine_fingerprint(ROOT, patterns, cfg, spec["config_keys"], BOOKS),
+    )
     freeze_file.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
     return spec
 
@@ -217,8 +240,10 @@ def assert_final(as_of: date, today: date) -> None:
     York's date at run time). A provisional close written into the append-only ledger could
     never be corrected there."""
     if as_of >= today:
-        raise SystemExit(f"as-of {as_of} is not before New York's date {today}: the session may not be final; "
-                         f"refusing to record it (the default as-of is New York's yesterday)")
+        raise SystemExit(
+            f"as-of {as_of} is not before New York's date {today}: the session may not be final; "
+            f"refusing to record it (the default as-of is New York's yesterday)"
+        )
 
 
 def same_day_revisions(old: pd.DataFrame | None, cells: list[dict]) -> list[dict]:
@@ -239,14 +264,18 @@ def merge_append_only(old: pd.DataFrame | None, new: pd.DataFrame) -> pd.DataFra
 
 
 def summary(frame: pd.DataFrame, freeze: date = FREEZE) -> str:
-    lines = [f"# Forward paper-trading record: {frame.index[0].date()} -> {frame.index[-1].date()} "
-             f"({len(frame)} sessions, frozen {freeze}, rules v0.8.0)\n",
-             "| book / stream | cumulative return % | Sharpe (excess, 260/yr) | vs control: Sharpe difference [95% CI] p |",
-             "|:--|--:|--:|:--|"]
+    lines = [
+        f"# Forward paper-trading record: {frame.index[0].date()} -> {frame.index[-1].date()} "
+        f"({len(frame)} sessions, frozen {freeze}, rules v0.8.0)\n",
+        "| book / stream | cumulative return % | Sharpe (excess, 260/yr) | vs control: Sharpe difference [95% CI] p |",
+        "|:--|--:|--:|:--|",
+    ]
     rf = frame["rf"].to_numpy(float)
+
     def ex(col):
         r = frame[col].to_numpy(float)[1:]
         return r - np.nan_to_num(rf[:-1]) / PPY
+
     for book, (_, _, streams, controls) in BOOKS.items():
         for s in streams:
             col = f"{book}/{s}"
@@ -261,10 +290,14 @@ def summary(frame: pd.DataFrame, freeze: date = FREEZE) -> str:
             elif s in controls:
                 vs = f"(interval after {MIN_SESSIONS_FOR_INTERVALS} sessions)"
             lines.append(f"| {col} | {cr:+.2f} | {sh:.2f} | {vs} |")
-    lines.append(f"\nNo decision before session {DECISION_LOOK_SESSIONS} (pre-registered, docs/evaluation/v09_preregistration.md, "
-                 f"amendment of 2026-09-29): intervals printed before it are descriptive. Sessions so far: {len(frame)}.")
-    lines.append("\nThe ledger is append-only: sessions are added from each run's recomputation and never rewritten; "
-                 "differences between a recomputation and the ledger are logged in revisions.csv and runs.jsonl.")
+    lines.append(
+        f"\nNo decision before session {DECISION_LOOK_SESSIONS} (pre-registered, docs/evaluation/v09_preregistration.md, "
+        f"amendment of 2026-09-29): intervals printed before it are descriptive. Sessions so far: {len(frame)}."
+    )
+    lines.append(
+        "\nThe ledger is append-only: sessions are added from each run's recomputation and never rewritten; "
+        "differences between a recomputation and the ledger are logged in revisions.csv and runs.jsonl."
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -275,15 +308,25 @@ def main(argv=None) -> int:
     ap.add_argument("--data", default="yahoo", choices=("yahoo", "synthetic"))
     ap.add_argument("--freeze", default=FREEZE.isoformat(), help="first session (tests only)")
     ap.add_argument("--allow-shrink", action="store_true", help="accept a recomputation that ends before the ledger does")
-    ap.add_argument("--oms", action="store_true",
-                    help="also run the paper OMS shadow record (separate label, under <out>/oms; off by default: "
-                         "the frozen record is unchanged, and turning it on starts a new, separately labelled record)")
-    ap.add_argument("--oms-corporate-actions", action="store_true",
-                    help="with --oms: apply corporate actions with ex-date in the session window to held "
-                         "quantities (C3 hook; off by default; needs a provider with action tables)")
+    ap.add_argument(
+        "--oms",
+        action="store_true",
+        help="also run the paper OMS shadow record (separate label, under <out>/oms; off by default: "
+        "the frozen record is unchanged, and turning it on starts a new, separately labelled record)",
+    )
+    ap.add_argument(
+        "--oms-corporate-actions",
+        action="store_true",
+        help="with --oms: apply corporate actions with ex-date in the session window to held "
+        "quantities (C3 hook; off by default; needs a provider with action tables)",
+    )
     ap.add_argument("--freeze-file", default=str(FREEZE_FILE), help="engine freeze record (tests only)")
-    ap.add_argument("--refreeze", default=None, metavar="NEW_ID",
-                    help="record the current engine as a new vintage in the freeze file and exit (deliberate change)")
+    ap.add_argument(
+        "--refreeze",
+        default=None,
+        metavar="NEW_ID",
+        help="record the current engine as a new vintage in the freeze file and exit (deliberate change)",
+    )
     ap.add_argument("--reason", default="", help="why the engine was re-frozen (required with --refreeze)")
     a = ap.parse_args(argv)
     load_dotenv(str(ROOT / ".env"))
@@ -295,9 +338,12 @@ def main(argv=None) -> int:
     if as_of < freeze:
         log(f"as-of {as_of} is before the freeze date {freeze}: nothing to record yet")
         return 0
-    cfg = make_config(data_provider=a.data, memory_path=None,
-                      edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
-                      fred_cache_dir=str(ROOT / "build" / "fred_cache"))
+    cfg = make_config(
+        data_provider=a.data,
+        memory_path=None,
+        edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
+        fred_cache_dir=str(ROOT / "build" / "fred_cache"),
+    )
     if a.refreeze:
         spec = refreeze(Path(a.freeze_file), cfg, a.refreeze, a.reason, exchange_today())
         log(f"re-frozen as vintage {spec['vintage_id']} ({spec['engine_hash'][:12]}): {a.reason}")
@@ -309,6 +355,7 @@ def main(argv=None) -> int:
     # run after the next close) there is nothing to record, and that is not a failure. Any
     # other shortfall (a sleeve whose history stops early) is an error and propagates.
     from agentic_trader.instruments import Instrument
+
     calendar = provider.history(Instrument.parse("SPY"), freeze, as_of)
     if len(calendar) < 2:
         log(f"fewer than 2 complete sessions since the freeze date {freeze} (as-of {as_of}): nothing to record yet")
@@ -320,23 +367,27 @@ def main(argv=None) -> int:
     for s in cov.get("skipped", []):
         log(f"WARNING: session {s['date']} not recorded: {s['reason']}; the next run records it once complete")
     if cov.get("last_bar") and date.fromisoformat(cov["last_bar"]) < as_of:
-        log(f"WARNING: the last complete session is {cov['last_bar']}, before the as-of {as_of}: "
-            f"the provider has not served every bar yet (review D7)")
+        log(
+            f"WARNING: the last complete session is {cov['last_bar']}, before the as-of {as_of}: "
+            f"the provider has not served every bar yet (review D7)"
+        )
     ledger = out / "ledger.csv"
     old = read_ledger_csv(ledger) if ledger.exists() else None
     if old is not None and len(old) and frame.index[-1] < old.index[-1] and not a.allow_shrink:
-        raise SystemExit(f"as-of {as_of} would shrink the record ({len(old)} -> {len(frame)} sessions); "
-                         f"pass --allow-shrink to accept it")
+        raise SystemExit(
+            f"as-of {as_of} would shrink the record ({len(old)} -> {len(frame)} sessions); pass --allow-shrink to accept it"
+        )
     rev = revisions(old, frame)
     merged = merge_append_only(old, frame)
     write_ledger_csv(frame, out / "ledger_recomputed.csv")
     write_ledger_csv(merged, ledger)
     # ledger_vintage.csv: the engine vintage of every ledger row, appended with the rows
-    added = merged.index[len(old):] if old is not None else merged.index
+    added = merged.index[len(old) :] if old is not None else merged.index
     if len(added):
         vfile = out / "ledger_vintage.csv"
         pd.DataFrame({"date": added.strftime("%Y-%m-%d"), "vintage_id": vintage_id}).to_csv(
-            vfile, mode="a", index=False, header=not vfile.exists())
+            vfile, mode="a", index=False, header=not vfile.exists()
+        )
     # exposure.csv: gross exposure, turnover and trading cost per book/stream per session,
     # kept append-only like the ledger (sessions already written are never rewritten)
     exp_file = out / "exposure.csv"
@@ -346,42 +397,67 @@ def main(argv=None) -> int:
     if rev["cells"] or rev["dropped"]:
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         rows = [{"run_at": stamp, "as_of": as_of.isoformat(), **c} for c in rev["cells"]]
-        rows += [{"run_at": stamp, "as_of": as_of.isoformat(), "date": d, "column": "(session)", "old": "present",
-                  "new": "missing"} for d in rev["dropped"]]
-        pd.DataFrame(rows).to_csv(out / "revisions.csv", mode="a", index=False,
-                                  header=not (out / "revisions.csv").exists())
+        rows += [
+            {"run_at": stamp, "as_of": as_of.isoformat(), "date": d, "column": "(session)", "old": "present", "new": "missing"}
+            for d in rev["dropped"]
+        ]
+        pd.DataFrame(rows).to_csv(out / "revisions.csv", mode="a", index=False, header=not (out / "revisions.csv").exists())
     same_day = same_day_revisions(old, rev["cells"])
     text = summary(merged, freeze)
     if same_day:
-        text += (f"\n**Same-day revision:** {len(same_day)} cell(s) of {same_day[0]['date']}, the session the previous "
-                 f"run recorded, moved in this run (columns: {', '.join(sorted({c['column'] for c in same_day}))}). "
-                 f"The bar was probably not final when it was fetched; the ledger keeps the first value, see revisions.csv.\n")
+        text += (
+            f"\n**Same-day revision:** {len(same_day)} cell(s) of {same_day[0]['date']}, the session the previous "
+            f"run recorded, moved in this run (columns: {', '.join(sorted({c['column'] for c in same_day}))}). "
+            f"The bar was probably not final when it was fetched; the ledger keeps the first value, see revisions.csv.\n"
+        )
     (out / "summary.md").write_text(text, encoding="utf-8")
     bars = store_session_bars(provider, out / "bars", as_of)
     heads = ledger_chain(ledger.read_text(encoding="utf-8"))
     with open(out / "runs.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps({"run_at": time.strftime("%Y-%m-%d %H:%M:%S"), "as_of": as_of.isoformat(),
-                            "fetched_at_utc": pd.Timestamp.now("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            "same_day_revisions": len(same_day), "bars": bars, "vintage_id": vintage_id,
-                            "freeze": freeze.isoformat(), "sessions": int(len(merged)),
-                            "sessions_recomputed": int(len(frame)), "appended": int(len(merged) - (len(old) if old is not None else 0)),
-                            "data": a.data, "seconds": round(time.time() - t0, 1),
-                            "price_vintage": vintage_hash(provider.frames),
-                            "revisions": rev["changed"], "dropped": rev["dropped"],
-                            # round 2: the last complete session the recomputation reached (D7),
-                            # sessions held back as incomplete (D2), the ledger's hash chain (D6)
-                            "last_bar": cov.get("last_bar"), "skipped": cov.get("skipped", []),
-                            "ledger_rows": len(heads) - 1, "ledger_chain": heads[-1] if heads else None,
-                            "last": {c: float(merged[c].iloc[-1]) for c in merged.columns},
-                            "provenance": provenance()}, default=float) + "\n")
-    if a.oms:   # plan item 4.7; never reads or writes the frozen ledger
+        f.write(
+            json.dumps(
+                {
+                    "run_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "as_of": as_of.isoformat(),
+                    "fetched_at_utc": pd.Timestamp.now("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "same_day_revisions": len(same_day),
+                    "bars": bars,
+                    "vintage_id": vintage_id,
+                    "freeze": freeze.isoformat(),
+                    "sessions": int(len(merged)),
+                    "sessions_recomputed": int(len(frame)),
+                    "appended": int(len(merged) - (len(old) if old is not None else 0)),
+                    "data": a.data,
+                    "seconds": round(time.time() - t0, 1),
+                    "price_vintage": vintage_hash(provider.frames),
+                    "revisions": rev["changed"],
+                    "dropped": rev["dropped"],
+                    # round 2: the last complete session the recomputation reached (D7),
+                    # sessions held back as incomplete (D2), the ledger's hash chain (D6)
+                    "last_bar": cov.get("last_bar"),
+                    "skipped": cov.get("skipped", []),
+                    "ledger_rows": len(heads) - 1,
+                    "ledger_chain": heads[-1] if heads else None,
+                    "last": {c: float(merged[c].iloc[-1]) for c in merged.columns},
+                    "provenance": provenance(),
+                },
+                default=float,
+            )
+            + "\n"
+        )
+    if a.oms:  # plan item 4.7; never reads or writes the frozen ledger
         from agentic_trader.oms import paper_session
-        log(f"OMS shadow record: {paper_session(as_of, cfg, provider, BOOKS, out / 'oms', freeze, corporate_actions=a.oms_corporate_actions)}")
+
+        log(
+            f"OMS shadow record: {paper_session(as_of, cfg, provider, BOOKS, out / 'oms', freeze, corporate_actions=a.oms_corporate_actions)}"
+        )
     if same_day:
         log(f"WARNING: same-day revision of {same_day[0]['date']} ({len(same_day)} cell(s)); see summary.md")
     if rev["changed"] or rev["dropped"]:
-        log(f"WARNING: the recomputation differs from the ledger for {len(rev['cells'])} cell(s) and "
-            f"{len(rev['dropped'])} dropped session(s); the ledger keeps its rows, see revisions.csv")
+        log(
+            f"WARNING: the recomputation differs from the ledger for {len(rev['cells'])} cell(s) and "
+            f"{len(rev['dropped'])} dropped session(s); the ledger keeps its rows, see revisions.csv"
+        )
     log(f"{len(merged)} sessions in the ledger ({len(frame)} recomputed) in {time.time() - t0:.0f}s -> {ledger}")
     return 0
 

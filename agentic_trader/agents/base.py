@@ -7,6 +7,7 @@ Each agent follows the same pattern:
   3. *LLM*: when enabled, the model reasons over the same facts and returns a
      structured JSON document that replaces the rule-based judgement.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,6 +54,7 @@ def fmt_facts(facts: dict[str, Any]) -> str:
         if isinstance(v, float):
             return round(v, 6)
         return v
+
     return json.dumps({k: conv(v) for k, v in facts.items()}, indent=1, default=str)
 
 
@@ -113,8 +115,14 @@ class Agent:
             return None
         return self._complete(prompt, state)
 
-    def ask_json(self, prompt: str, required: tuple[str, ...], state: Any = None,
-                 numeric: tuple[str, ...] = (), schema: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    def ask_json(
+        self,
+        prompt: str,
+        required: tuple[str, ...],
+        state: Any = None,
+        numeric: tuple[str, ...] = (),
+        schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """One JSON reply, or ``None`` (rules apply) when it does not meet the contract.
 
         ``required`` keys must be present. ``numeric`` keys must hold a finite JSON number
@@ -126,8 +134,7 @@ class Agent:
         """
         if self.llm is None:
             return None
-        text = self._complete(
-            prompt + "\n\nRespond with a single JSON object only (no prose outside it).", state, schema)
+        text = self._complete(prompt + "\n\nRespond with a single JSON object only (no prose outside it).", state, schema)
         data = extract_json(text)
         problem = self._contract_problem(data, required, numeric, schema)
         if problem is not None:
@@ -137,15 +144,15 @@ class Agent:
         return data
 
     @staticmethod
-    def _contract_problem(data: dict[str, Any] | None, required: tuple[str, ...],
-                          numeric: tuple[str, ...], schema: dict[str, Any] | None = None) -> str | None:
+    def _contract_problem(
+        data: dict[str, Any] | None, required: tuple[str, ...], numeric: tuple[str, ...], schema: dict[str, Any] | None = None
+    ) -> str | None:
         if data is None:
             return "no JSON object"
         missing = [k for k in required if k not in data]
         if missing:
             return f"missing {missing}"
-        bad = [k for k in numeric if k in data and not is_number(data[k])
-               and not (data[k] is None and k not in required)]
+        bad = [k for k in numeric if k in data and not is_number(data[k]) and not (data[k] is None and k not in required)]
         if bad:
             return "non-numeric " + ", ".join(f"{k}={data[k]!r}" for k in bad)
         return violation(data, schema)

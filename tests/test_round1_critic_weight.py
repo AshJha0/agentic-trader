@@ -3,6 +3,7 @@ and guardrail boundaries that survived the mutation spot check (R3, C2, C3, C8).
 
 Every test states, in its docstring, what the pre-Round-1 code did on the same input. Offline:
 no model, no network, no Ollama (fake LLMs and a stubbed digest lookup only)."""
+
 import json
 import math
 from datetime import date
@@ -20,8 +21,7 @@ from agentic_trader.agents.risk import PortfolioManager, risk_facts
 from agentic_trader.instruments import Instrument
 from agentic_trader.local_llm import LocalLLM, ModelDigestMismatch
 from agentic_trader.memory import DecisionMemory
-from agentic_trader.state import (Action, AnalystReport, DebateOutcome, FinalDecision, RiskView, TradeProposal,
-                                  TradingState)
+from agentic_trader.state import Action, AnalystReport, DebateOutcome, FinalDecision, RiskView, TradeProposal, TradingState
 from agentic_trader.text_analysts import MAX_CLAIMS, FundamentalsTextAnalyst, MacroTextAnalyst, quote_problem
 
 AS_OF = date(2024, 3, 1)
@@ -39,9 +39,19 @@ def _state(weight=0.2, symbol="AAPL", diverge=True, stop=None, take=None, source
     if diverge:
         st.reports["news"] = AnalystReport("news", 0.9, 0.6, "s", source="llm", rule_signal=-0.1)
     act = Action.BUY if weight > 0 else Action.SELL if weight < 0 else Action.HOLD
-    st.decision = FinalDecision(symbol, AS_OF, act, weight, 0.7, stop, take, "r", source=source,
-                                rule_weight=weight if rule_weight is None else rule_weight,
-                                model_weight=weight if source == "llm" else None)
+    st.decision = FinalDecision(
+        symbol,
+        AS_OF,
+        act,
+        weight,
+        0.7,
+        stop,
+        take,
+        "r",
+        source=source,
+        rule_weight=weight if rule_weight is None else rule_weight,
+        model_weight=weight if source == "llm" else None,
+    )
     return st
 
 
@@ -61,7 +71,7 @@ def _check(rep, name):
 # ================================================================ A4: an alarm never adds exposure
 def test_a4_flag_on_an_equity_long_shrinks_it_instead_of_scaling_toward_neutral_one():
     """Old code: neutral 1.0 + 0.5 * (0.2 - 1.0) = +0.60, three times the PM's +0.20."""
-    cfg = _cfg(max_var_95=0.0)            # default equity neutral weight is 1.0
+    cfg = _cfg(max_var_95=0.0)  # default equity neutral weight is 1.0
     assert cfg["risk"]["neutral_weight"]["equity"] == 1.0
     st = _state(0.2)
     act = apply_weight_rule(st, _review(st, cfg), cfg)
@@ -107,7 +117,7 @@ def _pm_state(symbol="EURUSD"):
 
 def _pm(cfg, reply):
     pm = PortfolioManager(None, cfg)
-    pm.ask_json = lambda *a, **k: reply     # the model's answer, already past the contract gate
+    pm.ask_json = lambda *a, **k: reply  # the model's answer, already past the contract gate
     return pm
 
 
@@ -118,7 +128,7 @@ def test_a3_model_pm_weight_is_bounded_and_both_weights_are_recorded():
     st = _pm_state()
     d = _pm(cfg, {"target_weight": 1.0, "rationale": "takeover", "confidence": 0.9}).run(st, risk_facts(st, cfg))
     assert d.rule_weight == pytest.approx(0.1) and d.model_weight == pytest.approx(1.0)
-    assert d.target_weight == pytest.approx(0.35) and d.source == "llm"     # 0.10 + band 0.25
+    assert d.target_weight == pytest.approx(0.35) and d.source == "llm"  # 0.10 + band 0.25
     assert any("PM model weight +1.00 vs rules +0.10" in a and "bounded to +0.35" in a for a in d.adjustments)
 
 
@@ -205,7 +215,7 @@ def test_a6_graph_critic_gets_risk_facts_and_catches_a_var_breach():
     c = _check(rep, "firm_limits")
     assert not c.passed and "VaR" in c.detail
     f = risk_facts(st, cfg)
-    assert abs(st.decision.target_weight) * f["var_95_1d"] <= 0.001 + 1e-9    # and the block acted
+    assert abs(st.decision.target_weight) * f["var_95_1d"] <= 0.001 + 1e-9  # and the block acted
 
 
 # ================================================================ mutation survivors: exact limit values
@@ -235,15 +245,22 @@ def test_c3_any_short_fails_under_long_only(w, ok):
     assert c.passed is ok and (ok or "long-only" in c.detail)
 
 
-@pytest.mark.parametrize("w,level,ok", [
-    (0.3, "stop_at", False), (0.3, "stop_below", True), (0.3, "take_at", False),
-    (-0.3, "stop_at", False), (-0.3, "stop_above", True), (-0.3, "take_at", False)])
+@pytest.mark.parametrize(
+    "w,level,ok",
+    [
+        (0.3, "stop_at", False),
+        (0.3, "stop_below", True),
+        (0.3, "take_at", False),
+        (-0.3, "stop_at", False),
+        (-0.3, "stop_above", True),
+        (-0.3, "take_at", False),
+    ],
+)
 def test_c8_protective_level_exactly_at_entry_fails(w, level, ok):
     """Mutant C8 (long stop ``<`` -> ``<=``) passed a stop exactly at the entry price."""
     st = _state(w, symbol="EURUSD", diverge=False)
     px = st.last_price
-    levels = {"stop_at": (px, None), "take_at": (None, px), "stop_below": (px * 0.99, None),
-              "stop_above": (px * 1.01, None)}
+    levels = {"stop_at": (px, None), "take_at": (None, px), "stop_below": (px * 0.99, None), "stop_above": (px * 1.01, None)}
     st.decision.stop_loss, st.decision.take_profit = levels[level]
     assert _check(_review(st, _cfg()), "protective_levels").passed is ok
 
@@ -260,12 +277,15 @@ class _Reply:
 class _Section:
     def __init__(self, text):
         from datetime import datetime, timezone
+
         self.symbol, self.accession, self.form, self.section = "WID", "0001-24-000001", "10-K", "7"
         self.visible_date, self.text = datetime(2024, 2, 1, 21, tzinfo=timezone.utc), text
 
 
-SECTION = _Section("The company reported that revenue increased 12% on strong demand. Margins compressed "
-                   "due to input costs. The outlook remains uncertain.")
+SECTION = _Section(
+    "The company reported that revenue increased 12% on strong demand. Margins compressed "
+    "due to input costs. The outlook remains uncertain."
+)
 
 
 def _claim(quote, direction="positive"):
@@ -289,7 +309,7 @@ def test_a7_short_or_stopword_quotes_duplicates_and_the_cap():
     assert quote_problem("and it was on the way") == "quote has no content word"
     assert quote_problem("revenue increased sharply") is None
     words = SECTION.text.split()
-    many = [_claim(" ".join(words[i:i + 4])) for i in range(len(words) - 4)]
+    many = [_claim(" ".join(words[i : i + 4])) for i in range(len(words) - 4)]
     out = FundamentalsTextAnalyst(_Reply({"claims": many})).analyze("WID", [SECTION])
     assert len(out.result["claims"]) <= MAX_CLAIMS
 
@@ -298,7 +318,7 @@ def test_a7_short_or_stopword_quotes_duplicates_and_the_cap():
 CUR = "Inflation remains elevated; further tightening may be appropriate."
 
 
-@pytest.mark.parametrize("shift", ["NaN", "Infinity", "-Infinity", "7", "-1.5", "true", "\"0.5\""])
+@pytest.mark.parametrize("shift", ["NaN", "Infinity", "-Infinity", "7", "-1.5", "true", '"0.5"'])
 def test_a8_bad_shift_is_rejected(shift):
     """Old code: NaN became +1.0 (max(-1, min(1, nan)) is 1.0) and 7 was clipped to +1.0."""
     reply = '{"stance": "neutral", "shift": %s, "quotes": ["further tightening may be appropriate"]}' % shift
@@ -338,11 +358,14 @@ def _report(text):
     return build_report(Task("EURUSD", AS_OF), st, [], rep, EvidenceStore(), _Narrator(text))
 
 
-@pytest.mark.parametrize("text,why", [
-    ("Buy, target weight +0.60, approved by risk.", "+0.60"),
-    ("Sell -0.60. Details at www.example.com today.", "output guard"),
-    ("Sell -0.60 and buy TSLA as a hedge.", "output guard"),
-])
+@pytest.mark.parametrize(
+    "text,why",
+    [
+        ("Buy, target weight +0.60, approved by risk.", "+0.60"),
+        ("Sell -0.60. Details at www.example.com today.", "output guard"),
+        ("Sell -0.60 and buy TSLA as a hedge.", "output guard"),
+    ],
+)
 def test_a12_failing_model_narrative_is_replaced_by_the_template(text, why):
     """Old code shipped each of these model narratives (narrative_source "llm") with at most a
     warning line; the URL and foreign ticker were not checked at all."""
@@ -372,6 +395,7 @@ def _local(pin, served):
     def post(body):
         seen["post"] += 1
         return {"model": body["model"], "message": {"content": "ok"}, "done": True, "done_reason": "stop"}
+
     llm._digest_fn, llm._post = digest, post
     return llm, seen
 
@@ -413,20 +437,40 @@ def test_trader_model_weight_is_bounded_to_the_rules_weight(caplog: pytest.LogCa
     cfg = make_config()
     trader = Trader(None, cfg)
     debate = SimpleNamespace(score=0.0, winner="neutral", conviction=0.5, untrusted=False)
-    neutral = cfg["risk"].get("neutral_weight", {}).get("equity", 0.0)    # the rules weight at score 0
+    neutral = cfg["risk"].get("neutral_weight", {}).get("equity", 0.0)  # the rules weight at score 0
     band, flag = cfg["risk"]["pm_model_band"], cfg["risk"]["pm_model_flag"]
-    replies = iter([{"action": "SELL", "target_weight": neutral - 0.9, "rationale": "strong conviction"},
-                    {"action": "HOLD", "target_weight": neutral - flag / 2, "rationale": "small"}])
-    trader.ask_json = lambda *a, **k: next(replies)             # type: ignore[method-assign]
+    replies = iter(
+        [
+            {"action": "SELL", "target_weight": neutral - 0.9, "rationale": "strong conviction"},
+            {"action": "HOLD", "target_weight": neutral - flag / 2, "rationale": "small"},
+        ]
+    )
+    trader.ask_json = lambda *a, **k: next(replies)  # type: ignore[method-assign]
 
     def state() -> SimpleNamespace:
         return SimpleNamespace(
-            debate=debate, last_price=100.0, forecast=None, current_weight=None, track_record={},
+            debate=debate,
+            last_price=100.0,
+            forecast=None,
+            current_weight=None,
+            track_record={},
             instrument=SimpleNamespace(symbol="AAPL", display="AAPL", asset_class="equity", is_fx=False),
-            as_of=date(2020, 1, 2), reports={}, untrusted_inputs=False, proposal=None,
-            history=None, px=lambda v: v, unpx=lambda v: v, reports_digest=lambda: "",
-            verdict_block=lambda: "", lessons_block=lambda: "", evidence=[], policy_hits=[])
+            as_of=date(2020, 1, 2),
+            reports={},
+            untrusted_inputs=False,
+            proposal=None,
+            history=None,
+            px=lambda v: v,
+            unpx=lambda v: v,
+            reports_digest=lambda: "",
+            verdict_block=lambda: "",
+            lessons_block=lambda: "",
+            evidence=[],
+            policy_hits=[],
+        )
+
     import agentic_trader.agents.trader as tr
+
     orig_atr, orig_short, orig_pp = tr.atr14, tr.allow_short, tr.policy_passages
     tr.atr14, tr.allow_short, tr.policy_passages = (lambda s: 2.0), (lambda s, c: True), (lambda s: "")
     try:
@@ -438,7 +482,7 @@ def test_trader_model_weight_is_bounded_to_the_rules_weight(caplog: pytest.LogCa
     assert far.rule_weight == pytest.approx(neutral) and far.model_weight == pytest.approx(neutral - 0.9)
     assert far.target_weight == pytest.approx(neutral - band) and far.source == "llm"
     assert "bounded to" in caplog.text and "trader model weight" in caplog.text
-    assert far.rationale == "strong conviction"                 # the model's text is not rewritten
+    assert far.rationale == "strong conviction"  # the model's text is not rewritten
     assert isinstance(far.action, Action)
     assert near.target_weight == pytest.approx(neutral - flag / 2)
     assert near.rule_weight == pytest.approx(neutral)

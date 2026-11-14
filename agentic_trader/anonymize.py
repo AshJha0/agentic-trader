@@ -43,6 +43,7 @@ as a -0.1% policy rate, names outside the built-in map, the wording of a filing,
 shape of the return series itself. One-letter tickers (``V``) are not aliased in text:
 they collide with Roman numerals.
 """
+
 from __future__ import annotations
 
 import logging
@@ -55,55 +56,148 @@ from .instruments import Instrument
 log = logging.getLogger(__name__)
 
 # Fact keys that carry price levels (or price differences) and must be rebased.
-PRICE_KEYS = frozenset({
-    "close", "last_close", "sma20", "sma50", "sma200", "macd_line", "macd_hist",
-    "macd_hist_prev", "atr14", "entry_price", "stop_loss", "take_profit",
-})
+PRICE_KEYS = frozenset(
+    {
+        "close",
+        "last_close",
+        "sma20",
+        "sma50",
+        "sma200",
+        "macd_line",
+        "macd_hist",
+        "macd_hist_prev",
+        "atr14",
+        "entry_price",
+        "stop_loss",
+        "take_profit",
+    }
+)
 
 # Scale-free fact keys that may reach an anonymised prompt unchanged. Strings among them
 # (dates, currency codes, a source label) are still passed through ``scrub``.
-SCALE_FREE_KEYS = frozenset({
-    # technical
-    "rsi14", "bollinger_pct_b", "kdj_k", "kdj_d", "kdj_j", "realized_vol_20d_annual",
-    "realized_vol_1y_annual", "zscore20", "return_5d", "return_20d", "return_60d", "return_12_1m",
-    "bars", "atr_pct",
-    # fundamentals: ratios, growth rates, margins, yields and filing dates
-    "pe_ratio", "forward_pe", "sector_pe", "revenue_growth_yoy", "net_margin", "debt_to_equity",
-    "fcf_yield", "eps_surprise", "insider_net_buying", "report_period_end", "revenue_period_end",
-    "net_income_period_end", "eps_period_end", "ocf_period_end", "filed", "lag_days", "source",
-    # FX macro
-    "base", "quote", "base_rate", "quote_rate", "rate_diff", "base_inflation", "quote_inflation",
-    "deviation_from_200d",
-    # news and sentiment (headline text is fenced separately, never a fact)
-    "lookback_days", "count", "recency_weighted_tone", "posts", "mean_post_sentiment",
-    "recent_post_sentiment", "bullish_share", "volume_zscore",
-    # alpha library: z-scores, ICs and counts (the peer list is replaced by its size)
-    "latest", "ic", "combined_z", "breadth", "horizon",
-    # trader and risk facts
-    "short_selling_allowed", "max_position", "debate_winner", "debate_score", "debate_conviction",
-    "current_position", "strategic_weight_when_neutral", "track_n", "track_hit_rate", "track_avg_pnl",
-    "proposed_weight", "var_95_1d", "var_95_1d_short", "cvar_95_1d", "drawdown_from_60d_high",
-    "target_vol", "max_var_95", "rebalance_band", "max_book_var_95", "book_var_95_now",
-})
+SCALE_FREE_KEYS = frozenset(
+    {
+        # technical
+        "rsi14",
+        "bollinger_pct_b",
+        "kdj_k",
+        "kdj_d",
+        "kdj_j",
+        "realized_vol_20d_annual",
+        "realized_vol_1y_annual",
+        "zscore20",
+        "return_5d",
+        "return_20d",
+        "return_60d",
+        "return_12_1m",
+        "bars",
+        "atr_pct",
+        # fundamentals: ratios, growth rates, margins, yields and filing dates
+        "pe_ratio",
+        "forward_pe",
+        "sector_pe",
+        "revenue_growth_yoy",
+        "net_margin",
+        "debt_to_equity",
+        "fcf_yield",
+        "eps_surprise",
+        "insider_net_buying",
+        "report_period_end",
+        "revenue_period_end",
+        "net_income_period_end",
+        "eps_period_end",
+        "ocf_period_end",
+        "filed",
+        "lag_days",
+        "source",
+        # FX macro
+        "base",
+        "quote",
+        "base_rate",
+        "quote_rate",
+        "rate_diff",
+        "base_inflation",
+        "quote_inflation",
+        "deviation_from_200d",
+        # news and sentiment (headline text is fenced separately, never a fact)
+        "lookback_days",
+        "count",
+        "recency_weighted_tone",
+        "posts",
+        "mean_post_sentiment",
+        "recent_post_sentiment",
+        "bullish_share",
+        "volume_zscore",
+        # alpha library: z-scores, ICs and counts (the peer list is replaced by its size)
+        "latest",
+        "ic",
+        "combined_z",
+        "breadth",
+        "horizon",
+        # trader and risk facts
+        "short_selling_allowed",
+        "max_position",
+        "debate_winner",
+        "debate_score",
+        "debate_conviction",
+        "current_position",
+        "strategic_weight_when_neutral",
+        "track_n",
+        "track_hit_rate",
+        "track_avg_pnl",
+        "proposed_weight",
+        "var_95_1d",
+        "var_95_1d_short",
+        "cvar_95_1d",
+        "drawdown_from_60d_high",
+        "target_vol",
+        "max_var_95",
+        "rebalance_band",
+        "max_book_var_95",
+        "book_var_95_now",
+    }
+)
 
 # Numeric keys not listed above pass when their name says they are dimensionless.
-_SCALE_FREE_SUFFIXES = ("_yoy", "_pct", "_ratio", "_yield", "_margin", "_z", "_zscore", "_share",
-                        "_rate", "_tone", "_sentiment", "_vol", "_ic", "_growth", "_surprise")
+_SCALE_FREE_SUFFIXES = (
+    "_yoy",
+    "_pct",
+    "_ratio",
+    "_yield",
+    "_margin",
+    "_z",
+    "_zscore",
+    "_share",
+    "_rate",
+    "_tone",
+    "_sentiment",
+    "_vol",
+    "_ic",
+    "_growth",
+    "_surprise",
+)
 _SCALE_FREE_PREFIXES = ("return_", "track_", "ic_", "z_", "var_", "cvar_")
 
 # An ISO date, with an optional time-of-day and zone suffix (``2020-02-20T21:30:00.000Z``).
-_ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})"
-                       r"(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?(?!\d)")
+_ISO_DATE = re.compile(
+    r"(?<!\d)(\d{4})-(\d{2})-(\d{2})"
+    r"(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?(?!\d)"
+)
 # SEC accession numbers: 0000320193-20-000096 (and the 18-digit form without dashes).
 _ACCESSION = re.compile(r"(?<!\d)(\d{10})-(\d{2})-(\d{6})(?!\d)|(?<!\d)(\d{18})(?!\d)")
 _CIK = re.compile(r"\bCIK\s*(?:No\.?|number|#)?\s*:?\s*\d{1,10}\b|(?<!\d)0\d{9}(?!\d)", re.I)
-_MONTHS = {m: i + 1 for i, m in enumerate(
-    ("january", "february", "march", "april", "may", "june", "july", "august", "september",
-     "october", "november", "december"))}
+_MONTHS = {
+    m: i + 1
+    for i, m in enumerate(
+        ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december")
+    )
+}
 _MONTHS.update({m[:3]: i for m, i in list(_MONTHS.items())})
 _MONTHS["sept"] = 9
-_MON = (r"(January|February|March|April|May|June|July|August|September|October|November|December|"
-        r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)\.?")
+_MON = (
+    r"(January|February|March|April|May|June|July|August|September|October|November|December|"
+    r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)\.?"
+)
 _MDY = re.compile(rf"\b{_MON}\s+(\d{{1,2}}),?\s+(\d{{4}})\b", re.I)
 _DMY = re.compile(rf"\b(\d{{1,2}})\s+{_MON},?\s+(\d{{4}})\b", re.I)
 _MY = re.compile(rf"\b{_MON},?\s+(\d{{4}})\b", re.I)
@@ -113,48 +207,71 @@ _YEAR = re.compile(r"(?<![\d.,$])(19[5-9]\d|20\d\d)(?![\d,]|\.\d)")
 # Company and product names per ticker for the research universe (evaluation.py), so the
 # text path can alias them without a network call. EDGAR names add to these at run time.
 COMPANY_NAMES: dict[str, tuple[str, ...]] = {
-    "AAPL": ("Apple Inc.", "Apple Computer", "Apple"), "NVDA": ("NVIDIA Corporation", "NVIDIA", "Nvidia"),
-    "MSFT": ("Microsoft Corporation", "Microsoft"), "META": ("Meta Platforms", "Facebook, Inc.", "Facebook", "Meta"),
-    "GOOGL": ("Alphabet Inc.", "Alphabet", "Google"), "AMZN": ("Amazon.com, Inc.", "Amazon.com", "Amazon"),
+    "AAPL": ("Apple Inc.", "Apple Computer", "Apple"),
+    "NVDA": ("NVIDIA Corporation", "NVIDIA", "Nvidia"),
+    "MSFT": ("Microsoft Corporation", "Microsoft"),
+    "META": ("Meta Platforms", "Facebook, Inc.", "Facebook", "Meta"),
+    "GOOGL": ("Alphabet Inc.", "Alphabet", "Google"),
+    "AMZN": ("Amazon.com, Inc.", "Amazon.com", "Amazon"),
     "JPM": ("JPMorgan Chase & Co.", "JPMorgan Chase", "JPMorgan", "J.P. Morgan", "Chase"),
     "XOM": ("Exxon Mobil Corporation", "ExxonMobil", "Exxon Mobil", "Exxon"),
-    "JNJ": ("Johnson & Johnson", "Janssen"), "SPY": ("SPDR S&P 500 ETF Trust", "SPDR S&P 500"),
-    "UNH": ("UnitedHealth Group", "UnitedHealthcare", "UnitedHealth", "Optum"), "V": ("Visa Inc.", "Visa"),
-    "MA": ("Mastercard Incorporated", "Mastercard"), "PG": ("Procter & Gamble", "P&G"),
-    "HD": ("The Home Depot", "Home Depot"), "COST": ("Costco Wholesale", "Costco"), "WMT": ("Walmart Inc.", "Walmart",
-                                                                                         "Wal-Mart"),
-    "KO": ("The Coca-Cola Company", "Coca-Cola"), "PEP": ("PepsiCo, Inc.", "PepsiCo", "Frito-Lay"),
-    "CVX": ("Chevron Corporation", "Chevron"), "LLY": ("Eli Lilly and Company", "Eli Lilly", "Lilly"),
-    "ABBV": ("AbbVie Inc.", "AbbVie"), "MRK": ("Merck & Co.", "Merck"),
-    "BAC": ("Bank of America Corporation", "Bank of America"), "GS": ("The Goldman Sachs Group", "Goldman Sachs"),
-    "CAT": ("Caterpillar Inc.", "Caterpillar"), "BA": ("The Boeing Company", "Boeing"),
+    "JNJ": ("Johnson & Johnson", "Janssen"),
+    "SPY": ("SPDR S&P 500 ETF Trust", "SPDR S&P 500"),
+    "UNH": ("UnitedHealth Group", "UnitedHealthcare", "UnitedHealth", "Optum"),
+    "V": ("Visa Inc.", "Visa"),
+    "MA": ("Mastercard Incorporated", "Mastercard"),
+    "PG": ("Procter & Gamble", "P&G"),
+    "HD": ("The Home Depot", "Home Depot"),
+    "COST": ("Costco Wholesale", "Costco"),
+    "WMT": ("Walmart Inc.", "Walmart", "Wal-Mart"),
+    "KO": ("The Coca-Cola Company", "Coca-Cola"),
+    "PEP": ("PepsiCo, Inc.", "PepsiCo", "Frito-Lay"),
+    "CVX": ("Chevron Corporation", "Chevron"),
+    "LLY": ("Eli Lilly and Company", "Eli Lilly", "Lilly"),
+    "ABBV": ("AbbVie Inc.", "AbbVie"),
+    "MRK": ("Merck & Co.", "Merck"),
+    "BAC": ("Bank of America Corporation", "Bank of America"),
+    "GS": ("The Goldman Sachs Group", "Goldman Sachs"),
+    "CAT": ("Caterpillar Inc.", "Caterpillar"),
+    "BA": ("The Boeing Company", "Boeing"),
     "BRK-B": ("Berkshire Hathaway",),
 }
 PRODUCT_NAMES: dict[str, tuple[str, ...]] = {
     "AAPL": ("iPhone", "iPad", "MacBook", "Mac", "iOS", "macOS", "App Store", "AirPods", "Apple Watch"),
-    "NVDA": ("GeForce", "CUDA", "Mellanox", "DGX"), "MSFT": ("Windows", "Azure", "Xbox", "Office 365", "LinkedIn"),
-    "META": ("Instagram", "WhatsApp", "Messenger", "Oculus"), "GOOGL": ("YouTube", "Android", "Waymo"),
-    "AMZN": ("AWS", "Amazon Web Services", "Prime", "Alexa", "Whole Foods"), "JNJ": ("Tylenol", "Neutrogena"),
-    "LLY": ("Mounjaro", "Trulicity"), "ABBV": ("Humira",), "MRK": ("Keytruda",), "BA": ("737 MAX",),
+    "NVDA": ("GeForce", "CUDA", "Mellanox", "DGX"),
+    "MSFT": ("Windows", "Azure", "Xbox", "Office 365", "LinkedIn"),
+    "META": ("Instagram", "WhatsApp", "Messenger", "Oculus"),
+    "GOOGL": ("YouTube", "Android", "Waymo"),
+    "AMZN": ("AWS", "Amazon Web Services", "Prime", "Alexa", "Whole Foods"),
+    "JNJ": ("Tylenol", "Neutrogena"),
+    "LLY": ("Mounjaro", "Trulicity"),
+    "ABBV": ("Humira",),
+    "MRK": ("Keytruda",),
+    "BA": ("737 MAX",),
 }
 
 
 def _name_stem(name: str) -> str:
     """``Apple Inc.`` -> ``Apple``: drop a trailing corporate suffix (one level)."""
-    return re.sub(r"[\s,]+(Inc\.?|Incorporated|Corporation|Corp\.?|Company|Co\.?|Ltd\.?|plc|PLC|"
-                  r"Holdings|Group|N\.A\.)$", "", name.strip()).strip(" ,")
+    return re.sub(
+        r"[\s,]+(Inc\.?|Incorporated|Corporation|Corp\.?|Company|Co\.?|Ltd\.?|plc|PLC|"
+        r"Holdings|Group|N\.A\.)$",
+        "",
+        name.strip(),
+    ).strip(" ,")
 
 
 def _universe() -> list[str]:
-    from .evaluation import UNIVERSES   # local import: evaluation imports the desk
+    from .evaluation import UNIVERSES  # local import: evaluation imports the desk
+
     return list(UNIVERSES["all"])
+
 
 _dropped_logged: set[str] = set()
 
 
 def is_scale_free_key(key: str) -> bool:
-    return (key in SCALE_FREE_KEYS or key.endswith(_SCALE_FREE_SUFFIXES)
-            or key.startswith(_SCALE_FREE_PREFIXES))
+    return key in SCALE_FREE_KEYS or key.endswith(_SCALE_FREE_SUFFIXES) or key.startswith(_SCALE_FREE_PREFIXES)
 
 
 class Anonymizer:
@@ -170,14 +287,20 @@ class Anonymizer:
                 (instrument.base, "CCY_BASE"),
                 (instrument.quote, "CCY_QUOTE"),
             ]
-            self.restores = [("CCY_BASE/CCY_QUOTE", instrument.display), ("PAIR_X", instrument.symbol),
-                             ("CCY_BASE", instrument.base), ("CCY_QUOTE", instrument.quote)]
+            self.restores = [
+                ("CCY_BASE/CCY_QUOTE", instrument.display),
+                ("PAIR_X", instrument.symbol),
+                ("CCY_BASE", instrument.base),
+                ("CCY_QUOTE", instrument.quote),
+            ]
         else:
             self.aliases = [(instrument.yahoo_symbol, "STOCK_X"), (instrument.symbol, "STOCK_X")]
             self.restores = [("STOCK_X", instrument.symbol)]
-        self._patterns = [(re.compile(rf"(?<![A-Za-z0-9]){re.escape(real)}(?![A-Za-z0-9])"), alias)  # type: ignore[type-var]  # aliases built from set symbols
-                          for real, alias in self.aliases]
-        self.accessions: dict[str, str] = {}      # real accession -> ACC_n
+        self._patterns = [
+            (re.compile(rf"(?<![A-Za-z0-9]){re.escape(real)}(?![A-Za-z0-9])"), alias)  # type: ignore[type-var]  # aliases built from set symbols
+            for real, alias in self.aliases
+        ]
+        self.accessions: dict[str, str] = {}  # real accession -> ACC_n
         self._names: set[str] = set()
         self._text_patterns: list[tuple[re.Pattern, str]] | None = None
         self._name_patterns: list[tuple[re.Pattern, str]] | None = None
@@ -213,8 +336,10 @@ class Anonymizer:
             for n in names:
                 rules.setdefault(n, alias)
                 rules.setdefault(n.upper(), alias)
-        return [(re.compile(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])"), rules[n])
-                for n in sorted(rules, key=len, reverse=True)]   # longest first: "Apple Inc." before "Apple"
+        return [
+            (re.compile(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])"), rules[n])
+            for n in sorted(rules, key=len, reverse=True)
+        ]  # longest first: "Apple Inc." before "Apple"
 
     def _text_rules(self) -> list[tuple[re.Pattern, str]]:
         """Names and other universe tickers (third-party text)."""
@@ -306,11 +431,13 @@ class Anonymizer:
         def month(m: re.Match) -> str:
             n = (int(m[2]) - self.as_of.year) * 12 + _MONTHS[m[1].lower()] - self.as_of.month
             return "M0" if n == 0 else f"M{n:+d}"
+
         text = _MY.sub(month, text)
 
         def year(m: re.Match) -> str:
             n = int(m[1]) - self.as_of.year
             return "Y0" if n == 0 else f"Y{n:+d}"
+
         return _YEAR.sub(year, text)
 
     def restore(self, value: Any) -> Any:
@@ -343,12 +470,12 @@ def enforce_llm_anonymize(config: dict) -> bool:
         config.setdefault("llm_anonymize_forced", False)
         return True
     if config.get("allow_deanonymized_llm"):
-        log.warning("model run WITHOUT anonymisation (allow_deanonymized_llm is set): prompts "
-                    "carry real tickers, names and dates")
+        log.warning(
+            "model run WITHOUT anonymisation (allow_deanonymized_llm is set): prompts carry real tickers, names and dates"
+        )
         config["llm_anonymize_forced"] = False
         return False
-    log.warning("llm_anonymize forced on: a model is attached (set allow_deanonymized_llm to "
-                "run a de-anonymised control)")
+    log.warning("llm_anonymize forced on: a model is attached (set allow_deanonymized_llm to run a de-anonymised control)")
     config["llm_anonymize"] = True
     config["llm_anonymize_forced"] = True
     return True

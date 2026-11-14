@@ -5,6 +5,7 @@ posts are generated from each day's realised move (so they carry information
 known at that day's close, never later); fundamentals are reported quarterly
 with a 30-day publication lag. Nothing here is real market data.
 """
+
 from __future__ import annotations
 
 import zlib
@@ -21,18 +22,43 @@ _EPOCH = "2015-01-01"
 _END = "2030-12-31"
 
 _FX_START = {
-    "EURUSD": 1.10, "GBPUSD": 1.27, "USDJPY": 145.0, "AUDUSD": 0.66, "USDCHF": 0.90,
-    "USDCAD": 1.36, "NZDUSD": 0.60, "EURGBP": 0.86, "EURJPY": 158.0,
+    "EURUSD": 1.10,
+    "GBPUSD": 1.27,
+    "USDJPY": 145.0,
+    "AUDUSD": 0.66,
+    "USDCHF": 0.90,
+    "USDCAD": 1.36,
+    "NZDUSD": 0.60,
+    "EURGBP": 0.86,
+    "EURJPY": 158.0,
 }
 # Approximate USD value of one unit of each currency (mid-2020s levels), so a pair outside
 # _FX_START starts at a level consistent with its quoting convention: JPY quotes near 100+,
 # where Instrument.pip_size is 0.01, and everything else near 1. A generic uniform(0.8, 1.5)
 # start made an 0.8-pip spread on GBPJPY worth ~45 bp instead of ~0.3 bp.
 _USD_PER_UNIT = {
-    "USD": 1.0, "EUR": 1.10, "GBP": 1.27, "JPY": 1 / 145.0, "CHF": 1 / 0.90, "AUD": 0.66, "CAD": 1 / 1.36,
-    "NZD": 0.60, "SEK": 1 / 10.5, "NOK": 1 / 10.7, "DKK": 1 / 6.9, "CNH": 1 / 7.2, "CNY": 1 / 7.2,
-    "HKD": 1 / 7.8, "SGD": 1 / 1.34, "MXN": 1 / 17.0, "ZAR": 1 / 18.0, "TRY": 1 / 33.0, "PLN": 1 / 4.0,
-    "INR": 1 / 83.0, "KRW": 1 / 1350.0, "BRL": 1 / 5.0,
+    "USD": 1.0,
+    "EUR": 1.10,
+    "GBP": 1.27,
+    "JPY": 1 / 145.0,
+    "CHF": 1 / 0.90,
+    "AUD": 0.66,
+    "CAD": 1 / 1.36,
+    "NZD": 0.60,
+    "SEK": 1 / 10.5,
+    "NOK": 1 / 10.7,
+    "DKK": 1 / 6.9,
+    "CNH": 1 / 7.2,
+    "CNY": 1 / 7.2,
+    "HKD": 1 / 7.8,
+    "SGD": 1 / 1.34,
+    "MXN": 1 / 17.0,
+    "ZAR": 1 / 18.0,
+    "TRY": 1 / 33.0,
+    "PLN": 1 / 4.0,
+    "INR": 1 / 83.0,
+    "KRW": 1 / 1350.0,
+    "BRL": 1 / 5.0,
 }
 
 
@@ -46,42 +72,62 @@ def fx_start_level(instrument: Instrument, fallback: float) -> float:
         return fallback * (100.0 if instrument.quote == "JPY" else 1.0)
     return b / q
 
+
 _NEWS = {
     "equity": {
-        "pos": ["{s} beats earnings estimates as revenue growth accelerates",
-                "Analysts upgrade {s} citing strong demand and record margins",
-                "{s} raises full-year guidance on robust sales",
-                "{s} shares rally after new product launch wins praise"],
-        "neg": ["{s} misses estimates as margins decline",
-                "{s} downgraded on weak demand and rising costs",
-                "{s} cuts guidance amid slowdown concerns",
-                "Regulators open probe into {s}; shares fall"],
-        "neu": ["{s} to present at industry conference next week",
-                "{s} announces board appointment",
-                "{s} trading volume in line with average"],
+        "pos": [
+            "{s} beats earnings estimates as revenue growth accelerates",
+            "Analysts upgrade {s} citing strong demand and record margins",
+            "{s} raises full-year guidance on robust sales",
+            "{s} shares rally after new product launch wins praise",
+        ],
+        "neg": [
+            "{s} misses estimates as margins decline",
+            "{s} downgraded on weak demand and rising costs",
+            "{s} cuts guidance amid slowdown concerns",
+            "Regulators open probe into {s}; shares fall",
+        ],
+        "neu": [
+            "{s} to present at industry conference next week",
+            "{s} announces board appointment",
+            "{s} trading volume in line with average",
+        ],
     },
     "fx": {
-        "pos": ["{b} strengthens as {b} central bank signals further tightening",
-                "Strong {b} data beats expectations, lifting {s}",
-                "{q} weakens after dovish comments from policymakers",
-                "Risk appetite improves; {s} rallies"],
-        "neg": ["{b} slides as growth data disappoints",
-                "{b} central bank hints at rate cuts; {s} falls",
-                "Hawkish {q} policymakers boost {q}, pressuring {s}",
-                "{s} drops amid rising recession fears"],
-        "neu": ["{s} range-bound ahead of central bank meeting",
-                "Traders await {q} inflation data",
-                "{s} liquidity thin in holiday trading"],
+        "pos": [
+            "{b} strengthens as {b} central bank signals further tightening",
+            "Strong {b} data beats expectations, lifting {s}",
+            "{q} weakens after dovish comments from policymakers",
+            "Risk appetite improves; {s} rallies",
+        ],
+        "neg": [
+            "{b} slides as growth data disappoints",
+            "{b} central bank hints at rate cuts; {s} falls",
+            "Hawkish {q} policymakers boost {q}, pressuring {s}",
+            "{s} drops amid rising recession fears",
+        ],
+        "neu": [
+            "{s} range-bound ahead of central bank meeting",
+            "Traders await {q} inflation data",
+            "{s} liquidity thin in holiday trading",
+        ],
     },
 }
 
 _SOCIAL = {
-    "pos": ["$SYM looking bullish, loading calls", "$SYM breakout! strong buy",
-            "$SYM to the moon, great momentum", "accumulating more $SYM on this strength"],
-    "neg": ["$SYM looks weak, buying puts", "$SYM breakdown, sell before it gets worse",
-            "$SYM dump incoming, bearish", "cutting my $SYM loss here, ugly chart"],
-    "neu": ["anyone watching $SYM today?", "$SYM chop, waiting for a setup",
-            "no position in $SYM yet"],
+    "pos": [
+        "$SYM looking bullish, loading calls",
+        "$SYM breakout! strong buy",
+        "$SYM to the moon, great momentum",
+        "accumulating more $SYM on this strength",
+    ],
+    "neg": [
+        "$SYM looks weak, buying puts",
+        "$SYM breakdown, sell before it gets worse",
+        "$SYM dump incoming, bearish",
+        "cutting my $SYM loss here, ugly chart",
+    ],
+    "neu": ["anyone watching $SYM today?", "$SYM chop, waiting for a setup", "no position in $SYM yet"],
 }
 
 
@@ -116,8 +162,8 @@ class SyntheticProvider(MarketDataProvider):
         i = 0
         while i < n:
             length = int(rng.integers(40, 120))
-            drift[i:i + length] = rng.normal(0.0, 0.08) if fx else rng.normal(0.08, 0.30)
-            volmult[i:i + length] = rng.uniform(0.7, 1.5)
+            drift[i : i + length] = rng.normal(0.0, 0.08) if fx else rng.normal(0.08, 0.30)
+            volmult[i : i + length] = rng.uniform(0.7, 1.5)
             i += length
         dvol = base_vol * volmult / np.sqrt(ppy)
         eps = rng.standard_t(5, n) / np.sqrt(5.0 / 3.0)  # unit-variance fat tails
@@ -131,8 +177,7 @@ class SyntheticProvider(MarketDataProvider):
             volume = np.zeros(n)
         else:
             volume = rng.lognormal(np.log(rng.uniform(2e6, 3e7)), 0.3, n) * (1 + 2 * np.abs(eps))
-        df = pd.DataFrame({"Open": open_, "High": high, "Low": low, "Close": close,
-                           "Volume": volume.round()}, index=dates)
+        df = pd.DataFrame({"Open": open_, "High": high, "Low": low, "Close": close, "Volume": volume.round()}, index=dates)
         df["_z"] = eps  # standardised daily move, used to generate news tone
         self._cache[instrument.symbol] = df
         return df

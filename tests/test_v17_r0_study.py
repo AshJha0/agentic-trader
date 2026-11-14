@@ -1,5 +1,6 @@
 """v0.17 R0.1 (seed pseudo-replication, review A1) and R0.3 (per-decision horizon scoring,
 review B4) in scripts/llm_study.py. Fixture rows only; no model, no network."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -29,21 +30,39 @@ study = _study()
 NAMES = ["A", "B", "C", "D", "E"]
 
 
-def _rows(n_dates: int = 12, seeds: tuple[int, ...] = (0,), cell: str = "local_all",
-          weight=lambda i, j, s: 0.1 * ((i * 7 + j * 3) % 5 - 2), price=None) -> list[dict[str, Any]]:
+def _rows(
+    n_dates: int = 12,
+    seeds: tuple[int, ...] = (0,),
+    cell: str = "local_all",
+    weight=lambda i, j, s: 0.1 * ((i * 7 + j * 3) % 5 - 2),
+    price=None,
+) -> list[dict[str, Any]]:
     price = price or (lambda name, k: 100.0 * (1 + 0.01 * ((k * (NAMES.index(name) + 2)) % 9 - 4)))
     dates = study.design_dates(n_dates)
     rows = []
     for s in seeds:
         for i, d in enumerate(dates):
             for j, n in enumerate(NAMES):
-                rows.append({"cell": cell, "seed": s, "symbol": n, "as_of": d.isoformat(),
-                             "target_weight": weight(i, j, s), "vt_weight": 0.5, "close": price(n, i),
-                             "regime": 0, "source": "llm", "sources": {}, "calls": []})
+                rows.append(
+                    {
+                        "cell": cell,
+                        "seed": s,
+                        "symbol": n,
+                        "as_of": d.isoformat(),
+                        "target_weight": weight(i, j, s),
+                        "vt_weight": 0.5,
+                        "close": price(n, i),
+                        "regime": 0,
+                        "source": "llm",
+                        "sources": {},
+                        "calls": [],
+                    }
+                )
     return rows
 
 
 # ---- R0.1 -----------------------------------------------------------------------------------
+
 
 def test_identical_seed_replays_do_not_narrow_the_interval() -> None:
     """Regression for A1: the old code concatenated seeds into one series, so two identical
@@ -53,7 +72,8 @@ def test_identical_seed_replays_do_not_narrow_the_interval() -> None:
     two = study.cell_metrics(_rows(seeds=(0, 1)), cfg)[0]
     assert two["periods"] == one["periods"]
     assert (two["sharpe_minus_control"], two["ci_lo"], two["ci_hi"], two["p"]) == pytest.approx(
-        (one["sharpe_minus_control"], one["ci_lo"], one["ci_hi"], one["p"]))
+        (one["sharpe_minus_control"], one["ci_lo"], one["ci_hi"], one["p"])
+    )
     assert two["seed_replays"] and not one["seed_replays"]
     assert [p["seed"] for p in two["per_seed"]] == [0, 1]
 
@@ -68,8 +88,7 @@ def test_distinct_seeds_are_reported_separately_and_averaged() -> None:
 
 def test_seeds_above_one_refused_at_temperature_zero(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="identical replays"):
-        study.run_study(["AAPL"], study.design_dates(20)[1:2], 2, [], make_config(study.STUDY_BASE),
-                        tmp_path / "x.jsonl")
+        study.run_study(["AAPL"], study.design_dates(20)[1:2], 2, [], make_config(study.STUDY_BASE), tmp_path / "x.jsonl")
     study.check_seeds(2, 0.7)
     study.check_seeds(1, 0.0)
     with pytest.raises(SystemExit):
@@ -87,10 +106,12 @@ def test_local_llm_sends_configured_temperature() -> None:
 
 # ---- R0.3 -----------------------------------------------------------------------------------
 
+
 def _prices_from(paths: dict[str, pd.Series]):
     def fn(symbol: str, start: date, end: date) -> pd.Series:
         s = paths[symbol]
         return s[(s.index >= pd.Timestamp(start)) & (s.index <= pd.Timestamp(end))]
+
     return fn
 
 
@@ -105,9 +126,20 @@ def _rows_on(paths: dict[str, pd.Series], cell: str, weight) -> list[dict[str, A
     for i, d in enumerate(study.design_dates(15)):
         ts = paths[NAMES[0]].index[paths[NAMES[0]].index.get_indexer([pd.Timestamp(d)], method="bfill")[0]]
         for j, n in enumerate(NAMES):
-            rows.append({"cell": cell, "seed": 0, "symbol": n, "as_of": ts.date().isoformat(),
-                         "target_weight": weight(paths, n, ts), "vt_weight": 0.5,
-                         "close": float(paths[n][ts]), "calls": [], "sources": {}, "regime": 0})
+            rows.append(
+                {
+                    "cell": cell,
+                    "seed": 0,
+                    "symbol": n,
+                    "as_of": ts.date().isoformat(),
+                    "target_weight": weight(paths, n, ts),
+                    "vt_weight": 0.5,
+                    "close": float(paths[n][ts]),
+                    "calls": [],
+                    "sources": {},
+                    "regime": 0,
+                }
+            )
     return rows
 
 
@@ -159,8 +191,7 @@ def test_horizon_metrics_work_on_stored_first_pass_rows(tmp_path: Path, capsys: 
     """The report path reads rows the run already wrote (no model) and prints the primary table."""
     out = tmp_path / "r.jsonl"
     cfg = make_config(study.STUDY_BASE)
-    study.run_study(["AAPL", "MSFT", "SPY"], study.design_dates(20)[1:5], 1, [study.CELLS[0]], cfg, out,
-                    None, lambda s: None)
-    assert study.main(["--report", "--out", str(out)]) == 0
+    study.run_study(["AAPL", "MSFT", "SPY"], study.design_dates(20)[1:5], 1, [study.CELLS[0]], cfg, out, None, lambda s: None)
+    assert study.main(["--report", "--data", "synthetic", "--out", str(out)]) == 0
     text = capsys.readouterr().out
     assert "Descriptive (per decision, 20-bar forward return" in text and "Left out" not in text

@@ -25,6 +25,7 @@ alpha: ``alpha.text_alpha_decay`` (``leakage.ic_purged``, 5 folds) against Yahoo
 
 Network (GDELT, Yahoo); the test suite never runs this script. $0, no LLM calls.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,7 +43,7 @@ from agentic_trader.data.gdelt import GdeltProvider, clean_articles, daily_tone,
 from agentic_trader.evaluation import CORE_UNIVERSE, PERIODS
 from agentic_trader.sentiment import score_text
 
-GDELT_START = date(2017, 1, 1)   # first day DOC 2.0 indexes
+GDELT_START = date(2017, 1, 1)  # first day DOC 2.0 indexes
 CACHE = Path("results/v15/gdelt_cache")
 MIN_INTERVAL = 6.0
 LOOKBACK_DAYS = 7
@@ -88,8 +89,7 @@ def download() -> None:
     CACHE.mkdir(parents=True, exist_ok=True)
     p = GdeltProvider(min_interval=MIN_INTERVAL)
     start, end = window()
-    todo = [(s, a, b) for s in QUERIES for a, b in weeks(start, end)
-            if not (CACHE / s / f"{a:%Y%m%d}.json").exists()]
+    todo = [(s, a, b) for s in QUERIES for a, b in weeks(start, end) if not (CACHE / s / f"{a:%Y%m%d}.json").exists()]
     print(f"{len(todo)} requests to go", flush=True)
     last, backoff = 0.0, 60.0
     for i, (sym, a, b) in enumerate(todo):
@@ -130,6 +130,7 @@ def download() -> None:
 
 def headlines(sym: str) -> list:
     from agentic_trader.data.base import NewsItem
+
     arts = []
     for f in sorted((CACHE / sym).glob("*.json")):
         try:
@@ -139,8 +140,15 @@ def headlines(sym: str) -> list:
     out = []
     for a in clean_articles(arts, "English"):
         t = _seen(a["seendate"])
-        out.append(NewsItem(published=t.date(), headline=str(a["title"]), source="gdelt",
-                            sentiment=score_text(str(a["title"])), tags=["gdelt"]))
+        out.append(
+            NewsItem(
+                published=t.date(),
+                headline=str(a["title"]),
+                source="gdelt",
+                sentiment=score_text(str(a["title"])),
+                tags=["gdelt"],
+            )
+        )
     return out
 
 
@@ -160,6 +168,7 @@ def analyse(out_path: Path) -> dict:
     from agentic_trader.config import DEFAULT_CONFIG
     from agentic_trader.data.yahoo import YahooProvider
     from agentic_trader.instruments import Instrument
+
     start, end = window()
     yp = YahooProvider(DEFAULT_CONFIG)
     rows = []
@@ -170,24 +179,42 @@ def analyse(out_path: Path) -> dict:
         h = h[(h.index >= pd.Timestamp(start)) & (h.index <= pd.Timestamp(end))]
         sig = signal_on(pd.DatetimeIndex(h.index).tz_localize(None), tone)
         dec = text_alpha_decay(sig, h["Close"].to_numpy(float))
-        rows.append({"symbol": sym, "headlines": len(items), "days_with_headlines": len(tone),
-                     "sessions": len(h), "signal_coverage": round(float(np.isfinite(sig).mean()), 4),
-                     "decay": {str(k): {kk: (None if not np.isfinite(vv) else round(float(vv), 4))
-                                        for kk, vv in v.items()} for k, v in dec.items()}})
+        rows.append(
+            {
+                "symbol": sym,
+                "headlines": len(items),
+                "days_with_headlines": len(tone),
+                "sessions": len(h),
+                "signal_coverage": round(float(np.isfinite(sig).mean()), 4),
+                "decay": {
+                    str(k): {kk: (None if not np.isfinite(vv) else round(float(vv), 4)) for kk, vv in v.items()}
+                    for k, v in dec.items()
+                },
+            }
+        )
         print(sym, rows[-1]["headlines"], rows[-1]["days_with_headlines"], dec[1], dec[5], flush=True)
     summary = {}
     for hz in ("1", "5", "10", "21", "63"):
         ics = [r["decay"][hz]["ic"] for r in rows if r["decay"][hz]["ic"] is not None]
         ts = [r["decay"][hz]["t"] for r in rows if r["decay"][hz]["t"] is not None]
-        summary[hz] = {"mean_ic": round(float(np.mean(ics)), 4) if ics else None,
-                       "mean_t": round(float(np.mean(ts)), 3) if ts else None,
-                       "t_of_mean_ic": (round(float(np.mean(ics) / (np.std(ics, ddof=1) / np.sqrt(len(ics)))), 3)
-                                        if len(ics) > 2 else None),
-                       "names": len(ics), "names_abs_t_gt_2": int(sum(abs(t) > 2 for t in ts))}
-    res = {"trial": "v0.15 GDELT headline tone (rules lexicon)", "design_period": PERIODS["design"],
-           "window_used": [start.isoformat(), end.isoformat()],
-           "note": "GDELT DOC 2.0 starts 2017-01-01; design overlap only. Weekly artlist, 250 max, newest first.",
-           "lookback_days": LOOKBACK_DAYS, "n_folds": 5, "queries": QUERIES, "summary": summary, "rows": rows}
+        summary[hz] = {
+            "mean_ic": round(float(np.mean(ics)), 4) if ics else None,
+            "mean_t": round(float(np.mean(ts)), 3) if ts else None,
+            "t_of_mean_ic": (round(float(np.mean(ics) / (np.std(ics, ddof=1) / np.sqrt(len(ics)))), 3) if len(ics) > 2 else None),
+            "names": len(ics),
+            "names_abs_t_gt_2": int(sum(abs(t) > 2 for t in ts)),
+        }
+    res = {
+        "trial": "v0.15 GDELT headline tone (rules lexicon)",
+        "design_period": PERIODS["design"],
+        "window_used": [start.isoformat(), end.isoformat()],
+        "note": "GDELT DOC 2.0 starts 2017-01-01; design overlap only. Weekly artlist, 250 max, newest first.",
+        "lookback_days": LOOKBACK_DAYS,
+        "n_folds": 5,
+        "queries": QUERIES,
+        "summary": summary,
+        "rows": rows,
+    }
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(res, indent=2))
     return res

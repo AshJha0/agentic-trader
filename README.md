@@ -418,10 +418,9 @@ from agentic_trader.agentic import AgentHarness, Role, Task
 harness = AgentHarness(TradingGraph(make_config()), positions={"EURUSD": 0.2})
 run = harness.run(Task("EURUSD", date(2024, 3, 1), Role.TRADER, current_weight=0.2))
 print(run.state.value, run.decision.target_weight, len(run.evidence), run.report.warnings)
-print(run.report.to_markdown())        # decision, findings with evidence ids, critic checks, evidence, audit warnings
+print(run.report.to_markdown())  # decision, findings with evidence ids, critic checks, evidence, audit warnings
 
-port = run_portfolio_backtest(["AAPL", "JPM", "EURUSD"], "2023-01-02", "2023-12-29", make_config(),
-                              weighting="risk_parity")
+port = run_portfolio_backtest(["AAPL", "JPM", "EURUSD"], "2023-01-02", "2023-12-29", make_config(), weighting="risk_parity")
 print(port.table())
 ```
 
@@ -484,6 +483,13 @@ of the last one.
   `quant/__init__.py` (which validates arguments so both backends refuse the same input), add
   a cross-check to `tests/test_quant.py` and a hypothesis test to `tests/test_fuzz.py`. Every
   function the facade exports is fuzzed on both backends.
+
+## v0.19.1 (2026-11-14): quality, no new results
+
+The repo is formatted with `ruff format` (one commit, listed in `.git-blame-ignore-revs`);
+four modules gained offline tests (`cli/evaluate`, `cli/decisions`, `agentic/redteam_v2`,
+`data/__init__`, each at 97 % or more in their own test runs); `scripts/llm_study.py` rows now
+record `data_provider` and `--report` reads it. Details in the CHANGELOG.
 
 ## v0.19 (v0.19.0, 2026-11-14; release candidates rc1 to rc3, 2026-11-12/13): long runs that survive, skips that are counted
 

@@ -10,6 +10,7 @@ About an hour on the C++ backend.
 
     .venv\\Scripts\\python.exe scripts/measure_v08.py [--only eval_main,portfolio_holdout] [--out results/v08]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,8 +49,11 @@ EVALS: dict[str, tuple[list[str], dict, dict]] = {
     "eval_noedgar": (ALL, FOUR, {"edgar": False}),
     "eval_rules_v03": (ALL, FOUR, RULES_V03),
     "eval_rules_v02": (CORE, FOUR, RULES_V02),
-    "eval_xalpha": (ALL, FOUR, {"analysts": ["technical", "fundamentals", "news", "sentiment", "xalpha"],
-                                "xalpha_universe": ALL}),
+    "eval_xalpha": (
+        ALL,
+        FOUR,
+        {"analysts": ["technical", "fundamentals", "news", "sentiment", "xalpha"], "xalpha_universe": ALL},
+    ),
     "eval_alpha": (CORE, FOUR, {"analysts": ["technical", "sentiment", "macro", "fundamentals", "news", "alpha"]}),
     "eval_no_trackrecord_cut": (ALL, FOUR, {"rules": {"track_record_cut": False}}),
     "eval_cash_leg_off": (ALL, FOUR, {"cash_leg": "off"}),
@@ -65,30 +69,53 @@ PORTFOLIOS: dict[str, tuple[list[str], str, dict]] = {
     "portfolio_design_cash_leg_off": (CORE, "design", {"cash_leg": "off"}),
     "portfolio_holdout_cash_leg_off": (CORE, "holdout", {"cash_leg": "off"}),
     "portfolio_holdout_impact_1e9_vwap": (CORE, "holdout", {"costs": {"impact_coeff": 1.0}, "initial_capital": 1e9}),
-    "portfolio_holdout_impact_1e9_twap": (CORE, "holdout", {"costs": {"impact_coeff": 1.0, "execution_algo": "twap"},
-                                                            "initial_capital": 1e9}),
-    "portfolio_holdout_impact_1e9_ac": (CORE, "holdout", {"costs": {"impact_coeff": 1.0, "execution_algo": "ac",
-                                                                    "ac_kappa": 5.0}, "initial_capital": 1e9}),
+    "portfolio_holdout_impact_1e9_twap": (
+        CORE,
+        "holdout",
+        {"costs": {"impact_coeff": 1.0, "execution_algo": "twap"}, "initial_capital": 1e9},
+    ),
+    "portfolio_holdout_impact_1e9_ac": (
+        CORE,
+        "holdout",
+        {"costs": {"impact_coeff": 1.0, "execution_algo": "ac", "ac_kappa": 5.0}, "initial_capital": 1e9},
+    ),
 }
 
 # Keys the data layer reads from the provider's own config (config.get / config[...] in
 # agentic_trader/data). A run that overrides one of them needs a provider built from its
 # config: the shared provider keeps the settings it was built with, so the first v0.8
 # measurement ran "EDGAR off" and "cash leg off" with both still on (meta recorded it).
-PROVIDER_KEYS = frozenset({
-    "data_provider", "edgar", "edgar_user_agent", "edgar_cache_dir", "edgar_cache_max_age_days",
-    "edgar_ciks", "cash_leg", "risk_free_annual", "fx_policy_rates", "fx_macro_source", "fx_inflation",
-    "fred_vintages", "fred_vintage_step_days", "fred_cache_dir", "fred_cache_max_age_days",
-})
+PROVIDER_KEYS = frozenset(
+    {
+        "data_provider",
+        "edgar",
+        "edgar_user_agent",
+        "edgar_cache_dir",
+        "edgar_cache_max_age_days",
+        "edgar_ciks",
+        "cash_leg",
+        "risk_free_annual",
+        "fx_policy_rates",
+        "fx_macro_source",
+        "fx_inflation",
+        "fred_vintages",
+        "fred_vintage_step_days",
+        "fred_cache_dir",
+        "fred_cache_max_age_days",
+    }
+)
 
 VAR_WINDOWS = (120, 250)
-DESK_VAR_WINDOW = 250   # agents/risk.py risk_facts: historical VaR of the last 250 daily returns
+DESK_VAR_WINDOW = 250  # agents/risk.py risk_facts: historical VaR of the last 250 daily returns
 
 
 def base_config(**over) -> dict:
-    cfg = make_config(data_provider="yahoo", memory_path=None,
-                      edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
-                      fred_cache_dir=str(ROOT / "build" / "fred_cache"))
+    cfg = make_config(
+        data_provider="yahoo",
+        memory_path=None,
+        edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
+        fred_cache_dir=str(ROOT / "build" / "fred_cache"),
+    )
     return make_config(cfg, **over)
 
 
@@ -125,10 +152,15 @@ def run_eval(name: str, out: Path, provider) -> None:
     cfg = base_config(**over)
     log(f"{name}: {len(syms)} symbols x {list(periods)} ...")
     t0 = time.time()
-    res = evaluate(syms, periods, cfg, EVERY, provider=provider_for(cfg, over, provider), workers=4,
-                   progress=lambda m: log(f"  {name}: {m}"))
-    res.meta["measurement"] = {"name": name, "overrides": _jsonable(over), "rebalance_every": EVERY,
-                               "seconds": round(time.time() - t0, 1)}   # meta["macro_sources"] is evaluate()'s own tally
+    res = evaluate(
+        syms, periods, cfg, EVERY, provider=provider_for(cfg, over, provider), workers=4, progress=lambda m: log(f"  {name}: {m}")
+    )
+    res.meta["measurement"] = {
+        "name": name,
+        "overrides": _jsonable(over),
+        "rebalance_every": EVERY,
+        "seconds": round(time.time() - t0, 1),
+    }  # meta["macro_sources"] is evaluate()'s own tally
     res.to_json(path, include_returns=True)
     log(f"{name}: done in {time.time() - t0:.0f}s ({len(res.rows)} rows, {len(res.meta.get('errors', []))} errors)")
 
@@ -143,23 +175,44 @@ def run_portfolio(name: str, out: Path, provider) -> None:
     cfg = base_config(**over)
     log(f"{name}: {len(syms)} sleeves {start} -> {end} ...")
     t0 = time.time()
-    rep = run_portfolio_backtest(syms, start, end, cfg, rebalance_every=EVERY,
-                                 provider=provider_for(cfg, over, provider))
+    rep = run_portfolio_backtest(syms, start, end, cfg, rebalance_every=EVERY, provider=provider_for(cfg, over, provider))
     frame = rep.returns.copy()
     frame["rf"] = rep.rf if isinstance(rep.rf, np.ndarray) else float(rep.rf if rep.rf is not None else 0.0)
     frame.to_csv(out / f"{name}.csv")
-    sleeves = {s: {k: {"impact_paid": r.results[k].impact_paid, "sharpe": r.results[k].metrics.sharpe,
-                       "cumulative_return": r.results[k].metrics.cumulative_return,
-                       "max_drawdown": r.results[k].metrics.max_drawdown}
-                   for k in r.results} for s, r in rep.sleeves.items()}
-    json.dump(_jsonable({"name": name, "period": period, "start": start, "end": end, "symbols": syms,
-                         "overrides": over, "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1),
-                         "table": rep.table().to_dict(orient="index"),
-                         "metrics": {k: m for k, m in rep.metrics.items()},
-                         "sharpe_vs_vol_target": rep.sharpe_difference(AGENT, "B&H vol-target"),
-                         "sharpe_vs_buy_hold": rep.sharpe_difference(AGENT, "Buy&Hold"),
-                         "sleeves": sleeves, "provenance": provenance()}),
-              open(path, "w", encoding="utf-8"), indent=1)
+    sleeves = {
+        s: {
+            k: {
+                "impact_paid": r.results[k].impact_paid,
+                "sharpe": r.results[k].metrics.sharpe,
+                "cumulative_return": r.results[k].metrics.cumulative_return,
+                "max_drawdown": r.results[k].metrics.max_drawdown,
+            }
+            for k in r.results
+        }
+        for s, r in rep.sleeves.items()
+    }
+    json.dump(
+        _jsonable(
+            {
+                "name": name,
+                "period": period,
+                "start": start,
+                "end": end,
+                "symbols": syms,
+                "overrides": over,
+                "rebalance_every": EVERY,
+                "seconds": round(time.time() - t0, 1),
+                "table": rep.table().to_dict(orient="index"),
+                "metrics": {k: m for k, m in rep.metrics.items()},
+                "sharpe_vs_vol_target": rep.sharpe_difference(AGENT, "B&H vol-target"),
+                "sharpe_vs_buy_hold": rep.sharpe_difference(AGENT, "Buy&Hold"),
+                "sleeves": sleeves,
+                "provenance": provenance(),
+            }
+        ),
+        open(path, "w", encoding="utf-8"),
+        indent=1,
+    )
     log(f"{name}: done in {time.time() - t0:.0f}s")
 
 
@@ -198,6 +251,7 @@ def run_trials(out: Path, provider) -> None:
     universe under the current engine, so the selection statistics count all of them."""
     from agentic_trader.evaluation import TRIALS, trial_slug
     from agentic_trader.checkpoint import fingerprint
+
     design = {"design": PERIODS["design"]}
     for t in TRIALS:
         path = out / f"trial_{trial_slug(t.name)}.json"
@@ -205,8 +259,15 @@ def run_trials(out: Path, provider) -> None:
             continue
         # inputs only (not code): a file from other inputs is re-measured; a file written before
         # fingerprints existed is kept, so the registered trial statistics do not move
-        fp = fingerprint({"trial": t.name, "overrides": _jsonable(t.overrides), "rebalance_every": EVERY,
-                          "symbols": list(CORE), "design": list(design["design"])})
+        fp = fingerprint(
+            {
+                "trial": t.name,
+                "overrides": _jsonable(t.overrides),
+                "rebalance_every": EVERY,
+                "symbols": list(CORE),
+                "design": list(design["design"]),
+            }
+        )
         if path.exists():
             old = json.load(open(path, encoding="utf-8")).get("meta", {}).get("measurement", {}).get("fingerprint")
             if old is None or old == fp:
@@ -221,12 +282,17 @@ def run_trials(out: Path, provider) -> None:
         res = evaluate(CORE, design, cfg, EVERY, provider=prov, workers=4)
         # the statistic the deflated Sharpe is computed on: the same 15-sleeve design-period
         # portfolio Sharpe (equal capital, 260 periods/year) as the chosen rules' own
-        port = run_portfolio_backtest(CORE, design["design"][0], design["design"][1], cfg, rebalance_every=EVERY,
-                                      provider=prov)
-        res.meta["measurement"] = {"trial": t.name, "version": t.version, "overrides": _jsonable(t.overrides),
-                                   "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1),
-                                   "portfolio_sharpe": float(port.metrics[AGENT].sharpe), "fingerprint": fp}
-        tmp = path.with_suffix(".json.tmp")   # atomic: a crash mid-write never leaves a half file
+        port = run_portfolio_backtest(CORE, design["design"][0], design["design"][1], cfg, rebalance_every=EVERY, provider=prov)
+        res.meta["measurement"] = {
+            "trial": t.name,
+            "version": t.version,
+            "overrides": _jsonable(t.overrides),
+            "rebalance_every": EVERY,
+            "seconds": round(time.time() - t0, 1),
+            "portfolio_sharpe": float(port.metrics[AGENT].sharpe),
+            "fingerprint": fp,
+        }
+        tmp = path.with_suffix(".json.tmp")  # atomic: a crash mid-write never leaves a half file
         res.to_json(tmp, include_returns=True)
         os.replace(tmp, path)
         log(f"trial {t.name!r}: done in {time.time() - t0:.0f}s")
@@ -236,15 +302,25 @@ def run_trials(out: Path, provider) -> None:
         mean, port_sharpe = None, None
         if path.exists():
             data = json.load(open(path, encoding="utf-8"))
-            vals = [r["Sharpe"] for r in data["rows"]
-                    if r.get("strategy") == AGENT and r.get("period") == "design" and r.get("Sharpe") is not None]
+            vals = [
+                r["Sharpe"]
+                for r in data["rows"]
+                if r.get("strategy") == AGENT and r.get("period") == "design" and r.get("Sharpe") is not None
+            ]
             mean = float(np.mean(vals)) if vals else None
             port_sharpe = data.get("meta", {}).get("measurement", {}).get("portfolio_sharpe")
         if port_sharpe is None:
             port_sharpe = t.recorded_portfolio_sharpe
-        rows.append({"name": t.name, "version": t.version, "reproducible": t.overrides is not None,
-                     "recorded_mean_sharpe_v03_engine": t.recorded_mean_sharpe, "mean_sharpe": mean,
-                     "portfolio_sharpe": port_sharpe})
+        rows.append(
+            {
+                "name": t.name,
+                "version": t.version,
+                "reproducible": t.overrides is not None,
+                "recorded_mean_sharpe_v03_engine": t.recorded_mean_sharpe,
+                "mean_sharpe": mean,
+                "portfolio_sharpe": port_sharpe,
+            }
+        )
     json.dump({"trials": rows, "provenance": provenance()}, open(out / "trials.json", "w", encoding="utf-8"), indent=1)
     log(f"trials: {sum(r['mean_sharpe'] is not None for r in rows)} of {len(rows)} measured")
 
@@ -261,22 +337,31 @@ def run_phase_sweep(out: Path, provider) -> None:
     for offset in range(EVERY):
         log(f"phase_sweep: offset {offset} ...")
         t0 = time.time()
-        rep = run_portfolio_backtest(CORE, start, end, base_config(), rebalance_every=EVERY, provider=provider,
-                                     rebalance_offset=offset)
-        rows[str(offset)] = {"table": rep.table().to_dict(orient="index"),
-                             "sharpe_vs_vol_target": rep.sharpe_difference(AGENT, "B&H vol-target"),
-                             "sharpe_vs_buy_hold": rep.sharpe_difference(AGENT, "Buy&Hold"),
-                             "seconds": round(time.time() - t0, 1)}
-    json.dump(_jsonable({"period": "holdout", "rebalance_every": EVERY, "offsets": rows, "provenance": provenance()}),
-              open(path, "w", encoding="utf-8"), indent=1)
+        rep = run_portfolio_backtest(
+            CORE, start, end, base_config(), rebalance_every=EVERY, provider=provider, rebalance_offset=offset
+        )
+        rows[str(offset)] = {
+            "table": rep.table().to_dict(orient="index"),
+            "sharpe_vs_vol_target": rep.sharpe_difference(AGENT, "B&H vol-target"),
+            "sharpe_vs_buy_hold": rep.sharpe_difference(AGENT, "Buy&Hold"),
+            "seconds": round(time.time() - t0, 1),
+        }
+    json.dump(
+        _jsonable({"period": "holdout", "rebalance_every": EVERY, "offsets": rows, "provenance": provenance()}),
+        open(path, "w", encoding="utf-8"),
+        indent=1,
+    )
     log("phase_sweep: done")
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=str(ROOT / "results" / "v08"))
-    ap.add_argument("--only", default=None,
-                    help="comma list of run names, or the stages var_coverage / trials / phase_sweep (default: everything)")
+    ap.add_argument(
+        "--only",
+        default=None,
+        help="comma list of run names, or the stages var_coverage / trials / phase_sweep (default: everything)",
+    )
     args = ap.parse_args(argv)
     load_dotenv(str(ROOT / ".env"))
     out = Path(args.out)
@@ -299,8 +384,12 @@ def main(argv=None) -> int:
         run_phase_sweep(out, provider)
     if only is None or "trials" in only:
         run_trials(out, provider)
-    manifest = {"finished": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.time() - t0),
-                "files": sorted(p.name for p in out.iterdir()), "provenance": provenance()}
+    manifest = {
+        "finished": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "seconds": round(time.time() - t0),
+        "files": sorted(p.name for p in out.iterdir()),
+        "provenance": provenance(),
+    }
     json.dump(manifest, open(out / "manifest.json", "w", encoding="utf-8"), indent=1)
     log(f"all done in {time.time() - t0:.0f}s")
     return 0

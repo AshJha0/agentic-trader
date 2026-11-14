@@ -26,6 +26,7 @@ Approval gateways decide what happens to REQUIRE_APPROVAL:
   (the API exposes it); the harness moves the task to AWAITING_APPROVAL;
 * ``DenyApprovalGateway`` rejects everything (locked-down batch runs).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -41,8 +42,18 @@ from datetime import date
 from typing import Any, Callable
 
 from ..instruments import Instrument
-from .domain import (Capability, PolicyDecision, PolicyOutcome, RiskLevel, Role, ROLE_CAPABILITIES,
-                     ToolDescriptor, ToolRequest, new_id, utc_now)
+from .domain import (
+    Capability,
+    PolicyDecision,
+    PolicyOutcome,
+    RiskLevel,
+    Role,
+    ROLE_CAPABILITIES,
+    ToolDescriptor,
+    ToolRequest,
+    new_id,
+    utc_now,
+)
 
 Rule = Callable[["PolicyContext"], PolicyDecision | None]
 
@@ -68,8 +79,7 @@ def capability_rule(ctx: PolicyContext) -> PolicyDecision | None:
     missing = ctx.tool.annotations.required - ctx.capabilities
     if missing:
         names = ", ".join(sorted(c.value for c in missing))
-        return PolicyDecision(PolicyOutcome.DENY, "required_capabilities",
-                              f"role {ctx.role.value} lacks {names}")
+        return PolicyDecision(PolicyOutcome.DENY, "required_capabilities", f"role {ctx.role.value} lacks {names}")
     return None
 
 
@@ -77,10 +87,10 @@ def read_only_rule(ctx: PolicyContext) -> PolicyDecision | None:
     if ctx.tool.annotations.read_only:
         return None
     if Capability.PROPOSE_TRADES not in ctx.capabilities:
-        return PolicyDecision(PolicyOutcome.DENY, "read_only",
-                              f"{ctx.tool.name} changes state and role {ctx.role.value} cannot propose trades")
-    return PolicyDecision(PolicyOutcome.REQUIRE_APPROVAL, "read_only",
-                          f"{ctx.tool.name} changes state; approval required")
+        return PolicyDecision(
+            PolicyOutcome.DENY, "read_only", f"{ctx.tool.name} changes state and role {ctx.role.value} cannot propose trades"
+        )
+    return PolicyDecision(PolicyOutcome.REQUIRE_APPROVAL, "read_only", f"{ctx.tool.name} changes state; approval required")
 
 
 DEFAULT_MAX_SYMBOLS_PER_CALL = 60
@@ -140,17 +150,16 @@ def argument_guard_rule(ctx: PolicyContext) -> PolicyDecision | None:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", f"{key} is not a number")
         if isinstance(v, bool) or not math.isfinite(fv):
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", f"{key} is not finite")
-        if key == "current_weight":   # the position held: a fact to size from, whatever the cap
+        if key == "current_weight":  # the position held: a fact to size from, whatever the cap
             continue
         wcap = float(ctx.config.get("max_position", 1.0))
         if abs(fv) > wcap:
-            return PolicyDecision(PolicyOutcome.DENY, "argument_guard",
-                                  f"{key} {fv:+.2f} exceeds the max position {wcap:.2f}")
+            return PolicyDecision(PolicyOutcome.DENY, "argument_guard", f"{key} {fv:+.2f} exceeds the max position {wcap:.2f}")
     lookback = args.get("lookback_days")
     if lookback is not None and (not isinstance(lookback, (int, float)) or not 0 < lookback <= 3660):
         return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "lookback_days must be in (0, 3660]")
     notional = args.get("notional")
-    if notional is not None:   # an order's size is bounded before it can reach an approver
+    if notional is not None:  # an order's size is bounded before it can reach an approver
         try:
             nv = float(notional)
         except (TypeError, ValueError):
@@ -159,33 +168,46 @@ def argument_guard_rule(ctx: PolicyContext) -> PolicyDecision | None:
             return PolicyDecision(PolicyOutcome.DENY, "argument_guard", "notional must be a positive finite number")
         ncap = ctx.config.get("max_order_notional")
         if ncap is not None and nv > float(ncap):
-            return PolicyDecision(PolicyOutcome.DENY, "argument_guard",
-                                  f"notional {nv:,.0f} exceeds the per-order cap {float(ncap):,.0f}")
+            return PolicyDecision(
+                PolicyOutcome.DENY, "argument_guard", f"notional {nv:,.0f} exceeds the per-order cap {float(ncap):,.0f}"
+            )
     return None
 
 
 def risk_level_rule(ctx: PolicyContext) -> PolicyDecision | None:
     if ctx.tool.annotations.risk is RiskLevel.HIGH:
-        return PolicyDecision(PolicyOutcome.REQUIRE_APPROVAL, "risk_level",
-                              f"{ctx.tool.name} is high risk; approval required")
+        return PolicyDecision(PolicyOutcome.REQUIRE_APPROVAL, "risk_level", f"{ctx.tool.name} is high risk; approval required")
     return None
 
 
 def allow_rule(ctx: PolicyContext) -> PolicyDecision:
-    return PolicyDecision(PolicyOutcome.ALLOW, "default_allow",
-                          f"{ctx.tool.name} is read-only, {ctx.tool.annotations.risk.value} risk, "
-                          f"and role {ctx.role.value} holds the required capabilities")
+    return PolicyDecision(
+        PolicyOutcome.ALLOW,
+        "default_allow",
+        f"{ctx.tool.name} is read-only, {ctx.tool.annotations.risk.value} risk, "
+        f"and role {ctx.role.value} holds the required capabilities",
+    )
 
 
-DEFAULT_RULES: tuple[Rule, ...] = (deny_list_rule, capability_rule, argument_guard_rule,
-                                   read_only_rule, risk_level_rule, allow_rule)
+DEFAULT_RULES: tuple[Rule, ...] = (
+    deny_list_rule,
+    capability_rule,
+    argument_guard_rule,
+    read_only_rule,
+    risk_level_rule,
+    allow_rule,
+)
 MAX_DECISIONS_KEPT = 1000
 
 
 # --------------------------------------------------------------- engine
 class PolicyEngine:
-    def __init__(self, config: dict[str, Any] | None = None, rules: tuple[Rule, ...] = DEFAULT_RULES,
-                 role_capabilities: dict[Role, frozenset[Capability]] | None = None):
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        rules: tuple[Rule, ...] = DEFAULT_RULES,
+        role_capabilities: dict[Role, frozenset[Capability]] | None = None,
+    ):
         self.config = dict(config or {})
         self.rules = rules
         # ``is None``, not ``or``: an explicitly empty map grants nothing (fail closed).
@@ -259,8 +281,9 @@ class QueuedApprovalGateway(ApprovalGateway):
     def decide(self, task_id: str, request: ToolRequest, reason: str) -> bool | None:
         # The same request asked again (a resumed task) finds its earlier entry.
         with self._lock:
-            existing = next((a for a in self._queue.values()
-                             if a.task_id == task_id and a.request.request_id == request.request_id), None)
+            existing = next(
+                (a for a in self._queue.values() if a.task_id == task_id and a.request.request_id == request.request_id), None
+            )
             if existing is None:
                 existing = ApprovalRequest(new_id("APPROVAL"), task_id, request, reason)
                 self._queue[existing.id] = existing
@@ -268,8 +291,7 @@ class QueuedApprovalGateway(ApprovalGateway):
 
     def pending(self, task_id: str | None = None) -> list[ApprovalRequest]:
         with self._lock:
-            return [a for a in self._queue.values()
-                    if not a.decided and (task_id is None or a.task_id == task_id)]
+            return [a for a in self._queue.values() if not a.decided and (task_id is None or a.task_id == task_id)]
 
     def all(self) -> list[ApprovalRequest]:
         with self._lock:
@@ -301,8 +323,9 @@ class QueuedApprovalGateway(ApprovalGateway):
                 del self._queue[k]
         return len(gone)
 
-    def resolve(self, approval_id: str, approve: bool, decided_by: str = "human", note: str = "",
-                signature: str | None = None) -> ApprovalRequest:
+    def resolve(
+        self, approval_id: str, approve: bool, decided_by: str = "human", note: str = "", signature: str | None = None
+    ) -> ApprovalRequest:
         # ``signature`` is ignored here; ``SignedApprovalGateway`` requires it.
         with self._lock:
             a = self._queue.get(approval_id)
@@ -319,8 +342,9 @@ def approval_message(approval_id: str, request: ToolRequest, approve: bool) -> b
     """The canonical bytes an approver signs: the approval, the exact request (tool and
     arguments, via ``request_id``) and the verdict. A signature for one verdict or one
     request does not verify for another."""
-    return json.dumps({"approval": approval_id, "request": request.request_id, "tool": request.tool,
-                       "approve": bool(approve)}, sort_keys=True).encode()
+    return json.dumps(
+        {"approval": approval_id, "request": request.request_id, "tool": request.tool, "approve": bool(approve)}, sort_keys=True
+    ).encode()
 
 
 def sign_approval(secret: bytes, approval_id: str, request: ToolRequest, approve: bool) -> str:
@@ -337,6 +361,7 @@ def ed25519_keypair() -> tuple[bytes, bytes]:
     the public half. Uses the ``cryptography`` package (pinned in requirements-lock.txt)."""
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
     sk = Ed25519PrivateKey.generate()
     raw = serialization.Encoding.Raw
     priv = sk.private_bytes(raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
@@ -347,18 +372,20 @@ def sign_approval_ed25519(private_key: bytes, approval_id: str, request: ToolReq
     """Ed25519 signature (hex) of ``approval_message``. Run by the approver, never by the
     server: the server cannot produce this without the approver's private key."""
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
     sk = Ed25519PrivateKey.from_private_bytes(bytes(private_key))
     return sk.sign(approval_message(approval_id, request, approve)).hex()
 
 
-def verify_approval_ed25519(public_key: bytes, signature: str, approval_id: str, request: ToolRequest,
-                            approve: bool) -> bool:
+def verify_approval_ed25519(public_key: bytes, signature: str, approval_id: str, request: ToolRequest, approve: bool) -> bool:
     """True when ``signature`` (hex) is a valid Ed25519 signature of the approval message."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
     try:
         Ed25519PublicKey.from_public_bytes(bytes(public_key)).verify(
-            bytes.fromhex(str(signature)), approval_message(approval_id, request, approve))
+            bytes.fromhex(str(signature)), approval_message(approval_id, request, approve)
+        )
         return True
     except (InvalidSignature, ValueError):
         return False
@@ -437,11 +464,18 @@ class SignedApprovalGateway(QueuedApprovalGateway):
 
     name = "signed"
 
-    def __init__(self, keys: dict[str, bytes] | None = None, quorum: dict[str, int] | None = None, default_quorum: int = 1,
-                 ttl_s: float | None = None, price_fn: Callable[[ToolRequest], float | None] | None = None,
-                 price_tolerance: float = 0.01, store: AppendOnlyApprovalLog | None = None,
-                 clock: Callable[[], float] = time.time,
-                 public_keys: dict[str, bytes] | None = None) -> None:
+    def __init__(
+        self,
+        keys: dict[str, bytes] | None = None,
+        quorum: dict[str, int] | None = None,
+        default_quorum: int = 1,
+        ttl_s: float | None = None,
+        price_fn: Callable[[ToolRequest], float | None] | None = None,
+        price_tolerance: float = 0.01,
+        store: AppendOnlyApprovalLog | None = None,
+        clock: Callable[[], float] = time.time,
+        public_keys: dict[str, bytes] | None = None,
+    ) -> None:
         super().__init__()
         self.keys = {k: bytes(v) for k, v in (keys or {}).items()}
         self.public_keys = {k: bytes(v) for k, v in (public_keys or {}).items()}
@@ -461,7 +495,7 @@ class SignedApprovalGateway(QueuedApprovalGateway):
                 raise ValueError(f"quorum {n} for {tool} must be between 1 and {n_approvers} approvers")
         self.ttl_s, self.price_fn, self.price_tolerance = ttl_s, price_fn, float(price_tolerance)
         self.store, self.clock = store, clock
-        self._sigs: dict[str, dict[str, str]] = {}          # approval id -> approver -> signature
+        self._sigs: dict[str, dict[str, str]] = {}  # approval id -> approver -> signature
         self._approved_at: dict[str, float] = {}
         self._price_at: dict[str, float | None] = {}
 
@@ -485,8 +519,9 @@ class SignedApprovalGateway(QueuedApprovalGateway):
         if self.store is not None:
             self.store.append({"at": self.clock(), **event})
 
-    def resolve(self, approval_id: str, approve: bool, decided_by: str = "human", note: str = "",
-                signature: str | None = None) -> ApprovalRequest:
+    def resolve(
+        self, approval_id: str, approve: bool, decided_by: str = "human", note: str = "", signature: str | None = None
+    ) -> ApprovalRequest:
         """Add one approver's signed decision; ``decided_by`` is the approver id. The request
         stays pending until the quorum is reached (or one approver rejects)."""
         secret, public = self.keys.get(decided_by), self.public_keys.get(decided_by)
@@ -520,12 +555,20 @@ class SignedApprovalGateway(QueuedApprovalGateway):
                 self._price_at[approval_id] = self._price(a.request) if self.price_fn else None
             else:
                 a.note = f"{len(sigs)} of {need} signatures"
-        self._log(kind="signature", approval=approval_id, approver=decided_by, approve=bool(approve),
-                  request=a.request.request_id, tool=a.request.tool, signature=str(signature),
-                  scheme="ed25519" if public is not None else "hmac-legacy")
+        self._log(
+            kind="signature",
+            approval=approval_id,
+            approver=decided_by,
+            approve=bool(approve),
+            request=a.request.request_id,
+            tool=a.request.tool,
+            signature=str(signature),
+            scheme="ed25519" if public is not None else "hmac-legacy",
+        )
         if a.decided:
-            self._log(kind="decision", approval=approval_id, approved=a.approved, by=a.decided_by,
-                      price=self._price_at.get(approval_id))
+            self._log(
+                kind="decision", approval=approval_id, approved=a.approved, by=a.decided_by, price=self._price_at.get(approval_id)
+            )
         return a
 
     def decide(self, task_id: str, request: ToolRequest, reason: str) -> bool | None:
@@ -533,8 +576,7 @@ class SignedApprovalGateway(QueuedApprovalGateway):
         if verdict is not True:
             return verdict
         with self._lock:
-            a = next(x for x in self._queue.values()
-                     if x.task_id == task_id and x.request.request_id == request.request_id)
+            a = next(x for x in self._queue.values() if x.task_id == task_id and x.request.request_id == request.request_id)
             approved_at, price_at = self._approved_at.get(a.id), self._price_at.get(a.id)
         problem = None
         now = self.clock()
@@ -544,16 +586,17 @@ class SignedApprovalGateway(QueuedApprovalGateway):
             # Round 1 (A9/E-2): fail closed. No valid price at quorum time, or none now, means
             # the re-pricing check cannot run, so the approval is treated as stale.
             if not _valid_price(price_at):
-                problem = (f"no valid price was captured when the quorum was reached ({price_at!r}): "
-                           "the re-pricing check cannot run, so the approval is refused")
+                problem = (
+                    f"no valid price was captured when the quorum was reached ({price_at!r}): "
+                    "the re-pricing check cannot run, so the approval is refused"
+                )
             else:
                 assert price_at is not None
                 px = self._price(request)
                 if not _valid_price(px):
                     problem = f"no valid price at execution ({px!r}): the re-pricing check cannot run"
-                elif abs(px / price_at - 1.0) > self.price_tolerance:   # type: ignore[operator]
-                    problem = (f"price moved since approval ({price_at:g} -> {px}); tolerance "
-                               f"{self.price_tolerance:.2%}")
+                elif abs(px / price_at - 1.0) > self.price_tolerance:  # type: ignore[operator]
+                    problem = f"price moved since approval ({price_at:g} -> {px}); tolerance {self.price_tolerance:.2%}"
         if problem is not None:
             with self._lock:
                 a.approved, a.note = False, problem

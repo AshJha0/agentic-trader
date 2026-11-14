@@ -4,6 +4,7 @@ Every method takes an ``as_of`` date and must only return information that was
 available at the close of that date. The graph additionally clips price history
 to ``<= as_of`` so a provider bug cannot leak future prices into a decision.
 """
+
 from __future__ import annotations
 
 import logging
@@ -116,8 +117,7 @@ class MarketDataProvider(ABC):
         return cash_rates(dates, self.config, self.real_world)
 
 
-def cash_rates(dates: pd.DatetimeIndex, config: dict, real_world: bool,
-               mode: str | None = None) -> np.ndarray:
+def cash_rates(dates: pd.DatetimeIndex, config: dict, real_world: bool, mode: str | None = None) -> np.ndarray:
     """``MarketDataProvider.risk_free_series`` for a config; ``mode`` overrides ``config["cash_leg"]``."""
     mode = mode or config.get("cash_leg", "auto")
     n = len(dates)
@@ -130,6 +130,7 @@ def cash_rates(dates: pd.DatetimeIndex, config: dict, real_world: bool,
     if mode != MACRO_SOURCE_FRED:
         raise ValueError(f"unknown cash_leg {mode!r} (auto, fred, static or off)")
     from .fred import CASH_SERIES, default_client
+
     s = default_client(config).series_asof(CASH_SERIES["USD"], pd.DatetimeIndex(dates))
     return (s / 100.0).to_numpy(dtype=float)
 
@@ -180,8 +181,7 @@ STATIC_SOURCE_LABEL = "static config (illustrative - update fx_policy_rates/fx_i
 FRED_SOURCE_LABEL = "FRED (point-in-time)"
 
 
-def fx_rates(instrument: Instrument, dates: pd.DatetimeIndex, config: dict,
-             real_world: bool) -> tuple[pd.Series, pd.Series, str]:
+def fx_rates(instrument: Instrument, dates: pd.DatetimeIndex, config: dict, real_world: bool) -> tuple[pd.Series, pd.Series, str]:
     """The one resolver of "what policy rates were known at each date" (percent).
 
     Returns ``(base_rate, quote_rate, source)`` indexed by ``dates``; a leg that is not
@@ -197,9 +197,13 @@ def fx_rates(instrument: Instrument, dates: pd.DatetimeIndex, config: dict,
     b, q = instrument.base, instrument.quote
     if src == MACRO_SOURCE_STATIC:
         rates = config["fx_policy_rates"]
-        return (pd.Series(float(rates[b]) if b in rates else np.nan, index=idx),
-                pd.Series(float(rates[q]) if q in rates else np.nan, index=idx), src)
+        return (
+            pd.Series(float(rates[b]) if b in rates else np.nan, index=idx),
+            pd.Series(float(rates[q]) if q in rates else np.nan, index=idx),
+            src,
+        )
     from .fred import RATE_SERIES, default_client
+
     c = default_client(config)
 
     def leg(ccy: str) -> pd.Series:
@@ -215,11 +219,15 @@ def static_fx_macro(instrument: Instrument, config: dict) -> dict[str, Any]:
     if b not in rates or q not in rates:
         return {}
     return {
-        "base": b, "quote": q,
-        "base_rate": rates[b], "quote_rate": rates[q],
+        "base": b,
+        "quote": q,
+        "base_rate": rates[b],
+        "quote_rate": rates[q],
         "rate_diff": rates[b] - rates[q],
-        "base_inflation": cpi.get(b), "quote_inflation": cpi.get(q),
-        "source": STATIC_SOURCE_LABEL, "macro_source": MACRO_SOURCE_STATIC,
+        "base_inflation": cpi.get(b),
+        "quote_inflation": cpi.get(q),
+        "source": STATIC_SOURCE_LABEL,
+        "macro_source": MACRO_SOURCE_STATIC,
     }
 
 
@@ -242,14 +250,25 @@ def fx_macro(instrument: Instrument, as_of: date, config: dict, real_world: bool
     br, qr = float(bs.iloc[0]), float(qs.iloc[0])
     b, q = instrument.base, instrument.quote
     if np.isnan(br) or np.isnan(qr):
-        log.info("no point-in-time FRED policy rate for %s at %s (%s%s); macro abstains",
-                 instrument.display, as_of, "" if not np.isnan(br) else f"{b} missing ",
-                 "" if not np.isnan(qr) else f"{q} missing")
+        log.info(
+            "no point-in-time FRED policy rate for %s at %s (%s%s); macro abstains",
+            instrument.display,
+            as_of,
+            "" if not np.isnan(br) else f"{b} missing ",
+            "" if not np.isnan(qr) else f"{q} missing",
+        )
         return {}
-    out: dict[str, Any] = {"base": b, "quote": q, "base_rate": br, "quote_rate": qr,
-                           "rate_diff": br - qr, "source": FRED_SOURCE_LABEL,
-                           "macro_source": MACRO_SOURCE_FRED}
+    out: dict[str, Any] = {
+        "base": b,
+        "quote": q,
+        "base_rate": br,
+        "quote_rate": qr,
+        "rate_diff": br - qr,
+        "source": FRED_SOURCE_LABEL,
+        "macro_source": MACRO_SOURCE_FRED,
+    }
     from .fred import default_client
+
     c = default_client(config)
     bi, qi = c.inflation(b, as_of), c.inflation(q, as_of)  # type: ignore[arg-type]  # FX: base/quote set
     if bi is not None and qi is not None:

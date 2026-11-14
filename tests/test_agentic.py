@@ -1,5 +1,6 @@
 """The agentic layer: domain, evidence, tools, policy, planner, harness state
 machine, critic, audited reporter, knowledge retrieval and tracing. Offline."""
+
 import json
 import threading
 import time
@@ -9,15 +10,35 @@ import numpy as np
 import pytest
 
 from agentic_trader import TradingGraph, make_config
-from agentic_trader.agentic import (AgentHarness, AutoApprovalGateway, Capability, DenyApprovalGateway,
-                                    DeskTools, EvidenceStore, EvidenceType, Finding, KnowledgeBase,
-                                    Metrics, PolicyEngine, PolicyOutcome, QueuedApprovalGateway, Role,
-                                    Task, TaskState, ToolExecutor, ToolRegistry, Tracer, build_registry,
-                                    canonical_plan, evidence_audit, number_audit, schema_from_signature,
-                                    validate_plan)
+from agentic_trader.agentic import (
+    AgentHarness,
+    AutoApprovalGateway,
+    Capability,
+    DenyApprovalGateway,
+    DeskTools,
+    EvidenceStore,
+    EvidenceType,
+    Finding,
+    KnowledgeBase,
+    Metrics,
+    PolicyEngine,
+    PolicyOutcome,
+    QueuedApprovalGateway,
+    Role,
+    Task,
+    TaskState,
+    ToolExecutor,
+    ToolRegistry,
+    Tracer,
+    build_registry,
+    canonical_plan,
+    evidence_audit,
+    number_audit,
+    schema_from_signature,
+    validate_plan,
+)
 from agentic_trader.agentic.critic import Critic
-from agentic_trader.agentic.domain import (RiskLevel, StepType, ToolAnnotations, ToolRequest, TRANSITIONS,
-                                           canonical_json, digest)
+from agentic_trader.agentic.domain import RiskLevel, StepType, ToolAnnotations, ToolRequest, TRANSITIONS, canonical_json, digest
 from agentic_trader.agentic.harness import IllegalTransition
 from agentic_trader.agentic.planner import make_plan
 from agentic_trader.agentic.reporter import build_report, collect_facts
@@ -59,7 +80,7 @@ def test_evidence_store_resolves_and_detects_tampering():
     ev = st.record(EvidenceType.DATA, "market_data.news", "2 headlines", [{"h": "x"}], "CID-1")
     assert st.resolve(ev.id) and st.get(ev.id) is ev and len(st) == 1
     assert st.unresolved([ev.id, "DATA-deadbeef"]) == ["DATA-deadbeef"]
-    ev.payload.append({"h": "injected"})            # payload mutated after the fact
+    ev.payload.append({"h": "injected"})  # payload mutated after the fact
     assert not st.resolve(ev.id)
     with pytest.raises(ValueError):
         st.add(ev)
@@ -70,14 +91,20 @@ def test_schema_from_signature_and_coercion():
     def f(symbol: str, as_of: date, k: int = 3, weight: float | None = None, tags: list[str] = []) -> dict:
         """Doc."""
         return {}
+
     s = schema_from_signature(f)
     assert s["required"] == ["symbol", "as_of"] and s["properties"]["as_of"]["format"] == "date"
     assert s["properties"]["weight"]["nullable"] and s["properties"]["tags"]["type"] == "array"
     out = coerce_arguments(s, {"symbol": "AAPL", "as_of": "2024-03-01", "k": 2.0, "weight": None})
     assert out["as_of"] == date(2024, 3, 1) and out["k"] == 2 and out["weight"] is None
-    for bad in ({"symbol": "AAPL"}, {"symbol": "AAPL", "as_of": "2024-03-01", "extra": 1},
-                {"symbol": "AAPL", "as_of": "2024-03-01", "k": 2.5}, {"symbol": 1, "as_of": "2024-03-01"},
-                {"symbol": "AAPL", "as_of": "2024-03-01", "k": True}, {"symbol": "x" * 3000, "as_of": "2024-03-01"}):
+    for bad in (
+        {"symbol": "AAPL"},
+        {"symbol": "AAPL", "as_of": "2024-03-01", "extra": 1},
+        {"symbol": "AAPL", "as_of": "2024-03-01", "k": 2.5},
+        {"symbol": 1, "as_of": "2024-03-01"},
+        {"symbol": "AAPL", "as_of": "2024-03-01", "k": True},
+        {"symbol": "x" * 3000, "as_of": "2024-03-01"},
+    ):
         with pytest.raises(ValueError):
             coerce_arguments(s, bad)
 
@@ -89,6 +116,7 @@ def test_registry_rejects_duplicates_and_lists_catalogue():
     def echo(x: int) -> int:
         """Echo."""
         return x
+
     with pytest.raises(ValueError):
         reg.register("demo", echo)
     with pytest.raises(KeyError):
@@ -99,9 +127,16 @@ def test_registry_rejects_duplicates_and_lists_catalogue():
 
 def _executor(reg, role=Role.TRADER, gateway=None, timeout=5.0, policy_cfg=None):
     from agentic_trader.agentic.tools import ExecutorConfig
-    return ToolExecutor(reg, PolicyEngine(policy_cfg or {"max_position": 1.0}), EvidenceStore(), role,
-                        gateway or AutoApprovalGateway(), Tracer(), ExecutorConfig(timeout_s=timeout, max_attempts=2,
-                                                                                   retry_backoff_s=0.0))
+
+    return ToolExecutor(
+        reg,
+        PolicyEngine(policy_cfg or {"max_position": 1.0}),
+        EvidenceStore(),
+        role,
+        gateway or AutoApprovalGateway(),
+        Tracer(),
+        ExecutorConfig(timeout_s=timeout, max_attempts=2, retry_backoff_s=0.0),
+    )
 
 
 def test_executor_records_evidence_for_success_and_failure():
@@ -116,13 +151,14 @@ def test_executor_records_evidence_for_success_and_failure():
     def boom(x: int) -> dict:
         """Boom."""
         raise RuntimeError("kaboom")
+
     ex = _executor(reg)
     r = ex.call("demo.ok", x=1)
     assert r.ok and r.payload == {"x": 1} and r.attempts == 1
     ev = ex.evidence_for(r)
     assert ev is not None and ev.type is EvidenceType.DATA and ex.evidence.resolve(ev.id)
     r2 = ex.call("demo.boom", x=1)
-    assert not r2.ok and "kaboom" in r2.error and r2.attempts == 1        # a bug is not retried
+    assert not r2.ok and "kaboom" in r2.error and r2.attempts == 1  # a bug is not retried
     assert len(ex.evidence) == 2 and "FAILED" in list(ex.evidence)[-1].summary
     r3 = ex.call("demo.missing", x=1)
     assert not r3.ok and "unknown tool" in r3.error
@@ -146,6 +182,7 @@ def test_executor_retries_transient_errors_and_times_out():
         """Slow."""
         time.sleep(0.5)
         return 1
+
     ex = _executor(reg, timeout=0.05)
     r = ex.call("demo.flaky")
     assert r.ok and r.payload == 7 and r.attempts == 2
@@ -156,8 +193,10 @@ def test_executor_retries_transient_errors_and_times_out():
 # ------------------------------------------------------------------ policy
 def _tool(read_only=True, risk=RiskLevel.LOW, required=frozenset({Capability.READ_MARKET_DATA})):
     from agentic_trader.agentic.domain import ToolDescriptor
-    return ToolDescriptor("demo.t", "demo", "t", {"type": "object", "properties": {}},
-                          ToolAnnotations(read_only, risk, required, EvidenceType.DATA))
+
+    return ToolDescriptor(
+        "demo.t", "demo", "t", {"type": "object", "properties": {}}, ToolAnnotations(read_only, risk, required, EvidenceType.DATA)
+    )
 
 
 def _req(**args):
@@ -169,14 +208,23 @@ def test_policy_rules_in_order():
     d = pe.evaluate(_req(), _tool(), Role.ADMIN)
     assert d.outcome is PolicyOutcome.DENY and d.rule == "deny_list"
     pe = PolicyEngine({"symbol_universe": ["AAPL", "EURUSD"], "max_position": 0.5})
-    assert pe.evaluate(_req(), _tool(required=frozenset({Capability.APPROVE_TRADES})), Role.TRADER).rule == "required_capabilities"
+    assert (
+        pe.evaluate(_req(), _tool(required=frozenset({Capability.APPROVE_TRADES})), Role.TRADER).rule == "required_capabilities"
+    )
     d = pe.evaluate(_req(), _tool(read_only=False, required=frozenset()), Role.ANALYST)
     assert d.outcome is PolicyOutcome.DENY and d.rule == "read_only"
     d = pe.evaluate(_req(), _tool(read_only=False, required=frozenset()), Role.TRADER)
     assert d.outcome is PolicyOutcome.REQUIRE_APPROVAL and d.rule == "read_only"
-    for args in ({"symbol": "MSFT"}, {"symbol": "EUR/XYZ"}, {"as_of": (date.today() + timedelta(days=1)).isoformat()},
-                 {"as_of": "not-a-date"}, {"weight": 0.7}, {"weight": float("nan")}, {"weight": "x"},
-                 {"lookback_days": 0}):
+    for args in (
+        {"symbol": "MSFT"},
+        {"symbol": "EUR/XYZ"},
+        {"as_of": (date.today() + timedelta(days=1)).isoformat()},
+        {"as_of": "not-a-date"},
+        {"weight": 0.7},
+        {"weight": float("nan")},
+        {"weight": "x"},
+        {"lookback_days": 0},
+    ):
         d = pe.evaluate(_req(**args), _tool(), Role.ADMIN)
         assert d.outcome is PolicyOutcome.DENY and d.rule == "argument_guard", args
     d = pe.evaluate(_req(), _tool(risk=RiskLevel.HIGH), Role.ADMIN)
@@ -196,7 +244,7 @@ def test_queued_gateway_round_trip_and_deny_gateway():
     req = ToolRequest("execution.submit_order", {"symbol": "AAPL", "side": "buy", "quantity": 1}, "CID-1")
     assert q.decide("T1", req, "why") is None
     assert q.decide("T1", ToolRequest("execution.submit_order", req.arguments, "CID-2"), "why") is None
-    assert len(q.pending()) == 1                       # same tool + arguments = same approval
+    assert len(q.pending()) == 1  # same tool + arguments = same approval
     a = q.pending("T1")[0]
     q.resolve(a.id, True, "risk", "fine")
     assert q.decide("T1", req, "why") is True and not q.pending()
@@ -262,8 +310,11 @@ def test_validate_plan_strips_repairs_pins_and_appends_governance():
     ins = Instrument.parse("AAPL")
     reg = build_registry(DeskTools(SyntheticProvider(CFG), CFG))
     raw = [
-        {"type": "tool", "name": "market_data.news", "arguments": {"symbol": "MSFT", "as_of": "2020-01-01",
-                                                                   "lookback_days": 3, "evil": 1}},
+        {
+            "type": "tool",
+            "name": "market_data.news",
+            "arguments": {"symbol": "MSFT", "as_of": "2020-01-01", "lookback_days": 3, "evil": 1},
+        },
         {"type": "tool", "name": "execution.submit_order", "arguments": {"symbol": "AAPL", "side": "buy", "quantity": 1}},
         {"type": "tool", "name": "nope.tool", "arguments": {}},
         {"type": "agent", "name": "risk"},
@@ -271,14 +322,18 @@ def test_validate_plan_strips_repairs_pins_and_appends_governance():
         {"type": "agent", "name": "analyst:technical"},
         {"type": "agent", "name": "rogue_stage"},
         {"type": "finalise", "name": "finalise"},
-        "garbage", {"type": "??", "name": "x"},
+        "garbage",
+        {"type": "??", "name": "x"},
     ]
     plan = validate_plan(raw, Task("AAPL", AS_OF), ins, ["technical", "news"], reg)
     names = [s.name for s in plan.steps]
     assert plan.source == "llm+repaired"
     tool = plan.steps[0]
-    assert tool.name == "market_data.news" and tool.arguments == {"symbol": "AAPL", "as_of": AS_OF.isoformat(),
-                                                                 "lookback_days": 3}
+    assert tool.name == "market_data.news" and tool.arguments == {
+        "symbol": "AAPL",
+        "as_of": AS_OF.isoformat(),
+        "lookback_days": 3,
+    }
     assert "execution.submit_order" not in names and "nope.tool" not in names and "rogue_stage" not in names
     assert names.count("analyst:technical") == 1
     assert names[-6:] == ["debate", "trader", "risk", "critic", "validate_evidence", "finalise"]
@@ -289,6 +344,7 @@ def test_make_plan_uses_canonical_when_model_output_is_unusable():
     class Bad:
         def complete(self, *a, **k):
             return "I have no plan for you."
+
     cfg = make_config(CFG, agentic={"llm_planner": True})
     reg = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
     plan = make_plan(Task("AAPL", AS_OF), Instrument.parse("AAPL"), ["technical"], cfg, reg, Bad())
@@ -297,6 +353,7 @@ def test_make_plan_uses_canonical_when_model_output_is_unusable():
     class Good:
         def complete(self, *a, **k):
             return json.dumps({"steps": [{"type": "agent", "name": "analyst:technical"}]})
+
     plan = make_plan(Task("AAPL", AS_OF), Instrument.parse("AAPL"), ["technical"], cfg, reg, Good())
     assert plan.source.startswith("llm") and [s.name for s in plan.steps][-3:] == ["critic", "validate_evidence", "finalise"]
 
@@ -306,10 +363,17 @@ def test_make_plan_uses_canonical_when_model_output_is_unusable():
 def test_harness_completes_with_evidence_findings_and_clean_audit(symbol):
     run = harness().run(Task(symbol, AS_OF, Role.TRADER, current_weight=0.1))
     assert run.state is TaskState.COMPLETED and not run.errors
-    assert [h[0] for h in run.history] == ["PLANNING", "VALIDATING_PLAN", "EXECUTING", "CRITIQUING",
-                                           "VALIDATING_EVIDENCE", "FINALISING", "COMPLETED"]
+    assert [h[0] for h in run.history] == [
+        "PLANNING",
+        "VALIDATING_PLAN",
+        "EXECUTING",
+        "CRITIQUING",
+        "VALIDATING_EVIDENCE",
+        "FINALISING",
+        "COMPLETED",
+    ]
     assert len(run.evidence) >= 15 and run.findings and run.report is not None
-    assert run.report.warnings == []                              # narrative audits clean
+    assert run.report.warnings == []  # narrative audits clean
     assert all(run.evidence.resolve(i) for f in run.findings for i in f.evidence_ids)
     assert run.decision is not None and run.decision.evidence_ids
     assert run.trading_state.knowledge and run.trading_state.alpha
@@ -344,6 +408,7 @@ def _ticket(h, symbol, target):
     """v0.8: a ticket is the plan execution.plan produced (units, notional, currency, price, plan
     reference), never a bare quantity (review finding 71)."""
     from agentic_trader.agentic.servers import ticket_from_plan
+
     return ticket_from_plan(h.tools.plan(symbol, AS_OF, target))
 
 
@@ -353,6 +418,7 @@ def test_harness_awaits_approval_then_resumes_or_cancels():
     reg = h.registry
     # A plan that starts with a state-changing tool cannot come from the validator; build it by hand.
     from agentic_trader.agentic.domain import Plan, PlanStep
+
     run = h.submit(Task("AAPL", AS_OF, Role.TRADER))
     order = PlanStep.make(StepType.TOOL, "execution.submit_order", _ticket(h, "AAPL", 0.1))
     base = canonical_plan(run.task, ins, h.graph.analyst_names(ins), CFG, reg)
@@ -371,26 +437,25 @@ def test_harness_awaits_approval_then_resumes_or_cancels():
 
     run2 = h.submit(Task("AAPL", AS_OF, Role.TRADER))
     h._transition(run2, TaskState.PLANNING)
-    run2.plan = Plan((PlanStep.make(StepType.TOOL, "execution.submit_order", _ticket(h, "AAPL", 0.2)),)
-                     + base.steps, "test")
+    run2.plan = Plan((PlanStep.make(StepType.TOOL, "execution.submit_order", _ticket(h, "AAPL", 0.2)),) + base.steps, "test")
     h._transition(run2, TaskState.VALIDATING_PLAN)
     h._transition(run2, TaskState.EXECUTING)
     h.resume(run2)
     assert run2.state is TaskState.AWAITING_APPROVAL
     h.cancel(run2.id)
     assert run2.state is TaskState.CANCELLED and run2.finished_at is not None
-    assert h.resume(run2).state is TaskState.CANCELLED           # terminal: resume is a no-op
+    assert h.resume(run2).state is TaskState.CANCELLED  # terminal: resume is a no-op
 
 
 def test_rejected_approval_fails_the_step_but_finishes_the_task():
     h = harness(gateway=DenyApprovalGateway())
     run = h.submit(Task("AAPL", AS_OF, Role.TRADER))
     from agentic_trader.agentic.domain import Plan, PlanStep
+
     ins = Instrument.parse("AAPL")
     base = canonical_plan(run.task, ins, h.graph.analyst_names(ins), CFG, h.registry)
     h._transition(run, TaskState.PLANNING)
-    run.plan = Plan((PlanStep.make(StepType.TOOL, "execution.submit_order", _ticket(h, "AAPL", 0.1)),)
-                    + base.steps, "test")
+    run.plan = Plan((PlanStep.make(StepType.TOOL, "execution.submit_order", _ticket(h, "AAPL", 0.1)),) + base.steps, "test")
     h._transition(run, TaskState.VALIDATING_PLAN)
     h._transition(run, TaskState.EXECUTING)
     h.resume(run)
@@ -410,7 +475,7 @@ def test_cancel_between_steps():
     run = h.submit(Task("AAPL", AS_OF))
     run.cancel_requested = True
     h.resume(run)
-    assert run.state is TaskState.CANCELLED and run.trading_state is None      # cancelled while queued: no work done
+    assert run.state is TaskState.CANCELLED and run.trading_state is None  # cancelled while queued: no work done
 
 
 def test_harness_is_usable_from_threads():
@@ -431,11 +496,11 @@ def test_critic_flags_divergence_wrong_side_levels_and_limits():
     findings = [Finding.make("technical", "x", 0.9, ("DATA-00000001",))]
     store = EvidenceStore()
     rep = Critic(make_config(CFG, agentic={"llm_critic": False})).review(st, findings, store)
-    assert not rep.passed and findings[0].confidence == 0.0          # unresolved evidence is an error
+    assert not rep.passed and findings[0].confidence == 0.0  # unresolved evidence is an error
     # model view far from its rules
     st.reports["technical"].source, st.reports["technical"].rule_signal = "llm", -0.9
-    st.decision.stop_loss = st.last_price * 1.5                       # wrong side for a long
-    st.decision.target_weight = 1.5                                   # above the cap
+    st.decision.stop_loss = st.last_price * 1.5  # wrong side for a long
+    st.decision.target_weight = 1.5  # above the cap
     rep = Critic(make_config(CFG, agentic={"llm_critic": False})).review(st, [], store, {"var_95_1d": 0.05})
     names = {c.name: c for c in rep.checks}
     assert not names["model_rule_divergence"].passed and rep.multiplier <= 0.7
@@ -447,6 +512,7 @@ def test_llm_critique_can_only_lower_confidence():
     class Booster:
         def complete(self, system, prompt, *, deep):
             return json.dumps({"concerns": ["none"], "confidence_multiplier": 3.0})
+
     st, _ = graph().propagate("AAPL", AS_OF)
     rep = Critic(CFG, Booster()).review(st, [], EvidenceStore())
     assert rep.llm_multiplier == 1.0 and rep.multiplier == 1.0 and rep.llm_concerns == ["none"]
@@ -454,6 +520,7 @@ def test_llm_critique_can_only_lower_confidence():
     class Doubter:
         def complete(self, system, prompt, *, deep):
             return json.dumps({"concerns": ["thin evidence"], "confidence_multiplier": 0.4})
+
     rep = Critic(CFG, Doubter()).review(st, [], EvidenceStore())
     assert rep.multiplier == pytest.approx(0.4)
 
@@ -464,19 +531,24 @@ def test_number_and_evidence_audits():
     ok = "BUY at +0.54 (confidence 0.51); last close 223.22; 4 analysts; that is 53.5% of capital."
     assert number_audit(ok, facts) == []
     assert number_audit("weight 0.99 and 17 analysts", facts) == ["0.99", "17"]
-    assert number_audit("as of 2024-03-01 see DATA-0123abcd", facts) == []   # dates and ids are not figures
+    assert number_audit("as of 2024-03-01 see DATA-0123abcd", facts) == []  # dates and ids are not figures
     store = EvidenceStore()
     ev = store.record(EvidenceType.DATA, "x", "y", {"a": 1}, "C")
     assert evidence_audit(f"see {ev.id}", [], store) == []
-    assert evidence_audit("see DATA-deadbeef", [Finding.make("a", "b", 0.5, ("DEC-00000000",))], store) == \
-        ["DATA-deadbeef", "DEC-00000000"]
+    assert evidence_audit("see DATA-deadbeef", [Finding.make("a", "b", 0.5, ("DEC-00000000",))], store) == [
+        "DATA-deadbeef",
+        "DEC-00000000",
+    ]
 
 
 def test_report_flags_fabricated_numbers_and_ids_from_a_model():
     class Fabricator:
         def complete(self, system, prompt, *, deep):
-            return ("Buy with weight +0.5354 (confidence 0.51). Revenue grew 99.9% and the fill rate was 42%; "
-                    "see EXEC-deadbeef and DATA-ffffffff.")
+            return (
+                "Buy with weight +0.5354 (confidence 0.51). Revenue grew 99.9% and the fill rate was 42%; "
+                "see EXEC-deadbeef and DATA-ffffffff."
+            )
+
     st, _ = graph().propagate("AAPL", AS_OF)
     critic = Critic(make_config(CFG, agentic={"llm_critic": False})).review(st, [], EvidenceStore())
     rep = build_report(Task("AAPL", AS_OF), st, [], critic, EvidenceStore(), Fabricator())
@@ -484,7 +556,7 @@ def test_report_flags_fabricated_numbers_and_ids_from_a_model():
     assert rep.narrative_source == "template" and rep.rejected_narrative and "99.9%" not in rep.narrative
     joined = " ".join(rep.warnings)
     assert "99.9%" in joined and "42%" in joined and "DATA-ffffffff" in joined
-    assert "EXEC-deadbeef" not in joined                              # not one of our id prefixes
+    assert "EXEC-deadbeef" not in joined  # not one of our id prefixes
     md = rep.to_markdown()
     assert "## Audit warnings" in md and "## Evidence" in md
     facts = collect_facts(st, critic)

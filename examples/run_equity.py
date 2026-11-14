@@ -1,8 +1,9 @@
 """Run the agent firm on an equity for one date.
 
-    python examples/run_equity.py                 # offline, synthetic data
-    python examples/run_equity.py --live          # Claude + Yahoo Finance
+python examples/run_equity.py                 # offline, synthetic data
+python examples/run_equity.py --live          # Claude + Yahoo Finance
 """
+
 import sys
 
 from agentic_trader import TradingGraph, make_config

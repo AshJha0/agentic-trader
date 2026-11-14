@@ -24,6 +24,7 @@ Worked example (spread to Y). A name with a 4 bp estimated spread and 1.5 % dail
 half spread 2 bp; at q/ADV = 1 % the square-root term is ``0.015 * 0.1 = 15`` bp, so
 ``Y = 2 / 15 = 0.13``, inside the 0.1-0.3 band the review quotes from the literature.
 """
+
 from __future__ import annotations
 
 import math
@@ -35,8 +36,9 @@ _CS_K = 3.0 - 2.0 * math.sqrt(2.0)
 
 
 # ---------------------------------------------------------------- stop slippage
-def stop_fill_with_slippage(w: float, stop: float, o: float, h: float, low: float,
-                            half_spread: float = 0.0, range_frac: float = 0.0) -> float:
+def stop_fill_with_slippage(
+    w: float, stop: float, o: float, h: float, low: float, half_spread: float = 0.0, range_frac: float = 0.0
+) -> float:
     """Fill price of a protective stop on a bar with open ``o``, high ``h`` and low ``low``,
     or NaN when the stop does not trade. ``half_spread`` is a price fraction (5e-4 = 5 bp);
     ``range_frac`` in [0, 1] is the share of the distance from the stop to the bar's extreme
@@ -47,7 +49,7 @@ def stop_fill_with_slippage(w: float, stop: float, o: float, h: float, low: floa
     if np.isnan(stop) or w == 0.0:
         return float("nan")
     if w > 0:
-        if o <= stop:                       # gapped through: market order at the open
+        if o <= stop:  # gapped through: market order at the open
             return max(low, o * (1.0 - half_spread))
         if low <= stop:
             px = stop * (1.0 - half_spread) - range_frac * (stop - low)
@@ -61,8 +63,9 @@ def stop_fill_with_slippage(w: float, stop: float, o: float, h: float, low: floa
     return float("nan")
 
 
-def stop_slippage_frac(w: float, stop: float, o: float, h: float, low: float,
-                       half_spread: float = 0.0, range_frac: float = 0.0) -> float:
+def stop_slippage_frac(
+    w: float, stop: float, o: float, h: float, low: float, half_spread: float = 0.0, range_frac: float = 0.0
+) -> float:
     """Extra loss (fraction of the position's notional at the stop) of the slipped fill over
     the engine's fill (stop level, or open on a gap). 0 when the stop does not trade."""
     if np.isnan(stop) or w == 0.0:
@@ -77,8 +80,7 @@ def stop_slippage_frac(w: float, stop: float, o: float, h: float, low: float,
 
 
 # ---------------------------------------------------------------- participation cap
-def cap_participation(target_weights, prices, adv, capital: float, cap: float = 0.10,
-                      equity=None) -> np.ndarray:
+def cap_participation(target_weights, prices, adv, capital: float, cap: float = 0.10, equity=None) -> np.ndarray:
     """The weight path a trader limited to ``cap`` of ADV per bar can hold, chasing
     ``target_weights``. ``adv`` is average daily volume in shares (NaN or <= 0: uncapped bar);
     ``equity`` (optional, per bar) replaces the constant ``capital``. Price drift of the held
@@ -111,9 +113,11 @@ def participation_shortfall(target_weights, capped) -> dict[str, float]:
     of bars with a gap above 1e-9."""
     t = np.nan_to_num(np.asarray(target_weights, float), nan=0.0)
     gap = np.abs(t - np.asarray(capped, float))
-    return {"mean_gap": float(gap.mean()) if gap.size else 0.0,
-            "max_gap": float(gap.max()) if gap.size else 0.0,
-            "bars_lagging": float((gap > 1e-9).mean()) if gap.size else 0.0}
+    return {
+        "mean_gap": float(gap.mean()) if gap.size else 0.0,
+        "max_gap": float(gap.max()) if gap.size else 0.0,
+        "bars_lagging": float((gap > 1e-9).mean()) if gap.size else 0.0,
+    }
 
 
 # ---------------------------------------------------------------- spread estimators
@@ -168,9 +172,11 @@ def spread_estimates(df: pd.DataFrame) -> dict[str, float]:
     volatility), and the full-sample Abdi-Ranaldo estimate."""
     raw = corwin_schultz(df["High"], df["Low"], df["Close"], floor=False)
     ok = np.isfinite(raw).any()
-    return {"corwin_schultz": max(float(np.nanmean(raw)), 0.0) if ok else float("nan"),
-            "corwin_schultz_floored": float(np.nanmean(np.maximum(raw, 0.0))) if ok else float("nan"),
-            "abdi_ranaldo": abdi_ranaldo(df["High"], df["Low"], df["Close"])}
+    return {
+        "corwin_schultz": max(float(np.nanmean(raw)), 0.0) if ok else float("nan"),
+        "corwin_schultz_floored": float(np.nanmean(np.maximum(raw, 0.0))) if ok else float("nan"),
+        "abdi_ranaldo": abdi_ranaldo(df["High"], df["Low"], df["Close"]),
+    }
 
 
 # ---------------------------------------------------------------- impact calibration
@@ -183,8 +189,7 @@ def spread_consistent_y(spread: float, daily_vol: float, ref_participation: floa
     return 0.5 * spread / (daily_vol * math.sqrt(ref_participation))
 
 
-def calibrate_impact(frames: dict[str, pd.DataFrame], ref_participation: float = 0.01,
-                     vol_window: int = 250) -> pd.DataFrame:
+def calibrate_impact(frames: dict[str, pd.DataFrame], ref_participation: float = 0.01, vol_window: int = 250) -> pd.DataFrame:
     """One row per symbol: both spread estimates (bp), trailing daily volatility, and the
     spread-consistent ``Y`` from each estimator. ``frames`` are OHLC(V) frames."""
     rows = []
@@ -193,16 +198,23 @@ def calibrate_impact(frames: dict[str, pd.DataFrame], ref_participation: float =
         r = np.diff(np.log(df["Close"].to_numpy(float)))
         r = r[np.isfinite(r)][-vol_window:]
         vol = float(r.std(ddof=1)) if r.size > 2 else float("nan")
-        rows.append({"symbol": sym, "days": len(df),
-                     "cs_spread_bp": 1e4 * est["corwin_schultz"], "ar_spread_bp": 1e4 * est["abdi_ranaldo"],
-                     "daily_vol_pct": 100 * vol,
-                     "Y_cs": spread_consistent_y(est["corwin_schultz"], vol, ref_participation),
-                     "Y_ar": spread_consistent_y(est["abdi_ranaldo"], vol, ref_participation)})
+        rows.append(
+            {
+                "symbol": sym,
+                "days": len(df),
+                "cs_spread_bp": 1e4 * est["corwin_schultz"],
+                "ar_spread_bp": 1e4 * est["abdi_ranaldo"],
+                "daily_vol_pct": 100 * vol,
+                "Y_cs": spread_consistent_y(est["corwin_schultz"], vol, ref_participation),
+                "Y_ar": spread_consistent_y(est["abdi_ranaldo"], vol, ref_participation),
+            }
+        )
     return pd.DataFrame(rows).set_index("symbol") if rows else pd.DataFrame()
 
 
-def simulate_ohlc(n_days: int, spread: float, daily_vol: float = 0.01, steps: int = 100,
-                  seed: int = 0, start: float = 100.0) -> pd.DataFrame:
+def simulate_ohlc(
+    n_days: int, spread: float, daily_vol: float = 0.01, steps: int = 100, seed: int = 0, start: float = 100.0
+) -> pd.DataFrame:
     """Synthetic OHLC with a known effective spread, for validating the estimators: an
     efficient log price follows a random walk observed ``steps`` times a day; every observed
     trade is at the efficient price times ``1 +/- spread / 2`` (random side). High, Low and
@@ -214,5 +226,7 @@ def simulate_ohlc(n_days: int, spread: float, daily_vol: float = 0.01, steps: in
     px = np.exp(logp) * (1.0 + side * spread / 2.0)
     px = px.reshape(n_days, steps)
     idx = pd.bdate_range("2000-01-03", periods=n_days)
-    return pd.DataFrame({"Open": px[:, 0], "High": px.max(axis=1), "Low": px.min(axis=1),
-                         "Close": px[:, -1], "Volume": np.full(n_days, 1e6)}, index=idx)
+    return pd.DataFrame(
+        {"Open": px[:, 0], "High": px.max(axis=1), "Low": px.min(axis=1), "Close": px[:, -1], "Volume": np.full(n_days, 1e6)},
+        index=idx,
+    )

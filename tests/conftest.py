@@ -1,4 +1,5 @@
 """Suite-wide fixtures."""
+
 import os
 
 import pytest
@@ -19,8 +20,7 @@ def _restore_environ():
 def _replay_allowlist_in_tmp(tmp_path_factory, monkeypatch):
     """Replay recordings saved by tests list their digests in a per-test temporary allowlist,
     never in the user's ~/.agentic_trader/replay_allowlist.txt."""
-    monkeypatch.setenv("AGENTIC_TRADER_REPLAY_ALLOWLIST",
-                       str(tmp_path_factory.mktemp("replay_allow") / "allowlist.txt"))
+    monkeypatch.setenv("AGENTIC_TRADER_REPLAY_ALLOWLIST", str(tmp_path_factory.mktemp("replay_allow") / "allowlist.txt"))
 
 
 # The slowest tests (about 10 s or more each in `pytest --durations=40`, measured 2026-11-07

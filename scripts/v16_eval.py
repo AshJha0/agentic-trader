@@ -17,6 +17,7 @@ Every subcommand takes ``--limit N`` and ``--smoke`` (3 items; exit 1 when any r
 unparseable). ``run`` and ``judge`` write one JSONL row per item as soon as it is answered (raw
 reply kept) and a rerun resumes from the rows already in ``--out``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,8 +39,14 @@ JSON_SUFFIX = "\n\nRespond with a single JSON object only (no prose outside it).
 
 def make_llm(a: argparse.Namespace):
     from agentic_trader.local_llm import LocalLLM, reachable
-    cfg = {"llm_provider": "local", "local_llm_model": a.model, "local_llm_timeout_s": a.timeout,
-           "local_llm_seed": 7, "max_tokens": a.max_tokens}
+
+    cfg = {
+        "llm_provider": "local",
+        "local_llm_model": a.model,
+        "local_llm_timeout_s": a.timeout,
+        "local_llm_seed": 7,
+        "max_tokens": a.max_tokens,
+    }
     llm = LocalLLM(cfg)
     if not reachable(llm.url):
         raise SystemExit("no Ollama server at 127.0.0.1:11434")
@@ -86,9 +93,12 @@ def _items(a: argparse.Namespace) -> list[dict[str, Any]]:
 def _write_meta(out: Path, llm, extra: dict[str, Any]) -> None:
     meta = {"run_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"), **extra}
     if llm is not None:
-        meta.update(model=getattr(llm, "model", None), calls=getattr(llm, "calls", None),
-                    usage=llm.usage.summary() if hasattr(llm, "usage") else None,
-                    note="local open-weight model, $0; a floor for a small model, not Claude")
+        meta.update(
+            model=getattr(llm, "model", None),
+            calls=getattr(llm, "calls", None),
+            usage=llm.usage.summary() if hasattr(llm, "usage") else None,
+            note="local open-weight model, $0; a floor for a small model, not Claude",
+        )
     out.with_suffix(".meta.json").write_text(json.dumps(meta, indent=1, default=str), encoding="utf-8")
 
 
@@ -120,15 +130,20 @@ def check_rows(items: list[dict[str, Any]], replies: dict[str, dict[str, Any]]) 
         rep = replies[it["id"]]
         parsed = rep.get("parsed") if "parsed" in rep else ev.parse_reply(rep.get("raw"))
         v = ev.check_reply(it, parsed)
-        rows.append({"id": it["id"], "role": it["role"], "source": it["source"],
-                     "fenced_injection": bool(it["rubric"]["fence"]), **v})
+        rows.append(
+            {"id": it["id"], "role": it["role"], "source": it["source"], "fenced_injection": bool(it["rubric"]["fence"]), **v}
+        )
     n = len(rows)
     fenced = [r for r in rows if r["fenced_injection"]]
-    summary = {"n": n, "parsed": sum(r["parsed"] for r in rows),
-               "used_facts": sum(r["used_facts"] for r in rows),
-               "no_invented_numbers": sum(r["no_invented_numbers"] for r in rows),
-               "fenced_items": len(fenced), "respected_fence": sum(r["respected_fence"] for r in fenced),
-               "all_three": sum(r["used_facts"] and r["no_invented_numbers"] and r["respected_fence"] for r in rows)}
+    summary = {
+        "n": n,
+        "parsed": sum(r["parsed"] for r in rows),
+        "used_facts": sum(r["used_facts"] for r in rows),
+        "no_invented_numbers": sum(r["no_invented_numbers"] for r in rows),
+        "fenced_items": len(fenced),
+        "respected_fence": sum(r["respected_fence"] for r in fenced),
+        "all_three": sum(r["used_facts"] and r["no_invented_numbers"] and r["respected_fence"] for r in rows),
+    }
     return {"summary": summary, "rows": rows}
 
 
@@ -158,7 +173,8 @@ def _calibration_targets(a: argparse.Namespace) -> list[dict[str, Any]]:
 
 def cmd_judge(a: argparse.Namespace, llm=None) -> int:
     from agentic_trader.agentic.judge_kit import JudgeConfigError, resolve_judge_model
-    try:   # v0.17 R3.1: judge from another model family than the judged one (self-preference)
+
+    try:  # v0.17 R3.1: judge from another model family than the judged one (self-preference)
         a.model = resolve_judge_model(a.judge_model, a.judged_model, a.allow_same_family)
     except JudgeConfigError as e:
         raise SystemExit(str(e)) from e
@@ -169,15 +185,23 @@ def cmd_judge(a: argparse.Namespace, llm=None) -> int:
     def answer(p):
         err = None
         try:
-            raw = llm.complete_json(ev.JUDGE_SYSTEM, ev.judge_prompt(p["item"], p["raw"]), deep=False,
-                                    schema=ev.JUDGE_SCHEMA)
+            raw = llm.complete_json(ev.JUDGE_SYSTEM, ev.judge_prompt(p["item"], p["raw"]), deep=False, schema=ev.JUDGE_SCHEMA)
         except Exception as e:  # noqa: BLE001
             raw, err = None, f"{type(e).__name__}: {e}"
         return {"id": p["id"], "item_id": p["item"]["id"], "raw": raw, "verdict": ev.parse_judge(raw), "error": err}
 
     done = _checkpointed(out, pairs, answer, "judge")
-    _write_meta(out, llm, {"subcommand": "judge", "n": len(pairs), "calibration": bool(a.calibration),
-                           "judge_model": a.model, "judged_model": a.judged_model})
+    _write_meta(
+        out,
+        llm,
+        {
+            "subcommand": "judge",
+            "n": len(pairs),
+            "calibration": bool(a.calibration),
+            "judge_model": a.model,
+            "judged_model": a.judged_model,
+        },
+    )
     bad = [p["id"] for p in pairs if done[p["id"]]["verdict"] is None]
     print(json.dumps({"n": len(pairs), "unparseable": len(bad)}))
     return 1 if a.smoke and bad else 0
@@ -204,9 +228,12 @@ def agreement(judged: dict[str, dict[str, Any]], calibration: list[dict[str, Any
         judge = [bool(v[c]) for _, v, _ in pairs]
         det = [bool(d[c]) for _, _, d in pairs]
         out["criteria"][c] = {
-            "judge_kappa": ev.cohen_kappa(judge, human), "judge_agree": sum(x == y for x, y in zip(judge, human)),
-            "checker_kappa": ev.cohen_kappa(det, human), "checker_agree": sum(x == y for x, y in zip(det, human)),
-            "n": len(pairs)}
+            "judge_kappa": ev.cohen_kappa(judge, human),
+            "judge_agree": sum(x == y for x, y in zip(judge, human)),
+            "checker_kappa": ev.cohen_kappa(det, human),
+            "checker_agree": sum(x == y for x, y in zip(det, human)),
+            "n": len(pairs),
+        }
     return out
 
 
@@ -233,8 +260,13 @@ def cmd_freeze(a: argparse.Namespace, llm=None) -> int:
 def main(argv: list[str] | None = None, llm=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name, fn in (("run", cmd_run), ("check", cmd_check), ("judge", cmd_judge),
-                     ("agreement", cmd_agreement), ("freeze", cmd_freeze)):
+    for name, fn in (
+        ("run", cmd_run),
+        ("check", cmd_check),
+        ("judge", cmd_judge),
+        ("agreement", cmd_agreement),
+        ("freeze", cmd_freeze),
+    ):
         s = sub.add_parser(name)
         s.add_argument("--out", required=name != "freeze", default=None)
         s.add_argument("--limit", type=int, default=0)
@@ -248,6 +280,7 @@ def main(argv: list[str] | None = None, llm=None) -> int:
         s.add_argument("--judged", default=None, help="agreement: JSONL from judge --calibration")
         if name == "judge":
             from agentic_trader.agentic.judge_kit import DEFAULT_JUDGE_MODEL, DEFAULT_JUDGED_MODEL
+
             s.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL, help="judge model (other family)")
             s.add_argument("--judged-model", default=DEFAULT_JUDGED_MODEL, help="model that wrote the replies")
             s.add_argument("--allow-same-family", action="store_true", help="permit a same-family judge")

@@ -1,6 +1,7 @@
 """Quant research layer: statistics, alpha library and evaluation, execution
 algorithms and simulator, portfolio construction, plus C++ vs numpy cross-checks
 of the new core functions."""
+
 import math
 from datetime import date
 
@@ -9,18 +10,50 @@ import pandas as pd
 import pytest
 
 from agentic_trader import Instrument, make_config, quant, run_portfolio_backtest
-from agentic_trader.alpha import (ALPHAS, alpha_report, alpha_snapshot, combine, compute_alphas,
-                                  forward_returns, information_coefficient, significant_alpha_signal)
-from agentic_trader.algo import (almgren_chriss_schedule, plan_execution, pov_schedule, simulate_execution,
-                                 synthetic_intraday_bars, twap_schedule, volume_profile, vwap_schedule)
+from agentic_trader.alpha import (
+    ALPHAS,
+    alpha_report,
+    alpha_snapshot,
+    combine,
+    compute_alphas,
+    forward_returns,
+    information_coefficient,
+    significant_alpha_signal,
+)
+from agentic_trader.algo import (
+    almgren_chriss_schedule,
+    plan_execution,
+    pov_schedule,
+    simulate_execution,
+    synthetic_intraday_bars,
+    twap_schedule,
+    volume_profile,
+    vwap_schedule,
+)
 from agentic_trader.data import SyntheticProvider
-from agentic_trader.portfolio import (METHODS, construct, ewma_cov, inverse_vol_weights,
-                                      ledoit_wolf_shrink, mean_variance_weights, min_variance_weights,
-                                      risk_contributions, risk_parity_weights, sample_cov)
+from agentic_trader.portfolio import (
+    METHODS,
+    construct,
+    ewma_cov,
+    inverse_vol_weights,
+    ledoit_wolf_shrink,
+    mean_variance_weights,
+    min_variance_weights,
+    risk_contributions,
+    risk_parity_weights,
+    sample_cov,
+)
 from agentic_trader.quant import pycore
 from agentic_trader.state import Action, FinalDecision
-from agentic_trader.stats import (deflated_sharpe, expected_max_sharpe, min_track_record, probabilistic_sharpe,
-                                  selection_report, sharpe_ci_bootstrap, sharpe_stats)
+from agentic_trader.stats import (
+    deflated_sharpe,
+    expected_max_sharpe,
+    min_track_record,
+    probabilistic_sharpe,
+    selection_report,
+    sharpe_ci_bootstrap,
+    sharpe_stats,
+)
 
 CFG = make_config(memory_path=None)
 NAN = float("nan")
@@ -121,7 +154,7 @@ def test_alpha_signals_are_bounded_point_in_time_and_complete(frames):
         sig = compute_alphas(df, ins, None, carry)
         assert set(sig.columns) == set(ALPHAS if ins.is_fx else [a for a in ALPHAS if a != "carry"])
         assert ((sig.dropna() >= -1) & (sig.dropna() <= 1)).all().all()
-        assert sig.notna().mean().min() > 0.6                                   # every alpha computes
+        assert sig.notna().mean().min() > 0.6  # every alpha computes
         short = compute_alphas(df.iloc[:-50], ins, None, None if carry is None else carry[:-50])
         pd.testing.assert_frame_equal(sig.iloc[:-50], short, check_exact=False, rtol=1e-12)
     with pytest.raises(ValueError):
@@ -136,11 +169,11 @@ def test_alpha_semantics():
     sig = compute_alphas(up, ins)
     last = sig.iloc[-1]
     assert last["tsmom_12_1"] > 0.9 and last["high_52w"] == pytest.approx(1.0) and last["donchian_20"] > 0.9
-    assert last["reversal_5"] < 0 and last["rsi_contrarian"] < 0            # fade a straight rally
+    assert last["reversal_5"] < 0 and last["rsi_contrarian"] < 0  # fade a straight rally
     fx = Instrument.parse("USDJPY")
     sigfx = compute_alphas(up, fx, ["carry"], np.full(400, 0.03))
     assert sigfx["carry"].iloc[-1] == pytest.approx(math.tanh(1.0))
-    assert np.isnan(compute_alphas(up, fx, ["carry"])["carry"]).all()       # no carry series -> no signal
+    assert np.isnan(compute_alphas(up, fx, ["carry"])["carry"]).all()  # no carry series -> no signal
 
 
 def test_combine_and_information_coefficient():
@@ -150,7 +183,7 @@ def test_combine_and_information_coefficient():
     fwd = forward_returns([100, 101, 102, 103, 104.0], 2)
     assert np.isnan(fwd[-2:]).all() and fwd[0] == pytest.approx(0.02)
     ic, t, n = information_coefficient([1, 2, 3, 4, 5], [1, 3, 2, 5, 4])
-    assert 0 < ic < 1 and t == pytest.approx(ic * math.sqrt(5)) and n == 5   # horizon 1: pairs are independent
+    assert 0 < ic < 1 and t == pytest.approx(ic * math.sqrt(5)) and n == 5  # horizon 1: pairs are independent
     # v0.8: an h-bar forward return sampled every bar has only n/h independent pairs, so the
     # t-statistic must shrink by sqrt(h) -- the same rule xalpha.ic_summary applies.
     assert information_coefficient([1, 2, 3, 4, 5], [1, 3, 2, 5, 4], horizon=2)[1] == pytest.approx(ic * math.sqrt(2.5))
@@ -176,9 +209,13 @@ def test_alpha_report_structure(frames):
 
 def test_significance_gated_series_matches_the_analyst_at_one_bar(frames):
     from agentic_trader.alpha import significance_gated_series, significant_alpha_signal
+
     ins, df, carry = frames["USDJPY"]
     rep = alpha_report(df, ins, 10, carry_series=carry)
-    ic = {n: {"IC": v["IC"], "t(IC)": v["t(IC)"], "t_crit": v["t_crit"], "n": v["n"]} for n, v in rep.table.to_dict(orient="index").items()}
+    ic = {
+        n: {"IC": v["IC"], "t(IC)": v["t(IC)"], "t_crit": v["t_crit"], "n": v["n"]}
+        for n, v in rep.table.to_dict(orient="index").items()
+    }
     latest = {n: (None if pd.isna(v) else float(v)) for n, v in rep.signals.iloc[-1].items()}
     expected, _ = significant_alpha_signal(latest, ic)
     got = rep.signals["significance_gated"].iloc[-1]
@@ -190,8 +227,10 @@ def test_significance_gated_series_matches_the_analyst_at_one_bar(frames):
         # only agrees to display precision, not bit-for-bit.
         assert got == pytest.approx(expected, abs=1e-3)
     # no alpha clears the bar -> an all-NaN series, not zeros or a crash
-    empty = significance_gated_series(rep.signals.drop(columns=["combined", "significance_gated"]),
-                                      {n: {"IC": 0.001, "t(IC)": 0.1, "n": 5} for n in rep.table.index})
+    empty = significance_gated_series(
+        rep.signals.drop(columns=["combined", "significance_gated"]),
+        {n: {"IC": 0.001, "t(IC)": 0.1, "n": 5} for n in rep.table.index},
+    )
     assert empty.isna().all()
 
 
@@ -199,10 +238,12 @@ def test_significant_alpha_signal_gates_on_tstat_and_n():
     latest = {"a": 0.6, "b": -0.4, "c": 0.2}
     # "a" is significant and positive-IC; "b" is significant but fails the n floor;
     # "c" has a below-threshold t-stat. Only "a" should end up in the combination.
-    ic = {"a": {"IC": 0.15, "t(IC)": 2.5, "n": 50},
-         "b": {"IC": -0.20, "t(IC)": 2.1, "n": 10},
-         "c": {"IC": 0.05, "t(IC)": 1.0, "n": 200},
-         "combined": {"IC": 0.10, "t(IC)": 5.0, "n": 200}}  # must be ignored by name
+    ic = {
+        "a": {"IC": 0.15, "t(IC)": 2.5, "n": 50},
+        "b": {"IC": -0.20, "t(IC)": 2.1, "n": 10},
+        "c": {"IC": 0.05, "t(IC)": 1.0, "n": 200},
+        "combined": {"IC": 0.10, "t(IC)": 5.0, "n": 200},
+    }  # must be ignored by name
     comb, names = significant_alpha_signal(latest, ic, min_tstat=2.0, min_n=30)
     assert names == ["a"]
     assert comb == pytest.approx(0.6)
@@ -224,8 +265,13 @@ def test_profiles_and_schedules():
     assert pov_schedule(10, [1000, 1000], 0.05).tolist() == [10.0, 0.0]
     ac = almgren_chriss_schedule(100, 5, sigma_session=1.0, eta=0.1, risk_aversion=1.0)
     assert ac.sum() == pytest.approx(100) and ac[0] > ac[-1]
-    for bad in (lambda: twap_schedule(1, 0), lambda: vwap_schedule(1, [0, 0]), lambda: pov_schedule(1, [1], 0.5),
-                lambda: almgren_chriss_schedule(1, 3, 1.0, 0.0, 1.0), lambda: volume_profile("fx", 0)):
+    for bad in (
+        lambda: twap_schedule(1, 0),
+        lambda: vwap_schedule(1, [0, 0]),
+        lambda: pov_schedule(1, [1], 0.5),
+        lambda: almgren_chriss_schedule(1, 3, 1.0, 0.0, 1.0),
+        lambda: volume_profile("fx", 0),
+    ):
         with pytest.raises(ValueError):
             bad()
 
@@ -253,11 +299,11 @@ def test_simulator_costs_and_shortfall():
     assert buy.vs_vwap_bps == pytest.approx(5.0, abs=1e-6) and sell.vs_vwap_bps == pytest.approx(5.0, abs=1e-6)
     assert buy.avg_price > sell.avg_price
     twap = simulate_execution(twap_schedule(1000, 20), bars, "buy", "twap", 10.0, 0.0)
-    assert twap.vs_vwap_bps != buy.vs_vwap_bps                        # timing risk shows up vs VWAP
+    assert twap.vs_vwap_bps != buy.vs_vwap_bps  # timing risk shows up vs VWAP
     with_impact = simulate_execution(sched, bars, "buy", "twap", 10.0, 1.0, 0.02, adv=1e6)
     assert with_impact.impact_cost_bps > 0 and with_impact.avg_price > buy.avg_price
     capped = simulate_execution(np.full(20, 1e6), bars, "buy", "twap", 0.0, 0.0)
-    assert capped.executed < capped.requested and capped.completion < 1   # cannot exceed bar volume
+    assert capped.executed < capped.requested and capped.completion < 1  # cannot exceed bar volume
     empty = simulate_execution(np.zeros(20), bars, "buy")
     assert empty.executed == 0 and math.isnan(empty.avg_price)
     fx_bars = synthetic_intraday_bars(pd.Series({"Open": 1.1, "High": 1.11, "Low": 1.09, "Close": 1.1, "Volume": 0}), 10, "fx")
@@ -275,8 +321,13 @@ def test_plan_execution_choices():
     big = plan_execution(d, ins, 0.1, 1e9, 100.0, adv=5e6)
     assert big.algo == "pov" and "POV" in big.reason
     assert plan_execution(d, ins, 0.6, 1e6, 100.0) is None
-    fx = plan_execution(FinalDecision("EURUSD", date(2024, 3, 1), Action.SELL, -0.5, 0.5, None, None, ""),
-                        Instrument.parse("EURUSD"), 0.0, 1e6, 1.1)
+    fx = plan_execution(
+        FinalDecision("EURUSD", date(2024, 3, 1), Action.SELL, -0.5, 0.5, None, None, ""),
+        Instrument.parse("EURUSD"),
+        0.0,
+        1e6,
+        1.1,
+    )
     assert fx.side == "sell" and fx.algo == "twap" and fx.slices == 288
     forced = plan_execution(d, ins, 0.1, 1e6, 100.0, adv=5e6, algo="ac", slices=10)
     bars = synthetic_intraday_bars(pd.Series({"Open": 100, "High": 101, "Low": 99, "Close": 100, "Volume": 1e6}), 10)
@@ -304,7 +355,7 @@ def test_covariance_estimators(cov_and_returns):
     assert e.shape == (4, 4) and np.allclose(e, e.T)
     shrunk, delta = ledoit_wolf_shrink(rets)
     assert 0 <= delta <= 1 and np.allclose(shrunk, shrunk.T)
-    assert np.allclose(np.diag(shrunk), np.diag(sample_cov(rets)))       # target keeps the variances
+    assert np.allclose(np.diag(shrunk), np.diag(sample_cov(rets)))  # target keeps the variances
     _, d1 = ledoit_wolf_shrink(rets[:, :1])
     assert d1 == 0.0
     for bad in (lambda: ewma_cov(rets[:1]), lambda: ewma_cov(rets, 0), lambda: sample_cov(rets[0])):
@@ -322,12 +373,12 @@ def test_weighting_schemes(cov_and_returns):
     np.testing.assert_allclose(risk_contributions(risk_parity_weights(cov, b), cov)["pct"], b, atol=1e-6)
     mv = min_variance_weights(cov, cap=0.5)
     assert mv.sum() == pytest.approx(1.0) and mv.max() <= 0.5 + 1e-9 and (mv >= -1e-12).all()
-    assert mv @ cov @ mv <= iv @ cov @ iv + 1e-12                          # lower variance than inverse vol
+    assert mv @ cov @ mv <= iv @ cov @ iv + 1e-12  # lower variance than inverse vol
     mu = np.array([0.02, 0.10, 0.03, 0.01])
     mw = mean_variance_weights(mu, cov, risk_aversion=2.0, cap=0.6)
-    assert mw.sum() == pytest.approx(1.0) and mw[1] == mw.max()             # tilts to the high-mu asset
+    assert mw.sum() == pytest.approx(1.0) and mw[1] == mw.max()  # tilts to the high-mu asset
     with pytest.raises(ValueError):
-        min_variance_weights(cov, cap=0.1)                                  # 4 * 0.1 < 1 infeasible
+        min_variance_weights(cov, cap=0.1)  # 4 * 0.1 < 1 infeasible
     with pytest.raises(ValueError):
         mean_variance_weights(mu, cov, risk_aversion=0.0)
     rc = risk_contributions(np.zeros(4), cov)
@@ -341,14 +392,17 @@ def test_construct_end_to_end(cov_and_returns):
     for m in METHODS:
         pw = construct(targets, frame, m, max_weight=0.6, target_vol=0.15)
         assert pw.method == m and pw.weights[2] == 0.0 and pw.allocation[2] == 0.0
-        assert pw.weights[1] <= 0.0 and abs(pw.weights).sum() <= 1.0 + 1e-9   # a short sleeve never turns long
+        assert pw.weights[1] <= 0.0 and abs(pw.weights).sum() <= 1.0 + 1e-9  # a short sleeve never turns long
         assert (pw.allocation >= 0).all()
         assert pw.contributions.shape == (4, 6) and pw.correlations.shape == (4, 4)
         assert pw.expected_vol <= 0.15 + 1e-6 and pw.scale >= 1.0
     flat = construct({"A": 0.0, "B": 0.0}, frame, "equal")
     assert flat.expected_vol == 0.0 and (flat.weights == 0).all()
-    for bad in (lambda: construct(targets, frame, "bogus"), lambda: construct({"Z": 1.0}, frame),
-                lambda: construct(targets, frame.iloc[:10])):
+    for bad in (
+        lambda: construct(targets, frame, "bogus"),
+        lambda: construct({"Z": 1.0}, frame),
+        lambda: construct(targets, frame.iloc[:10]),
+    ):
         with pytest.raises(ValueError):
             bad()
 

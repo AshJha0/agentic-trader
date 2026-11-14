@@ -7,6 +7,7 @@ With ``mmdc`` each block is rendered to SVG in a temp dir; the exit status is th
 number of diagrams that failed. Without it (and without ``--html``) the script
 exits 0 with a notice, so a machine without node does not fail for that reason.
 """
+
 import argparse
 import json
 import re
@@ -63,8 +64,9 @@ def main() -> int:
         for i, d in enumerate(diagrams, 1):
             src, dst = Path(tmp) / f"d{i}.mmd", Path(tmp) / f"d{i}.svg"
             src.write_text(d, encoding="utf-8")
-            p = subprocess.run([mmdc, "-i", str(src), "-o", str(dst), "-p", str(cfg), "-q"],
-                               capture_output=True, text=True, timeout=120)
+            p = subprocess.run(
+                [mmdc, "-i", str(src), "-o", str(dst), "-p", str(cfg), "-q"], capture_output=True, text=True, timeout=120
+            )
             ok = p.returncode == 0 and dst.exists()
             fails += not ok
             print(f"{'ok  ' if ok else 'FAIL'} diagram {i}" + ("" if ok else f": {p.stderr.strip()[-300:]}"))

@@ -19,6 +19,7 @@ Update deliberately with ``python scripts/v17_eval_baseline.py --update --reason
 re-running the eval on the new prompts (``scripts/v16_eval.py run/check`` with a local model);
 the reason should name that run. No model is called here.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -40,6 +41,7 @@ def _sha(b: bytes) -> str:
 def current_record(items_path: Path = ev.ITEMS_PATH, calibration_path: Path = ev.CALIBRATION_PATH) -> dict[str, Any]:
     from .. import make_config
     from ..prompts import prompt_bundle_hash
+
     items = ev.load_items(items_path)
     by_id = {it["id"]: it for it in items}
     cal = ev.load_calibration(calibration_path)
@@ -49,10 +51,12 @@ def current_record(items_path: Path = ev.ITEMS_PATH, calibration_path: Path = ev
         checker[f"{c}_pass"] = sum(bool(v[c]) for _, v in verdicts)
         checker[f"{c}_agree_with_labels"] = sum(bool(v[c]) == bool(r["labels"][c]) for r, v in verdicts)
     judge_sample = ev.judge_prompt({"prompt": "<PROMPT>"}, "<REPLY>")
-    return {"prompt_bundle_hash": prompt_bundle_hash(make_config(memory_path=None)),
-            "items_sha256": _sha(items_path.read_bytes().replace(b"\r\n", b"\n")),
-            "judge_prompt_sha256": _sha((ev.JUDGE_SYSTEM + "\n" + judge_sample).encode("utf-8")),
-            "checker": checker}
+    return {
+        "prompt_bundle_hash": prompt_bundle_hash(make_config(memory_path=None)),
+        "items_sha256": _sha(items_path.read_bytes().replace(b"\r\n", b"\n")),
+        "judge_prompt_sha256": _sha((ev.JUDGE_SYSTEM + "\n" + judge_sample).encode("utf-8")),
+        "checker": checker,
+    }
 
 
 def load_baseline(path: Path = BASELINE_PATH) -> dict[str, Any]:
@@ -76,7 +80,11 @@ def write_baseline(reason: str, path: Path = BASELINE_PATH, record: dict[str, An
     history = list(old.get("history", []))
     if old:
         history.append({k: old.get(k) for k in ("prompt_bundle_hash", "reason")})
-    doc = {"_note": "Eval-regression gate baseline (v0.17 R3.3). Re-record only with " + UPDATE_HINT,
-           **rec, "reason": reason.strip(), "history": history}
+    doc = {
+        "_note": "Eval-regression gate baseline (v0.17 R3.3). Re-record only with " + UPDATE_HINT,
+        **rec,
+        "reason": reason.strip(),
+        "history": history,
+    }
     path.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
     return doc

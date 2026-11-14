@@ -1,5 +1,6 @@
 """v0.17 R0.4 (review A3): schema ranges are enforced by the contract check; an out-of-range
 model number is a rejection (rules apply, counted as a contract failure), not a clip."""
+
 from __future__ import annotations
 
 import json
@@ -20,8 +21,7 @@ CFG = make_config(memory_path=None)
 def _state() -> TradingState:
     idx = pd.bdate_range(end="2024-03-01", periods=300)
     c = 100 * np.exp(np.linspace(0, 0.3, 300))
-    h = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": np.full(300, 1e6)},
-                     index=idx)
+    h = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": np.full(300, 1e6)}, index=idx)
     return TradingState(Instrument.parse("AAPL"), idx[-1].date(), h)
 
 
@@ -55,25 +55,28 @@ def test_every_number_in_every_schema_is_bounded(name: str) -> None:
             assert {"minimum", "maximum"} <= set(spec) or "exclusiveMinimum" in spec, (name, key)
 
 
-@pytest.mark.parametrize("schema,data,bad", [
-    (contracts.ANALYST, {"signal": 1.0, "confidence": 0.0}, False),
-    (contracts.ANALYST, {"signal": -1.0001}, True),
-    (contracts.FACILITATOR, {"winner": "Bull", "score": 0.1, "conviction": None}, False),
-    (contracts.FACILITATOR, {"winner": "maybe", "score": 0.1}, True),
-    (contracts.TRADER, {"action": "BUY", "target_weight": 0.5, "horizon_days": 200}, True),
-    (contracts.TRADER, {"action": "BUY", "target_weight": 0.5, "stop_loss": 0}, True),
-    (contracts.TRADER, {"action": "SELL", "target_weight": -0.5, "stop_loss": None}, False),
-    (contracts.PORTFOLIO_MANAGER, {"target_weight": 50}, True),
-    (contracts.RISK_VIEW, {"recommended_weight": -3}, True),
-])
+@pytest.mark.parametrize(
+    "schema,data,bad",
+    [
+        (contracts.ANALYST, {"signal": 1.0, "confidence": 0.0}, False),
+        (contracts.ANALYST, {"signal": -1.0001}, True),
+        (contracts.FACILITATOR, {"winner": "Bull", "score": 0.1, "conviction": None}, False),
+        (contracts.FACILITATOR, {"winner": "maybe", "score": 0.1}, True),
+        (contracts.TRADER, {"action": "BUY", "target_weight": 0.5, "horizon_days": 200}, True),
+        (contracts.TRADER, {"action": "BUY", "target_weight": 0.5, "stop_loss": 0}, True),
+        (contracts.TRADER, {"action": "SELL", "target_weight": -0.5, "stop_loss": None}, False),
+        (contracts.PORTFOLIO_MANAGER, {"target_weight": 50}, True),
+        (contracts.RISK_VIEW, {"recommended_weight": -3}, True),
+    ],
+)
 def test_violation(schema: dict, data: dict, bad: bool) -> None:
     assert (contracts.violation(data, schema) is not None) is bad
 
 
 def test_anthropic_request_carries_no_numeric_bounds() -> None:
     llm = AnthropicLLM.__new__(AnthropicLLM)
-    llm._request = lambda deep: {}            # type: ignore[attr-defined]
-    llm._system_blocks = lambda s: s          # type: ignore[attr-defined]
+    llm._request = lambda deep: {}  # type: ignore[attr-defined]
+    llm._system_blocks = lambda s: s  # type: ignore[attr-defined]
     sent = llm.build_request("s", "p", deep=False, schema=contracts.ANALYST)["output_config"]["format"]["schema"]
     for spec in sent["properties"].values():
         assert not {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"} & set(spec)
@@ -84,6 +87,7 @@ def test_study_counts_out_of_range_as_contract_rejection() -> None:
     import importlib.util
     import sys
     from pathlib import Path
+
     path = Path(__file__).resolve().parents[1] / "scripts" / "llm_study.py"
     spec = importlib.util.spec_from_file_location("llm_study_r0c", path)
     mod = importlib.util.module_from_spec(spec)

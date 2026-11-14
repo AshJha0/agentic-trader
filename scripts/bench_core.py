@@ -8,6 +8,7 @@ evaluation does per sleeve. Times are the best of ``repeat`` wall-clock runs per
 The C++ row is reported only when the compiled ``_atcore`` imports (build with
 scripts/build_cpp.ps1); otherwise it says so. Prints a markdown table and a json line.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,6 +45,7 @@ def main() -> None:
     try:
         from agentic_trader.quant import _atcore  # type: ignore[attr-defined]
         from agentic_trader import quant
+
         rows["cpp"] = min(run(quant, prices) for _ in range(a.repeat)) if quant.BACKEND == "cpp" else None
         del _atcore
     except ImportError:

@@ -1,6 +1,7 @@
 """v0.13 foundation (plan P1 items 1.1-1.4, 1.6-1.8): model tables, structured outputs,
 prompt caching, server-side refusal fallback evidence, token counting in budget admission,
 and served-model drift. Everything runs offline against a stand-in ``anthropic`` module."""
+
 from __future__ import annotations
 
 import os
@@ -16,8 +17,15 @@ from agentic_trader import contracts
 from agentic_trader.agents.base import Agent
 from agentic_trader.config import DEFAULT_CONFIG, make_config
 from agentic_trader.llm import (
-    MODEL_CAPABILITIES, PRICES_PER_MTOK, AnthropicLLM, budget_llm, estimate_tokens,
-    forced_tool_choice_supported, model_matches, price_for, refusal_fallback_supported,
+    MODEL_CAPABILITIES,
+    PRICES_PER_MTOK,
+    AnthropicLLM,
+    budget_llm,
+    estimate_tokens,
+    forced_tool_choice_supported,
+    model_matches,
+    price_for,
+    refusal_fallback_supported,
     request_shape,
 )
 
@@ -48,11 +56,13 @@ def install(monkeypatch, reply=None, fail=None, delay=0.0, count=None):
     lock = threading.Lock()
 
     def default_reply(kw):
-        return SimpleNamespace(model=kw["model"], stop_reason="end_turn", stop_details=None,
-                               usage=SimpleNamespace(input_tokens=100, output_tokens=20,
-                                                     cache_read_input_tokens=80,
-                                                     cache_creation_input_tokens=10),
-                               content=[SimpleNamespace(type="text", text='{"signal": 0.4}')])
+        return SimpleNamespace(
+            model=kw["model"],
+            stop_reason="end_turn",
+            stop_details=None,
+            usage=SimpleNamespace(input_tokens=100, output_tokens=20, cache_read_input_tokens=80, cache_creation_input_tokens=10),
+            content=[SimpleNamespace(type="text", text='{"signal": 0.4}')],
+        )
 
     def make(kind):
         def create(**kw):
@@ -64,6 +74,7 @@ def install(monkeypatch, reply=None, fail=None, delay=0.0, count=None):
             if exc is not None:
                 raise exc
             return (reply or default_reply)(kw)
+
         return create
 
     def count_tokens(**kw):
@@ -97,10 +108,14 @@ def test_defaults_are_the_current_generation():
     assert DEFAULT_CONFIG["deep_effort"] == "medium"
 
 
-@pytest.mark.parametrize("model,price", [
-    ("claude-haiku-5-5", (0.10, 0.50)), ("claude-sonnet-5-5", (2.0, 10.0)),
-    ("claude-opus-5-5", (4.0, 20.0)),
-])
+@pytest.mark.parametrize(
+    "model,price",
+    [
+        ("claude-haiku-5-5", (0.10, 0.50)),
+        ("claude-sonnet-5-5", (2.0, 10.0)),
+        ("claude-opus-5-5", (4.0, 20.0)),
+    ],
+)
 def test_price_table_pins_5_5_family(model, price):
     assert PRICES_PER_MTOK[model] == price and price_for(model + "-20261101") == price
 
@@ -115,7 +130,7 @@ def test_forced_tool_choice_and_fallback_capabilities():
     for m in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"):
         assert not forced_tool_choice_supported(m) and refusal_fallback_supported(m)
     assert forced_tool_choice_supported("claude-haiku-5-5")
-    assert not refusal_fallback_supported("claude-haiku-5-5")     # Haiku 5.5 has no server-side fallback
+    assert not refusal_fallback_supported("claude-haiku-5-5")  # Haiku 5.5 has no server-side fallback
     assert not refusal_fallback_supported("claude-sonnet-5")
 
 
@@ -128,10 +143,13 @@ def test_default_ids_resolve_in_both_tables(key):
 
 
 # Opt-in only: a key in the environment is not consent to call the network from a test run.
-@pytest.mark.skipif(not (os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("AGENTIC_TRADER_LIVE_API") == "1"),
-                    reason="live API check: set AGENTIC_TRADER_LIVE_API=1 with a key (models.retrieve is free)")
+@pytest.mark.skipif(
+    not (os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("AGENTIC_TRADER_LIVE_API") == "1"),
+    reason="live API check: set AGENTIC_TRADER_LIVE_API=1 with a key (models.retrieve is free)",
+)
 def test_default_ids_exist_on_the_api():  # pragma: no cover - runs only with a key
     import anthropic
+
     client = anthropic.Anthropic()
     for key in ("deep_think_llm", "quick_think_llm"):
         assert client.models.retrieve(DEFAULT_CONFIG[key]).id == DEFAULT_CONFIG[key]
@@ -144,7 +162,7 @@ def test_complete_json_sends_output_config_format_alongside_effort(monkeypatch):
     assert llm.complete_json("sys", "p", deep=False, schema=contracts.ANALYST) == '{"signal": 0.4}'
     oc = sent["create"][0]["output_config"]
     assert oc["effort"] == "low" and oc["format"] == {"type": "json_schema", "schema": contracts.api_schema(contracts.ANALYST)}
-    assert "tool_choice" not in sent["create"][0]          # never forced (400 on 5.5 models)
+    assert "tool_choice" not in sent["create"][0]  # never forced (400 on 5.5 models)
 
 
 @pytest.mark.parametrize("schema", list(contracts.ALL.values()))
@@ -159,6 +177,7 @@ class _Probe(Agent):
 
 class _SchemaLLM:
     """Records which path the agent took and replies with a fixture."""
+
     def __init__(self, text):
         self.text, self.schemas = text, []
 
@@ -174,32 +193,42 @@ class _SchemaLLM:
 def test_ask_json_uses_structured_outputs_and_keeps_the_contract_gate():
     llm = _SchemaLLM('{"signal": "high", "confidence": 0.5, "summary": "s"}')
     a = _Probe(llm, {})
-    got = a.ask_json("p", ("signal", "confidence", "summary"), numeric=("signal", "confidence"),
-                     schema=contracts.ANALYST)
-    assert llm.schemas == [contracts.ANALYST] and got is None   # schema-valid is not enough: gate 2 rejects
+    got = a.ask_json("p", ("signal", "confidence", "summary"), numeric=("signal", "confidence"), schema=contracts.ANALYST)
+    assert llm.schemas == [contracts.ANALYST] and got is None  # schema-valid is not enough: gate 2 rejects
 
 
 def test_ask_json_without_complete_json_falls_back_to_plain_completion():
     class Plain:
         def complete(self, system, prompt, *, deep):
             return '{"signal": 0.1, "confidence": 0.5, "summary": "s"}'
+
     got = _Probe(Plain(), {}).ask_json("p", ("signal",), schema=contracts.ANALYST)
     assert got == {"signal": 0.1, "confidence": 0.5, "summary": "s"}
 
 
-FIXTURES = {   # recorded-shape replies, one per contract: each must parse and pass its gate
-    "analyst": ('{"signal": 0.3, "confidence": 0.6, "summary": "s", "key_points": ["a"]}',
-                ("signal", "confidence", "summary"), ("signal", "confidence")),
-    "facilitator": ('{"winner": "bear", "score": -0.2, "conviction": null, "summary": "s"}',
-                    ("winner", "score", "summary"), ("score", "conviction")),
-    "risk_view": ('{"recommended_weight": 0.1, "argument": "a"}',
-                  ("recommended_weight", "argument"), ("recommended_weight",)),
-    "portfolio_manager": ('{"target_weight": 0.2, "confidence": 0.5, "rationale": "r"}',
-                          ("target_weight", "rationale"), ("target_weight", "confidence")),
-    "trader": ('{"action": "BUY", "target_weight": 0.4, "confidence": 0.7, "stop_loss": null, '
-               '"take_profit": 120.5, "horizon_days": 5, "rationale": "r"}',
-               ("action", "target_weight", "rationale"),
-               ("target_weight", "confidence", "stop_loss", "take_profit", "horizon_days")),
+FIXTURES = {  # recorded-shape replies, one per contract: each must parse and pass its gate
+    "analyst": (
+        '{"signal": 0.3, "confidence": 0.6, "summary": "s", "key_points": ["a"]}',
+        ("signal", "confidence", "summary"),
+        ("signal", "confidence"),
+    ),
+    "facilitator": (
+        '{"winner": "bear", "score": -0.2, "conviction": null, "summary": "s"}',
+        ("winner", "score", "summary"),
+        ("score", "conviction"),
+    ),
+    "risk_view": ('{"recommended_weight": 0.1, "argument": "a"}', ("recommended_weight", "argument"), ("recommended_weight",)),
+    "portfolio_manager": (
+        '{"target_weight": 0.2, "confidence": 0.5, "rationale": "r"}',
+        ("target_weight", "rationale"),
+        ("target_weight", "confidence"),
+    ),
+    "trader": (
+        '{"action": "BUY", "target_weight": 0.4, "confidence": 0.7, "stop_loss": null, '
+        '"take_profit": 120.5, "horizon_days": 5, "rationale": "r"}',
+        ("action", "target_weight", "rationale"),
+        ("target_weight", "confidence", "stop_loss", "take_profit", "horizon_days"),
+    ),
 }
 
 
@@ -207,7 +236,7 @@ FIXTURES = {   # recorded-shape replies, one per contract: each must parse and p
 def test_every_contract_fixture_parses_with_zero_failures(name):
     text, required, numeric = FIXTURES[name]
     schema = contracts.ALL[name]
-    assert set(required) == set(schema["required"])          # schema and gate agree
+    assert set(required) == set(schema["required"])  # schema and gate agree
     assert set(numeric) <= set(schema["properties"])
     assert _Probe(_SchemaLLM(text), {}).ask_json("p", required, numeric=numeric, schema=schema) is not None
 
@@ -217,8 +246,7 @@ def test_system_is_one_cached_block_and_usage_reports_cache_fields(monkeypatch):
     sent = install(monkeypatch)
     llm = AnthropicLLM(cfg(use_refusal_fallback=False))
     llm.complete("FIRM + role", "p", deep=True)
-    assert sent["create"][0]["system"] == [{"type": "text", "text": "FIRM + role",
-                                            "cache_control": {"type": "ephemeral"}}]
+    assert sent["create"][0]["system"] == [{"type": "text", "text": "FIRM + role", "cache_control": {"type": "ephemeral"}}]
     s = llm.usage.summary()
     assert s["cache_read_tokens"] == 80 and s["cache_write_tokens"] == 10
     assert s["by_model"]["claude-sonnet-5-5"]["cache_read_tokens"] == 80
@@ -228,13 +256,21 @@ def test_system_is_one_cached_block_and_usage_reports_cache_fields(monkeypatch):
 def test_fallback_default_on_supported_models_and_evidence_recorded(monkeypatch):
     def reply(kw):
         return SimpleNamespace(
-            model="claude-opus-5-5", stop_reason="end_turn", stop_details=None, usage=None,
-            content=[SimpleNamespace(type="fallback", from_=SimpleNamespace(model="claude-sonnet-5-5"),
-                                     to=SimpleNamespace(model="claude-opus-5-5")),
-                     SimpleNamespace(type="text", text="ok")])
+            model="claude-opus-5-5",
+            stop_reason="end_turn",
+            stop_details=None,
+            usage=None,
+            content=[
+                SimpleNamespace(
+                    type="fallback", from_=SimpleNamespace(model="claude-sonnet-5-5"), to=SimpleNamespace(model="claude-opus-5-5")
+                ),
+                SimpleNamespace(type="text", text="ok"),
+            ],
+        )
+
     sent = install(monkeypatch, reply=reply)
     llm = AnthropicLLM(cfg())
-    assert llm.complete("s", "p", deep=True) == "ok"            # a recorded fallback is not drift
+    assert llm.complete("s", "p", deep=True) == "ok"  # a recorded fallback is not drift
     kw = sent["beta"][0]
     assert kw["betas"] == ["server-side-fallback-2026-07-01"] and kw["extra_body"] == {"fallbacks": "default"}
     ev = llm.last_call
@@ -250,8 +286,10 @@ def test_no_fallback_parameter_on_haiku(monkeypatch):
 
 def test_refusal_category_is_evidence(monkeypatch):
     def reply(kw):
-        return SimpleNamespace(model=kw["model"], stop_reason="refusal", usage=None, content=[],
-                               stop_details=SimpleNamespace(category="cyber"))
+        return SimpleNamespace(
+            model=kw["model"], stop_reason="refusal", usage=None, content=[], stop_details=SimpleNamespace(category="cyber")
+        )
+
     install(monkeypatch, reply=reply)
     llm = AnthropicLLM(cfg())
     assert llm.complete("s", "p", deep=True) is None
@@ -269,8 +307,14 @@ def test_model_matches():
 @pytest.mark.parametrize("strict,expect", [(True, None), (False, '{"signal": 0.4}')])
 def test_drift_is_rejected_when_strict_and_always_counted(monkeypatch, strict, expect):
     def reply(kw):
-        return SimpleNamespace(model="claude-haiku-4-5", stop_reason="end_turn", stop_details=None,
-                               usage=None, content=[SimpleNamespace(type="text", text='{"signal": 0.4}')])
+        return SimpleNamespace(
+            model="claude-haiku-4-5",
+            stop_reason="end_turn",
+            stop_details=None,
+            usage=None,
+            content=[SimpleNamespace(type="text", text='{"signal": 0.4}')],
+        )
+
     install(monkeypatch, reply=reply)
     llm = AnthropicLLM(cfg(llm_strict_model=strict))
     assert llm.complete("s", "p", deep=False) == expect
@@ -280,11 +324,11 @@ def test_drift_is_rejected_when_strict_and_always_counted(monkeypatch, strict, e
 def test_served_model_is_stored_per_decision(monkeypatch):
     from agentic_trader.graph import TradingGraph
     from agentic_trader.memory import DecisionMemory
+
     install(monkeypatch)
     g = TradingGraph(cfg(), memory=DecisionMemory(None), on_event=lambda *_: None)
     state, dec = g.propagate("AAPL", "2024-03-01")
-    assert state.llm_calls and all(c["model_served"] in ("claude-haiku-5-5", "claude-sonnet-5-5")
-                                   for c in state.llm_calls)
+    assert state.llm_calls and all(c["model_served"] in ("claude-haiku-5-5", "claude-sonnet-5-5") for c in state.llm_calls)
     assert set(dec.models_served) <= {"claude-haiku-5-5", "claude-sonnet-5-5"} and dec.models_served
     assert dec.to_dict()["models_served"] == list(dec.models_served)
 
@@ -310,7 +354,7 @@ def test_count_tokens_used_only_with_a_key_and_falls_back(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
     assert llm.count_input_tokens(True, "s", "p") == 1234
     assert sent["count"][0]["model"] == "claude-sonnet-5-5"
-    sent = install(monkeypatch, count=None)                  # endpoint down -> estimate
+    sent = install(monkeypatch, count=None)  # endpoint down -> estimate
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
     assert AnthropicLLM(cfg()).count_input_tokens(True, "s", "p") == estimate_tokens("s", "p")
 
@@ -336,6 +380,7 @@ def test_workers_at_the_cap_during_a_retry_storm_never_overspend(monkeypatch, ca
         with lock:
             seen[key] = seen.get(key, 0) + 1
             return _RateLimit() if seen[key] == 1 else None
+
     install(monkeypatch, fail=fail, delay=0.01)
     c = cfg(max_tokens=1000, llm_max_retries=2)
     inner = AnthropicLLM(c)
@@ -343,8 +388,7 @@ def test_workers_at_the_cap_during_a_retry_storm_never_overspend(monkeypatch, ca
     cap = per_call * calls_affordable
     llm = budget_llm(inner, make_config(c, max_llm_cost_usd=cap))
     results = []
-    threads = [threading.Thread(target=lambda i=i: results.append(llm.complete("s", f"p-{i:02d}", deep=True)))
-               for i in range(8)]
+    threads = [threading.Thread(target=lambda i=i: results.append(llm.complete("s", f"p-{i:02d}", deep=True))) for i in range(8)]
     for t in threads:
         t.start()
     for t in threads:

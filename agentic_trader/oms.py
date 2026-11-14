@@ -78,6 +78,7 @@ Example (COOKBOOK-ready)::
     print(oms.cash_projection())     # one row: USD, 2026-11-09 (T+1, a Monday), -20004.0
     oms.kill_switch.engage("global", "end of test")  # every order path now refuses
 """
+
 from __future__ import annotations
 
 import json
@@ -104,25 +105,25 @@ from .validate import FX_ROLL_NY, NEW_YORK, cap_short_notional
 EQUITY_OPEN_NY = time(9, 30)
 
 OMS_DEFAULTS: dict[str, Any] = {
-    "max_order_notional": None,      # None: servers.default_order_cap(config) (capital x max_position)
+    "max_order_notional": None,  # None: servers.default_order_cap(config) (capital x max_position)
     "max_order_quantity": 1_000_000.0,
-    "price_collar_pct": 0.10,        # |price / last close - 1| allowed
+    "price_collar_pct": 0.10,  # |price / last close - 1| allowed
     "duplicate_window_seconds": 60.0,
-    "participation_cap": 0.10,       # largest fill as a fraction of modelled daily volume
-    "borrow_list": [],               # equities that may be sold short
-    "max_short_notional": 0.5,       # fraction of capital; None = no cap
+    "participation_cap": 0.10,  # largest fill as a fraction of modelled daily volume
+    "borrow_list": [],  # equities that may be sold short
+    "max_short_notional": 0.5,  # fraction of capital; None = no cap
     # Book limits re-checked at order time, on the book as it would stand if the order and every
     # working order filled, valued at the latest mark per symbol (OMS.marks: last close given to
     # submit, else the fill price; an unmarked position is not counted). Fractions of capital;
     # None turns a check off.
-    "max_gross_exposure": 3.0,       # sum |quantity x mark| / capital
-    "max_net_exposure": 2.0,         # |sum quantity x mark| / capital
-    "max_name_concentration": 1.0,   # |quantity x mark| / capital for the ordered name (= risk.max_position default)
-    "max_var_pct": None,             # 1-day VaR of the book (risk_model.var_next) / capital; needs OMS.returns
-    "var_method": "fhs",             # risk_model VaR method for max_var_pct
+    "max_gross_exposure": 3.0,  # sum |quantity x mark| / capital
+    "max_net_exposure": 2.0,  # |sum quantity x mark| / capital
+    "max_name_concentration": 1.0,  # |quantity x mark| / capital for the ordered name (= risk.max_position default)
+    "max_var_pct": None,  # 1-day VaR of the book (risk_model.var_next) / capital; needs OMS.returns
+    "var_method": "fhs",  # risk_model VaR method for max_var_pct
     "var_alpha": 0.95,
-    "kill_switch_path": None,        # JSON file; None keeps the switch in memory
-    "extra_equity_holidays": [],     # ISO dates (one-off closures)
+    "kill_switch_path": None,  # JSON file; None keeps the switch in memory
+    "extra_equity_holidays": [],  # ISO dates (one-off closures)
     "extra_fx_holidays": [],
 }
 
@@ -138,8 +139,13 @@ def oms_config(config: dict) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ calendars
 # Shared stdlib calendar (also loaded by the paper freshness job); re-exported here.
-from .nyse_calendar import (EQUITY_EARLY_CLOSE_NY, NYSE_SPECIAL_CLOSURES, nyse_close_time,  # noqa: E402,F401
-                            nyse_early_closes, nyse_holidays)
+from .nyse_calendar import (  # noqa: E402,F401
+    EQUITY_EARLY_CLOSE_NY,
+    NYSE_SPECIAL_CLOSURES,
+    nyse_close_time,
+    nyse_early_closes,
+    nyse_holidays,
+)
 
 
 @lru_cache(maxsize=None)
@@ -293,8 +299,7 @@ class OrderState(str, Enum):
 LEGAL_TRANSITIONS: dict[OrderState, frozenset[OrderState]] = {
     OrderState.NEW: frozenset({OrderState.ACKED, OrderState.REJECTED, OrderState.CANCELLED}),
     OrderState.ACKED: frozenset({OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELLED}),
-    OrderState.PARTIALLY_FILLED: frozenset({OrderState.PARTIALLY_FILLED, OrderState.FILLED,
-                                            OrderState.CANCELLED}),
+    OrderState.PARTIALLY_FILLED: frozenset({OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELLED}),
     OrderState.FILLED: frozenset(),
     OrderState.CANCELLED: frozenset(),
     OrderState.REJECTED: frozenset(),
@@ -329,9 +334,9 @@ class Order:
     client_order_id: str
     symbol: str
     asset_class: str
-    side: str                       # "buy" | "sell"
+    side: str  # "buy" | "sell"
     quantity: float
-    price: float                    # reference price the order was checked and is filled at
+    price: float  # reference price the order was checked and is filled at
     submitted_at: datetime
     state: OrderState = OrderState.NEW
     reject_reason: str = ""
@@ -359,9 +364,15 @@ class Order:
         return {"symbol": self.symbol, "side": self.side, "quantity": self.quantity, "price": self.price}
 
     def snapshot(self) -> dict[str, Any]:
-        return {"client_order_id": self.client_order_id, **self.fields(), "asset_class": self.asset_class,
-                "state": self.state.value, "filled_qty": self.filled_qty, "cost": self.cost,
-                "reject_reason": self.reject_reason}
+        return {
+            "client_order_id": self.client_order_id,
+            **self.fields(),
+            "asset_class": self.asset_class,
+            "state": self.state.value,
+            "filled_qty": self.filled_qty,
+            "cost": self.cost,
+            "reject_reason": self.reject_reason,
+        }
 
     def move(self, new: OrderState, at: datetime, note: str, evidence_id: str) -> None:
         """Apply one transition, refusing any the life cycle does not allow."""
@@ -403,22 +414,27 @@ class _NoMacro:
         return {}
 
 
-def fill_cost(ins: Instrument, config: dict, notional: float, price: float, impact_k: float | None,
-              capital: float) -> float:
+def fill_cost(ins: Instrument, config: dict, notional: float, price: float, impact_k: float | None, capital: float) -> float:
     """Cost in account currency of filling ``notional`` at ``price``: the backtester's entry cost
     ``|dw| * unit_cost + K_t * |dw| ** 1.5`` for ``dw = notional / capital``, times capital."""
     bc = backtest_config_for(ins, config, np.array([price]), cast(Any, _NoMacro()), date.min)
     dw = abs(notional) / capital
-    return capital * (dw * (bc.cost_bps + bc.slippage_bps) / 1e4 + (impact_k or 0.0) * dw ** 1.5)
+    return capital * (dw * (bc.cost_bps + bc.slippage_bps) / 1e4 + (impact_k or 0.0) * dw**1.5)
 
 
 # ------------------------------------------------------------------ OMS
 class OMS:
     """The paper order book of one account. Not thread-safe: one desk, one caller."""
 
-    def __init__(self, config: dict, evidence: EvidenceStore | None = None,
-                 approval: ApprovalGateway | None = None, capital: float | None = None,
-                 positions: dict[str, float] | None = None, kill_switch: KillSwitch | None = None):
+    def __init__(
+        self,
+        config: dict,
+        evidence: EvidenceStore | None = None,
+        approval: ApprovalGateway | None = None,
+        capital: float | None = None,
+        positions: dict[str, float] | None = None,
+        kill_switch: KillSwitch | None = None,
+    ):
         self.config = config
         self.cfg = oms_config(config)
         self.evidence = evidence if evidence is not None else EvidenceStore()
@@ -432,18 +448,20 @@ class OMS:
         # the order-time VaR check (max_var_pct); callers may fill both before submitting
         self.marks: dict[str, float] = {}
         self.returns: dict[str, pd.Series] = {}
-        self.cash_flows: list[dict[str, Any]] = []      # currency, amount, settle_date, client_order_id
-        self.fx_value_dates: dict[str, date] = {}       # open FX position -> value date
+        self.cash_flows: list[dict[str, Any]] = []  # currency, amount, settle_date, client_order_id
+        self.fx_value_dates: dict[str, date] = {}  # open FX position -> value date
         self.fx_rolls: list[dict[str, Any]] = []
         if self.cfg["max_order_notional"] is None:
             from .agentic.servers import default_order_cap
+
             self.max_notional = default_order_cap(config, self.capital)
         else:
             self.max_notional = float(self.cfg["max_order_notional"])
 
     # ---------------------------------------------------------- evidence
-    def _evidence(self, order: Order, summary: str, type_: EvidenceType = EvidenceType.DECISION,
-                  extra: dict[str, Any] | None = None) -> str:
+    def _evidence(
+        self, order: Order, summary: str, type_: EvidenceType = EvidenceType.DECISION, extra: dict[str, Any] | None = None
+    ) -> str:
         payload = {**order.snapshot(), **(extra or {})}
         return self.evidence.record(type_, "oms", summary, payload, order.client_order_id).id
 
@@ -451,15 +469,19 @@ class OMS:
         if new not in LEGAL_TRANSITIONS[order.state]:
             raise IllegalTransition(f"{order.client_order_id}: {order.state.value} -> {new.value} is not allowed")
         prior = order.state
-        order.state = new   # the evidence payload shows the state being entered
-        ev = self._evidence(order, f"{order.client_order_id} {prior.value} -> {new.value}: {note}",
-                            extra={"from": prior.value, "at": at.isoformat(), "note": note})
+        order.state = new  # the evidence payload shows the state being entered
+        ev = self._evidence(
+            order,
+            f"{order.client_order_id} {prior.value} -> {new.value}: {note}",
+            extra={"from": prior.value, "at": at.isoformat(), "note": note},
+        )
         order.state = prior
         order.move(new, at, note, ev)
 
     # ---------------------------------------------------------- submit
-    def submit(self, client_order_id: str, symbol: str, side: str, quantity: float, price: float,
-               last_close: float, at: datetime) -> Order:
+    def submit(
+        self, client_order_id: str, symbol: str, side: str, quantity: float, price: float, last_close: float, at: datetime
+    ) -> Order:
         """Accept, check and acknowledge (or reject) an order. Returns the order in ACKED or
         REJECTED state; a repeat of a known ``client_order_id`` returns that order unchanged."""
         _aware(at)
@@ -468,20 +490,27 @@ class OMS:
             raise ValueError("side must be 'buy' or 'sell'")
         for name, v in (("quantity", quantity), ("price", price), ("last_close", last_close)):
             # numbers.Real admits numpy scalars (np.int64 is not an int); a bool is not a quantity.
-            if not (isinstance(v, numbers.Real) and not isinstance(v, (bool, np.bool_))
-                    and math.isfinite(float(v)) and float(v) > 0):
+            if not (
+                isinstance(v, numbers.Real) and not isinstance(v, (bool, np.bool_)) and math.isfinite(float(v)) and float(v) > 0
+            ):
                 raise ValueError(f"{name} must be a positive finite number")
         order = Order(str(client_order_id), ins.symbol, ins.asset_class, side, float(quantity), float(price), at)
         known = self.orders.get(order.client_order_id)
         if known is not None:
             if known.fields() != order.fields():
-                raise ValueError(f"client order id {order.client_order_id} was used for {known.fields()}; "
-                                 "a new order needs a new id")
+                raise ValueError(
+                    f"client order id {order.client_order_id} was used for {known.fields()}; a new order needs a new id"
+                )
             return known
         self.orders[order.client_order_id] = order
-        order.history.append(Transition(OrderState.NEW, at, "received",
-                                        self._evidence(order, f"{order.client_order_id} NEW: received",
-                                                       extra={"at": at.isoformat()})))
+        order.history.append(
+            Transition(
+                OrderState.NEW,
+                at,
+                "received",
+                self._evidence(order, f"{order.client_order_id} NEW: received", extra={"at": at.isoformat()}),
+            )
+        )
         reason = self._pre_trade(order, ins, float(last_close), at) or self._approve(order)
         if reason:
             order.reject_reason = reason
@@ -502,20 +531,24 @@ class OMS:
             return f"fat_finger_quantity: {order.quantity:g} exceeds {float(cfg['max_order_quantity']):g}"
         move = order.price / last_close - 1.0
         if abs(move) > float(cfg["price_collar_pct"]):
-            return (f"price_collar: {order.price:g} is {move:+.2%} from the last close {last_close:g} "
-                    f"(collar {float(cfg['price_collar_pct']):.0%})")
+            return (
+                f"price_collar: {order.price:g} is {move:+.2%} from the last close {last_close:g} "
+                f"(collar {float(cfg['price_collar_pct']):.0%})"
+            )
         window = timedelta(seconds=float(cfg["duplicate_window_seconds"]))
         for other in self.orders.values():
-            if (other is not order and other.fields() == order.fields()
-                    and other.state not in (OrderState.REJECTED, OrderState.CANCELLED)
-                    and abs(at - other.submitted_at) <= window):
+            if (
+                other is not order
+                and other.fields() == order.fields()
+                and other.state not in (OrderState.REJECTED, OrderState.CANCELLED)
+                and abs(at - other.submitted_at) <= window
+            ):
                 return f"duplicate: same order as {other.client_order_id} within {window.total_seconds():g}s"
         if not calendar_for(ins, cfg).is_open(at):
             return f"market_hours: {ins.asset_class} market closed at {at.astimezone(NEW_YORK):%Y-%m-%d %H:%M} New York"
         before = self.positions.get(ins.symbol, 0.0) + self._working(ins.symbol)
         after = before + order.signed * order.quantity
-        if not ins.is_fx and after < 0 and after < before and ins.symbol not in {
-                str(s).upper() for s in cfg["borrow_list"]}:
+        if not ins.is_fx and after < 0 and after < before and ins.symbol not in {str(s).upper() for s in cfg["borrow_list"]}:
             return f"borrow: {ins.symbol} is not on the borrow list; the order would leave {after:g} short"
         cap = cfg["max_short_notional"]
         if after < 0 and cap is not None:
@@ -558,14 +591,17 @@ class OMS:
                 return var
             prior = self._book_var(before)
             if var > float(lim) and var > (prior if isinstance(prior, float) else 0.0):
-                return (f"var: 1-day {float(cfg['var_alpha']):.0%} VaR {var:.2%} of capital exceeds "
-                        f"{float(lim):.2%} ({cfg['var_method']})")
+                return (
+                    f"var: 1-day {float(cfg['var_alpha']):.0%} VaR {var:.2%} of capital exceeds "
+                    f"{float(lim):.2%} ({cfg['var_method']})"
+                )
         return None
 
     def _book_var(self, book: dict[str, float]) -> float | str:
         """1-day VaR (fraction of capital) of the weights ``book`` on the stored return
         histories, by ``risk_model.var_next``; a refusal reason when it cannot be formed."""
         from .risk_model import var_next
+
         live = {s: w for s, w in book.items() if w}
         if not live:
             return 0.0
@@ -581,14 +617,21 @@ class OMS:
 
     def _working(self, symbol: str) -> float:
         """Signed quantity still to fill on live orders in ``symbol``."""
-        return sum(o.signed * o.remaining for o in self.orders.values()
-                   if o.symbol == symbol and o.state in (OrderState.ACKED, OrderState.PARTIALLY_FILLED))
+        return sum(
+            o.signed * o.remaining
+            for o in self.orders.values()
+            if o.symbol == symbol and o.state in (OrderState.ACKED, OrderState.PARTIALLY_FILLED)
+        )
 
     def _approve(self, order: Order) -> str | None:
         request = ToolRequest("oms.submit", order.fields(), order.client_order_id, "oms")
         verdict = self.approval.decide(order.client_order_id, request, "paper order")
-        self._evidence(order, f"{order.client_order_id} approval via {self.approval.name}: {verdict}",
-                       EvidenceType.APPROVAL, {"gateway": self.approval.name, "approved": verdict})
+        self._evidence(
+            order,
+            f"{order.client_order_id} approval via {self.approval.name}: {verdict}",
+            EvidenceType.APPROVAL,
+            {"gateway": self.approval.name, "approved": verdict},
+        )
         if verdict is True:
             return None
         return "approval: " + ("pending; resubmit after a decision" if verdict is None else "refused")
@@ -615,9 +658,14 @@ class OMS:
             return None
         notional = qty * market.price
         trade_date = cal.trade_date(at)
-        fill = Fill(qty, market.price, fill_cost(ins, self.config, notional, market.price, market.impact_k,
-                                                 self.capital),
-                    at, trade_date, cal.settlement_date(trade_date))
+        fill = Fill(
+            qty,
+            market.price,
+            fill_cost(ins, self.config, notional, market.price, market.impact_k, self.capital),
+            at,
+            trade_date,
+            cal.settlement_date(trade_date),
+        )
         order.fills.append(fill)
         self.positions[order.symbol] = self.positions.get(order.symbol, 0.0) + order.signed * qty
         self._book_cash(order, ins, fill)
@@ -627,20 +675,24 @@ class OMS:
             else:
                 self.fx_value_dates.pop(order.symbol, None)
         done = order.remaining <= 1e-9
-        self._move(order, OrderState.FILLED if done else OrderState.PARTIALLY_FILLED, at,
-                   f"filled {qty:g} at {market.price:g}, cost {fill.cost:.4f}")
+        self._move(
+            order,
+            OrderState.FILLED if done else OrderState.PARTIALLY_FILLED,
+            at,
+            f"filled {qty:g} at {market.price:g}, cost {fill.cost:.4f}",
+        )
         return fill
 
     def _book_cash(self, order: Order, ins: Instrument, fill: Fill) -> None:
         flows = [(self.account_currency, -fill.cost)]
         if ins.is_fx:
-            flows += [(str(ins.base), order.signed * fill.quantity),
-                      (str(ins.quote), -order.signed * fill.quantity * fill.price)]
+            flows += [(str(ins.base), order.signed * fill.quantity), (str(ins.quote), -order.signed * fill.quantity * fill.price)]
         else:
             flows.append((self.account_currency, -order.signed * fill.quantity * fill.price))
         for ccy, amount in flows:
-            self.cash_flows.append({"currency": ccy, "amount": amount, "settle_date": fill.settle_date,
-                                    "client_order_id": order.client_order_id})
+            self.cash_flows.append(
+                {"currency": ccy, "amount": amount, "settle_date": fill.settle_date, "client_order_id": order.client_order_id}
+            )
 
     def cancel(self, client_order_id: str, at: datetime, reason: str = "cancelled") -> Order:
         """Cancel a live order (always allowed, even under a kill switch)."""
@@ -666,11 +718,21 @@ class OMS:
             cal = calendar_for(Instrument.parse(symbol, "fx"), self.cfg)
             new_value = cal.settlement_date(cal.trade_date(at))
             if new_value > value_date:
-                roll = {"symbol": symbol, "quantity": self.positions[symbol], "from": value_date,
-                        "to": new_value, "at": _aware(at)}
+                roll = {
+                    "symbol": symbol,
+                    "quantity": self.positions[symbol],
+                    "from": value_date,
+                    "to": new_value,
+                    "at": _aware(at),
+                }
                 self.fx_value_dates[symbol] = new_value
-                ev = self.evidence.record(EvidenceType.DECISION, "oms", f"FX roll {symbol} {value_date} -> {new_value}",
-                                          {k: str(v) for k, v in roll.items()}, f"roll-{symbol}")
+                ev = self.evidence.record(
+                    EvidenceType.DECISION,
+                    "oms",
+                    f"FX roll {symbol} {value_date} -> {new_value}",
+                    {k: str(v) for k, v in roll.items()},
+                    f"roll-{symbol}",
+                )
                 rolls.append({**roll, "evidence_id": ev.id})
         self.fx_rolls.extend(rolls)
         return rolls
@@ -693,7 +755,7 @@ class OMS:
 # ------------------------------------------------------------------ reconciliation
 @dataclass(frozen=True)
 class Break:
-    kind: str           # "qty" | "cash" | "price"
+    kind: str  # "qty" | "cash" | "price"
     key: str
     oms: float
     ledger: float
@@ -714,9 +776,15 @@ class BreakReport:
         return pd.DataFrame([asdict(b) for b in self.breaks], columns=["kind", "key", "oms", "ledger", "diff"])
 
 
-def reconcile(oms: OMS, ledger_positions: dict[str, float], ledger_cash: float | None = None,
-              ledger_prices: dict[str, float] | None = None, qty_tol: float = 1e-6, cash_tol: float = 0.01,
-              price_tol_bps: float = 5.0) -> BreakReport:
+def reconcile(
+    oms: OMS,
+    ledger_positions: dict[str, float],
+    ledger_cash: float | None = None,
+    ledger_prices: dict[str, float] | None = None,
+    qty_tol: float = 1e-6,
+    cash_tol: float = 0.01,
+    price_tol_bps: float = 5.0,
+) -> BreakReport:
     """End-of-day comparison of the OMS book with the paper ledger.
 
     A quantity break is any symbol whose OMS and ledger quantities differ by more than
@@ -743,13 +811,16 @@ def reconcile(oms: OMS, ledger_positions: dict[str, float], ledger_cash: float |
             a = fills[k.upper()]
             # A non-positive or non-finite ledger price cannot be compared in bps; it is a
             # break in itself (it used to raise ZeroDivisionError and abort the whole report).
-            if (not math.isfinite(float(px)) or float(px) <= 0
-                    or abs(a / float(px) - 1.0) * 1e4 > price_tol_bps):
+            if not math.isfinite(float(px)) or float(px) <= 0 or abs(a / float(px) - 1.0) * 1e4 > price_tol_bps:
                 breaks.append(Break("price", k.upper(), a, float(px), a - float(px)))
     report = BreakReport(breaks, checked)
     report.evidence_id = oms.evidence.record(
-        EvidenceType.CALCULATION, "oms.reconcile", f"reconciliation: {len(breaks)} break(s) over {checked} checks",
-        [asdict(b) for b in breaks], "reconcile").id
+        EvidenceType.CALCULATION,
+        "oms.reconcile",
+        f"reconciliation: {len(breaks)} break(s) over {checked} checks",
+        [asdict(b) for b in breaks],
+        "reconcile",
+    ).id
     return report
 
 
@@ -757,8 +828,9 @@ def reconcile(oms: OMS, ledger_positions: dict[str, float], ledger_cash: float |
 SHADOW_LABEL = "oms_shadow_v14"
 
 
-def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tuple], out: Path,
-                  freeze: date, corporate_actions: bool = False) -> dict[str, Any]:
+def paper_session(
+    as_of: date, config: dict, provider: Any, books: dict[str, tuple], out: Path, freeze: date, corporate_actions: bool = False
+) -> dict[str, Any]:
     """One OMS shadow session for ``scripts/paper_trade_v09.py --oms``.
 
     For each book's first (candidate) stream, the last decided weight change per sleeve
@@ -783,6 +855,7 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
     from .backtest import run_portfolio_backtest
     from .corporate_actions import apply_actions, cash_flow_rows
     from .tca import predicted_cost, tca_rows
+
     out.mkdir(parents=True, exist_ok=True)
     capital = float(config["initial_capital"])
     ccy = str(config.get("account_currency", "USD"))
@@ -791,8 +864,9 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
     tca_out: list[pd.DataFrame] = []
     actions_fn = getattr(provider, "corporate_actions", None) if corporate_actions else None
     for book, (syms, weighting, streams, _) in books.items():
-        rep = run_portfolio_backtest(syms, freeze, as_of, config, rebalance_every=5, provider=provider,
-                                     weighting=weighting, cov_window=120)
+        rep = run_portfolio_backtest(
+            syms, freeze, as_of, config, rebalance_every=5, provider=provider, weighting=weighting, cov_window=120
+        )
         if len(rep.dates) < 3:
             continue
         stream = streams[0]
@@ -814,8 +888,16 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
             d = pd.Timestamp(sleeve.dates[-2]).date()
             if callable(actions_fn) and not ins.is_fx and held != 0.0:
                 held, booked = _apply_session_actions(
-                    provider, actions_fn, ins, held, float(pos[-3] * share[-3] * capital),
-                    pd.Timestamp(sleeve.dates[-3]).date(), d, float(px[-2]), apply_actions)
+                    provider,
+                    actions_fn,
+                    ins,
+                    held,
+                    float(pos[-3] * share[-3] * capital),
+                    pd.Timestamp(sleeve.dates[-3]).date(),
+                    d,
+                    float(px[-2]),
+                    apply_actions,
+                )
                 oms.cash_flows.extend(cash_flow_rows(booked, ccy))
                 action_rows += [{"label": SHADOW_LABEL, "book": book, **asdict(e)} for e in booked]
             oms.positions[ins.symbol] = held
@@ -829,14 +911,12 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
             at = datetime.combine(d, close_ny, NEW_YORK).astimezone(timezone.utc) - timedelta(minutes=1)
             cid = f"{book}-{ins.symbol}-{d.isoformat()}"
             side = "buy" if target > held else "sell"
-            order = oms.submit(cid, ins.symbol, side, abs(target - held), float(px[-2]),
-                               float(hist["Close"].iloc[-2]), at)
+            order = oms.submit(cid, ins.symbol, side, abs(target - held), float(px[-2]), float(hist["Close"].iloc[-2]), at)
             arrival[cid] = float(px[-2])
             predicted[cid] = predicted_cost(abs(target - held) * float(px[-2]), capital, _unit_cost(config, ins))
             if order.state is OrderState.ACKED:
                 oms.execute(cid, market_snapshot(hist, ins, config), at)
-            rows.append({"label": SHADOW_LABEL, "book": book, "stream": stream, **order.snapshot(),
-                         "trade_date": d.isoformat()})
+            rows.append({"label": SHADOW_LABEL, "book": book, "stream": stream, **order.snapshot(), "trade_date": d.isoformat()})
         traded = [o for o in oms.orders.values() if o.client_order_id in arrival]
         if traded:
             t = tca_rows(traded, arrival, predicted)
@@ -848,14 +928,16 @@ def paper_session(as_of: date, config: dict, provider: Any, books: dict[str, tup
         proj = oms.cash_projection()
         proj.insert(0, "book", book)
         projections.append(proj)
-        summary[book] = {"orders": sum(r["book"] == book for r in rows), "breaks": len(report.breaks),
-                         "evidence": len(oms.evidence)}
+        summary[book] = {
+            "orders": sum(r["book"] == book for r in rows),
+            "breaks": len(report.breaks),
+            "evidence": len(oms.evidence),
+        }
     _append_csv(out / "orders.csv", rows)
     _append_csv(out / "breaks.csv", breaks)
     _append_csv(out / "actions.csv", action_rows)
     if tca_out:
-        _append_csv(out / "tca.csv", [{str(k): v for k, v in r.items()}
-                                      for r in pd.concat(tca_out).to_dict("records")])
+        _append_csv(out / "tca.csv", [{str(k): v for k, v in r.items()} for r in pd.concat(tca_out).to_dict("records")])
     if projections:
         pd.concat(projections).to_csv(out / "cash_projection.csv", index=False)
     line = {"label": SHADOW_LABEL, "as_of": as_of.isoformat(), "books": summary}
@@ -873,8 +955,17 @@ def _unit_cost(config: dict, ins: Instrument) -> float:
     return (float(c.get("equity_cost_bps", 0.0)) + float(c.get("equity_slippage_bps", 0.0))) / 1e4
 
 
-def _apply_session_actions(provider: Any, actions_fn: Any, ins: Instrument, held: float, held_notional: float,
-                           d_prev: date, d: date, post_price: float, apply_actions: Any) -> tuple[float, list]:
+def _apply_session_actions(
+    provider: Any,
+    actions_fn: Any,
+    ins: Instrument,
+    held: float,
+    held_notional: float,
+    d_prev: date,
+    d: date,
+    post_price: float,
+    apply_actions: Any,
+) -> tuple[float, list]:
     """Held quantity after corporate actions with ex-date in ``(d_prev, d]``, and the events.
 
     With no action in the window the held quantity is returned unchanged. Otherwise it is
@@ -890,8 +981,9 @@ def _apply_session_actions(provider: Any, actions_fn: Any, ins: Instrument, held
     raw = raw_fn(ins, d_prev) if callable(raw_fn) else None
     if raw is not None and math.isfinite(float(raw)) and float(raw) > 0:
         held = float(np.trunc(held_notional / float(raw)))
-    new, _, events = apply_actions({ins.symbol: held}, {ins.symbol: tbl}, through=d, after=d_prev,
-                                   prices={ins.symbol: post_price})
+    new, _, events = apply_actions(
+        {ins.symbol: held}, {ins.symbol: tbl}, through=d, after=d_prev, prices={ins.symbol: post_price}
+    )
     return float(new[ins.symbol]), events
 
 

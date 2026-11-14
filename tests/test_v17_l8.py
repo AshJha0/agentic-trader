@@ -1,6 +1,7 @@
 """v0.17 lane L8: financing spread, VaR NaN policy, execution realism, corporate actions,
 TCA, GJR-GARCH VaR/ES with ES and book-level coverage backtests, decay-derived rebalance,
 evidence bounds."""
+
 from __future__ import annotations
 
 import math
@@ -15,12 +16,27 @@ from agentic_trader import quant
 from agentic_trader import risk_model as rm
 from agentic_trader.corporate_actions import apply_actions, cash_flow_rows
 from agentic_trader.evidence_bounds import decision_horizon, holdout_selection_premium, sessions_needed
-from agentic_trader.execution_realism import (abdi_ranaldo, cap_participation, corwin_schultz,
-                                              participation_shortfall, simulate_ohlc, spread_consistent_y,
-                                              spread_estimates, stop_fill_with_slippage, stop_slippage_frac)
+from agentic_trader.execution_realism import (
+    abdi_ranaldo,
+    cap_participation,
+    corwin_schultz,
+    participation_shortfall,
+    simulate_ohlc,
+    spread_consistent_y,
+    spread_estimates,
+    stop_fill_with_slippage,
+    stop_slippage_frac,
+)
 from agentic_trader.financing import apply_financing, financing_drag, run_backtest_financed
-from agentic_trader.garch import (GJRParams, acerbi_szekely_z2, es_backtest, fit_gjr, gjr_var_es_forecast,
-                                  gjr_variance, simulate_gjr)
+from agentic_trader.garch import (
+    GJRParams,
+    acerbi_szekely_z2,
+    es_backtest,
+    fit_gjr,
+    gjr_var_es_forecast,
+    gjr_variance,
+    simulate_gjr,
+)
 from agentic_trader.horizon import half_life_from_ic, rebalance_from_decay
 from agentic_trader.quant import pycore
 from agentic_trader.stats import var_backtest
@@ -71,7 +87,7 @@ def test_unlevered_run_is_unchanged_by_default():
 def test_var_next_agrees_with_var_forecast_across_nan_gaps(method):
     rng = np.random.default_rng(3)
     r = rng.standard_t(4, 600) * 0.01
-    r[100:130] = np.nan          # a month of missing data
+    r[100:130] = np.nan  # a month of missing data
     r[400] = np.inf
     nxt = rm.var_next(r, method)
     ref = rm.var_forecast(np.append(np.where(np.isfinite(r), r, np.nan), 0.0), method)[-1]
@@ -93,8 +109,13 @@ def test_var_next_regression_old_code_dropped_nan_days():
 
 # ---------------------------------------------------------------- C1 execution realism
 def test_stop_slippage_defaults_match_engine_and_worsen_with_parameters():
-    for args in [(1.0, 95.0, 100, 101, 94), (1.0, 95.0, 93, 96, 92), (-1.0, 105.0, 100, 106, 99),
-                 (-1.0, 105.0, 107, 108, 104), (1.0, 95.0, 100, 101, 96)]:
+    for args in [
+        (1.0, 95.0, 100, 101, 94),
+        (1.0, 95.0, 93, 96, 92),
+        (-1.0, 105.0, 100, 106, 99),
+        (-1.0, 105.0, 107, 108, 104),
+        (1.0, 95.0, 100, 101, 96),
+    ]:
         w, s, o, h, low = args
         eng = pycore._exit_fill(w, s, np.nan, o, h, low)
         mine = stop_fill_with_slippage(w, s, o, h, low)
@@ -139,8 +160,9 @@ def test_spread_consistent_y_worked_example():
 
 # ---------------------------------------------------------------- C3 corporate actions
 def test_split_then_dividend_in_ex_date_order():
-    acts = {"AAPL": pd.DataFrame({"Split": [4.0, 0.0], "Dividend": [0.0, 0.25]},
-                                 index=pd.to_datetime(["2024-06-10", "2024-06-12"]))}
+    acts = {
+        "AAPL": pd.DataFrame({"Split": [4.0, 0.0], "Dividend": [0.0, 0.25]}, index=pd.to_datetime(["2024-06-10", "2024-06-12"]))
+    }
     pos, cash, ev = apply_actions({"AAPL": 10.0, "MSFT": 5.0}, acts, through=date(2024, 6, 12))
     assert pos == {"AAPL": 40.0, "MSFT": 5.0}
     assert cash == pytest.approx(10.0)
@@ -166,18 +188,21 @@ def test_reverse_split_cash_in_lieu_or_refusal():
 
 # ---------------------------------------------------------------- C5 TCA
 def _order(cid, side, qty, fills):
-    return SimpleNamespace(client_order_id=cid, side=side, quantity=qty,
-                           fills=[SimpleNamespace(quantity=q, price=p, cost=c) for q, p, c in fills])
+    return SimpleNamespace(
+        client_order_id=cid, side=side, quantity=qty, fills=[SimpleNamespace(quantity=q, price=p, cost=c) for q, p, c in fills]
+    )
 
 
 def test_tca_worked_example_and_partial_fill():
-    orders = [_order("a", "buy", 100, [(100, 50.02, 1.0)]),
-              _order("b", "sell", 200, [(100, 30.0, 0.5)]),
-              _order("c", "buy", 10, [])]
+    orders = [
+        _order("a", "buy", 100, [(100, 50.02, 1.0)]),
+        _order("b", "sell", 200, [(100, 30.0, 0.5)]),
+        _order("c", "buy", 10, []),
+    ]
     rows = tca_rows(orders, {"a": 50.0, "b": 30.0, "c": 10.0}, {"a": 1.5, "b": 2.0, "c": 0.1}).set_index("client_order_id")
     assert rows.loc["a", "realised_cost"] == pytest.approx(3.0)
     assert rows.loc["a", "slippage_bp"] == pytest.approx(3.0)
-    assert rows.loc["b", "predicted_cost"] == pytest.approx(1.0)        # half filled -> half predicted
+    assert rows.loc["b", "predicted_cost"] == pytest.approx(1.0)  # half filled -> half predicted
     assert rows.loc["b", "slippage_bp"] == pytest.approx(1e4 * (0.5 - 1.0) / 3000)
     assert rows.loc["c", "fill_ratio"] == 0 and math.isnan(rows.loc["c", "slippage_bp"])
     s = tca_summary(rows.reset_index())
@@ -187,14 +212,15 @@ def test_tca_worked_example_and_partial_fill():
 def test_tca_on_real_oms_fill_matches_model_cost():
     from agentic_trader.config import DEFAULT_CONFIG
     from agentic_trader.oms import OMS, MarketSnapshot, OrderState
+
     oms = OMS(DEFAULT_CONFIG, capital=100_000.0)
     at = datetime(2024, 3, 5, 20, 59, tzinfo=timezone.utc)
     o = oms.submit("t1", "AAPL", "buy", 100, 170.0, 170.0, at)
     assert o.state is OrderState.ACKED
     oms.execute("t1", MarketSnapshot(170.0, None, None), at)
-    bc_unit = (o.fills[0].cost / (100 * 170.0))
+    bc_unit = o.fills[0].cost / (100 * 170.0)
     rows = tca_rows([o], {"t1": 170.0}, {"t1": predicted_cost(100 * 170.0, 100_000.0, bc_unit)})
-    assert abs(rows["slippage_bp"].iloc[0]) < 1e-9     # fills at the reference: model error only
+    assert abs(rows["slippage_bp"].iloc[0]) < 1e-9  # fills at the reference: model error only
 
 
 # ---------------------------------------------------------------- C4 GJR-GARCH
@@ -205,7 +231,7 @@ def test_gjr_fit_recovers_parameters_on_long_path():
     r = simulate_gjr(3000, TRUE, seed=11)
     p = fit_gjr(r, use_scipy=False)
     assert p.persistence == pytest.approx(TRUE.persistence, abs=0.05)
-    assert p.gamma > p.alpha * 0.5            # leverage term found
+    assert p.gamma > p.alpha * 0.5  # leverage term found
     assert math.sqrt(p.long_run_var) == pytest.approx(math.sqrt(TRUE.long_run_var), rel=0.3)
 
 

@@ -1,5 +1,6 @@
 """v0.8 agents / LLM / memory fixes (tier-1 review findings 9, 10, 13, 17, 38, 39, 40, 41,
 42, 74, 75, 81, 84). Every test here fails on the v0.7 code."""
+
 from __future__ import annotations
 
 import json
@@ -23,14 +24,27 @@ from agentic_trader.anonymize import Anonymizer
 from agentic_trader.data import NewsItem, SyntheticProvider
 from agentic_trader.evaluation import CORE_UNIVERSE
 from agentic_trader.agentic import AgentHarness, Role, Task, TaskState
-from agentic_trader.llm import (AnthropicLLM, BudgetedLLM, UsageTracker, budget_llm, extract_json, get_llm,
-                                request_shape, retry_after_seconds)
+from agentic_trader.llm import (
+    AnthropicLLM,
+    BudgetedLLM,
+    UsageTracker,
+    budget_llm,
+    extract_json,
+    get_llm,
+    request_shape,
+    retry_after_seconds,
+)
 from agentic_trader.memory import DecisionMemory
 from agentic_trader.prompts import prompt_bundle_hash, prompt_registry
 
 # The v0.8 suites were written against these ids; P1 (v0.13) moved the defaults.
-V08_MODELS = {"deep_think_llm": "claude-opus-5", "quick_think_llm": "claude-haiku-4-5", "deep_effort": "high",
-              "llm_min_input_tokens": 8000, "llm_strict_model": False}
+V08_MODELS = {
+    "deep_think_llm": "claude-opus-5",
+    "quick_think_llm": "claude-haiku-4-5",
+    "deep_effort": "high",
+    "llm_min_input_tokens": 8000,
+    "llm_strict_model": False,
+}
 
 CFG = make_config(memory_path=None)
 QUIET = dict(memory=DecisionMemory(None), on_event=lambda *_: None)
@@ -70,14 +84,16 @@ class _APITimeoutError(_APIConnectionError):
     pass
 
 
-def fake_anthropic(monkeypatch, served="claude-opus-5-20260101", fail=None, text='{"signal": 0.5}',
-                   stop_reason="end_turn", usage=None, delay=0.0):
+def fake_anthropic(
+    monkeypatch, served="claude-opus-5-20260101", fail=None, text='{"signal": 0.5}', stop_reason="end_turn", usage=None, delay=0.0
+):
     """Install a stand-in ``anthropic`` module; returns the list of recorded request kwargs
     and the list of constructed clients. ``fail`` is one exception raised on every call, or a
     list consumed one entry per call (``None`` entries succeed)."""
     recorded, clients = [], []
-    usage = usage or SimpleNamespace(input_tokens=1000, output_tokens=200, cache_read_input_tokens=50,
-                                     cache_creation_input_tokens=0)
+    usage = usage or SimpleNamespace(
+        input_tokens=1000, output_tokens=200, cache_read_input_tokens=50, cache_creation_input_tokens=0
+    )
 
     class Messages:
         def create(self, **kw):
@@ -105,18 +121,21 @@ def fake_anthropic(monkeypatch, served="claude-opus-5-20260101", fail=None, text
     return recorded, clients
 
 
-@pytest.mark.parametrize("model,effort,thinking,want_effort", [
-    ("claude-opus-5", "high", {"type": "adaptive"}, "high"),
-    ("claude-opus-5-20260101", "xhigh", {"type": "adaptive"}, "xhigh"),
-    ("claude-sonnet-5", "max", {"type": "adaptive"}, "max"),
-    ("claude-fable-5-1", "high", None, "high"),          # thinking always on: no parameter
-    ("claude-opus-4-6", "xhigh", {"type": "adaptive"}, "high"),   # 4.6 has no xhigh
-    ("claude-opus-4-5", "max", None, "high"),            # pre-4.6: effort only, low..high
-    ("claude-opus-4-5-20251101", "low", None, "low"),
-    ("claude-haiku-4-5", "low", None, None),
-    ("claude-sonnet-4-5", "high", None, None),
-    ("claude-3-5-haiku-20241022", "high", None, None),   # unknown family: plain request
-])
+@pytest.mark.parametrize(
+    "model,effort,thinking,want_effort",
+    [
+        ("claude-opus-5", "high", {"type": "adaptive"}, "high"),
+        ("claude-opus-5-20260101", "xhigh", {"type": "adaptive"}, "xhigh"),
+        ("claude-sonnet-5", "max", {"type": "adaptive"}, "max"),
+        ("claude-fable-5-1", "high", None, "high"),  # thinking always on: no parameter
+        ("claude-opus-4-6", "xhigh", {"type": "adaptive"}, "high"),  # 4.6 has no xhigh
+        ("claude-opus-4-5", "max", None, "high"),  # pre-4.6: effort only, low..high
+        ("claude-opus-4-5-20251101", "low", None, "low"),
+        ("claude-haiku-4-5", "low", None, None),
+        ("claude-sonnet-4-5", "high", None, None),
+        ("claude-3-5-haiku-20241022", "high", None, None),  # unknown family: plain request
+    ],
+)
 def test_request_shape_only_sends_parameters_the_model_family_accepts(model, effort, thinking, want_effort):
     kw = request_shape(model, effort, 16000)
     assert kw["model"] == model and kw["max_tokens"] == 16000
@@ -127,8 +146,14 @@ def test_request_shape_only_sends_parameters_the_model_family_accepts(model, eff
 
 def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, caplog):
     recorded, clients = fake_anthropic(monkeypatch)
-    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, llm_timeout_s=42, llm_max_retries=1,
-                      llm_retry_backoff_s=0.0)
+    cfg = make_config(
+        **V08_MODELS,
+        llm_provider="anthropic",
+        use_refusal_fallback=False,
+        llm_timeout_s=42,
+        llm_max_retries=1,
+        llm_retry_backoff_s=0.0,
+    )
     llm = AnthropicLLM(cfg)
     # v0.8 regression (g): the SDK makes no retries of its own; AnthropicLLM runs the loop so every
     # attempt is observed (this line asserted max_retries=1 before, the enshrined defect)
@@ -149,8 +174,9 @@ def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, cap
     # call can cost (a full max_tokens reply); "estimate" reserves llm_reserve_output_tokens instead
     # (this line asserted the 2000-token reservation as the default before)
     assert llm.budget_mode == "hard" and llm.estimate_cost(True) == pytest.approx((8000 * 5 + 16000 * 25) / 1e6)
-    assert AnthropicLLM(make_config(cfg, llm_budget_mode="estimate")).estimate_cost(True) == \
-        pytest.approx((8000 * 5 + 2000 * 25) / 1e6)
+    assert AnthropicLLM(make_config(cfg, llm_budget_mode="estimate")).estimate_cost(True) == pytest.approx(
+        (8000 * 5 + 2000 * 25) / 1e6
+    )
 
     # refusal fallback goes through the beta endpoint with the fallbacks body, opus-5 only
     recorded.clear()
@@ -189,12 +215,13 @@ def test_anthropic_llm_request_shape_usage_and_failure_branches(monkeypatch, cap
 
 
 def test_dollar_budget_fails_closed_for_an_unpriced_served_model(monkeypatch):
-    fake_anthropic(monkeypatch, served="claude-opus-6-20270101",
-                   usage=SimpleNamespace(input_tokens=1_000_000, output_tokens=1_000_000))
+    fake_anthropic(
+        monkeypatch, served="claude-opus-6-20270101", usage=SimpleNamespace(input_tokens=1_000_000, output_tokens=1_000_000)
+    )
     cfg = make_config(**V08_MODELS, llm_provider="anthropic", max_llm_cost_usd=650.0)
     llm = get_llm(cfg)
     assert isinstance(llm, BudgetedLLM) and llm.max_cost_usd == 650.0 and llm.max_calls is None
-    assert llm.complete("s", "p", deep=True) is not None       # nothing known yet about the served id
+    assert llm.complete("s", "p", deep=True) is not None  # nothing known yet about the served id
     assert llm.exhausted and llm.complete("s", "p", deep=True) is None and llm.refused == 1
     assert llm.usage.summary()["unpriced_models"] == ["claude-opus-6-20270101"]
     # a configured id without a price is refused up front when a dollar cap is set
@@ -202,8 +229,10 @@ def test_dollar_budget_fails_closed_for_an_unpriced_served_model(monkeypatch):
         get_llm(make_config(**{**V08_MODELS, "deep_think_llm": "claude-opus-6"}, llm_provider="anthropic", max_llm_cost_usd=5.0))
     with pytest.raises(ValueError, match="quick_think_llm"):
         budget_llm(object(), make_config(quick_think_llm="claude-3-5-haiku-20241022", max_llm_cost_usd=5.0))
-    assert isinstance(get_llm(make_config(**{**V08_MODELS, "deep_think_llm": "claude-opus-6"}, llm_provider="anthropic",
-                                          max_llm_calls=3)), BudgetedLLM)   # a call cap needs no price
+    assert isinstance(
+        get_llm(make_config(**{**V08_MODELS, "deep_think_llm": "claude-opus-6"}, llm_provider="anthropic", max_llm_calls=3)),
+        BudgetedLLM,
+    )  # a call cap needs no price
     tr = UsageTracker()
     tr.add("claude-opus-6", SimpleNamespace(input_tokens=5, output_tokens=5))
     assert BudgetedLLM(SimpleNamespace(usage=tr, complete=lambda *a, **k: "x"), max_cost_usd=100.0).exhausted
@@ -264,12 +293,25 @@ class EdgarShaped(SyntheticProvider):
             return {}
         hist = self.history(instrument, as_of - timedelta(days=400), as_of)
         price = float(hist[hist.index <= pd.Timestamp(as_of)]["Close"].iloc[-1])
-        return {"report_period_end": "2023-12-30", "filed": "2024-02-02", "sector_pe": None,
-                "eps_surprise": None, "insider_net_buying": None, "source": "sec_edgar (point-in-time)",
-                "revenue_ttm": REV_TTM, "revenue_growth_yoy": -0.0047, "net_margin": 0.2612,
-                "debt_to_equity": 1.483, "lag_days": 28, "eps_ttm": round(EPS_TTM, 4),
-                "pe_ratio": round(price / EPS_TTM, 2), "fcf_yield": 0.0371,
-                "sector": "Technology", "forward_pe": 27.1, "market_cap": 2.9e12}
+        return {
+            "report_period_end": "2023-12-30",
+            "filed": "2024-02-02",
+            "sector_pe": None,
+            "eps_surprise": None,
+            "insider_net_buying": None,
+            "source": "sec_edgar (point-in-time)",
+            "revenue_ttm": REV_TTM,
+            "revenue_growth_yoy": -0.0047,
+            "net_margin": 0.2612,
+            "debt_to_equity": 1.483,
+            "lag_days": 28,
+            "eps_ttm": round(EPS_TTM, 4),
+            "pe_ratio": round(price / EPS_TTM, 2),
+            "fcf_yield": 0.0371,
+            "sector": "Technology",
+            "forward_pe": 27.1,
+            "market_cap": 2.9e12,
+        }
 
 
 class Recorder:
@@ -295,7 +337,7 @@ def test_anonymised_prompts_drop_absolute_scale_fundamentals():
             assert key not in p, (key, p[:400])
         assert not any(s in p for s in {f"{last:.5g}", f"{last:.6g}", f"{last:.4g}"})
     pe = float(re.search(r'"pe_ratio":\s*([0-9.]+)', fund[0])[1])
-    assert pe == pytest.approx(last / EPS_TTM, rel=1e-3)          # the ratio itself is scale-free
+    assert pe == pytest.approx(last / EPS_TTM, rel=1e-3)  # the ratio itself is scale-free
     assert '"forward_pe": 27.1' in fund[0] and '"net_margin": 0.2612' in fund[0]
     assert '"sector_pe": null' in fund[0] and '"filed": "D-28"' in fund[0]
     # the rules still see the raw facts: the report is not weakened by the prompt filter
@@ -304,24 +346,48 @@ def test_anonymised_prompts_drop_absolute_scale_fundamentals():
 
 def test_anonymizer_facts_is_an_allow_list():
     a = Anonymizer(Instrument.parse("AAPL"), date(2024, 3, 1), 180.0)
-    out = a.facts({"close": 180.0, "rsi14": 70.0, "sma50": 171.0, "revenue_ttm": 3.8e11, "eps_ttm": 6.4,
-                   "shares_outstanding": 1.5e10, "new_provider_ratio": 1.2, "growth_yoy": 0.1,
-                   "universe": ["AAPL", "MSFT", "NVDA"], "breadth": 3, "short_selling_allowed": False,
-                   "sector_pe": None, "latest": {"mom_20": 0.4}, "sector": "Technology"})
-    assert out == {"close": 100.0, "rsi14": 70.0, "sma50": 95.0, "new_provider_ratio": 1.2, "growth_yoy": 0.1,
-                   "breadth": 3, "short_selling_allowed": False, "sector_pe": None, "latest": {"mom_20": 0.4}}
+    out = a.facts(
+        {
+            "close": 180.0,
+            "rsi14": 70.0,
+            "sma50": 171.0,
+            "revenue_ttm": 3.8e11,
+            "eps_ttm": 6.4,
+            "shares_outstanding": 1.5e10,
+            "new_provider_ratio": 1.2,
+            "growth_yoy": 0.1,
+            "universe": ["AAPL", "MSFT", "NVDA"],
+            "breadth": 3,
+            "short_selling_allowed": False,
+            "sector_pe": None,
+            "latest": {"mom_20": 0.4},
+            "sector": "Technology",
+        }
+    )
+    assert out == {
+        "close": 100.0,
+        "rsi14": 70.0,
+        "sma50": 95.0,
+        "new_provider_ratio": 1.2,
+        "growth_yoy": 0.1,
+        "breadth": 3,
+        "short_selling_allowed": False,
+        "sector_pe": None,
+        "latest": {"mom_20": 0.4},
+    }
 
 
 def test_anonymised_xalpha_prompt_names_no_peer():
     from agentic_trader.agents.analysts import XAlphaAnalyst
+
     cfg = make_config(CFG, llm_anonymize=True)
     g = graph(cfg, llm=Recorder())
     st = g.prepare("AAPL", "2024-03-01")
     xa = XAlphaAnalyst(None, cfg)
     facts = xa.gather(st, g.provider)
     peers = [s for s in CORE_UNIVERSE["equity"] if s != "AAPL"]
-    assert set(peers) <= set(facts["universe"])                 # the raw facts keep the peer list
-    p = st.anon.scrub(xa.prompt(facts, st))                     # what Agent._complete sends
+    assert set(peers) <= set(facts["universe"])  # the raw facts keep the peer list
+    p = st.anon.scrub(xa.prompt(facts, st))  # what Agent._complete sends
     assert '"breadth"' in p and '"universe"' not in p
     assert not any(re.search(rf"(?<![A-Za-z0-9]){s}(?![A-Za-z0-9])", p) for s in peers), p[:400]
 
@@ -367,21 +433,30 @@ def test_memory_instances_in_separate_processes_do_not_overwrite_each_other(tmp_
     a.record("A", date(2024, 1, 2), "BUY", 0.5, 100.0, "a")
     b.record("B", date(2024, 1, 2), "SELL", -0.5, 50.0, "b")
     a.record("A", date(2024, 1, 3), "HOLD", 0.0, 101.0, "a2")
-    assert sorted(e.symbol + e.as_of for e in DecisionMemory(path).entries) == ["A2024-01-02", "A2024-01-03",
-                                                                                "B2024-01-02"]
+    assert sorted(e.symbol + e.as_of for e in DecisionMemory(path).entries) == ["A2024-01-02", "A2024-01-03", "B2024-01-02"]
 
 
 def test_memory_reads_legacy_lines_and_deduplicates_repeated_scans(tmp_path):
     path = tmp_path / "legacy.jsonl"
-    legacy = {"symbol": "AAPL", "as_of": "2024-03-01", "action": "BUY", "weight": 0.54, "price": 223.22,
-              "horizon_days": 10, "summary": "s", "resolved_on": None, "exit_price": None, "pnl": None,
-              "lesson": None}
+    legacy = {
+        "symbol": "AAPL",
+        "as_of": "2024-03-01",
+        "action": "BUY",
+        "weight": 0.54,
+        "price": 223.22,
+        "horizon_days": 10,
+        "summary": "s",
+        "resolved_on": None,
+        "exit_price": None,
+        "pnl": None,
+        "lesson": None,
+    }
     path.write_text("".join(json.dumps(legacy) + "\n" for _ in range(41)), encoding="utf-8")
     m = DecisionMemory(path)
     assert len(m.entries) == 1 and m.entries[0].provider == "" and m.skipped_lines == 0
     m.record("AAPL", date(2024, 3, 1), "BUY", 0.7, 223.22, "again", provider="synthetic")
     m.record("AAPL", date(2024, 3, 1), "BUY", 0.9, 223.22, "latest", provider="synthetic")
-    assert [e.weight for e in m.entries] == [0.54, 0.9]      # legacy (no provider) + one per provider
+    assert [e.weight for e in m.entries] == [0.54, 0.9]  # legacy (no provider) + one per provider
     assert [e.weight for e in DecisionMemory(path).entries] == [0.54, 0.9]
 
 
@@ -396,8 +471,17 @@ def test_memory_outcome_is_invariant_to_a_split_or_dividend_rebase():
     for factor, tag in ((0.25, "4:1 split"), (0.994, "0.6% dividend")):
         m = DecisionMemory(None)
         for i in range(5):
-            m.record("AAPL", s.index[i].date(), "BUY", 0.53, float(s.iloc[i]), "r", horizon_days=10, provider="yahoo",
-                     price_basis="adjusted_close")
+            m.record(
+                "AAPL",
+                s.index[i].date(),
+                "BUY",
+                0.53,
+                float(s.iloc[i]),
+                "r",
+                horizon_days=10,
+                provider="yahoo",
+                price_basis="adjusted_close",
+            )
         # the next session sees the whole history rebased (Yahoo auto_adjust after the event)
         rebased = s * factor
         assert m.resolve("AAPL", s.index[20].date(), rebased[:21], provider="yahoo", price_basis="adjusted_close") == 5
@@ -441,11 +525,11 @@ def test_memory_expires_a_stale_entry_instead_of_booking_a_multi_year_return():
 
 
 def test_memory_horizon_is_counted_in_bars_whatever_the_weekday():
-    s = _series(start="2024-01-01", n=30)     # Monday start
+    s = _series(start="2024-01-01", n=30)  # Monday start
     m = DecisionMemory(None)
-    for i in range(5):                        # Mon .. Fri entries
+    for i in range(5):  # Mon .. Fri entries
         m.record("X", s.index[i].date(), "BUY", 0.5, float(s.iloc[i]), "r", horizon_days=10)
-    for j in range(5, 30):                    # a daily live scan
+    for j in range(5, 30):  # a daily live scan
         m.resolve("X", s.index[j].date(), s[: j + 1])
         for i in range(5):
             e = m.entries[i]
@@ -519,13 +603,29 @@ def _rules_decision():
     return st, d
 
 
-@pytest.mark.parametrize("field,value", [
-    ("target_weight", None), ("target_weight", "50%"), ("target_weight", "0.5"), ("target_weight", True),
-    ("confidence", "high"), ("stop_loss", "abc"), ("take_profit", float("nan")), ("horizon_days", "ten"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("target_weight", None),
+        ("target_weight", "50%"),
+        ("target_weight", "0.5"),
+        ("target_weight", True),
+        ("confidence", "high"),
+        ("stop_loss", "abc"),
+        ("take_profit", float("nan")),
+        ("horizon_days", "ten"),
+    ],
+)
 def test_trader_reply_with_an_invalid_number_is_rejected_not_zeroed(field, value):
-    payload = {"action": "BUY", "target_weight": 0.8, "confidence": 0.6, "stop_loss": None,
-               "take_profit": None, "horizon_days": 10, "rationale": "r"}
+    payload = {
+        "action": "BUY",
+        "target_weight": 0.8,
+        "confidence": 0.6,
+        "stop_loss": None,
+        "take_profit": None,
+        "horizon_days": 10,
+        "rationale": "r",
+    }
     payload[field] = value
     text = json.dumps(payload)  # a NaN value is emitted as bare NaN, as a model would write it
     cfg = make_config(CFG, risk={"rebalance_band": 0.0})
@@ -537,30 +637,41 @@ def test_trader_reply_with_an_invalid_number_is_rejected_not_zeroed(field, value
     st, d = graph(cfg, llm=Stub("Trader.", payload)).propagate("AAPL", "2024-03-01", current_weight=1.0)
     _, rules = _rules_decision()
     assert st.proposal.source == "rules" and st.proposal.target_weight > 0
-    assert d.target_weight == rules.target_weight and d.target_weight > 0      # never liquidated
+    assert d.target_weight == rules.target_weight and d.target_weight > 0  # never liquidated
 
 
 def test_trader_reply_with_null_optional_levels_is_accepted():
-    payload = {"action": "BUY", "target_weight": 0.8, "confidence": 0.6, "stop_loss": None,
-               "take_profit": None, "horizon_days": 7, "rationale": "r"}
+    payload = {
+        "action": "BUY",
+        "target_weight": 0.8,
+        "confidence": 0.6,
+        "stop_loss": None,
+        "take_profit": None,
+        "horizon_days": 7,
+        "rationale": "r",
+    }
     st, _ = graph(llm=Reply("Trader.", payload)).propagate("AAPL", "2024-03-01")
     assert st.proposal.source == "llm" and st.proposal.target_weight == 0.8 and st.proposal.horizon_days == 7
-    assert st.proposal.stop_loss is not None                # ATR fallback for the null level
+    assert st.proposal.stop_loss is not None  # ATR fallback for the null level
 
 
-@pytest.mark.parametrize("role,payload", [
-    ("Technical Analyst", {"signal": None, "confidence": 0.8, "summary": "s"}),
-    ("Technical Analyst", {"signal": "0.4", "confidence": 0.8, "summary": "s"}),
-    ("Technical Analyst", {"signal": 0.4, "confidence": "high", "summary": "s"}),
-    ("Facilitator", {"winner": "bull", "score": None, "conviction": 0.5, "summary": "s"}),
-    ("Facilitator", {"winner": "bull", "score": 0.5, "conviction": "x", "summary": "s"}),
-    ("Risk Analyst", {"recommended_weight": None, "argument": "a"}),
-    ("Risk Analyst", {"recommended_weight": "0.3", "argument": "a"}),
-    ("Portfolio Manager", {"target_weight": None, "confidence": 0.5, "rationale": "pm"}),
-    ("Portfolio Manager", {"target_weight": 0.5, "confidence": "sure", "rationale": "pm"}),
-])
+@pytest.mark.parametrize(
+    "role,payload",
+    [
+        ("Technical Analyst", {"signal": None, "confidence": 0.8, "summary": "s"}),
+        ("Technical Analyst", {"signal": "0.4", "confidence": 0.8, "summary": "s"}),
+        ("Technical Analyst", {"signal": 0.4, "confidence": "high", "summary": "s"}),
+        ("Facilitator", {"winner": "bull", "score": None, "conviction": 0.5, "summary": "s"}),
+        ("Facilitator", {"winner": "bull", "score": 0.5, "conviction": "x", "summary": "s"}),
+        ("Risk Analyst", {"recommended_weight": None, "argument": "a"}),
+        ("Risk Analyst", {"recommended_weight": "0.3", "argument": "a"}),
+        ("Portfolio Manager", {"target_weight": None, "confidence": 0.5, "rationale": "pm"}),
+        ("Portfolio Manager", {"target_weight": 0.5, "confidence": "sure", "rationale": "pm"}),
+    ],
+)
 def test_every_agent_rejects_a_present_but_invalid_numeric_field(role, payload, caplog):
     import logging
+
     caplog.set_level(logging.WARNING, logger="agentic_trader.agents.base")
     st, d = graph(llm=Reply(role, payload)).propagate("AAPL", "2024-03-01", current_weight=1.0)
     assert all(r.source == "rules" for r in st.reports.values())
@@ -582,10 +693,11 @@ def test_analyst_nan_reply_falls_back_to_rules():
 def test_prompt_registry_hashes_shared_prompt_code(monkeypatch):
     import agentic_trader.agents.base as base_mod
     import agentic_trader.state as state_mod
+
     reg = prompt_registry(CFG)
     before = reg["bundle"]
     assert len(reg["shared"]["template"]) == 16
-    assert prompt_bundle_hash(CFG) == before                      # stable across calls
+    assert prompt_bundle_hash(CFG) == before  # stable across calls
 
     def reports_digest(self):
         return "ten key points instead of six"
@@ -607,13 +719,25 @@ def test_prompt_registry_hashes_shared_prompt_code(monkeypatch):
 def test_fundamentals_rules_do_not_invent_a_sector_pe():
     fa = FundamentalsAnalyst(None, make_config())
     st = SimpleNamespace(instrument=Instrument.parse("JPM"))
-    edgar = {"report_period_end": "2023-12-31", "filed": "2024-02-27", "sector_pe": None, "eps_surprise": None,
-             "insider_net_buying": None, "source": "sec_edgar", "revenue_ttm": 1.5e11, "revenue_growth_yoy": None,
-             "net_margin": 0.30, "debt_to_equity": 1.5, "lag_days": 4, "eps_ttm": 16.0, "pe_ratio": 11.0}
+    edgar = {
+        "report_period_end": "2023-12-31",
+        "filed": "2024-02-27",
+        "sector_pe": None,
+        "eps_surprise": None,
+        "insider_net_buying": None,
+        "source": "sec_edgar",
+        "revenue_ttm": 1.5e11,
+        "revenue_growth_yoy": None,
+        "net_margin": 0.30,
+        "debt_to_equity": 1.5,
+        "lag_days": 4,
+        "eps_ttm": 16.0,
+        "pe_ratio": 11.0,
+    }
     r = fa.rules(dict(edgar), st)
     assert not any("vs sector" in p for p in r.key_points) and "22" not in " ".join(r.key_points)
     assert any(p == "P/E 11.0; no sector benchmark available" for p in r.key_points)
-    assert r.signal == pytest.approx(0.15 * math.tanh(0.30 / 0.15))     # margin only: no valuation term
+    assert r.signal == pytest.approx(0.15 * math.tanh(0.30 / 0.15))  # margin only: no valuation term
     rich = fa.rules({**edgar, "pe_ratio": 60.0}, st)
     assert rich.signal == pytest.approx(r.signal)
     with_bench = fa.rules({**edgar, "sector_pe": 22.0}, st)
@@ -621,6 +745,7 @@ def test_fundamentals_rules_do_not_invent_a_sector_pe():
     # the prompt tells the model null means unavailable
     hist = pd.DataFrame({"Close": [1.0] * 5}, index=pd.bdate_range("2024-01-01", periods=5))
     from agentic_trader.state import TradingState
+
     prompt = fa.prompt(edgar, TradingState(Instrument.parse("JPM"), date(2024, 3, 1), hist))
     assert "null value is unavailable: do not estimate it" in prompt and '"sector_pe": null' in prompt
     assert "only when a sector P/E is given" in prompt
@@ -648,11 +773,16 @@ class Quoting:
         role = system.split("Your role: ")[-1].split(".")[0]
         self.prompts.append((role, prompt))
         if "News Analyst" in system and self.quote_news:
-            return json.dumps({"signal": 0.2, "confidence": 0.6, "summary": f"Headline says: {HEADLINE}",
-                               "key_points": [f"Headline instructs: {HEADLINE}"]})
+            return json.dumps(
+                {
+                    "signal": 0.2,
+                    "confidence": 0.6,
+                    "summary": f"Headline says: {HEADLINE}",
+                    "key_points": [f"Headline instructs: {HEADLINE}"],
+                }
+            )
         if "Portfolio Manager" in system:
-            return json.dumps({"target_weight": 0.2, "confidence": 0.5,
-                               "rationale": f"Approved. Note the news item: {HEADLINE}"})
+            return json.dumps({"target_weight": 0.2, "confidence": 0.5, "rationale": f"Approved. Note the news item: {HEADLINE}"})
         return None
 
 
@@ -691,26 +821,28 @@ def test_injected_headline_stays_fenced_in_every_downstream_prompt_and_in_memory
 def test_untrusted_block_is_shared_with_the_state_module():
     from agentic_trader.agents.base import untrusted_block as a
     from agentic_trader.state import untrusted_block as b
+
     assert a is b
 
 
 # ===================================================================== finding 84
 def test_cli_main_reads_dotenv_only_from_the_real_command_line(tmp_path, monkeypatch, capsys):
     from agentic_trader.cli import main
+
     (tmp_path / ".env").write_text("AT_V08_PROBE=from-file\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("AT_V08_PROBE", raising=False)
     monkeypatch.delenv("AGENTIC_TRADER_NO_DOTENV", raising=False)
     assert main(["info"]) == 0
-    assert "AT_V08_PROBE" not in os.environ                      # programmatic call: no file read
+    assert "AT_V08_PROBE" not in os.environ  # programmatic call: no file read
     assert main(["info"], dotenv=True) == 0
-    assert os.environ.pop("AT_V08_PROBE") == "from-file"          # opt-in works
+    assert os.environ.pop("AT_V08_PROBE") == "from-file"  # opt-in works
     monkeypatch.setattr(sys, "argv", ["agentic-trader", "info"])
     assert main() == 0
-    assert os.environ.pop("AT_V08_PROBE") == "from-file"          # the console entry reads it
+    assert os.environ.pop("AT_V08_PROBE") == "from-file"  # the console entry reads it
     monkeypatch.setenv("AGENTIC_TRADER_NO_DOTENV", "1")
     assert main() == 0
-    assert "AT_V08_PROBE" not in os.environ                      # ... unless told not to
+    assert "AT_V08_PROBE" not in os.environ  # ... unless told not to
     capsys.readouterr()
 
 
@@ -719,8 +851,17 @@ def test_cli_main_reads_dotenv_only_from_the_real_command_line(tmp_path, monkeyp
 def test_a_visit_by_another_provider_leaves_an_entry_for_its_own_provider_to_value():
     s = _series(start="2024-01-02", n=60)
     m = DecisionMemory(None)
-    m.record("AAPL", s.index[0].date(), "BUY", 0.5, float(s.iloc[0]), "r", horizon_days=10, provider="yahoo",
-             price_basis="adjusted_close")
+    m.record(
+        "AAPL",
+        s.index[0].date(),
+        "BUY",
+        0.5,
+        float(s.iloc[0]),
+        "r",
+        horizon_days=10,
+        provider="yahoo",
+        price_basis="adjusted_close",
+    )
     late = s.index[0].date() + timedelta(days=DecisionMemory.max_age_days(10) + 4)
     window = s[s.index <= pd.Timestamp(late)]
     for prov, basis in (("synthetic", "close"), ("recording", "close"), ("yahoo", "close")):
@@ -732,34 +873,44 @@ def test_a_visit_by_another_provider_leaves_an_entry_for_its_own_provider_to_val
     assert not e.expired and e.pnl == pytest.approx(0.5 * (s.iloc[10] / s.iloc[0] - 1)) and "was right" in e.lesson
     assert m.track_record("AAPL", nxt, provider="yahoo") == {"n": 1.0, "hit_rate": 1.0, "avg_pnl": pytest.approx(e.pnl)}
     # its own provider still expires what its own series cannot value (entry bar before the window)
-    m.record("AAPL", s.index[1].date(), "BUY", 0.5, float(s.iloc[1]), "r", horizon_days=10, provider="yahoo",
-             price_basis="adjusted_close")
+    m.record(
+        "AAPL",
+        s.index[1].date(),
+        "BUY",
+        0.5,
+        float(s.iloc[1]),
+        "r",
+        horizon_days=10,
+        provider="yahoo",
+        price_basis="adjusted_close",
+    )
     short = s[5:]
-    assert m.resolve("AAPL", nxt, short[short.index <= pd.Timestamp(nxt)], provider="yahoo",
-                     price_basis="adjusted_close") == 1
+    assert m.resolve("AAPL", nxt, short[short.index <= pd.Timestamp(nxt)], provider="yahoo", price_basis="adjusted_close") == 1
     assert m.entries[1].expired and m.entries[1].pnl is None
 
 
 # ------------------------------------------------- (d) the entry-bar tolerance is the staleness setting
 def test_entry_bar_tolerance_follows_the_staleness_setting():
     idx = pd.bdate_range("2024-01-01", periods=40)
-    keep = [d for d in idx if not (date(2024, 1, 8) <= d.date() <= date(2024, 1, 12))]   # a week without bars
+    keep = [d for d in idx if not (date(2024, 1, 8) <= d.date() <= date(2024, 1, 12))]  # a week without bars
     closes = pd.Series(np.linspace(100.0, 140.0, len(keep)), index=pd.DatetimeIndex(keep))
-    entry, visit = date(2024, 1, 13), date(2024, 2, 9)          # decided 8 days after the last bar (Jan 5)
+    entry, visit = date(2024, 1, 13), date(2024, 2, 9)  # decided 8 days after the last bar (Jan 5)
     truth = 0.5 * (closes.iloc[9] / closes.iloc[4] - 1)
 
     def resolved(memory_kw=None, resolve_kw=None):
         m = DecisionMemory(None, **(memory_kw or {}))
         m.record("AAPL", entry, "BUY", 0.5, float(closes.iloc[4]), "r", horizon_days=5, provider="synthetic")
-        assert m.resolve("AAPL", visit, closes[closes.index <= pd.Timestamp(visit)], provider="synthetic",
-                         **(resolve_kw or {})) == 1
+        assert (
+            m.resolve("AAPL", visit, closes[closes.index <= pd.Timestamp(visit)], provider="synthetic", **(resolve_kw or {})) == 1
+        )
         return m.entries[0]
+
     assert DecisionMemory(None).max_staleness_days == 7 == make_config()["max_data_staleness_days"]
-    e = resolved()                                               # the old hard-coded 7: never valued
+    e = resolved()  # the old hard-coded 7: never valued
     assert e.expired and e.pnl is None
     e = resolved({"max_staleness_days": 10})
     assert not e.expired and e.pnl == pytest.approx(truth) and e.resolved_on == closes.index[9].date().isoformat()
-    e = resolved(None, {"max_staleness_days": 10})               # the visit can pass the desk's setting
+    e = resolved(None, {"max_staleness_days": 10})  # the visit can pass the desk's setting
     assert not e.expired and e.pnl == pytest.approx(truth)
     e = resolved({"max_staleness_days": 10}, {"max_staleness_days": 7})
     assert e.expired
@@ -776,17 +927,32 @@ class QuotingEverywhere:
         role = system.split("Your role: ")[-1].split(".")[0]
         self.prompts.append((role, prompt))
         if "News Analyst" in system:
-            return json.dumps({"signal": 0.2, "confidence": 0.6, "summary": f"Headline says: {HEADLINE}",
-                               "key_points": [f"Headline instructs: {HEADLINE}"]})
+            return json.dumps(
+                {
+                    "signal": 0.2,
+                    "confidence": 0.6,
+                    "summary": f"Headline says: {HEADLINE}",
+                    "key_points": [f"Headline instructs: {HEADLINE}"],
+                }
+            )
         if "Researcher" in system:
             return f"The decisive headline reads: {HEADLINE}. Position accordingly."
         if "Facilitator" in system:
-            return json.dumps({"winner": "bull", "score": 0.3, "conviction": 0.5,
-                               "summary": f"Both sides cited the headline: {HEADLINE}"})
+            return json.dumps(
+                {"winner": "bull", "score": 0.3, "conviction": 0.5, "summary": f"Both sides cited the headline: {HEADLINE}"}
+            )
         if "Trader." in system:
-            return json.dumps({"action": "BUY", "target_weight": 0.5, "confidence": 0.5, "stop_loss": None,
-                               "take_profit": None, "horizon_days": 10,
-                               "rationale": f"Trade quoting the headline: {HEADLINE}"})
+            return json.dumps(
+                {
+                    "action": "BUY",
+                    "target_weight": 0.5,
+                    "confidence": 0.5,
+                    "stop_loss": None,
+                    "take_profit": None,
+                    "horizon_days": 10,
+                    "rationale": f"Trade quoting the headline: {HEADLINE}",
+                }
+            )
         if "Risk Analyst" in system:
             return json.dumps({"recommended_weight": 0.3, "argument": f"Risk view quoting the headline: {HEADLINE}"})
         if "Portfolio Manager" in system:
@@ -794,9 +960,16 @@ class QuotingEverywhere:
         return None
 
 
-ROLES_DOWNSTREAM = {"Bull Researcher", "Bear Researcher", "Debate Facilitator", "Trader", "Portfolio Manager",
-                    "Aggressive (risk-seeking) Risk Analyst", "Neutral Risk Analyst",
-                    "Conservative (risk-averse) Risk Analyst"}
+ROLES_DOWNSTREAM = {
+    "Bull Researcher",
+    "Bear Researcher",
+    "Debate Facilitator",
+    "Trader",
+    "Portfolio Manager",
+    "Aggressive (risk-seeking) Risk Analyst",
+    "Neutral Risk Analyst",
+    "Conservative (risk-averse) Risk Analyst",
+}
 
 
 def test_model_written_text_derived_from_fenced_input_stays_fenced_one_hop_later(tmp_path):
@@ -807,22 +980,25 @@ def test_model_written_text_derived_from_fenced_input_stays_fenced_one_hop_later
     st, _ = g.propagate("AAPL", date(2024, 3, 1))
     _assert_fenced_everywhere(day1.prompts, {"News Analyst"} | ROLES_DOWNSTREAM)
     pm = next(p for r, p in day1.prompts if r == "Portfolio Manager")
-    assert pm.count(MARK) >= 6 and MARK not in outside_fences(pm)     # digest, verdict, proposal, three risk views
+    assert pm.count(MARK) >= 6 and MARK not in outside_fences(pm)  # digest, verdict, proposal, three risk views
     assert all(t.untrusted for t in st.debate.turns) and st.debate.untrusted and st.proposal.untrusted
     assert all(v.untrusted for v in st.risk_views)
     # the flag follows the inputs, not the writer: rules-written turns quote the news key points too
-    st0, _ = TradingGraph(cfg, provider=EvilNews(cfg), memory=DecisionMemory(None),
-                          on_event=lambda *_: None).propagate("AAPL", date(2024, 3, 1))
+    st0, _ = TradingGraph(cfg, provider=EvilNews(cfg), memory=DecisionMemory(None), on_event=lambda *_: None).propagate(
+        "AAPL", date(2024, 3, 1)
+    )
     assert all(t.untrusted for t in st0.debate.turns) and st0.debate.untrusted and st0.proposal.untrusted
     assert all(v.untrusted for v in st0.risk_views)
     # with no third-party text and no lessons nothing is fenced: the prompts read as before
     clean = Recorder()
-    stc, _ = TradingGraph(make_config(cfg, analysts=["technical"]), llm=clean, memory=DecisionMemory(None),
-                          on_event=lambda *_: None).propagate("AAPL", date(2024, 3, 1))
+    stc, _ = TradingGraph(
+        make_config(cfg, analysts=["technical"]), llm=clean, memory=DecisionMemory(None), on_event=lambda *_: None
+    ).propagate("AAPL", date(2024, 3, 1))
     assert not stc.debate.untrusted and not stc.proposal.untrusted and not any(v.untrusted for v in stc.risk_views)
     assert not any(t.untrusted for t in stc.debate.turns) and not any("<untrusted_data" in p for p in clean.prompts)
-    assert any("Debate so far:\nbull: " in p for p in clean.prompts) and any("Debate verdict: Weighted" in p
-                                                                             for p in clean.prompts)
+    assert any("Debate so far:\nbull: " in p for p in clean.prompts) and any(
+        "Debate verdict: Weighted" in p for p in clean.prompts
+    )
     # day 2: the lessons carry the PM's rationale, and everything written from them is fenced too
     day2 = QuotingEverywhere()
     g2 = TradingGraph(cfg, llm=day2, provider=EvilNews(cfg), memory=DecisionMemory(path), on_event=lambda *_: None)
@@ -830,23 +1006,24 @@ def test_model_written_text_derived_from_fenced_input_stays_fenced_one_hop_later
     assert st2.lessons and MARK in st2.lessons[0]
     _assert_fenced_everywhere(day2.prompts, ROLES_DOWNSTREAM)
     # lessons alone make the derived text untrusted (they are model-written from earlier prompts)
-    stl, _ = TradingGraph(make_config(cfg, analysts=["technical"]), memory=DecisionMemory(path),
-                          on_event=lambda *_: None).propagate("AAPL", date(2024, 3, 20))
+    stl, _ = TradingGraph(
+        make_config(cfg, analysts=["technical"]), memory=DecisionMemory(path), on_event=lambda *_: None
+    ).propagate("AAPL", date(2024, 3, 20))
     assert stl.lessons and stl.untrusted_inputs and stl.debate.untrusted and all(t.untrusted for t in stl.debate.turns)
 
 
 # ------------------------------------------------- (f) a realistic reservation
 def test_budget_reservation_is_a_realistic_reply_so_parallel_workers_use_the_cap(monkeypatch):
-    usage = SimpleNamespace(input_tokens=8000, output_tokens=2000, cache_read_input_tokens=0,
-                            cache_creation_input_tokens=0)
+    usage = SimpleNamespace(input_tokens=8000, output_tokens=2000, cache_read_input_tokens=0, cache_creation_input_tokens=0)
     fake_anthropic(monkeypatch, served="claude-opus-5", usage=usage, delay=0.05)
     # the realistic reservation is llm_budget_mode="estimate" (v0.8 final review (e): the default
     # is "hard"; this test used the default before, when "estimate" was the only behaviour)
-    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0,
-                      llm_budget_mode="estimate")
+    cfg = make_config(
+        **V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0, llm_budget_mode="estimate"
+    )
     assert cfg["llm_reserve_output_tokens"] == 2000
     llm = get_llm(cfg)
-    per_call = (8000 * 5 + 2000 * 25) / 1e6                       # 0.09 USD: reserved, then booked as served
+    per_call = (8000 * 5 + 2000 * 25) / 1e6  # 0.09 USD: reserved, then booked as served
     assert isinstance(llm, BudgetedLLM) and llm.inner.estimate_cost(True) == pytest.approx(per_call)
     start = threading.Barrier(8)
 
@@ -854,6 +1031,7 @@ def test_budget_reservation_is_a_realistic_reply_so_parallel_workers_use_the_cap
         start.wait()
         for _ in range(5):
             llm.complete("s", "p", deep=True)
+
     ts = [threading.Thread(target=worker) for _ in range(8)]
     for t in ts:
         t.start()
@@ -865,8 +1043,9 @@ def test_budget_reservation_is_a_realistic_reply_so_parallel_workers_use_the_cap
     tiny = BudgetedLLM(AnthropicLLM(cfg), max_cost_usd=0.05)
     assert tiny.complete("s", "p", deep=True) is None and tiny.refused == 1 and tiny.spent_usd == 0.0
     # the reserve is configurable and must be a positive whole number of tokens
-    assert AnthropicLLM(make_config(cfg, llm_reserve_output_tokens=500)).estimate_cost(False) == \
-        pytest.approx((8000 * 1 + 500 * 5) / 1e6)
+    assert AnthropicLLM(make_config(cfg, llm_reserve_output_tokens=500)).estimate_cost(False) == pytest.approx(
+        (8000 * 1 + 500 * 5) / 1e6
+    )
     for bad in (0, -5, 2.5):
         with pytest.raises(ValueError, match="llm_reserve_output_tokens"):
             AnthropicLLM(make_config(cfg, llm_reserve_output_tokens=bad))
@@ -874,7 +1053,9 @@ def test_budget_reservation_is_a_realistic_reply_so_parallel_workers_use_the_cap
 
 # ------------------------------------------------- (g) every timed-out attempt is billed
 def test_every_timed_out_attempt_is_billed_even_when_a_retry_succeeds(monkeypatch):
-    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.0)
+    cfg = make_config(
+        **V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.0
+    )
     recorded, clients = fake_anthropic(monkeypatch, fail=[_APITimeoutError("read timeout"), None])
     llm = AnthropicLLM(cfg)
     assert clients[-1]["max_retries"] == 0 and llm.max_retries == 2
@@ -894,8 +1075,7 @@ def test_every_timed_out_attempt_is_billed_even_when_a_retry_succeeds(monkeypatc
     assert llm.complete("s", "p", deep=True) is None and len(recorded) == 3
     assert llm.usage.timeouts == 3 and llm.usage.errors == 1 and llm.usage.by_model["claude-opus-5"].estimated_calls == 3
     # rate limits, overloads and dropped connections are retried by the same loop; a 400 is not
-    recorded, _ = fake_anthropic(monkeypatch, fail=[_RateLimitError("slow down", 429), _APIStatusError("overloaded", 529),
-                                                    None])
+    recorded, _ = fake_anthropic(monkeypatch, fail=[_RateLimitError("slow down", 429), _APIStatusError("overloaded", 529), None])
     llm = AnthropicLLM(cfg)
     assert llm.complete("s", "p", deep=True) is not None and len(recorded) == 3 and llm.usage.errors == 0
     recorded, _ = fake_anthropic(monkeypatch, fail=[_APIConnectionError("reset"), None])
@@ -926,16 +1106,17 @@ def test_graph_wires_the_staleness_setting_into_memory_so_a_gapped_entry_settles
     entry = date(2024, 1, 13)
     cfg = make_config(memory_path=None, max_data_staleness_days=10)
     with pytest.raises(ValueError, match="refusing to decide on stale data"):
-        TradingGraph(make_config(memory_path=None), provider=Gapped(cfg), memory=DecisionMemory(None),
-                     on_event=lambda *_: None).propagate("AAPL", entry)
-    for injected in (None, DecisionMemory(None)):        # the graph's own memory, and one a caller hands in
+        TradingGraph(
+            make_config(memory_path=None), provider=Gapped(cfg), memory=DecisionMemory(None), on_event=lambda *_: None
+        ).propagate("AAPL", entry)
+    for injected in (None, DecisionMemory(None)):  # the graph's own memory, and one a caller hands in
         g = TradingGraph(cfg, provider=Gapped(cfg), memory=injected, on_event=lambda *_: None)
         assert g.max_staleness_days == 10 and (injected is not None or g.memory.max_staleness_days == 10)
         st, dec = g.propagate("AAPL", entry)
         assert st.history.index[-1].date() == date(2024, 1, 5) and dec.target_weight != 0
         e = g.memory.entries[-1]
         assert e.resolved_on is None
-        visit = entry + timedelta(days=DecisionMemory.max_age_days(e.horizon_days) - 1)   # inside the expiry window
+        visit = entry + timedelta(days=DecisionMemory.max_age_days(e.horizon_days) - 1)  # inside the expiry window
         st2 = g.prepare("AAPL", visit)
         closes = st2.history["Close"]
         exit_day = closes.index[closes.index.get_loc(pd.Timestamp("2024-01-05")) + e.horizon_days].date()
@@ -949,14 +1130,30 @@ def test_graph_wires_the_staleness_setting_into_memory_so_a_gapped_entry_settles
 def test_legacy_entries_without_a_provider_stamp_are_closed_out_by_any_named_provider(tmp_path):
     path = tmp_path / "memory.jsonl"
     s = _series(start="2024-01-02", n=60)
-    legacy = {"symbol": "AAPL", "as_of": s.index[0].date().isoformat(), "action": "BUY", "weight": 0.5,
-              "price": float(s.iloc[0]), "horizon_days": 10, "summary": "v0.7 desk"}   # no provider / price_basis
+    legacy = {
+        "symbol": "AAPL",
+        "as_of": s.index[0].date().isoformat(),
+        "action": "BUY",
+        "weight": 0.5,
+        "price": float(s.iloc[0]),
+        "horizon_days": 10,
+        "summary": "v0.7 desk",
+    }  # no provider / price_basis
     path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
     m = DecisionMemory(path)
     e = m.entries[0]
     assert (e.provider, e.price_basis) == ("", "") and m.skipped_lines == 0
-    m.record("AAPL", s.index[0].date(), "BUY", 0.5, float(s.iloc[0]), "yahoo desk", horizon_days=10,
-             provider="yahoo", price_basis="adjusted_close")
+    m.record(
+        "AAPL",
+        s.index[0].date(),
+        "BUY",
+        0.5,
+        float(s.iloc[0]),
+        "yahoo desk",
+        horizon_days=10,
+        provider="yahoo",
+        price_basis="adjusted_close",
+    )
     # inside the horizon window a named visit never values it, although the exit bar is in the series
     mid = s.index[15].date()
     assert m.resolve("AAPL", mid, s[s.index <= pd.Timestamp(mid)], provider="synthetic", price_basis="close") == 0
@@ -966,10 +1163,10 @@ def test_legacy_entries_without_a_provider_stamp_are_closed_out_by_any_named_pro
     assert m.resolve("AAPL", late, s[s.index <= pd.Timestamp(late)], provider="synthetic", price_basis="close") == 1
     assert e.expired and e.resolved_on == late.isoformat() and e.pnl is None and e.lesson is None
     other = m.entries[1]
-    assert other.resolved_on is None and not other.expired          # yahoo's entry is yahoo's to value or expire
+    assert other.resolved_on is None and not other.expired  # yahoo's entry is yahoo's to value or expire
     assert m.lessons("AAPL", late) == [] and m.track_record("AAPL", late) == {}
     reloaded = DecisionMemory(path)
-    assert reloaded.entries[0].expired and not reloaded.entries[1].expired   # the close-out is persisted
+    assert reloaded.entries[0].expired and not reloaded.entries[1].expired  # the close-out is persisted
     # an unstamped visit (in-memory use without a provider) still values an unstamped entry
     m2 = DecisionMemory(None)
     m2.record("AAPL", s.index[0].date(), "BUY", 0.5, float(s.iloc[0]), "r", horizon_days=10)
@@ -1002,8 +1199,7 @@ class HarnessStub:
 def test_critic_and_reporter_prompts_fence_claims_written_from_third_party_text():
     cfg = make_config(memory_path=None)
     stub = HarnessStub(QuotingEverywhere())
-    h = AgentHarness(TradingGraph(cfg, llm=stub, provider=EvilNews(cfg), memory=DecisionMemory(None),
-                                  on_event=lambda *_: None))
+    h = AgentHarness(TradingGraph(cfg, llm=stub, provider=EvilNews(cfg), memory=DecisionMemory(None), on_event=lambda *_: None))
     run = h.run(Task("AAPL", date(2024, 3, 1), Role.TRADER))
     assert run.state is TaskState.COMPLETED, run.errors
     critic = next(p for r, p in stub.prompts if r == "critic")
@@ -1027,26 +1223,35 @@ def test_critic_and_reporter_prompts_fence_claims_written_from_third_party_text(
     assert run.critic.llm_multiplier == 0.9 and run.report.narrative_source == "llm"
     assert run.to_dict()["findings"][0]["untrusted"] is False and run.report.sections["findings"][-1]["untrusted"] is True
     assert {f["agent"] for f in run.report.sections["findings"] if f["untrusted"]} == {
-        "news", "sentiment", "facilitator", "trader", "portfolio_manager"}      # sentiment reads social posts
+        "news",
+        "sentiment",
+        "facilitator",
+        "trader",
+        "portfolio_manager",
+    }  # sentiment reads social posts
     # with no third-party text and no lessons nothing is fenced and the prompts read as before
     clean = HarnessStub()
-    run2 = AgentHarness(TradingGraph(make_config(cfg, analysts=["technical"]), llm=clean, memory=DecisionMemory(None),
-                                     on_event=lambda *_: None)).run(Task("AAPL", date(2024, 3, 1), Role.TRADER))
+    run2 = AgentHarness(
+        TradingGraph(make_config(cfg, analysts=["technical"]), llm=clean, memory=DecisionMemory(None), on_event=lambda *_: None)
+    ).run(Task("AAPL", date(2024, 3, 1), Role.TRADER))
     assert run2.state is TaskState.COMPLETED and not any(f.untrusted for f in run2.findings)
     critic2 = next(p for r, p in clean.prompts if r == "critic")
     reporter2 = next(p for r, p in clean.prompts if r == "reporter")
     assert "<untrusted_data" not in critic2 and "<untrusted_data" not in reporter2
     assert re.search(r"^- technical: .+ \(confidence \d\.\d\d\)$", critic2, re.M) and "claim inside" not in critic2
-    assert re.search(rf"^Decision: {run2.decision.action.value} {re.escape(f'{run2.decision.target_weight:+.2f}')}\. \S",
-                     critic2, re.M)
+    assert re.search(
+        rf"^Decision: {run2.decision.action.value} {re.escape(f'{run2.decision.target_weight:+.2f}')}\. \S", critic2, re.M
+    )
     assert re.search(r"^- portfolio_manager: \S", reporter2, re.M)
 
 
 # ------------------------------------------------- (d) the registry hashes the fence helpers
-@pytest.mark.parametrize("target", ["fenced", "untrusted_inputs", "debate_block", "verdict_block", "proposal_block",
-                                    "risk_views_block"])
+@pytest.mark.parametrize(
+    "target", ["fenced", "untrusted_inputs", "debate_block", "verdict_block", "proposal_block", "risk_views_block"]
+)
 def test_prompt_registry_hashes_the_fence_helpers(monkeypatch, target):
     import agentic_trader.state as state_mod
+
     before = prompt_bundle_hash(CFG)
     if target == "fenced":
         monkeypatch.setattr(state_mod, "fenced", lambda label, lines, untrusted: "\n".join(lines))
@@ -1061,11 +1266,13 @@ def test_prompt_registry_hashes_the_fence_helpers(monkeypatch, target):
 
 # ------------------------------------------------- (e) a hard dollar cap by default
 def _budgeted(monkeypatch, mode, fail=None, **over):
-    usage = SimpleNamespace(input_tokens=8000, output_tokens=16000, cache_read_input_tokens=0,
-                            cache_creation_input_tokens=0)             # every reply fills max_tokens
+    usage = SimpleNamespace(
+        input_tokens=8000, output_tokens=16000, cache_read_input_tokens=0, cache_creation_input_tokens=0
+    )  # every reply fills max_tokens
     recorded, _ = fake_anthropic(monkeypatch, served="claude-opus-5", usage=usage, delay=0.05, fail=fail)
-    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0,
-                      llm_budget_mode=mode, **over)
+    cfg = make_config(
+        **V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=1.0, llm_budget_mode=mode, **over
+    )
     return get_llm(cfg), recorded
 
 
@@ -1076,6 +1283,7 @@ def _hammer(llm, workers=8, calls=5):
         start.wait()
         for _ in range(calls):
             llm.complete("s", "p", deep=True)
+
     ts = [threading.Thread(target=worker) for _ in range(workers)]
     for t in ts:
         t.start()
@@ -1084,7 +1292,7 @@ def _hammer(llm, workers=8, calls=5):
 
 
 def test_hard_budget_mode_bounds_spend_and_estimate_mode_is_a_documented_soft_cap(monkeypatch):
-    worst = (8000 * 5 + 16000 * 25) / 1e6                              # 0.44 USD: the most one opus-5 call can cost
+    worst = (8000 * 5 + 16000 * 25) / 1e6  # 0.44 USD: the most one opus-5 call can cost
     assert make_config()["llm_budget_mode"] == "hard"
     llm, recorded = _budgeted(monkeypatch, "hard")
     assert isinstance(llm, BudgetedLLM) and llm.inner.budget_mode == "hard"
@@ -1108,8 +1316,7 @@ def test_hard_budget_mode_bounds_spend_and_estimate_mode_is_a_documented_soft_ca
 
 
 def test_budget_exhausted_agrees_with_complete_on_the_tier_it_is_asked_about(monkeypatch):
-    usage = SimpleNamespace(input_tokens=8000, output_tokens=16000, cache_read_input_tokens=0,
-                            cache_creation_input_tokens=0)
+    usage = SimpleNamespace(input_tokens=8000, output_tokens=16000, cache_read_input_tokens=0, cache_creation_input_tokens=0)
     fake_anthropic(monkeypatch, served="claude-haiku-4-5", usage=usage)
     cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, max_llm_cost_usd=0.2)
     llm = get_llm(cfg)
@@ -1119,7 +1326,7 @@ def test_budget_exhausted_agrees_with_complete_on_the_tier_it_is_asked_about(mon
     assert llm.exhausted and llm.exhausted_for(True) and not llm.exhausted_for(False)
     assert llm.complete("s", "p", deep=True) is None and llm.refused == 1 and llm.spent_usd == 0.0
     assert llm.complete("s", "p", deep=False) == '{"signal": 0.5}' and llm.refused == 1
-    assert llm.spent_usd == pytest.approx(quick) and not llm.exhausted_for(False)       # 0.088 + 0.088 < 0.2
+    assert llm.spent_usd == pytest.approx(quick) and not llm.exhausted_for(False)  # 0.088 + 0.088 < 0.2
     assert llm.complete("s", "p", deep=False) is not None and llm.spent_usd == pytest.approx(2 * quick)
     assert llm.exhausted_for(False) and llm.complete("s", "p", deep=False) is None and llm.refused == 2
     # an inner model with no estimate reserves nothing: the property reads as before
@@ -1129,6 +1336,7 @@ def test_budget_exhausted_agrees_with_complete_on_the_tier_it_is_asked_about(mon
 
 def test_retries_honour_the_servers_retry_after_header_and_validate_the_backoff(monkeypatch):
     import agentic_trader.llm as llm_mod
+
     sleeps = []
     monkeypatch.setattr(llm_mod, "time", SimpleNamespace(sleep=sleeps.append, time=time.time, monotonic=time.monotonic))
 
@@ -1136,9 +1344,13 @@ def test_retries_honour_the_servers_retry_after_header_and_validate_the_backoff(
         e = _RateLimitError("slow down", status) if status == 429 else _APIStatusError("overloaded", status)
         e.response = SimpleNamespace(headers=headers)
         return e
-    cfg = make_config(**V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.5)
-    recorded, _ = fake_anthropic(monkeypatch, fail=[limited({"retry-after": "3"}), limited({"retry-after-ms": "1500"}, 529),
-                                                    None])
+
+    cfg = make_config(
+        **V08_MODELS, llm_provider="anthropic", use_refusal_fallback=False, llm_max_retries=2, llm_retry_backoff_s=0.5
+    )
+    recorded, _ = fake_anthropic(
+        monkeypatch, fail=[limited({"retry-after": "3"}), limited({"retry-after-ms": "1500"}, 529), None]
+    )
     llm = AnthropicLLM(cfg)
     assert llm.complete("s", "p", deep=True) is not None and len(recorded) == 3 and llm.usage.errors == 0
     assert sleeps == [3.0, 1.5]
@@ -1152,6 +1364,7 @@ def test_retries_honour_the_servers_retry_after_header_and_validate_the_backoff(
     assert retry_after_seconds(limited({"retry-after-ms": "250"})) == 0.25
     from email.utils import format_datetime
     from datetime import datetime, timezone
+
     soon = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=20), usegmt=True)
     assert 15 < retry_after_seconds(limited({"retry-after": soon})) <= 20
     # llm_retry_backoff_s is validated at construction, not on the first retry hours into a run

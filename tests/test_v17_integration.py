@@ -2,6 +2,7 @@
 participation cap flag, paper OMS corporate-action and TCA hooks, Ed25519 approvers from
 config, the output guard on the desk's own memory summaries, the replay digest allowlist and
 the walk-forward significance gate)."""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -14,8 +15,7 @@ import pytest
 from agentic_trader import TradingGraph, make_config, quant
 from agentic_trader.agentic.harness import signed_gateway_from_config
 from agentic_trader.agentic.policy import ed25519_keypair
-from agentic_trader.agentic.replay import (Recording, ReplayUntrusted, Tape, allow_recording, load_recording,
-                                           replay_allowlist_path)
+from agentic_trader.agentic.replay import Recording, ReplayUntrusted, Tape, allow_recording, load_recording, replay_allowlist_path
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.execution_realism import cap_participation, stop_fill_with_slippage
 from agentic_trader.financing import apply_financing
@@ -41,8 +41,7 @@ def test_financing_defaults_leave_results_bit_identical():
     w = np.where(np.arange(p.size) % 20 < 10, 1.5, -0.5)
     cfg = pycore.BacktestConfig(max_leverage=2.0)
     base = pycore.run_backtest_ex(p, w, cfg, cash_rate=np.full(p.size, 0.04))
-    again = pycore.run_backtest_ex(p, w, replace(cfg, funding_spread=0.0, cash_spread=0.0),
-                                   cash_rate=np.full(p.size, 0.04))
+    again = pycore.run_backtest_ex(p, w, replace(cfg, funding_spread=0.0, cash_spread=0.0), cash_rate=np.full(p.size, 0.04))
     assert np.array_equal(base.equity, again.equity)
 
 
@@ -53,8 +52,7 @@ def test_in_loop_financing_equals_post_hoc_apply_financing_at_zero_cost():
     fin = replace(cfg, funding_spread=0.005, cash_spread=0.002)
     # Re-targeted every bar (no drift between decisions): the post-hoc adjustment is exact.
     reb = np.ones(p.size)
-    post = apply_financing(pycore.run_backtest_ex(p, w, cfg, rebalance=reb), 252.0,
-                           funding_spread_bps=50.0, cash_spread_bps=20.0)
+    post = apply_financing(pycore.run_backtest_ex(p, w, cfg, rebalance=reb), 252.0, funding_spread_bps=50.0, cash_spread_bps=20.0)
     inloop = pycore.run_backtest_ex(p, w, fin, rebalance=reb)
     np.testing.assert_allclose(inloop.returns, post.returns, rtol=0, atol=1e-15)
     np.testing.assert_allclose(inloop.equity, post.equity, rtol=1e-12)
@@ -69,8 +67,12 @@ def test_in_loop_financing_equals_post_hoc_apply_financing_at_zero_cost():
 
 def test_financing_and_stop_fields_are_validated():
     p, *_ = _bars(10)
-    for bad in (dict(funding_spread=-0.01), dict(cash_spread=float("inf")), dict(stop_half_spread=-1e-4),
-                dict(stop_range_frac=1.5)):
+    for bad in (
+        dict(funding_spread=-0.01),
+        dict(cash_spread=float("inf")),
+        dict(stop_half_spread=-1e-4),
+        dict(stop_range_frac=1.5),
+    ):
         with pytest.raises(ValueError):
             pycore.run_backtest(p, np.ones(p.size), pycore.BacktestConfig(**bad))
 
@@ -88,8 +90,9 @@ def test_engine_stop_fill_matches_execution_realism_on_random_bars():
         eng = pycore._exit_fill(w, stop, np.nan, o, h, lo, hs, rf)
         ref = stop_fill_with_slippage(w, stop, o, h, lo, hs, rf)
         assert (np.isnan(eng) and np.isnan(ref)) or eng == pytest.approx(ref, abs=1e-12)
-        assert pycore._exit_fill(w, stop, np.nan, o, h, lo) == pycore._exit_fill(w, stop, np.nan, o, h, lo, 0.0, 0.0) \
-            or np.isnan(pycore._exit_fill(w, stop, np.nan, o, h, lo))
+        assert pycore._exit_fill(w, stop, np.nan, o, h, lo) == pycore._exit_fill(w, stop, np.nan, o, h, lo, 0.0, 0.0) or np.isnan(
+            pycore._exit_fill(w, stop, np.nan, o, h, lo)
+        )
 
 
 def test_stop_slippage_lowers_equity_only_on_stop_bars():
@@ -108,13 +111,15 @@ def test_stop_slippage_lowers_equity_only_on_stop_bars():
 
 def test_backtest_config_for_reads_opt_in_cost_keys():
     from agentic_trader.backtest import backtest_config_for
+
     prov = SyntheticProvider(CFG)
     ins = Instrument.parse("AAPL")
     p = np.array([100.0, 101.0])
     default = backtest_config_for(ins, CFG, p, prov, date(2024, 1, 2))
     assert (default.funding_spread, default.cash_spread, default.stop_half_spread, default.stop_range_frac) == (0, 0, 0, 0)
-    cfg = make_config(CFG, costs={"funding_spread_bps": 50, "cash_spread_bps": 10, "stop_half_spread_bps": 5,
-                                  "stop_range_frac": 0.25})
+    cfg = make_config(
+        CFG, costs={"funding_spread_bps": 50, "cash_spread_bps": 10, "stop_half_spread_bps": 5, "stop_range_frac": 0.25}
+    )
     on = backtest_config_for(ins, cfg, p, prov, date(2024, 1, 2))
     assert on.funding_spread == pytest.approx(0.005) and on.cash_spread == pytest.approx(0.001)
     assert on.stop_half_spread == pytest.approx(5e-4) and on.stop_range_frac == 0.25
@@ -122,6 +127,7 @@ def test_backtest_config_for_reads_opt_in_cost_keys():
 
 def test_participation_capper_is_identity_by_default_and_caps_when_set():
     from agentic_trader.backtest import participation_capper
+
     idx = pd.bdate_range("2024-01-01", periods=60)
     full = pd.DataFrame({"Close": np.full(60, 100.0), "Volume": np.full(60, 1000.0)}, index=idx)
     mask = np.ones(60, bool)
@@ -133,9 +139,9 @@ def test_participation_capper_is_identity_by_default_and_caps_when_set():
     on = participation_capper(full, mask, ins, cfg, 1e6)
     # cap 10 % of 1,000 shares at $100 on a $1m account: 0.01 weight a bar
     capped = on(w)
-    np.testing.assert_allclose(capped, cap_participation(w, full["Close"].to_numpy(),
-                                                         pd.Series(full["Volume"]).rolling(20).mean().to_numpy(),
-                                                         1e6, 0.1))
+    np.testing.assert_allclose(
+        capped, cap_participation(w, full["Close"].to_numpy(), pd.Series(full["Volume"]).rolling(20).mean().to_numpy(), 1e6, 0.1)
+    )
     assert capped[30] == pytest.approx(0.01) and capped[-1] < 1.0
     fx = participation_capper(full, mask, Instrument.parse("EURUSD"), cfg, 1e6)
     assert fx(w) is w
@@ -143,9 +149,11 @@ def test_participation_capper_is_identity_by_default_and_caps_when_set():
 
 def test_agent_backtest_unchanged_without_flags_and_capped_with_flag():
     from agentic_trader.backtest import run_agent_backtest
+
     base = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", CFG, rebalance_every=10)
-    again = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28",
-                               make_config(CFG, costs={"backtest_participation_cap": None}), rebalance_every=10)
+    again = run_agent_backtest(
+        "AAPL", "2024-01-02", "2024-03-28", make_config(CFG, costs={"backtest_participation_cap": None}), rebalance_every=10
+    )
     for k in base.results:
         assert np.array_equal(base.results[k].equity, again.results[k].equity), k
     tiny = make_config(CFG, costs={"backtest_participation_cap": 1e-9})
@@ -159,8 +167,9 @@ def test_cpp_parity_for_financing_and_stop_slippage():
     p, o, h, lo = _bars(200)
     w = np.where(np.arange(p.size) % 21 < 7, 1.6, np.where(np.arange(p.size) % 21 < 14, -1.3, 0.4))
     stop = np.where(w > 0, p * 0.99, p * 1.01)
-    cfg = quant.BacktestConfig(max_leverage=2.0, funding_spread=0.005, cash_spread=0.002,
-                               stop_half_spread=5e-4, stop_range_frac=0.3)
+    cfg = quant.BacktestConfig(
+        max_leverage=2.0, funding_spread=0.005, cash_spread=0.002, stop_half_spread=5e-4, stop_range_frac=0.3
+    )
     kw = dict(open=o, high=h, low=lo, stop=stop, cash_rate=np.full(p.size, 0.03))
     cpp = quant.run_backtest(p, w, cfg, **kw)
     py = pycore.run_backtest_ex(p, w, cfg, **kw)
@@ -189,6 +198,7 @@ BOOK = {"eq": (["AAPL", "JPM"], "equal", ("B&H vol-target",), {})}
 
 def test_paper_session_books_corporate_actions_and_writes_tca(tmp_path):
     from agentic_trader.oms import paper_session
+
     plain = paper_session(date(2024, 2, 15), CFG, SyntheticProvider(CFG), BOOK, tmp_path / "plain", date(2024, 1, 2))
     assert plain["books"]["eq"]["orders"] >= 1
     assert not (tmp_path / "plain" / "actions.csv").exists()
@@ -197,11 +207,10 @@ def test_paper_session_books_corporate_actions_and_writes_tca(tmp_path):
     assert len(tca) == plain["books"]["eq"]["orders"]
 
     off = paper_session(date(2024, 2, 15), CFG, _ActionsProvider(CFG), BOOK, tmp_path / "off", date(2024, 1, 2))
-    assert off == {**off, "books": plain["books"]}       # flag off (default): actions ignored
+    assert off == {**off, "books": plain["books"]}  # flag off (default): actions ignored
     assert not (tmp_path / "off" / "actions.csv").exists()
     out = tmp_path / "acts"
-    paper_session(date(2024, 2, 15), CFG, _ActionsProvider(CFG), BOOK, out, date(2024, 1, 2),
-                  corporate_actions=True)
+    paper_session(date(2024, 2, 15), CFG, _ActionsProvider(CFG), BOOK, out, date(2024, 1, 2), corporate_actions=True)
     acts = pd.read_csv(out / "actions.csv")
     assert set(acts["kind"]) >= {"split", "dividend"} and set(acts["symbol"]) == {"AAPL", "JPM"}
     split = acts[acts["kind"] == "split"]
@@ -215,10 +224,12 @@ def test_paper_session_books_corporate_actions_and_writes_tca(tmp_path):
 def test_session_actions_outside_the_window_leave_held_unchanged():
     from agentic_trader.corporate_actions import apply_actions
     from agentic_trader.oms import _apply_session_actions
+
     prov = _ActionsProvider(CFG)
     ins = Instrument.parse("AAPL")
-    held, ev = _apply_session_actions(prov, prov.corporate_actions, ins, 37.0, 3700.0,
-                                      date(2024, 1, 10), date(2024, 1, 11), 100.0, apply_actions)
+    held, ev = _apply_session_actions(
+        prov, prov.corporate_actions, ins, 37.0, 3700.0, date(2024, 1, 10), date(2024, 1, 11), 100.0, apply_actions
+    )
     assert held == 37.0 and ev == []
 
 
@@ -228,15 +239,15 @@ def test_signed_gateway_from_config_accepts_ed25519_public_keys():
     _, pk_b = ed25519_keypair()
     gw = signed_gateway_from_config({"public_keys": {"alice": pk_a.hex(), "bob": pk_b.hex()}, "quorum": 1})
     assert gw.keys == {} and gw.public_keys == {"alice": pk_a, "bob": pk_b}
-    mixed = signed_gateway_from_config({"approvers": {"old": "OLD_SECRET"}, "public_keys": {"new": pk_a.hex()}},
-                                       environ={"OLD_SECRET": "s3"})
+    mixed = signed_gateway_from_config(
+        {"approvers": {"old": "OLD_SECRET"}, "public_keys": {"new": pk_a.hex()}}, environ={"OLD_SECRET": "s3"}
+    )
     assert set(mixed.keys) == {"old"} and set(mixed.public_keys) == {"new"}
     for bad in ("zz", pk_a.hex()[:-2], ""):
         with pytest.raises(ValueError, match="64 hex"):
             signed_gateway_from_config({"public_keys": {"alice": bad}})
     with pytest.raises(ValueError, match="both"):
-        signed_gateway_from_config({"approvers": {"alice": "S"}, "public_keys": {"alice": pk_a.hex()}},
-                                   environ={"S": "x"})
+        signed_gateway_from_config({"approvers": {"alice": "S"}, "public_keys": {"alice": pk_a.hex()}}, environ={"S": "x"})
     with pytest.raises(ValueError, match="public_keys"):
         signed_gateway_from_config({})
 
@@ -254,8 +265,12 @@ def test_desk_memory_summary_goes_through_the_output_guard():
     g.record(st)
     s = mem.entries[-1].summary
     assert s == "[summary withheld by output guard: instruction-like, ticker, url]"
-    off = TradingGraph(make_config(CFG, agentic={"memory_output_guard": False}), provider=SyntheticProvider(CFG),
-                       memory=DecisionMemory(None), on_event=lambda *_: None)
+    off = TradingGraph(
+        make_config(CFG, agentic={"memory_output_guard": False}),
+        provider=SyntheticProvider(CFG),
+        memory=DecisionMemory(None),
+        on_event=lambda *_: None,
+    )
     st.as_of = date(2024, 3, 5)
     off.record(st)
     assert "http://evil.io" in off.memory.entries[-1].summary
@@ -268,17 +283,17 @@ def _rec():
 
 def test_replay_load_refuses_files_not_on_the_digest_allowlist(tmp_path):
     p = _rec().save(tmp_path / "a.replay.pkl")
-    assert load_recording(p).task_id == "TASK-x"                      # saved here: listed
+    assert load_recording(p).task_id == "TASK-x"  # saved here: listed
     assert replay_allowlist_path().is_file()
     other = tmp_path / "b.replay.pkl"
     other.write_bytes(p.read_bytes() + b"")
     tampered = tmp_path / "c.replay.pkl"
     tampered.write_bytes(p.read_bytes()[:-1] + bytes([p.read_bytes()[-1] ^ 1]))
     with pytest.raises(ReplayUntrusted, match="allowlist"):
-        load_recording(tampered)                                     # edited bytes: refused before unpickling
-    assert load_recording(other).task_id == "TASK-x"                  # same bytes, same digest
+        load_recording(tampered)  # edited bytes: refused before unpickling
+    assert load_recording(other).task_id == "TASK-x"  # same bytes, same digest
     foreign = tmp_path / "evil.replay.pkl"
-    foreign.write_bytes(b"cos\nsystem\n(S'echo pwned'\ntR.")         # a pickle that would run a command
+    foreign.write_bytes(b"cos\nsystem\n(S'echo pwned'\ntR.")  # a pickle that would run a command
     with pytest.raises(ReplayUntrusted):
         load_recording(foreign)
     with pytest.raises(ReplayUntrusted):
@@ -290,11 +305,12 @@ def test_replay_load_refuses_files_not_on_the_digest_allowlist(tmp_path):
 # ------------------------------------------------------------------ 8. walk-forward gate (N6)
 def test_walk_forward_gate_uses_only_prior_labels():
     from agentic_trader.alpha import walk_forward_gated_series
+
     rng = np.random.default_rng(1)
     T = 900
     r = rng.normal(0, 0.01, T)
     close = 100 * np.exp(np.cumsum(r))
-    good = np.r_[r[1:], 0.0] * 50 + rng.normal(0, 0.2, T)            # predicts next bar
+    good = np.r_[r[1:], 0.0] * 50 + rng.normal(0, 0.2, T)  # predicts next bar
     noise = rng.normal(0, 1, T)
     sig = pd.DataFrame({"good": np.clip(good, -1, 1), "noise": np.clip(noise, -1, 1)})
     wf = walk_forward_gated_series(sig, close, horizon=1, window=252, min_bars=126)
@@ -310,6 +326,7 @@ def test_walk_forward_gate_uses_only_prior_labels():
 
 def test_alpha_report_walk_forward_row_is_opt_in():
     from agentic_trader.alpha import alpha_report
+
     prov = SyntheticProvider(CFG)
     ins = Instrument.parse("AAPL")
     df = prov.history(ins, date(2021, 1, 4), date(2024, 3, 1))

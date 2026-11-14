@@ -52,5 +52,8 @@ repeated on the maintainer's machine. Run on round3-part3 at 1dd4ffb, 2026-11-14
 
 ## Follow-up
 
-Rows and the report header do not yet record the data provider, which is why `--data` has to
-be given by hand. Recording the provider is a follow-up for the next registered study (Round 4).
+Done in v0.19.1: rows written from then on carry `data_provider` (from the run header, via
+`study_lineage.stamp`) and `--report` reads it, printing `Data provider: ...` above the tables.
+`--data` stays as an override that must match the rows. The first-pass rows scored here were
+written before the field existed, so this re-score still needs `--data yahoo`; the report refuses
+to guess for such rows (tests: `tests/test_v16_study.py::test_report_provider_reads_rows_and_refuses_mismatch`).

@@ -2,6 +2,7 @@
 honoured by every scheme and after vol targeting, book VaR failing closed on short history,
 short positions sized on the right tail, hedges sized rather than flattened, a Ledoit-Wolf
 intensity that matches the (EWMA) estimator it shrinks, and degenerate windows raising."""
+
 import logging
 from datetime import date
 
@@ -15,8 +16,18 @@ from agentic_trader.backtest import run_portfolio_backtest
 from agentic_trader.data.synthetic import SyntheticProvider
 from agentic_trader.memory import DecisionMemory
 from agentic_trader.portfolio import (
-    METHODS, MIN_BOOK_OBS, book_returns, book_var_95, book_var_scale, construct, estimate_cov, ewma_cov,
-    ewma_weights, ledoit_wolf_shrink, risk_parity_weights, sample_cov,
+    METHODS,
+    MIN_BOOK_OBS,
+    book_returns,
+    book_var_95,
+    book_var_scale,
+    construct,
+    estimate_cov,
+    ewma_cov,
+    ewma_weights,
+    ledoit_wolf_shrink,
+    risk_parity_weights,
+    sample_cov,
 )
 from agentic_trader.state import Book, TradingState
 
@@ -40,7 +51,7 @@ def _frame(vols, n=300, seed=0, corr=0.0):
 
 
 # ------------------------------------------------ finding 2: max_weight for every scheme
-SKEWED = {"BIL": 0.002, "EQ1": 0.02, "EQ2": 0.02}   # a bill ETF next to two equities
+SKEWED = {"BIL": 0.002, "EQ1": 0.02, "EQ2": 0.02}  # a bill ETF next to two equities
 
 
 @pytest.mark.parametrize("method", METHODS)
@@ -51,7 +62,7 @@ def test_construct_caps_every_scheme_on_a_skewed_covariance(method):
     assert pw.allocation.sum() == pytest.approx(1.0) and (pw.allocation >= -1e-12).all()
     assert pw.contributions["allocation"].max() <= 0.5 + 1e-9
     if method in ("inverse_vol", "risk_parity"):
-        assert pw.allocation[0] == pytest.approx(0.5)   # the low-vol sleeve sits exactly on the cap
+        assert pw.allocation[0] == pytest.approx(0.5)  # the low-vol sleeve sits exactly on the cap
 
 
 @pytest.mark.parametrize("method", METHODS)
@@ -62,7 +73,7 @@ def test_vol_target_scale_up_respects_the_cap_and_the_gross_cap(method):
     assert np.abs(pw.weights).max() <= 0.5 + 1e-9
     assert np.abs(pw.weights).sum() <= 1.0 + 1e-9
     assert pw.allocation.sum() <= 1.0 + 1e-9 and pw.allocation.max() <= 0.5 + 1e-9
-    assert pw.contributions["allocation"].sum() <= 1.0 + 3 * 5e-5   # the frame is rounded to 4 dp
+    assert pw.contributions["allocation"].sum() <= 1.0 + 3 * 5e-5  # the frame is rounded to 4 dp
     assert pw.expected_vol <= 0.15 + 1e-9
     np.testing.assert_allclose(pw.weights, pw.allocation * np.array([1.0, 0.1, 0.1]) * pw.scale)
 
@@ -81,17 +92,38 @@ def test_group_budgets_honour_the_cap_within_and_across_groups(caplog):
     rets = _frame({**SKEWED, "FX": 0.005}, seed=2)
     groups = {"BIL": "eq", "EQ1": "eq", "EQ2": "eq", "FX": "fx"}
     for method in METHODS:
-        pw = construct({s: 1.0 for s in rets.columns}, rets, method, max_weight=0.5, target_vol=None,
-                       groups=groups, group_budgets={"eq": 0.6, "fx": 0.4})
+        pw = construct(
+            {s: 1.0 for s in rets.columns},
+            rets,
+            method,
+            max_weight=0.5,
+            target_vol=None,
+            groups=groups,
+            group_budgets={"eq": 0.6, "fx": 0.4},
+        )
         assert pw.allocation.max() <= 0.5 + 1e-9 and pw.allocation.sum() == pytest.approx(1.0)
     # a two-sleeve group with 0.2%/2% vols: within-group inverse vol wants 0.91 in the bill
-    pw = construct({"BIL": 1.0, "EQ1": 1.0, "FX": 1.0}, rets, "inverse_vol", max_weight=0.5, target_vol=None,
-                   groups=groups, group_budgets={"eq": 0.9, "fx": 0.1})
+    pw = construct(
+        {"BIL": 1.0, "EQ1": 1.0, "FX": 1.0},
+        rets,
+        "inverse_vol",
+        max_weight=0.5,
+        target_vol=None,
+        groups=groups,
+        group_budgets={"eq": 0.9, "fx": 0.1},
+    )
     assert pw.allocation.max() <= 0.5 + 1e-9
     # a single-sleeve group whose budget wants more than the cap: the cap wins and says so
     with caplog.at_level(logging.WARNING, logger="agentic_trader.portfolio"):
-        pw = construct({"BIL": 1.0, "EQ1": 1.0, "FX": 1.0}, rets, "equal", max_weight=0.4, target_vol=None,
-                       groups=groups, group_budgets={"eq": 0.05, "fx": 0.95})
+        pw = construct(
+            {"BIL": 1.0, "EQ1": 1.0, "FX": 1.0},
+            rets,
+            "equal",
+            max_weight=0.4,
+            target_vol=None,
+            groups=groups,
+            group_budgets={"eq": 0.05, "fx": 0.95},
+        )
     assert pw.allocation.max() <= 0.4 + 1e-9 and pw.allocation.sum() == pytest.approx(1.0)
     assert "overrides the group risk budgets" in caplog.text
 
@@ -114,11 +146,11 @@ def _book_frame(n=250, short_bars=10, seed=0):
 def test_zero_weight_short_history_symbol_does_not_change_the_book_check():
     rets = _book_frame()
     assert book_var_95({"A": 1.0}, rets) == pytest.approx(book_var_95({"A": 1.0, "NEW": 0.0}, rets))
-    limit = book_var_95({"A": 1.0}, rets) * 1.02   # tight: B has to be scaled down
+    limit = book_var_95({"A": 1.0}, rets) * 1.02  # tight: B has to be scaled down
     without = book_var_scale("B", 0.5, {"A": 1.0}, rets, limit)
     with_new = book_var_scale("B", 0.5, {"A": 1.0, "NEW": 0.0}, rets, limit)
     assert without == with_new
-    assert without[0] < 0.5 and without[2] is not None   # the cap is live in both cases
+    assert without[0] < 0.5 and without[2] is not None  # the cap is live in both cases
     # the fewer-than-20-rows condition that used to disable the check is what NEW alone shows
     assert book_returns({"A": 1.0, "NEW": 0.0}, rets).size == len(rets)
     assert book_returns({"A": 1.0, "NEW": 0.2}, rets).size == 10
@@ -149,15 +181,21 @@ def test_held_short_history_symbol_fails_closed_with_a_note():
 def test_pm_guardrails_record_the_fail_closed_note():
     rets = _book_frame()
     pm = PortfolioManager(None, CFG)
-    f = {"max_position": 1.0, "max_var_95": 0.0, "var_95_1d": 0.01, "var_95_1d_short": 0.01,
-         "short_selling_allowed": True, "rebalance_band": 0.0, "max_book_var_95": 0.05}
+    f = {
+        "max_position": 1.0,
+        "max_var_95": 0.0,
+        "var_95_1d": 0.01,
+        "var_95_1d_short": 0.01,
+        "short_selling_allowed": True,
+        "rebalance_band": 0.0,
+        "max_book_var_95": 0.05,
+    }
     w, notes = pm.guardrails(0.5, f, "B", Book({"A": 1.0, "NEW": 0.2}, rets))
     assert w == 0.0 and any("could not be evaluated" in n for n in notes)
     w, notes = pm.guardrails(0.5, f, "B", Book({"A": 1.0, "NEW": 0.0}, rets))
     assert w == 0.5 and notes == []
     # no_trade_band never keeps a position the (now failing-closed) check forbids
-    kept, band_note = pm.no_trade_band(0.45, 0.5, {**f, "rebalance_band": 0.1}, "B",
-                                       Book({"A": 1.0, "NEW": 0.2}, rets))
+    kept, band_note = pm.no_trade_band(0.45, 0.5, {**f, "rebalance_band": 0.1}, "B", Book({"A": 1.0, "NEW": 0.2}, rets))
     assert kept == 0.45 and band_note is None
 
 
@@ -167,11 +205,12 @@ def _truncate(provider, symbol, bars):
     def history(instrument, start, end):
         h = orig(instrument, start, end)
         return h.iloc[-bars:] if instrument.symbol == symbol else h
+
     provider.history = history
 
 
 def test_scan_book_check_survives_a_short_history_symbol(caplog):
-    cfg = make_config(CFG, risk={"max_book_var_95": 0.005})   # binds with SPY held at 1.0
+    cfg = make_config(CFG, risk={"max_book_var_95": 0.005})  # binds with SPY held at 1.0
     base = _graph(cfg).scan(["SPY", "QQQ"], "2024-03-01", positions={"SPY": 1.0})
     base_row = base[base.symbol == "QQQ"].iloc[0]
     assert "book VaR" in base_row.adjustments and base_row.target_weight == 0.0
@@ -182,7 +221,7 @@ def test_scan_book_check_survives_a_short_history_symbol(caplog):
         df = g.scan(["SPY", "QQQ", "NEW"], "2024-03-01", positions={"SPY": 1.0, "NEW": 0.0})
     row = df[df.symbol == "QQQ"].iloc[0]
     assert row.target_weight == base_row.target_weight and row.adjustments == base_row.adjustments
-    assert "NEW has 9 bars of book history (need 20)" in caplog.text   # 10 closes -> 9 returns
+    assert "NEW has 9 bars of book history (need 20)" in caplog.text  # 10 closes -> 9 returns
 
     g = _graph(cfg)
     _truncate(g.provider, "NEW", 10)
@@ -200,6 +239,7 @@ def test_scan_book_includes_held_symbols_outside_the_watchlist():
     def spy(ins, as_of, **kw):
         seen["book"] = kw.get("book")
         return orig(ins, as_of, **kw)
+
     g.propagate = spy
     g.scan(["AAPL"], "2024-03-01", positions={"AAPL": 0.5, "TLT": 3.0})
     assert "TLT" in seen["book"].returns.columns and seen["book"].positions == {"TLT": 3.0}
@@ -214,16 +254,24 @@ def _skewed_returns(sign=+1):
 
 
 def _facts(r, **over):
-    f = {"max_position": 1.0, "max_var_95": 0.02, "var_95_1d": quant.historical_var(r, 0.95),
-         "var_95_1d_short": quant.historical_var(-r, 0.95), "short_selling_allowed": True,
-         "rebalance_band": 0.0, "proposed_weight": -1.0, "realized_vol_20d_annual": None, "target_vol": 0.15}
+    f = {
+        "max_position": 1.0,
+        "max_var_95": 0.02,
+        "var_95_1d": quant.historical_var(r, 0.95),
+        "var_95_1d_short": quant.historical_var(-r, 0.95),
+        "short_selling_allowed": True,
+        "rebalance_band": 0.0,
+        "proposed_weight": -1.0,
+        "realized_vol_20d_annual": None,
+        "target_vol": 0.15,
+    }
     f.update(over)
     return f
 
 
 def test_short_var_guardrail_uses_the_right_tail():
     pm = PortfolioManager(None, CFG)
-    r = _skewed_returns()                       # q05 = -0.5%, q95 = +3%
+    r = _skewed_returns()  # q05 = -0.5%, q95 = +3%
     f = _facts(r)
     assert f["var_95_1d"] == pytest.approx(0.005) and f["var_95_1d_short"] == pytest.approx(0.03)
     w, notes = pm.guardrails(-1.0, f)
@@ -250,11 +298,12 @@ def test_conservative_analyst_and_risk_facts_use_the_short_tail():
     w = an.rules_weight(_facts(r, max_var_95=0.01, realized_vol_20d_annual=0.15))
     assert w == pytest.approx(-0.5 * 0.01 / 0.015)
     # the long side of the same series (0.5 * 0.5% < 1%) is untouched
-    assert an.rules_weight(_facts(r, proposed_weight=1.0, max_var_95=0.01,
-                                  realized_vol_20d_annual=0.15)) == pytest.approx(0.5)
+    assert an.rules_weight(_facts(r, proposed_weight=1.0, max_var_95=0.01, realized_vol_20d_annual=0.15)) == pytest.approx(0.5)
     closes = 100 * np.cumprod(1 + np.r_[0.0, r])
-    hist = pd.DataFrame({"Open": closes, "High": closes * 1.01, "Low": closes * 0.99, "Close": closes,
-                         "Volume": 1e6}, index=pd.bdate_range("2023-01-02", periods=len(closes)))
+    hist = pd.DataFrame(
+        {"Open": closes, "High": closes * 1.01, "Low": closes * 0.99, "Close": closes, "Volume": 1e6},
+        index=pd.bdate_range("2023-01-02", periods=len(closes)),
+    )
     st = TradingState(Instrument.parse("EURUSD"), date(2024, 1, 1), hist)
     f = risk_facts(st, CFG)
     assert f["var_95_1d"] == pytest.approx(quant.historical_var(r, 0.95))
@@ -264,6 +313,7 @@ def test_conservative_analyst_and_risk_facts_use_the_short_tail():
 def test_critic_firm_limits_check_the_short_tail():
     from agentic_trader.agentic.critic import Critic
     from agentic_trader.agentic.evidence import EvidenceStore
+
     st, _ = _graph().propagate("EURUSD", "2024-03-01")
     st.decision.target_weight = -0.7
     facts = {"var_95_1d": 0.005, "var_95_1d_short": 0.03}
@@ -291,7 +341,7 @@ def test_partial_hedge_is_sized_to_the_largest_feasible_size_when_the_rest_alrea
     cs = np.linspace(0, 1, 41)
     vs = np.array([book_var_95({"A": 1.0, "B": -c}, rets) for c in cs])
     limit = (zero + vs.min()) / 2
-    assert vs.min() < limit < zero < vs[-1]          # rest over, full hedge over, partial sizes under
+    assert vs.min() < limit < zero < vs[-1]  # rest over, full hedge over, partial sizes under
     w, after, note = book_var_scale("B", -1.0, other, rets, limit)
     expected = -max(c for c, v in zip(cs, vs) if v <= limit)
     assert w == pytest.approx(expected) and w < 0
@@ -316,10 +366,10 @@ def _cov_cor_reference(x):
     rbar = (np.sum(sample / np.outer(sq, sq)) - n) / (n * (n - 1))
     prior = rbar * np.outer(sq, sq)
     np.fill_diagonal(prior, var)
-    y = x ** 2
-    phi_mat = y.T @ y / t - 2 * (x.T @ x) * sample / t + sample ** 2
+    y = x**2
+    phi_mat = y.T @ y / t - 2 * (x.T @ x) * sample / t + sample**2
     phi = phi_mat.sum()
-    term1 = (x ** 3).T @ x / t
+    term1 = (x**3).T @ x / t
     help_ = x.T @ x / t
     theta = term1 - np.diag(help_)[:, None] * sample - help_ * var[:, None] + var[:, None] * sample
     np.fill_diagonal(theta, 0.0)
@@ -331,8 +381,9 @@ def _cov_cor_reference(x):
 
 def test_ledoit_wolf_intensity_matches_the_reference_implementation():
     rng = np.random.default_rng(5)
-    x = rng.multivariate_normal(np.zeros(4), np.array([[4, 1, 0.5, 0], [1, 3, 0.2, 0.1],
-                                                      [0.5, 0.2, 2, 0.3], [0, 0.1, 0.3, 1]]) * 1e-4, 200)
+    x = rng.multivariate_normal(
+        np.zeros(4), np.array([[4, 1, 0.5, 0], [1, 3, 0.2, 0.1], [0.5, 0.2, 2, 0.3], [0, 0.1, 0.3, 1]]) * 1e-4, 200
+    )
     delta_ref, prior, sample = _cov_cor_reference(x)
     shrunk, delta = ledoit_wolf_shrink(x, sample, np.full(200, 1.0 / 200))
     assert 0 < delta_ref < 1 and delta == pytest.approx(delta_ref, abs=1e-12)
@@ -363,9 +414,9 @@ def test_ewma_intensity_ignores_history_the_weights_ignore():
     L = rng.standard_normal((n, n))
     c = L @ L.T
     c = c / np.outer(np.sqrt(np.diag(c)), np.sqrt(np.diag(c)))
-    recent = rng.multivariate_normal(np.zeros(n), 0.02 ** 2 * c, 120)
-    quiet = rng.multivariate_normal(np.zeros(n), 0.005 ** 2 * c, 300)
-    same = rng.multivariate_normal(np.zeros(n), 0.02 ** 2 * c, 300)
+    recent = rng.multivariate_normal(np.zeros(n), 0.02**2 * c, 120)
+    quiet = rng.multivariate_normal(np.zeros(n), 0.005**2 * c, 300)
+    same = rng.multivariate_normal(np.zeros(n), 0.02**2 * c, 300)
     _, d0 = ledoit_wolf_shrink(recent, ewma_cov(recent, hl), ewma_weights(120, hl))
     for old in (quiet, same):
         full = np.vstack([old, recent])
@@ -384,7 +435,7 @@ def test_effective_sample_size_is_the_weights_own():
     rng = np.random.default_rng(2)
     x = rng.normal(0, 0.01, (400, 4))
     w = ewma_weights(400, 60.0)
-    assert 1 / (w @ w) == pytest.approx(169.8, abs=0.1)   # Kish ESS of the default halflife at T=400
+    assert 1 / (w @ w) == pytest.approx(169.8, abs=0.1)  # Kish ESS of the default halflife at T=400
     # same covariance, same rows: the equal-weight/T intensity understates by about T / n_eff
     s = ewma_cov(x, 60.0)
     _, d_w = ledoit_wolf_shrink(x, s, w)
@@ -426,7 +477,7 @@ def test_construct_raises_on_a_flat_window_and_survives_one_flat_sleeve():
     pw = construct({"A": 1, "B": 1, "C": 1}, mixed, "risk_parity", max_weight=1.0, target_vol=None)
     assert np.isfinite(pw.allocation).all() and pw.allocation[2] == 0.0
     assert pw.allocation.sum() == pytest.approx(1.0) and np.isfinite(pw.expected_vol)
-    for method in METHODS:   # and every scheme stays finite at the default cap
+    for method in METHODS:  # and every scheme stays finite at the default cap
         pw = construct({"A": 1, "B": 1, "C": 1}, mixed, method)
         assert np.isfinite(pw.allocation).all() and np.isfinite(pw.weights).all()
         assert np.isfinite(pw.expected_vol) and pw.allocation.sum() == pytest.approx(1.0)
@@ -434,6 +485,7 @@ def test_construct_raises_on_a_flat_window_and_survives_one_flat_sleeve():
 
 class _FlatBlock(SyntheticProvider):
     """Every instrument's prices are frozen over the block: a covariance window with no variance."""
+
     flat_start, flat_end = pd.Timestamp("2024-01-25"), pd.Timestamp("2024-03-08")
 
     def history(self, instrument, start, end):
@@ -448,6 +500,7 @@ class _FlatBlock(SyntheticProvider):
 
 def test_portfolio_backtest_keeps_the_previous_allocation_on_a_degenerate_window(monkeypatch):
     import agentic_trader.portfolio as P
+
     raised, real = [], P.construct
 
     def recording(*a, **k):
@@ -456,13 +509,15 @@ def test_portfolio_backtest_keeps_the_previous_allocation_on_a_degenerate_window
         except ValueError:
             raised.append(len(a[1]))
             raise
+
     monkeypatch.setattr(P, "construct", recording)
-    rp = run_portfolio_backtest(["AAPL", "JPM"], "2024-01-02", "2024-03-28", CFG, 5, provider=_FlatBlock(CFG),
-                                weighting="risk_parity", cov_window=20)
+    rp = run_portfolio_backtest(
+        ["AAPL", "JPM"], "2024-01-02", "2024-03-28", CFG, 5, provider=_FlatBlock(CFG), weighting="risk_parity", cov_window=20
+    )
     a = rp.allocations
-    assert raised and all(n == 20 for n in raised)          # full-size windows that were still degenerate
+    assert raised and all(n == 20 for n in raised)  # full-size windows that were still degenerate
     assert np.isfinite(a.to_numpy()).all()
     np.testing.assert_allclose(a.sum(axis=1), 1.0)
     inside = a[(a.index >= "2024-02-26") & (a.index <= "2024-03-08")]
-    assert len(inside) >= 5 and (inside.nunique() == 1).all()    # held, not re-solved, through the block
+    assert len(inside) >= 5 and (inside.nunique() == 1).all()  # held, not re-solved, through the block
     assert np.isfinite(rp.table().to_numpy(float)).all()

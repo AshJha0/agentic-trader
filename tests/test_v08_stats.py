@@ -1,6 +1,7 @@
 """v0.8 statistics fixes: the cross-instrument bootstrap resamples correlated *clusters*
 (review findings 4 and 54), and Benjamini-Hochberg runs on unrounded p-values over the
 rows that were actually tested (finding 80)."""
+
 import math
 
 import numpy as np
@@ -44,7 +45,7 @@ def test_cluster_bootstrap_coverage_under_a_common_factor_is_closer_to_nominal_t
             false_pos[name] += pb.p_value < 0.05
     cov = {k: v / n_mc for k, v in covered.items()}
     fp = {k: v / n_mc for k, v in false_pos.items()}
-    assert cov["instruments"] < 0.80, cov                      # the defect: plain is badly anti-conservative here
+    assert cov["instruments"] < 0.80, cov  # the defect: plain is badly anti-conservative here
     assert cov["clusters"] > cov["instruments"] + 0.15, cov
     assert abs(cov["clusters"] - 0.95) < abs(cov["instruments"] - 0.95), cov
     assert fp["clusters"] < fp["instruments"] / 2, fp
@@ -123,18 +124,27 @@ def test_cluster_scheme_gives_a_different_answer_from_plain_on_a_designed_fixtur
 def _five_group_result():
     rows = []
     rng = np.random.default_rng(5)
-    universe = [("equity", "core", ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL"]),
-                ("fx", "core", ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD"]),
-                ("equity", "extended", ["JPM", "XOM", "JNJ", "PG", "KO"]),
-                ("equity", "extended-macro", ["TLT", "IEF", "LQD", "HYG", "GLD"]),
-                ("fx", "extended", ["NZDUSD", "USDCHF", "EURGBP", "EURJPY"])]
+    universe = [
+        ("equity", "core", ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL"]),
+        ("fx", "core", ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD"]),
+        ("equity", "extended", ["JPM", "XOM", "JNJ", "PG", "KO"]),
+        ("equity", "extended-macro", ["TLT", "IEF", "LQD", "HYG", "GLD"]),
+        ("fx", "extended", ["NZDUSD", "USDCHF", "EURGBP", "EURJPY"]),
+    ]
     for k, (ac, uni, syms) in enumerate(universe):
         shock = rng.normal(0, 0.4)
         for sym in syms:
-            rows.append({"period": "q", "symbol": sym, "asset_class": ac, "universe": uni,
-                         "strategy": AGENT, "Sharpe": 0.5 + shock + rng.normal(0, 0.05)})
-            rows.append({"period": "q", "symbol": sym, "asset_class": ac, "universe": uni,
-                         "strategy": "Buy&Hold", "Sharpe": 0.5})
+            rows.append(
+                {
+                    "period": "q",
+                    "symbol": sym,
+                    "asset_class": ac,
+                    "universe": uni,
+                    "strategy": AGENT,
+                    "Sharpe": 0.5 + shock + rng.normal(0, 0.05),
+                }
+            )
+            rows.append({"period": "q", "symbol": sym, "asset_class": ac, "universe": uni, "strategy": "Buy&Hold", "Sharpe": 0.5})
     return EvaluationResult(pd.DataFrame(rows), {}), universe
 
 
@@ -161,9 +171,18 @@ def test_c8_paired_table_uses_the_time_block_primary_when_daily_returns_are_held
     common = rng.normal(0, 0.01, size=(250, 1))
     base = pd.DataFrame(rng.normal(0.0003, 0.01, size=(250, 12)), index=days, columns=syms)
     agent = base + common + rng.normal(0, 0.001, size=(250, 12))
-    rows = [{"period": "q", "symbol": s, "asset_class": "equity", "universe": "core", "strategy": st,
-             "Sharpe": float(stats.sharpe_stats(df[s]).sharpe_annual)}
-            for s in syms for st, df in (("AgenticTrader", agent), ("Buy&Hold", base))]
+    rows = [
+        {
+            "period": "q",
+            "symbol": s,
+            "asset_class": "equity",
+            "universe": "core",
+            "strategy": st,
+            "Sharpe": float(stats.sharpe_stats(df[s]).sharpe_annual),
+        }
+        for s in syms
+        for st, df in (("AgenticTrader", agent), ("Buy&Hold", base))
+    ]
     res = EvaluationResult(pd.DataFrame(rows), {}, {"q|AgenticTrader": agent, "q|Buy&Hold": base})
     tab = res.paired_table(n_boot=400)
     r = tab.iloc[0]
@@ -171,8 +190,7 @@ def test_c8_paired_table_uses_the_time_block_primary_when_daily_returns_are_held
     assert "conditional" in r.secondary and r.secondary.endswith("(instruments)")
     assert (r["ci95 high"] - r["ci95 low"]) > 3 * (r["secondary ci95 high"] - r["secondary ci95 low"])
     res.to_json(tmp_path / "a.json")
-    assert EvaluationResult.from_json(tmp_path / "a.json").paired_table(n_boot=400).scheme[0].startswith(
-        "cross-instrument")
+    assert EvaluationResult.from_json(tmp_path / "a.json").paired_table(n_boot=400).scheme[0].startswith("cross-instrument")
     res.to_json(tmp_path / "b.json", include_returns=True)
     back = EvaluationResult.from_json(tmp_path / "b.json").paired_table(n_boot=400)
     assert back.scheme[0] == "time-block" and back["ci95 low"][0] == r["ci95 low"]
@@ -187,10 +205,11 @@ def test_evaluation_paired_passes_the_asset_class_universe_labels_as_groups(monk
         seen["groups"] = None if kw.get("groups") is None else list(kw["groups"])
         seen["n"] = len(a)
         return real(a, b, **kw)
+
     monkeypatch.setattr(stats, "paired_bootstrap", spy)
     res.paired("Buy&Hold", period="q")
     label = {sym: f"{ac}:{uni}" for ac, uni, syms in universe for sym in syms}
-    expected = [label[s] for s in sorted(label)]   # the pivot orders instruments by symbol
+    expected = [label[s] for s in sorted(label)]  # the pivot orders instruments by symbol
     assert seen["n"] == 23 and seen["groups"] == expected
     res.paired("Buy&Hold", period="q", cluster=False)
     assert seen["groups"] is None
@@ -208,9 +227,9 @@ def test_benjamini_hochberg_counts_only_tested_rows_in_m():
 
 
 def test_benjamini_hochberg_is_sensitive_to_the_fourth_decimal():
-    p_true = np.array([0.01665, 0.4, 0.6])          # 0.01665 <= 1/3 * 0.05 = 0.016667
+    p_true = np.array([0.01665, 0.4, 0.6])  # 0.01665 <= 1/3 * 0.05 = 0.016667
     assert list(benjamini_hochberg(p_true)) == [True, False, False]
-    assert not benjamini_hochberg(np.round(p_true, 3)).any()   # what the v0.7 table fed it
+    assert not benjamini_hochberg(np.round(p_true, 3)).any()  # what the v0.7 table fed it
 
 
 def _table_with(monkeypatch, fake: dict[str, PairedBootstrap]):
@@ -220,40 +239,63 @@ def _table_with(monkeypatch, fake: dict[str, PairedBootstrap]):
         rows.append({"period": "q", "symbol": f"S{i}", "strategy": base, "universe": "core", "Sharpe": 1.0})
     res = EvaluationResult(pd.DataFrame(rows), {})
 
-    def fake_paired(self, baseline, metric="Sharpe", period=None, universe=None, strategy=AGENT, n_boot=10_000,
-                    seed=0, cluster=True):
+    def fake_paired(
+        self, baseline, metric="Sharpe", period=None, universe=None, strategy=AGENT, n_boot=10_000, seed=0, cluster=True
+    ):
         return fake[baseline]
+
     monkeypatch.setattr(EvaluationResult, "paired", fake_paired)
     return res.paired_table().sort_values("baseline").reset_index(drop=True)
 
 
 def test_paired_table_applies_bh_to_the_unrounded_p(monkeypatch):
-    tab = _table_with(monkeypatch, {
-        "b0": PairedBootstrap(10, 0.1, 0.01, 0.2, 0.01665, 8),
-        "b1": PairedBootstrap(10, 0.0, -0.1, 0.1, 0.4, 5),
-        "b2": PairedBootstrap(10, 0.0, -0.1, 0.1, 0.6, 4),
-    })
-    assert list(tab.p) == [0.017, 0.4, 0.6]                  # displayed at 3 dp
-    assert list(tab.significant) == [True, False, False]     # decided on the 5th
+    tab = _table_with(
+        monkeypatch,
+        {
+            "b0": PairedBootstrap(10, 0.1, 0.01, 0.2, 0.01665, 8),
+            "b1": PairedBootstrap(10, 0.0, -0.1, 0.1, 0.4, 5),
+            "b2": PairedBootstrap(10, 0.0, -0.1, 0.1, 0.6, 4),
+        },
+    )
+    assert list(tab.p) == [0.017, 0.4, 0.6]  # displayed at 3 dp
+    assert list(tab.significant) == [True, False, False]  # decided on the 5th
 
 
 def test_paired_table_untested_rows_are_nan_and_do_not_shrink_the_others_threshold(monkeypatch):
     nan = float("nan")
-    tab = _table_with(monkeypatch, {
-        "b0": PairedBootstrap(12, 0.2, 0.02, 0.4, 0.025, 9),
-        "b1": PairedBootstrap(2, 0.3, nan, nan, 1.0, 2),    # fewer than three instruments: never tested
-        "b2": PairedBootstrap(2, -0.1, nan, nan, 1.0, 0),
-    })
+    tab = _table_with(
+        monkeypatch,
+        {
+            "b0": PairedBootstrap(12, 0.2, 0.02, 0.4, 0.025, 9),
+            "b1": PairedBootstrap(2, 0.3, nan, nan, 1.0, 2),  # fewer than three instruments: never tested
+            "b2": PairedBootstrap(2, -0.1, nan, nan, 1.0, 0),
+        },
+    )
     assert list(tab.n) == [12, 2, 2]
     assert tab.p[0] == 0.025 and np.isnan(tab.p[1]) and np.isnan(tab.p[2])
-    assert list(tab.significant) == [True, False, False]     # m = 1, not 3 (which would need p <= 0.0167)
+    assert list(tab.significant) == [True, False, False]  # m = 1, not 3 (which would need p <= 0.0167)
 
 
 def test_paired_table_columns_carry_the_scheme(monkeypatch):
     tab = _table_with(monkeypatch, {"b0": PairedBootstrap(10, 0.1, 0.01, 0.2, 0.02, 8, "clusters", 5)})
-    assert list(tab.columns) == ["period", "baseline", "n", "mean Sharpe diff", "ci95 low", "ci95 high", "p",
-                                 "wins", "scheme", "days", "secondary", "secondary ci95 low",
-                                 "secondary ci95 high", "secondary p", "groups", "significant"]
+    assert list(tab.columns) == [
+        "period",
+        "baseline",
+        "n",
+        "mean Sharpe diff",
+        "ci95 low",
+        "ci95 high",
+        "p",
+        "wins",
+        "scheme",
+        "days",
+        "secondary",
+        "secondary ci95 low",
+        "secondary ci95 high",
+        "secondary p",
+        "groups",
+        "significant",
+    ]
     # no daily returns held: the cross-instrument figure is the fallback, and the label says so
     assert tab.scheme[0] == "cross-instrument (clusters); fallback: no daily returns held" and tab.groups[0] == 5
 
@@ -264,9 +306,19 @@ def _two_group_result(with_returns: bool = True):
     days, syms = pd.bdate_range("2024-01-02", periods=120), [f"S{i}" for i in range(6)]
     base = pd.DataFrame(rng.normal(0.0003, 0.01, size=(120, 6)), index=days, columns=syms)
     agent = base + rng.normal(0, 0.002, size=(120, 6))
-    rows = [{"period": "q", "symbol": s, "asset_class": "fx" if i % 2 else "equity", "universe": "core",
-             "strategy": st, "Sharpe": float(stats.sharpe_stats(df[s]).sharpe_annual), "MDD%": -1.0 * i}
-            for i, s in enumerate(syms) for st, df in (("AgenticTrader", agent), ("Buy&Hold", base))]
+    rows = [
+        {
+            "period": "q",
+            "symbol": s,
+            "asset_class": "fx" if i % 2 else "equity",
+            "universe": "core",
+            "strategy": st,
+            "Sharpe": float(stats.sharpe_stats(df[s]).sharpe_annual),
+            "MDD%": -1.0 * i,
+        }
+        for i, s in enumerate(syms)
+        for st, df in (("AgenticTrader", agent), ("Buy&Hold", base))
+    ]
     rets = {"q|AgenticTrader": agent, "q|Buy&Hold": base} if with_returns else {}
     return EvaluationResult(pd.DataFrame(rows), {}, rets)
 
@@ -286,6 +338,7 @@ def test_c8_fallback_label_states_the_real_reason():
 def test_c8_render_subset_keeps_daily_returns():
     import importlib.util
     from pathlib import Path
+
     p = Path(__file__).resolve().parents[1] / "scripts" / "render_v08_tables.py"
     spec = importlib.util.spec_from_file_location("render_v08_tables", p)
     mod = importlib.util.module_from_spec(spec)
@@ -299,11 +352,17 @@ def test_c8_excess_returns_make_a_cash_only_book_sharpe_zero():
     v0.8 Carry rows read +17.6 on raw returns, giving -12.69 agent minus Carry), excess returns are 0."""
     from types import SimpleNamespace
     from agentic_trader.backtest import ComparisonReport as Report
+
     n = 300
-    rf = np.linspace(0.01, 0.05, n)                    # annual, per bar
-    r = np.r_[0.0, rf[:-1] / 252.0]                    # returns[t+1] earns rf[t] / ppy
-    rep = SimpleNamespace(results={"Carry": SimpleNamespace(returns=r)}, dates=pd.bdate_range("2020-01-01", periods=n),
-                          rf=rf, backtest_config=None, instrument=SimpleNamespace(periods_per_year=252.0))
+    rf = np.linspace(0.01, 0.05, n)  # annual, per bar
+    r = np.r_[0.0, rf[:-1] / 252.0]  # returns[t+1] earns rf[t] / ppy
+    rep = SimpleNamespace(
+        results={"Carry": SimpleNamespace(returns=r)},
+        dates=pd.bdate_range("2020-01-01", periods=n),
+        rf=rf,
+        backtest_config=None,
+        instrument=SimpleNamespace(periods_per_year=252.0),
+    )
     rep.returns = lambda: Report.returns(rep)
     raw = rep.returns()["Carry"].iloc[1:].to_numpy()[:, None]
     ex = Report.excess_returns(rep)

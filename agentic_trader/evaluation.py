@@ -15,6 +15,7 @@ With an LLM, one client and one call budget are shared by every backtest, runs
 can go in parallel (``workers``), and ``meta`` records the token usage, the real
 cost, and how many agent outputs came from the model rather than the rules.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,11 +51,36 @@ CORE_UNIVERSE: dict[str, list[str]] = {
 # and real estate exposure through exchange-traded funds (priced and traded as equities);
 # the FX pairs are crosses and dollar pairs whose both legs have FRED policy-rate series.
 EXTENDED_UNIVERSE: dict[str, list[str]] = {
-    "equity": ["UNH", "V", "MA", "PG", "HD", "COST", "WMT", "KO", "PEP", "CVX", "LLY", "ABBV", "MRK",
-               "BAC", "GS", "CAT", "BA", "BRK-B", "QQQ", "IWM", "XLF", "XLE", "XLV", "XLU", "EEM", "EFA"],
+    "equity": [
+        "UNH",
+        "V",
+        "MA",
+        "PG",
+        "HD",
+        "COST",
+        "WMT",
+        "KO",
+        "PEP",
+        "CVX",
+        "LLY",
+        "ABBV",
+        "MRK",
+        "BAC",
+        "GS",
+        "CAT",
+        "BA",
+        "BRK-B",
+        "QQQ",
+        "IWM",
+        "XLF",
+        "XLE",
+        "XLV",
+        "XLU",
+        "EEM",
+        "EFA",
+    ],
     "macro_etf": ["TLT", "IEF", "LQD", "HYG", "GLD", "SLV", "USO", "DBC", "VNQ"],
-    "fx": ["NZDUSD", "USDCHF", "EURGBP", "EURJPY", "GBPJPY", "AUDJPY", "EURCHF", "AUDNZD", "CADJPY",
-           "EURAUD"],
+    "fx": ["NZDUSD", "USDCHF", "EURGBP", "EURJPY", "GBPJPY", "AUDJPY", "EURCHF", "AUDNZD", "CADJPY", "EURAUD"],
 }
 
 # Backwards-compatible view: asset class -> every symbol (macro ETFs are equities to the desk).
@@ -76,6 +102,7 @@ class Trial:
     the config overrides that reproduce it under the current engine (``None`` when it is not
     reproducible from config alone -- it still counts as a trial) and the design-period mean
     Sharpe recorded at the time (v0.3 engine, for the historical record only)."""
+
     name: str
     version: str
     overrides: dict | None
@@ -86,25 +113,23 @@ class Trial:
     recorded_portfolio_sharpe: float | None = None
 
 
-_CTRL_RULES = {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False,
-               "fx_carry_neutral": False}
+_CTRL_RULES = {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False, "fx_carry_neutral": False}
 _CTRL_RISK = {"rebalance_band": 0.0, "neutral_weight": {"equity": 0.0, "fx": 0.0}}
 _SIGNALS = {"tsmom": True, "trend_filtered_reversal": True, "abstain_without_data": True}
 
 
 def _v03_trial(rules: dict | None = None, risk: dict | None = None, stops: bool = False) -> dict:
     """A v0.3 ablation variant: the v0.2 control plus the named changes (FX carry rule off, as then)."""
-    return {"rules": {**_CTRL_RULES, **(rules or {})}, "risk": {**_CTRL_RISK, **(risk or {})},
-            "backtest": {"use_stops": stops}}
+    return {"rules": {**_CTRL_RULES, **(rules or {})}, "risk": {**_CTRL_RISK, **(risk or {})}, "backtest": {"use_stops": stops}}
 
 
 V14_IC = {"method": "ic", "window": 504}
 # The P2 study cell's trial name must equal llm_study.Cell.trial_name for the critic_on cell.
 CONFORMAL_V17_TRIAL = "v0.17 IC combination + conformal interval sizing (non-overlapping, vol-scaled calibration)"
-CRITIC_ON_TRIAL = ("P2 critic_on: local model in every role, critic in the graph acting on target_weight "
-                   "(scale 0.5 on a model/rules divergence)")
-CRITIC_ON_OVERRIDES = {"agentic": {"critic_in_graph": True, "critic_weight_rule": "scale",
-                                   "critic_weight_scale": 0.5}}
+CRITIC_ON_TRIAL = (
+    "P2 critic_on: local model in every role, critic in the graph acting on target_weight (scale 0.5 on a model/rules divergence)"
+)
+CRITIC_ON_OVERRIDES = {"agentic": {"critic_in_graph": True, "critic_weight_rule": "scale", "critic_weight_scale": 0.5}}
 
 
 def _eq(w: float) -> dict:
@@ -128,25 +153,52 @@ TRIALS: tuple[Trial, ...] = (
     Trial("strategic equity weight 0.50", "v0.3", _v03_trial(risk=_eq(0.50)), 0.58),
     Trial("strategic equity weight 1.00", "v0.3", _v03_trial(risk=_eq(1.00)), 0.66),
     Trial("strategic 0.50 + band", "v0.3", _v03_trial(risk={**_eq(0.50), "rebalance_band": 0.10}), 0.58),
-    Trial("strategic 0.50 + signal changes + band", "v0.3",
-          _v03_trial(rules=_SIGNALS, risk={**_eq(0.50), "rebalance_band": 0.10}), 0.58),
-    Trial("strategic 0.50 + abstain + band", "v0.3",
-          _v03_trial(rules={"abstain_without_data": True}, risk={**_eq(0.50), "rebalance_band": 0.10}), 0.56),
+    Trial(
+        "strategic 0.50 + signal changes + band",
+        "v0.3",
+        _v03_trial(rules=_SIGNALS, risk={**_eq(0.50), "rebalance_band": 0.10}),
+        0.58,
+    ),
+    Trial(
+        "strategic 0.50 + abstain + band",
+        "v0.3",
+        _v03_trial(rules={"abstain_without_data": True}, risk={**_eq(0.50), "rebalance_band": 0.10}),
+        0.56,
+    ),
     Trial("frozen v0.3: strategic 1.00 + band", "v0.3", _v03_trial(risk={**_eq(1.00), "rebalance_band": 0.10}), 0.65),
     Trial("+ alpha analyst (IC-weighted, all signals)", "v0.4", None, 0.60),
     Trial("+ alpha analyst (significance-gated, 400-day window)", "v0.4", None, 0.58),
-    Trial("+ alpha analyst (significance-gated, 900-day window)", "v0.5",
-          {"analysts": ["technical", "sentiment", "macro", "fundamentals", "news", "alpha"]}, 0.65),
-    Trial("FX carry / 4, cap 0.5", "v0.5.1",
-          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 4.0, "fx_carry_neutral_cap": 0.5}}),
-    Trial("FX carry / 2, cap 0.5 (adopted)", "v0.5.1",
-          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 2.0, "fx_carry_neutral_cap": 0.5}}),
-    Trial("FX carry / 4, cap 1.0", "v0.5.1",
-          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 4.0, "fx_carry_neutral_cap": 1.0}}),
-    Trial("FX carry / 8, cap 0.25", "v0.5.1",
-          {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 8.0, "fx_carry_neutral_cap": 0.25}}),
-    Trial("+ cross-sectional alpha analyst", "v0.6",
-          {"analysts": ["technical", "fundamentals", "news", "sentiment", "xalpha"], "xalpha_universe": UNIVERSES["all"]}),
+    Trial(
+        "+ alpha analyst (significance-gated, 900-day window)",
+        "v0.5",
+        {"analysts": ["technical", "sentiment", "macro", "fundamentals", "news", "alpha"]},
+        0.65,
+    ),
+    Trial(
+        "FX carry / 4, cap 0.5",
+        "v0.5.1",
+        {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 4.0, "fx_carry_neutral_cap": 0.5}},
+    ),
+    Trial(
+        "FX carry / 2, cap 0.5 (adopted)",
+        "v0.5.1",
+        {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 2.0, "fx_carry_neutral_cap": 0.5}},
+    ),
+    Trial(
+        "FX carry / 4, cap 1.0",
+        "v0.5.1",
+        {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 4.0, "fx_carry_neutral_cap": 1.0}},
+    ),
+    Trial(
+        "FX carry / 8, cap 0.25",
+        "v0.5.1",
+        {"rules": {"fx_carry_neutral": True}, "risk": {"fx_carry_neutral_scale": 8.0, "fx_carry_neutral_cap": 0.25}},
+    ),
+    Trial(
+        "+ cross-sectional alpha analyst",
+        "v0.6",
+        {"analysts": ["technical", "fundamentals", "news", "sentiment", "xalpha"], "xalpha_universe": UNIVERSES["all"]},
+    ),
     Trial("EDGAR filings off", "v0.6", {"edgar": False}),
     Trial("track-record size cut off", "v0.8", {"rules": {"track_record_cut": False}}),
     # v0.9 (docs/evaluation/v09_research.md): five risk-parity runs (the B&H vol-target row is
@@ -200,12 +252,18 @@ TRIALS: tuple[Trial, ...] = (
     # window = 504 bars, fixed before any run. Pre-registered expectation: tilt -> 0, desk ~
     # control; success is that the pipeline refuses noise (scripts/v14_design_trials.py).
     Trial("v0.14 IC-weighted combination (window 504)", "v0.14", {"combination": V14_IC}),
-    Trial("v0.14 IC combination + HMM regime conditioning", "v0.14",
-          {"combination": V14_IC, "regime": {"enabled": True, "condition": True}}),
-    Trial("v0.14 IC combination + conformal interval sizing", "v0.14",
-          # design pinned to "v14" (every-bar raw residuals) so the registered trial still
-          # means what ran; the v0.17 default design is a separate, unregistered fix (N7).
-          {"combination": V14_IC, "conformal": {"enabled": True, "design": "v14"}}),
+    Trial(
+        "v0.14 IC combination + HMM regime conditioning",
+        "v0.14",
+        {"combination": V14_IC, "regime": {"enabled": True, "condition": True}},
+    ),
+    Trial(
+        "v0.14 IC combination + conformal interval sizing",
+        "v0.14",
+        # design pinned to "v14" (every-bar raw residuals) so the registered trial still
+        # means what ran; the v0.17 default design is a separate, unregistered fix (N7).
+        {"combination": V14_IC, "conformal": {"enabled": True, "design": "v14"}},
+    ),
     # v0.15 (PLAN.md 3.2, 3.3, 3.8): text features, registered before any design-period run so
     # they count in the deflated Sharpe whether or not they are ever adopted. Signal-level trials
     # (IC/decay via alpha.text_alpha_decay), not reproducible from the desk config.
@@ -221,16 +279,14 @@ TRIALS: tuple[Trial, ...] = (
     # is run (15 core names x 20 design dates x 1 seed, local 7-8B model; rules is the control).
     # Desk-cell trials built by scripts/llm_study.py StudyGraph, not plain config overrides.
     # Names must equal llm_study.Cell.trial_name (the --live run refuses an unregistered cell).
-    Trial("P2 local_analysts: local model at the analysts only, rules downstream (trader, risk, PM)",
-          "v0.16", None),
+    Trial("P2 local_analysts: local model at the analysts only, rules downstream (trader, risk, PM)", "v0.16", None),
     Trial("P2 local_all: local model in every role", "v0.16", None),
     # v0.16 (PLAN.md 6.1): the remaining five P2 cells, registered before any of them is run so
     # every study cell counts as a trial in the deflated Sharpe whether or not it is ever run or
     # adopted. Names equal llm_study.Cell.trial_name (tests/test_v16_study.py checks all cells).
     Trial("P2 local_text: local model on the free-text roles (bull, bear) only", "v0.16", None),
     Trial("P2 local_pm: local model at the portfolio manager only", "v0.16", None),
-    Trial("P2 no_debate: local model in every role but the debate (researchers, facilitator on rules)",
-          "v0.16", None),
+    Trial("P2 no_debate: local model in every role but the debate (researchers, facilitator on rules)", "v0.16", None),
     Trial("P2 debate_1: local model in every role, one debate round", "v0.16", None),
     Trial("P2 neutral_risk: local model in every role, a single neutral risk analyst", "v0.16", None),
     # v0.17 R2.1 (review 2026-11-09 A2): the governed desk. Registered before it is run; the
@@ -239,15 +295,22 @@ TRIALS: tuple[Trial, ...] = (
     Trial(CRITIC_ON_TRIAL, "v0.17", None),
     # v0.17 (review 2026-11-09 N3, N9): the powered design cells, registered before any run.
     # Names equal study_design.DesignCell.trial_name (tests/test_v017_study_design.py checks).
-    Trial("P2 decisive_ta: technical-analyst-only local model, weekly design dates 2016-2021, "
-          "5-day horizon, incremental IC over the rule signal", "v0.17", None),
-    Trial("P2 postcutoff_ta: technical-analyst-only local model, weekly dates 2025-07 to 2026-10 "
-          "(post-training leakage control), 5-day horizon, incremental IC over the rule signal", "v0.17", None),
+    Trial(
+        "P2 decisive_ta: technical-analyst-only local model, weekly design dates 2016-2021, "
+        "5-day horizon, incremental IC over the rule signal",
+        "v0.17",
+        None,
+    ),
+    Trial(
+        "P2 postcutoff_ta: technical-analyst-only local model, weekly dates 2025-07 to 2026-10 "
+        "(post-training leakage control), 5-day horizon, incremental IC over the rule signal",
+        "v0.17",
+        None,
+    ),
     # v0.17 (review 2026-11-09 N7): the conformal design trial re-run with the non-overlapping,
     # vol-scaled calibration (conformal.design "v17"). Registered before the real-data re-run
     # (scripts/v14_design_trials.py), so it counts in the deflated Sharpe whatever it shows.
-    Trial(CONFORMAL_V17_TRIAL, "v0.17",
-          {"combination": V14_IC, "conformal": {"enabled": True, "design": "v17"}}),
+    Trial(CONFORMAL_V17_TRIAL, "v0.17", {"combination": V14_IC, "conformal": {"enabled": True, "design": "v17"}}),
 )
 
 
@@ -302,8 +365,7 @@ PERIODS: dict[str, tuple[str, str]] = {
 # The periods a plain `evaluate()` runs; `reserve` is opt-in because three months is a weak test.
 DEFAULT_PERIODS: tuple[str, ...] = ("design", "holdout", "q1_2024")
 
-METRIC_COLS = ["CR%", "AR%", "Vol%", "Sharpe", "t(SR)", "MDD%", "Calmar", "Exp%", "Trades", "Stops",
-               "Impact%"]
+METRIC_COLS = ["CR%", "AR%", "Vol%", "Sharpe", "t(SR)", "MDD%", "Calmar", "Exp%", "Trades", "Stops", "Impact%"]
 
 
 @dataclass
@@ -326,14 +388,16 @@ class EvaluationResult:
             # instruments for every strategy and matches paired().
             df = df.groupby(["period", "strategy", "symbol"], as_index=False)[METRIC_COLS].mean()
         g = df.groupby(["period", "strategy"])
-        out = pd.DataFrame({
-            "n": g.size(),
-            "median Sharpe": g["Sharpe"].median(),
-            "mean CR%": g["CR%"].mean(),
-            "mean MDD%": g["MDD%"].mean(),
-            "mean Vol%": g["Vol%"].mean(),
-            "mean Exp%": g["Exp%"].mean(),
-        })
+        out = pd.DataFrame(
+            {
+                "n": g.size(),
+                "median Sharpe": g["Sharpe"].median(),
+                "mean CR%": g["CR%"].mean(),
+                "mean MDD%": g["MDD%"].mean(),
+                "mean Vol%": g["Vol%"].mean(),
+                "mean Exp%": g["Exp%"].mean(),
+            }
+        )
         return out.round(2)
 
     def head_to_head(self, universe: str | None = None) -> pd.DataFrame:
@@ -350,14 +414,28 @@ class EvaluationResult:
                 if base == AGENT:
                     continue
                 wins = int((piv[AGENT] > piv[base]).sum())
-                out.append({"period": period, "baseline": base, "agent wins": wins,
-                            "instruments": int(piv[base].notna().sum()),
-                            "median Sharpe diff": round(float((piv[AGENT] - piv[base]).median()), 3)})
+                out.append(
+                    {
+                        "period": period,
+                        "baseline": base,
+                        "agent wins": wins,
+                        "instruments": int(piv[base].notna().sum()),
+                        "median Sharpe diff": round(float((piv[AGENT] - piv[base]).median()), 3),
+                    }
+                )
         return pd.DataFrame(out)
 
-    def paired(self, baseline: str = "Buy&Hold", metric: str = "Sharpe", period: str | None = None,
-               universe: str | None = None, strategy: str = AGENT, n_boot: int = 10_000, seed: int = 0,
-               cluster: bool = True):
+    def paired(
+        self,
+        baseline: str = "Buy&Hold",
+        metric: str = "Sharpe",
+        period: str | None = None,
+        universe: str | None = None,
+        strategy: str = AGENT,
+        n_boot: int = 10_000,
+        seed: int = 0,
+        cluster: bool = True,
+    ):
         """Cross-instrument bootstrap of ``strategy - baseline`` on one metric (see ``stats.paired_bootstrap``).
 
         With repeated agent runs, each instrument contributes its mean over runs.
@@ -372,6 +450,7 @@ class EvaluationResult:
         the plain scheme regardless (the v0.6 numbers).
         """
         from .stats import paired_bootstrap
+
         rows = self.rows
         if period is not None:
             rows = rows[rows.period == period]
@@ -384,17 +463,24 @@ class EvaluationResult:
         groups = None
         if cluster and {"asset_class", "universe"} <= set(rows.columns):
             key = rows.drop_duplicates("symbol").set_index("symbol")
-            key = (key["asset_class"].astype(str) + ":" + key["universe"].astype(str))
+            key = key["asset_class"].astype(str) + ":" + key["universe"].astype(str)
             aligned = key.reindex(both.index)
             if aligned.notna().all():
                 groups = aligned.to_numpy()
-        return paired_bootstrap(both[strategy].to_numpy(), both[baseline].to_numpy(), n_boot=n_boot, seed=seed,
-                                groups=groups)
+        return paired_bootstrap(both[strategy].to_numpy(), both[baseline].to_numpy(), n_boot=n_boot, seed=seed, groups=groups)
 
-    def paired_table(self, metric: str = "Sharpe", universe: str | None = None, strategy: str = AGENT,
-                     fdr_q: float = 0.05, cluster: bool = True,
-                     baselines: tuple[str, ...] | None = None, block: int = 10, n_boot: int = 2000,
-                     seed: int = 0) -> pd.DataFrame:
+    def paired_table(
+        self,
+        metric: str = "Sharpe",
+        universe: str | None = None,
+        strategy: str = AGENT,
+        fdr_q: float = 0.05,
+        cluster: bool = True,
+        baselines: tuple[str, ...] | None = None,
+        block: int = 10,
+        n_boot: int = 2000,
+        seed: int = 0,
+    ) -> pd.DataFrame:
         """Per period and baseline: mean paired difference, 95% CI and two-sided p, which
         resampling ``scheme`` produced them, plus ``significant`` corrected for the number of
         tested rows in *this table* (Benjamini-Hochberg false discovery rate at ``fdr_q``).
@@ -421,6 +507,7 @@ class EvaluationResult:
         the per-day mean return over runs.
         """
         from .stats import benjamini_hochberg, paired_time_block_table
+
         out: list[dict[str, Any]] = []
         cases: list[dict[str, Any]] = []
         rows = self.rows if universe is None or "universe" not in self.rows else self.rows[self.rows.universe == universe]
@@ -431,43 +518,75 @@ class EvaluationResult:
                 if base == strategy or (baselines is not None and base not in baselines):
                     continue
                 try:
-                    pb = self.paired(base, metric, period=period, universe=universe, strategy=strategy,
-                                     cluster=cluster)
+                    pb = self.paired(base, metric, period=period, universe=universe, strategy=strategy, cluster=cluster)
                 except ValueError:
                     continue
                 p = pb.p_value if math.isfinite(pb.ci_low) else nan
-                row = {"period": period, "baseline": base, "n": pb.n, f"mean {metric} diff": pb.mean_diff,
-                       "ci95 low": pb.ci_low, "ci95 high": pb.ci_high, "p": p, "wins": pb.wins,
-                       "scheme": "", "days": nan,
-                       "secondary": "", "secondary ci95 low": nan, "secondary ci95 high": nan,
-                       "secondary p": nan, "groups": pb.n_groups}
+                row = {
+                    "period": period,
+                    "baseline": base,
+                    "n": pb.n,
+                    f"mean {metric} diff": pb.mean_diff,
+                    "ci95 low": pb.ci_low,
+                    "ci95 high": pb.ci_high,
+                    "p": p,
+                    "wins": pb.wins,
+                    "scheme": "",
+                    "days": nan,
+                    "secondary": "",
+                    "secondary ci95 low": nan,
+                    "secondary ci95 high": nan,
+                    "secondary p": nan,
+                    "groups": pb.n_groups,
+                }
                 a, b = self.returns.get(f"{period}|{strategy}"), self.returns.get(f"{period}|{base}")
                 cols = [s for s in syms if s in a.columns and s in b.columns] if a is not None and b is not None else []
                 # Time blocks are shared days, so the cluster-group rule never gates this scheme.
-                why = ("metric is not Sharpe" if metric != "Sharpe" else "no daily returns held"
-                       if a is None or b is None else "fewer than 3 instruments with daily returns")
+                why = (
+                    "metric is not Sharpe"
+                    if metric != "Sharpe"
+                    else "no daily returns held"
+                    if a is None or b is None
+                    else "fewer than 3 instruments with daily returns"
+                )
                 row["scheme"] = f"cross-instrument ({pb.scheme}); fallback: {why}"
                 if metric == "Sharpe" and a is not None and b is not None and pb.n >= 3:
                     if len(cols) >= 3:
                         a2, b2 = a[cols].align(b[cols], join="inner", axis=0)
-                        cases.append({"label": len(out), "a": a2.to_numpy(float), "b": b2.to_numpy(float),
-                                      "secondary_scheme": pb.scheme})
+                        cases.append(
+                            {"label": len(out), "a": a2.to_numpy(float), "b": b2.to_numpy(float), "secondary_scheme": pb.scheme}
+                        )
                 out.append(row)
         if cases:
-            for c, tb in zip(cases, paired_time_block_table(cases, fdr_q=fdr_q, block=block, n_boot=n_boot,
-                                                            seed=seed)):
+            for c, tb in zip(cases, paired_time_block_table(cases, fdr_q=fdr_q, block=block, n_boot=n_boot, seed=seed)):
                 row = out[c["label"]]
-                row.update({"secondary": f"{tb['secondary']} ({c['secondary_scheme']})",
-                            "secondary ci95 low": row["ci95 low"], "secondary ci95 high": row["ci95 high"],
-                            "secondary p": row["p"],
-                            "n": tb["n"], f"mean {metric} diff": tb["mean Sharpe diff"],
-                            "ci95 low": tb["ci95 low"], "ci95 high": tb["ci95 high"], "p": tb["p"],
-                            "scheme": tb["primary"], "days": tb["days"]})
+                row.update(
+                    {
+                        "secondary": f"{tb['secondary']} ({c['secondary_scheme']})",
+                        "secondary ci95 low": row["ci95 low"],
+                        "secondary ci95 high": row["ci95 high"],
+                        "secondary p": row["p"],
+                        "n": tb["n"],
+                        f"mean {metric} diff": tb["mean Sharpe diff"],
+                        "ci95 low": tb["ci95 low"],
+                        "ci95 high": tb["ci95 high"],
+                        "p": tb["p"],
+                        "scheme": tb["primary"],
+                        "days": tb["days"],
+                    }
+                )
         df = pd.DataFrame(out)
         if len(df):
             p_raw = df["p"].to_numpy(dtype=float)
-            for col in (f"mean {metric} diff", "ci95 low", "ci95 high", "p",
-                        "secondary ci95 low", "secondary ci95 high", "secondary p"):
+            for col in (
+                f"mean {metric} diff",
+                "ci95 low",
+                "ci95 high",
+                "p",
+                "secondary ci95 low",
+                "secondary ci95 high",
+                "secondary p",
+            ):
                 df[col] = df[col].astype(float).round(3)
             df["significant"] = benjamini_hochberg(p_raw, fdr_q)
         return df
@@ -479,8 +598,11 @@ class EvaluationResult:
             return pd.DataFrame()
         g = rows.groupby(["period", "symbol"])[metric]
         per = pd.DataFrame({"runs": g.size(), "std": g.std(ddof=1), "range": g.max() - g.min()})
-        return per.groupby("period").agg(runs=("runs", "max"), instruments=("std", "size"),
-                                         mean_std=("std", "mean"), mean_range=("range", "mean")).round(3)
+        return (
+            per.groupby("period")
+            .agg(runs=("runs", "max"), instruments=("std", "size"), mean_std=("std", "mean"), mean_range=("range", "mean"))
+            .round(3)
+        )
 
     def slowest(self, n: int = 10) -> pd.DataFrame:
         """The ``n`` slowest (period, symbol, run) jobs, from ``meta["timings"]``.
@@ -509,16 +631,24 @@ class EvaluationResult:
     @classmethod
     def from_json(cls, path: str | Path) -> "EvaluationResult":
         d = json.loads(Path(path).read_text(encoding="utf-8"))
-        rets = {k: pd.DataFrame(v["data"], index=pd.to_datetime(v["index"]), columns=v["columns"])
-                for k, v in (d.get("returns") or {}).items()}
+        rets = {
+            k: pd.DataFrame(v["data"], index=pd.to_datetime(v["index"]), columns=v["columns"])
+            for k, v in (d.get("returns") or {}).items()
+        }
         return cls(pd.DataFrame(d["rows"]), d.get("meta", {}), rets)
 
 
-def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str]] | None = None,
-             config: dict | None = None, rebalance_every: int = 5,
-             provider: MarketDataProvider | None = None,
-             progress: Callable[[str], None] | None = None,
-             llm: LLM | None = None, workers: int = 1, repeats: int = 1) -> EvaluationResult:
+def evaluate(
+    symbols: list[str] | None = None,
+    periods: dict[str, tuple[str, str]] | None = None,
+    config: dict | None = None,
+    rebalance_every: int = 5,
+    provider: MarketDataProvider | None = None,
+    progress: Callable[[str], None] | None = None,
+    llm: LLM | None = None,
+    workers: int = 1,
+    repeats: int = 1,
+) -> EvaluationResult:
     """Run the agent and baselines for every (period, symbol). Failures are recorded, not raised.
 
     ``workers > 1`` runs backtests in parallel threads (useful with an LLM, whose
@@ -534,7 +664,7 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     provider = provider or get_provider(cfg)
     macro_sources = getattr(provider, "macro_sources", None)
     if isinstance(macro_sources, dict):
-        macro_sources.clear()   # this run's tally only: the provider may be shared across runs
+        macro_sources.clear()  # this run's tally only: the provider may be shared across runs
     llm = llm if llm is not None else get_llm(cfg)
     if llm is not None and cfg.get("llm_provider") == "local" and touches_holdout(periods):
         # v0.17 R1.4: the anonymised local-model study may look at the holdout only after
@@ -587,9 +717,16 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
             a = t.loc[AGENT] if AGENT in t.index else None
             src = rep.agent_sources
             share = f"  [llm {src.get('llm', 0)}/{sum(src.values())}]" if llm is not None and src else ""
-            progress(f"{pname:<8} {sym:<7} " + (f"run {k} " if repeats > 1 else "") + (
-                f"agent Sharpe {a['Sharpe']:+.2f} vs B&H {t.loc['Buy&Hold', 'Sharpe']:+.2f}{share}"
-                if a is not None else "baselines only") + f"  ({elapsed:.1f}s)")
+            progress(
+                f"{pname:<8} {sym:<7} "
+                + (f"run {k} " if repeats > 1 else "")
+                + (
+                    f"agent Sharpe {a['Sharpe']:+.2f} vs B&H {t.loc['Buy&Hold', 'Sharpe']:+.2f}{share}"
+                    if a is not None
+                    else "baselines only"
+                )
+                + f"  ({elapsed:.1f}s)"
+            )
         return job, rep, None, elapsed
 
     if workers > 1:
@@ -602,54 +739,77 @@ def evaluate(symbols: list[str] | None = None, periods: dict[str, tuple[str, str
     daily: dict[str, dict[str, list[pd.Series]]] = {}
     baselines_done: set[tuple[str, str]] = set()
     for (pname, sym, k), rep, err, elapsed in outcomes:  # job order: deterministic regardless of workers
-        timings.append({"period": pname, "symbol": sym, "run": k, "seconds": round(elapsed, 3),
-                        "error": err is not None})
+        timings.append({"period": pname, "symbol": sym, "run": k, "seconds": round(elapsed, 3), "error": err is not None})
         if err is not None:
             errors.append({"period": pname, "symbol": sym, "run": k, "error": err})
             continue
         for name, v in rep.agent_sources.items():
             sources[name] = sources.get(name, 0) + v
         rets = rep.excess_returns()
-        for strat in rets.columns:   # daily excess returns for the time-block primary (C8), same dedup as rows
+        for strat in rets.columns:  # daily excess returns for the time-block primary (C8), same dedup as rows
             if strat != AGENT and (pname, sym) in baselines_done:
                 continue
             daily.setdefault(f"{pname}|{strat}", {}).setdefault(rep.instrument.symbol, []).append(rets[strat])
-        for strat, r in rep.table(decimals=None).iterrows():   # full precision: aggregates and bootstraps run on these
-            if strat != AGENT:   # baselines are deterministic: one row each, from the first run that succeeded
+        for strat, r in rep.table(decimals=None).iterrows():  # full precision: aggregates and bootstraps run on these
+            if strat != AGENT:  # baselines are deterministic: one row each, from the first run that succeeded
                 if (pname, sym) in baselines_done:
                     continue
-            rows.append({"period": pname, "symbol": rep.instrument.symbol,
-                         "asset_class": rep.instrument.asset_class,
-                         "universe": universe_group(rep.instrument.symbol), "strategy": strat,
-                         "run": 0 if strat != AGENT else k,
-                         **{c: float(r[c]) for c in METRIC_COLS}})
+            rows.append(
+                {
+                    "period": pname,
+                    "symbol": rep.instrument.symbol,
+                    "asset_class": rep.instrument.asset_class,
+                    "universe": universe_group(rep.instrument.symbol),
+                    "strategy": strat,
+                    "run": 0 if strat != AGENT else k,
+                    **{c: float(r[c]) for c in METRIC_COLS},
+                }
+            )
         baselines_done.add((pname, sym))
     from .prompts import prompt_registry
-    meta = {"periods": periods, "symbols": symbols, "rebalance_every": rebalance_every, "repeats": repeats,
-            "prompts": prompt_registry(cfg),
-            "lookback_days": cfg["lookback_days"], "alpha_lookback_days": cfg.get("alpha_lookback_days"),
-            "edgar": getattr(provider, "edgar", None) is not None,   # a configured, contactable EDGAR client
-            "data_provider": cfg["data_provider"], "llm_provider": cfg["llm_provider"],
-            "impact_coeff": cfg["costs"].get("impact_coeff", 0.0), "initial_capital": cfg["initial_capital"],
-            "fred_vintages": bool(cfg.get("fred_vintages")),
-            "rules": cfg.get("rules"), "rebalance_band": cfg["risk"].get("rebalance_band"),
-            "neutral_weight": cfg["risk"].get("neutral_weight"),
-            "use_stops": cfg.get("backtest", {}).get("use_stops"),
-            "exec_lag": int(cfg.get("backtest", {}).get("exec_lag", 0)),
-            "fill": cfg.get("backtest", {}).get("fill", "close"),
-            "errors": errors, "seconds": round(time.perf_counter() - t0, 1),
-            "agent_sources": sources,
-            "macro_sources": dict(macro_sources) if isinstance(macro_sources, dict) else {},
-            "timings": timings, "provenance": provenance()}
+
+    meta = {
+        "periods": periods,
+        "symbols": symbols,
+        "rebalance_every": rebalance_every,
+        "repeats": repeats,
+        "prompts": prompt_registry(cfg),
+        "lookback_days": cfg["lookback_days"],
+        "alpha_lookback_days": cfg.get("alpha_lookback_days"),
+        "edgar": getattr(provider, "edgar", None) is not None,  # a configured, contactable EDGAR client
+        "data_provider": cfg["data_provider"],
+        "llm_provider": cfg["llm_provider"],
+        "impact_coeff": cfg["costs"].get("impact_coeff", 0.0),
+        "initial_capital": cfg["initial_capital"],
+        "fred_vintages": bool(cfg.get("fred_vintages")),
+        "rules": cfg.get("rules"),
+        "rebalance_band": cfg["risk"].get("rebalance_band"),
+        "neutral_weight": cfg["risk"].get("neutral_weight"),
+        "use_stops": cfg.get("backtest", {}).get("use_stops"),
+        "exec_lag": int(cfg.get("backtest", {}).get("exec_lag", 0)),
+        "fill": cfg.get("backtest", {}).get("fill", "close"),
+        "errors": errors,
+        "seconds": round(time.perf_counter() - t0, 1),
+        "agent_sources": sources,
+        "macro_sources": dict(macro_sources) if isinstance(macro_sources, dict) else {},
+        "timings": timings,
+        "provenance": provenance(),
+    }
     if llm is not None:
-        meta.update(models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
-                    effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},
-                    debate_rounds=cfg["max_debate_rounds"], anonymized=bool(cfg.get("llm_anonymize")),
-                    max_llm_calls=cfg.get("max_llm_calls"), max_llm_cost_usd=cfg.get("max_llm_cost_usd"),
-                    usage=llm_usage(llm),
-                    budget_refused=getattr(llm, "refused", 0))
-    returns = {key: pd.DataFrame({s: pd.concat(runs, axis=1).mean(axis=1) for s, runs in by_sym.items()})
-               for key, by_sym in daily.items()}   # repeats: per-day mean over runs
+        meta.update(
+            models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
+            effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},
+            debate_rounds=cfg["max_debate_rounds"],
+            anonymized=bool(cfg.get("llm_anonymize")),
+            max_llm_calls=cfg.get("max_llm_calls"),
+            max_llm_cost_usd=cfg.get("max_llm_cost_usd"),
+            usage=llm_usage(llm),
+            budget_refused=getattr(llm, "refused", 0),
+        )
+    returns = {
+        key: pd.DataFrame({s: pd.concat(runs, axis=1).mean(axis=1) for s, runs in by_sym.items()})
+        for key, by_sym in daily.items()
+    }  # repeats: per-day mean over runs
     return EvaluationResult(pd.DataFrame(rows), meta, returns)
 
 
@@ -693,8 +853,9 @@ class HoldoutLocked(RuntimeError):
 # The v2 audit (``v16_local_study.py recall2``). Until 2026-11-12 this pointed at the v0.16
 # result, which the pre-registration itself declares void (review B3).
 DEFAULT_RECALL_AUDIT_PATH = "results/v17_local/recall2.json"
-VOID_RECALL_AUDIT = ("this is a v0.16 recall result (fixed candidate order); the pre-registration "
-                     "declares it void, run the v2 audit (recall2)")
+VOID_RECALL_AUDIT = (
+    "this is a v0.16 recall result (fixed candidate order); the pre-registration declares it void, run the v2 audit (recall2)"
+)
 
 
 def touches_holdout(periods: dict[str, tuple[str, str]]) -> bool:
@@ -703,8 +864,9 @@ def touches_holdout(periods: dict[str, tuple[str, str]]) -> bool:
     return any(pd.Timestamp(a) <= h1 and pd.Timestamp(b) >= h0 for a, b in periods.values())
 
 
-def recall_audit_verdict(result: dict, *, n_se: float = 2.0, min_n: int = 100,
-                         max_unparsed_share: float = 0.10, legacy: bool = False) -> dict:
+def recall_audit_verdict(
+    result: dict, *, n_se: float = 2.0, min_n: int = 100, max_unparsed_share: float = 0.10, legacy: bool = False
+) -> dict:
     """Judge a ``scripts/v16_local_study.py recall`` result (its ``summarise_recall`` dict).
 
     Pass rule (v16 prereg, "recall <= chance + 2 SE"): for each of ``ticker``, ``month`` and
@@ -717,7 +879,7 @@ def recall_audit_verdict(result: dict, *, n_se: float = 2.0, min_n: int = 100,
     bounds: dict[str, float] = {}
     if "recall_flagged" in result:
         return recall2_verdict(result, min_n=min_n)
-    if not legacy:      # the v0.16 rule below is kept for the record only; no gate uses it
+    if not legacy:  # the v0.16 rule below is kept for the record only; no gate uses it
         return {"passed": False, "reasons": [VOID_RECALL_AUDIT], "bounds": bounds}
     n = int(result.get("n") or 0)
     if n < min_n:
@@ -752,10 +914,9 @@ def recall2_verdict(result: dict, *, min_n: int = 100) -> dict:
     if not result.get("placebo"):
         reasons.append("no placebo arm")
     eq = result.get("equivalence") or {}
-    if eq.get("passed") is not True:   # review C11: not flagged is not enough, recall >= margin must be rejected
+    if eq.get("passed") is not True:  # review C11: not flagged is not enough, recall >= margin must be rejected
         reasons.append("equivalence test " + (str(eq.get("reason")) if eq else "missing: rerun the v2 audit"))
-    return {"passed": not reasons, "reasons": reasons, "bounds": {}, "audit": "v2",
-            "equivalence": eq or None}
+    return {"passed": not reasons, "reasons": reasons, "bounds": {}, "audit": "v2", "equivalence": eq or None}
 
 
 def require_recall_pass(path: str | Path, **kw) -> dict:

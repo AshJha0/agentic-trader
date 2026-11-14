@@ -10,6 +10,7 @@ language (English by default; the lexicon is English) and scored by the rules le
 ``sentiment.py``. Headlines are third-party text: callers that put them in a prompt fence
 them with ``state.untrusted_block`` as every other news source is.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,7 @@ DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
 def _norm_title(t: str) -> str:
-    t = re.sub(r"\s+[-|–—]\s+[^-|–—]{2,40}$", "", t.strip())   # trailing " - Outlet"
+    t = re.sub(r"\s+[-|–—]\s+[^-|–—]{2,40}$", "", t.strip())  # trailing " - Outlet"
     return re.sub(r"[^a-z0-9 ]", "", re.sub(r"\s+", " ", t.lower())).strip()
 
 
@@ -58,12 +59,17 @@ def clean_articles(articles: list[dict[str, Any]], language: str = "English") ->
 class GdeltProvider:
     """Headlines for a query, point in time by ``seendate``. ``fetch`` injectable for tests."""
 
-    def __init__(self, fetch: Callable[[str], bytes] | None = None, language: str = "English",
-                 max_records: int = 250, min_interval: float = 5.0):
+    def __init__(
+        self,
+        fetch: Callable[[str], bytes] | None = None,
+        language: str = "English",
+        max_records: int = 250,
+        min_interval: float = 5.0,
+    ):
         self._fetch = fetch or self._http
         self.language = language
         self.max_records = max_records
-        self.min_interval = min_interval   # GDELT asks for at most one request every 5 seconds
+        self.min_interval = min_interval  # GDELT asks for at most one request every 5 seconds
         self._last = 0.0
         self.requests = 0
 
@@ -77,14 +83,26 @@ class GdeltProvider:
     @staticmethod
     def _http(url: str) -> bytes:
         from urllib.request import Request, urlopen
+
         with urlopen(Request(url, headers={"User-Agent": "AgenticTrader research"}), timeout=30) as r:  # noqa: S310
             return r.read()
 
     def url(self, query: str, start: datetime, end: datetime) -> str:
-        return DOC_API + "?" + urlencode({
-            "query": query, "mode": "artlist", "format": "json", "maxrecords": self.max_records,
-            "startdatetime": start.strftime("%Y%m%d%H%M%S"), "enddatetime": end.strftime("%Y%m%d%H%M%S"),
-            "sort": "datedesc"})
+        return (
+            DOC_API
+            + "?"
+            + urlencode(
+                {
+                    "query": query,
+                    "mode": "artlist",
+                    "format": "json",
+                    "maxrecords": self.max_records,
+                    "startdatetime": start.strftime("%Y%m%d%H%M%S"),
+                    "enddatetime": end.strftime("%Y%m%d%H%M%S"),
+                    "sort": "datedesc",
+                }
+            )
+        )
 
     def articles(self, query: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
         wait = self.min_interval - (time.monotonic() - self._last)
@@ -95,7 +113,7 @@ class GdeltProvider:
         raw = self._fetch(self.url(query, start, end))
         try:
             data = json.loads(raw or b"{}")
-        except json.JSONDecodeError:   # GDELT answers some bad queries with plain text
+        except json.JSONDecodeError:  # GDELT answers some bad queries with plain text
             log.warning("GDELT returned non-JSON for %r", query)
             return []
         return clean_articles(data.get("articles", []) or [], self.language)
@@ -110,8 +128,15 @@ class GdeltProvider:
             if t is None or t > as_of:
                 continue
             title = str(a["title"])
-            out.append(NewsItem(published=t.date(), headline=title, source=f"gdelt:{a.get('domain', '')}",
-                                sentiment=score_text(title), tags=["gdelt", "untrusted"]))
+            out.append(
+                NewsItem(
+                    published=t.date(),
+                    headline=title,
+                    source=f"gdelt:{a.get('domain', '')}",
+                    sentiment=score_text(title),
+                    tags=["gdelt", "untrusted"],
+                )
+            )
         return out
 
 

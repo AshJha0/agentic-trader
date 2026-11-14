@@ -6,7 +6,10 @@ from .synthetic import SyntheticProvider
 from .yahoo import YahooProvider
 
 PROVIDERS: dict[str, Callable[[dict], MarketDataProvider]] = {
-    "synthetic": SyntheticProvider, "yahoo": YahooProvider, "csv": CSVProvider}
+    "synthetic": SyntheticProvider,
+    "yahoo": YahooProvider,
+    "csv": CSVProvider,
+}
 
 
 def get_provider(config: dict) -> MarketDataProvider:
@@ -17,5 +20,13 @@ def get_provider(config: dict) -> MarketDataProvider:
         raise ValueError(f"unknown data_provider {name!r}; choose from {sorted(PROVIDERS)}") from None
 
 
-__all__ = ["MarketDataProvider", "NewsItem", "SyntheticProvider", "YahooProvider",
-           "CSVProvider", "get_provider", "PROVIDERS", "clean_ohlcv"]
+__all__ = [
+    "MarketDataProvider",
+    "NewsItem",
+    "SyntheticProvider",
+    "YahooProvider",
+    "CSVProvider",
+    "get_provider",
+    "PROVIDERS",
+    "clean_ohlcv",
+]

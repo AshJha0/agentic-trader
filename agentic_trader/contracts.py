@@ -15,6 +15,7 @@ backend, so an out-of-range value is a contract rejection (rules apply, counted 
 failure), never clipped to the nearest bound. The Anthropic structured-outputs endpoint does
 not accept numeric bounds, so ``api_schema`` strips them (into ``description``) for that path.
 """
+
 from __future__ import annotations
 
 import math
@@ -30,39 +31,54 @@ def num(lo: float, hi: float, nullable: bool = False) -> dict[str, Any]:
     return {"type": ["number", "null"] if nullable else "number", "minimum": lo, "maximum": hi}
 
 
-SIGNED = num(-1, 1)            # signals, scores, weights as signed fractions of capital
-UNIT = num(0, 1)               # confidence, conviction
+SIGNED = num(-1, 1)  # signals, scores, weights as signed fractions of capital
+UNIT = num(0, 1)  # confidence, conviction
 UNIT_OR_NULL = num(0, 1, nullable=True)
 PRICE_OR_NULL = {"type": ["number", "null"], "exclusiveMinimum": 0}
 
 
 def obj(properties: dict[str, Any], required: tuple[str, ...]) -> dict[str, Any]:
-    return {"type": "object", "properties": properties, "required": list(required),
-            "additionalProperties": False}
+    return {"type": "object", "properties": properties, "required": list(required), "additionalProperties": False}
 
 
-ANALYST = obj({"signal": SIGNED, "confidence": UNIT, "summary": TEXT,
-               "key_points": {"type": "array", "items": TEXT}},
-              ("signal", "confidence", "summary"))
+ANALYST = obj(
+    {"signal": SIGNED, "confidence": UNIT, "summary": TEXT, "key_points": {"type": "array", "items": TEXT}},
+    ("signal", "confidence", "summary"),
+)
 
-FACILITATOR = obj({"winner": {"type": "string", "enum": ["bull", "bear", "balanced"]},
-                   "score": SIGNED, "conviction": UNIT_OR_NULL, "summary": TEXT},
-                  ("winner", "score", "summary"))
+FACILITATOR = obj(
+    {
+        "winner": {"type": "string", "enum": ["bull", "bear", "balanced"]},
+        "score": SIGNED,
+        "conviction": UNIT_OR_NULL,
+        "summary": TEXT,
+    },
+    ("winner", "score", "summary"),
+)
 
-RISK_VIEW = obj({"recommended_weight": SIGNED, "argument": TEXT},
-                ("recommended_weight", "argument"))
+RISK_VIEW = obj({"recommended_weight": SIGNED, "argument": TEXT}, ("recommended_weight", "argument"))
 
-PORTFOLIO_MANAGER = obj({"target_weight": SIGNED, "confidence": UNIT_OR_NULL, "rationale": TEXT},
-                        ("target_weight", "rationale"))
+PORTFOLIO_MANAGER = obj({"target_weight": SIGNED, "confidence": UNIT_OR_NULL, "rationale": TEXT}, ("target_weight", "rationale"))
 
-TRADER = obj({"action": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
-              "target_weight": SIGNED, "confidence": UNIT_OR_NULL, "stop_loss": PRICE_OR_NULL,
-              "take_profit": PRICE_OR_NULL, "horizon_days": num(1, 90, nullable=True), "rationale": TEXT},
-             ("action", "target_weight", "rationale"))
+TRADER = obj(
+    {
+        "action": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
+        "target_weight": SIGNED,
+        "confidence": UNIT_OR_NULL,
+        "stop_loss": PRICE_OR_NULL,
+        "take_profit": PRICE_OR_NULL,
+        "horizon_days": num(1, 90, nullable=True),
+        "rationale": TEXT,
+    },
+    ("action", "target_weight", "rationale"),
+)
 
 ALL: dict[str, dict[str, Any]] = {
-    "analyst": ANALYST, "facilitator": FACILITATOR, "risk_view": RISK_VIEW,
-    "portfolio_manager": PORTFOLIO_MANAGER, "trader": TRADER,
+    "analyst": ANALYST,
+    "facilitator": FACILITATOR,
+    "risk_view": RISK_VIEW,
+    "portfolio_manager": PORTFOLIO_MANAGER,
+    "trader": TRADER,
 }
 
 
@@ -85,9 +101,12 @@ def violation(data: dict[str, Any], schema: dict[str, Any] | None) -> str | None
             continue
         if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v):
             continue
-        if ("minimum" in spec and v < spec["minimum"]) or ("maximum" in spec and v > spec["maximum"]) \
-                or ("exclusiveMinimum" in spec and v <= spec["exclusiveMinimum"]) \
-                or ("exclusiveMaximum" in spec and v >= spec["exclusiveMaximum"]):
+        if (
+            ("minimum" in spec and v < spec["minimum"])
+            or ("maximum" in spec and v > spec["maximum"])
+            or ("exclusiveMinimum" in spec and v <= spec["exclusiveMinimum"])
+            or ("exclusiveMaximum" in spec and v >= spec["exclusiveMaximum"])
+        ):
             rng = ", ".join(f"{b}={spec[b]}" for b in _BOUNDS if b in spec)
             return f"{key}={v!r} out of range ({rng})"
     return None

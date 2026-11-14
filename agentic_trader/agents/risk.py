@@ -1,4 +1,5 @@
 """Risk-management team (aggressive / neutral / conservative) and Portfolio Manager."""
+
 from __future__ import annotations
 
 import logging
@@ -48,8 +49,9 @@ def risk_facts(state: TradingState, config: dict) -> dict[str, Any]:
         # Informational only (current book, no proposed change): the enforced check runs in
         # PortfolioManager.guardrails, which has state.book and can evaluate the proposed
         # weight's own effect on it -- a plain fact dict can only report a number, not act.
-        "book_var_95_now": (_book_var_now(state, config["risk"].get("book_var_method", "ewma"))
-                            if state.book is not None else None),
+        "book_var_95_now": (
+            _book_var_now(state, config["risk"].get("book_var_method", "ewma")) if state.book is not None else None
+        ),
     }
 
 
@@ -66,6 +68,7 @@ def position_cvar(f: dict[str, Any], w: float) -> float:
 
 def _book_var_now(state: TradingState, method: str) -> float | None:
     from ..portfolio import book_var_95
+
     assert state.book is not None  # the caller only asks when a book is attached
     sym = state.instrument.symbol
     positions = {**state.book.positions, sym: state.current_weight or 0.0}
@@ -77,11 +80,10 @@ class RiskAnalyst(Agent):
     stance = "neutral"
     _roles = {
         "aggressive": "Aggressive (risk-seeking) Risk Analyst. You champion high-reward "
-                      "opportunities and argue against leaving returns on the table.",
-        "neutral": "Neutral Risk Analyst. You balance reward and risk, favouring volatility-"
-                   "targeted sizing.",
+        "opportunities and argue against leaving returns on the table.",
+        "neutral": "Neutral Risk Analyst. You balance reward and risk, favouring volatility-targeted sizing.",
         "conservative": "Conservative (risk-averse) Risk Analyst. You prioritise capital "
-                        "preservation, drawdown control and tail risk.",
+        "preservation, drawdown control and tail risk.",
     }
 
     def __init__(self, llm, config, stance: str):
@@ -91,13 +93,11 @@ class RiskAnalyst(Agent):
 
     @property
     def role(self) -> str:  # type: ignore[override]
-        return self._roles[self.stance] + " Debate the other risk analysts and recommend a " \
-            "position size."
+        return self._roles[self.stance] + " Debate the other risk analysts and recommend a position size."
 
     def rules_weight(self, f: dict[str, Any]) -> float:
         w0, mx = f["proposed_weight"], f["max_position"]
-        vt = quant.vol_target_weight(w0, f["realized_vol_20d_annual"] or float("nan"),
-                                     f["target_vol"], mx) if w0 else 0.0
+        vt = quant.vol_target_weight(w0, f["realized_vol_20d_annual"] or float("nan"), f["target_vol"], mx) if w0 else 0.0
         if self.stance == "aggressive":
             if self.config["risk"].get("aggressive_vol_scaled", True):
                 # 1.25x the vol-targeted size: the aggressive view scales with volatility like the
@@ -119,20 +119,24 @@ class RiskAnalyst(Agent):
                 w *= f["max_var_95"] / (var * abs(w))
         return clip(w, -mx, mx)
 
-    def speak(self, state: TradingState, f: dict[str, Any], rnd: int,
-              history: list[RiskView]) -> RiskView:
+    def speak(self, state: TradingState, f: dict[str, Any], rnd: int, history: list[RiskView]) -> RiskView:
         w = self.rules_weight(f)
         if rnd > 1 and history:  # rule-based convergence towards the group's view
             others = [v.recommended_weight for v in history[-3:] if v.stance != self.stance]
             if others:
                 w = 0.75 * w + 0.25 * float(np.mean(others))
-        text = (f"{self.stance.title()} view: size {w:+.2f} (proposal {f['proposed_weight']:+.2f}); "
-                f"20d vol {_pct(f['realized_vol_20d_annual'])}, 1-day VaR95 (position side) "
-                f"{position_var(f, f['proposed_weight']):.2%}, "
-                f"CVaR95 {position_cvar(f, f['proposed_weight']):.2%}, drawdown from 60d high "
-                f"{f['drawdown_from_60d_high']:.1%}.")
-        untrusted = (state.untrusted_inputs or (state.proposal is not None and state.proposal.untrusted)
-                     or any(v.untrusted for v in history))
+        text = (
+            f"{self.stance.title()} view: size {w:+.2f} (proposal {f['proposed_weight']:+.2f}); "
+            f"20d vol {_pct(f['realized_vol_20d_annual'])}, 1-day VaR95 (position side) "
+            f"{position_var(f, f['proposed_weight']):.2%}, "
+            f"CVaR95 {position_cvar(f, f['proposed_weight']):.2%}, drawdown from 60d high "
+            f"{f['drawdown_from_60d_high']:.1%}."
+        )
+        untrusted = (
+            state.untrusted_inputs
+            or (state.proposal is not None and state.proposal.untrusted)
+            or any(v.untrusted for v in history)
+        )
         view = RiskView(self.stance, w, text, rnd, untrusted=untrusted)
 
         prompt = (
@@ -141,27 +145,37 @@ class RiskAnalyst(Agent):
             f"Risk facts:\n{fmt_facts(state.prompt_facts(f))}\n"
             + ("\nDiscussion so far:\n" + state.risk_views_block(history) if history else "")
             + f'\n\nRound {rnd}. JSON keys: "recommended_weight" (signed fraction of capital), '
-              '"argument" (<= 120 words, respond to the other analysts).'
+            '"argument" (<= 120 words, respond to the other analysts).'
         )
-        data = self.ask_json(prompt, ("recommended_weight", "argument"), state=state,
-                             numeric=("recommended_weight",), schema=contracts.RISK_VIEW)
+        data = self.ask_json(
+            prompt, ("recommended_weight", "argument"), state=state, numeric=("recommended_weight",), schema=contracts.RISK_VIEW
+        )
         if data:
             mx = f["max_position"]
-            view = RiskView(self.stance, clip(data["recommended_weight"], -mx, mx),
-                            str(data["argument"]), rnd, source="llm", untrusted=untrusted)
+            view = RiskView(
+                self.stance,
+                clip(data["recommended_weight"], -mx, mx),
+                str(data["argument"]),
+                rnd,
+                source="llm",
+                untrusted=untrusted,
+            )
         return view
 
 
 class PortfolioManager(Agent):
     name = "portfolio_manager"
     deep = True
-    role = ("Portfolio Manager. You review the trader's proposal and the risk team's "
-            "discussion, then approve, resize or reject the trade. Hard firm limits are "
-            "enforced after your decision.")
+    role = (
+        "Portfolio Manager. You review the trader's proposal and the risk team's "
+        "discussion, then approve, resize or reject the trade. Hard firm limits are "
+        "enforced after your decision."
+    )
     stance_weights = {"aggressive": 0.25, "neutral": 0.5, "conservative": 0.25}
 
-    def guardrails(self, w: float, f: dict[str, Any], symbol: str | None = None,
-                   book: Book | None = None) -> tuple[float, list[str]]:
+    def guardrails(
+        self, w: float, f: dict[str, Any], symbol: str | None = None, book: Book | None = None
+    ) -> tuple[float, list[str]]:
         """``symbol`` and ``book`` are only needed for the book-level VaR check (both
         ``None`` -- the default -- leaves every other guardrail exactly as before that
         check existed)."""
@@ -184,8 +198,10 @@ class PortfolioManager(Agent):
             w = new
         if book is not None and symbol is not None and f.get("max_book_var_95") and w != 0:
             from ..portfolio import book_var_scale
-            w, _, note = book_var_scale(symbol, w, book.positions, book.returns, f["max_book_var_95"],
-                                         method=f.get("book_var_method", "ewma"))
+
+            w, _, note = book_var_scale(
+                symbol, w, book.positions, book.returns, f["max_book_var_95"], method=f.get("book_var_method", "ewma")
+            )
             if note:
                 notes.append(note)
         if 0 < abs(w) < self.config["risk"]["min_trade_weight"]:
@@ -200,11 +216,12 @@ class PortfolioManager(Agent):
         for v in state.risk_views:
             latest[v.stance] = v
         tot = sum(self.stance_weights[s] for s in latest)
-        w = (sum(self.stance_weights[s] * v.recommended_weight for s, v in latest.items()) / tot
-             if tot else p.target_weight)
+        w = sum(self.stance_weights[s] * v.recommended_weight for s, v in latest.items()) / tot if tot else p.target_weight
         conf = p.confidence
-        rationale = (f"Blended risk-team sizing (25% aggressive / 50% neutral / 25% conservative) "
-                     f"gives {w:+.2f} against a proposal of {p.target_weight:+.2f}.")
+        rationale = (
+            f"Blended risk-team sizing (25% aggressive / 50% neutral / 25% conservative) "
+            f"gives {w:+.2f} against a proposal of {p.target_weight:+.2f}."
+        )
         fc = state.forecast
         if fc is not None:
             # combination.method "ic": the trader's mean-variance weight already prices risk,
@@ -212,9 +229,10 @@ class PortfolioManager(Agent):
             # scaled by min(1, |mu| / interval half-width).
             scale = fc.size_scale()
             w = fc.neutral + (p.target_weight - fc.neutral) * scale
-            rationale = (f"IC-combination weight {p.target_weight:+.2f} from {len(fc.active)} significant "
-                         f"signal(s)" + (f", interval sizing x{scale:.2f}" if fc.interval is not None else "")
-                         + f" -> {w:+.2f}.")
+            rationale = (
+                f"IC-combination weight {p.target_weight:+.2f} from {len(fc.active)} significant "
+                f"signal(s)" + (f", interval sizing x{scale:.2f}" if fc.interval is not None else "") + f" -> {w:+.2f}."
+            )
         source = "rules"
         rule_w, model_w = float(w), None
 
@@ -227,10 +245,15 @@ class PortfolioManager(Agent):
             + state.lessons_block()
             + policy_passages(state)
             + '\nJSON keys: "target_weight" (final signed fraction of capital), "confidence" '
-              '([0, 1]), "rationale" (2-4 sentences explaining approval/resizing/rejection).'
+            '([0, 1]), "rationale" (2-4 sentences explaining approval/resizing/rejection).'
         )
-        data = self.ask_json(prompt, ("target_weight", "rationale"), state=state,
-                             numeric=("target_weight", "confidence"), schema=contracts.PORTFOLIO_MANAGER)
+        data = self.ask_json(
+            prompt,
+            ("target_weight", "rationale"),
+            state=state,
+            numeric=("target_weight", "confidence"),
+            schema=contracts.PORTFOLIO_MANAGER,
+        )
         override_notes: list[str] = []
         if data:
             model_w = clip(data["target_weight"], -1, 1)
@@ -244,30 +267,37 @@ class PortfolioManager(Agent):
         w, band_note = self.no_trade_band(w, state.current_weight, f, sym, state.book)
         if band_note:
             notes.append(band_note)
-        approved = (np.sign(w) == np.sign(p.target_weight))
+        approved = np.sign(w) == np.sign(p.target_weight)
 
         # Protective levels must match the final direction: keep the trader's when
         # the direction is unchanged (and they are sane), rebuild them otherwise.
         direction = float(np.sign(w))
         fallback = protective_levels(direction, state.last_price, f["atr14"], self.config["risk"])
         if direction == np.sign(p.target_weight):
-            stop, take = sane_levels(direction, state.last_price, p.stop_loss, p.take_profit,
-                                     fallback)
+            stop, take = sane_levels(direction, state.last_price, p.stop_loss, p.take_profit, fallback)
         else:
             stop, take = fallback
-        d = FinalDecision(state.instrument.symbol, state.as_of,
-                          action_for(w, state.debate.score, thr), round(w, 4), conf,
-                          stop, take, rationale, bool(approved), notes, source,
-                          kept=band_note is not None,
-                          models_served=tuple(sorted({c["model_served"] for c in state.llm_calls
-                                                      if c.get("model_served")})),
-                          rule_weight=round(rule_w, 6),
-                          model_weight=None if model_w is None else round(model_w, 6))
+        d = FinalDecision(
+            state.instrument.symbol,
+            state.as_of,
+            action_for(w, state.debate.score, thr),
+            round(w, 4),
+            conf,
+            stop,
+            take,
+            rationale,
+            bool(approved),
+            notes,
+            source,
+            kept=band_note is not None,
+            models_served=tuple(sorted({c["model_served"] for c in state.llm_calls if c.get("model_served")})),
+            rule_weight=round(rule_w, 6),
+            model_weight=None if model_w is None else round(model_w, 6),
+        )
         state.decision = d
         return d
 
-    def bound_model_weight(self, model_w: float, rule_w: float,
-                           state: TradingState | None = None) -> tuple[float, list[str]]:
+    def bound_model_weight(self, model_w: float, rule_w: float, state: TradingState | None = None) -> tuple[float, list[str]]:
         """Round 1 (A3, owner decision D4): the model PM may move the weight at most
         ``risk.pm_model_band`` (default 0.25) away from the rules weight computed on the same
         inputs, and every gap above ``risk.pm_model_flag`` (default 0.10) is logged and noted on
@@ -282,14 +312,16 @@ class PortfolioManager(Agent):
         notes: list[str] = []
         if abs(gap) > flag + 1e-12:
             where = f"{state.instrument.symbol} {state.as_of}" if state is not None else "decision"
-            note = (f"PM model weight {model_w:+.2f} vs rules {rule_w:+.2f} (gap {abs(gap):.2f} > flag {flag:.2f})"
-                    + (f"; bounded to {bounded:+.2f} (band {band:.2f})" if abs(bounded - model_w) > 1e-12 else ""))
+            note = f"PM model weight {model_w:+.2f} vs rules {rule_w:+.2f} (gap {abs(gap):.2f} > flag {flag:.2f})" + (
+                f"; bounded to {bounded:+.2f} (band {band:.2f})" if abs(bounded - model_w) > 1e-12 else ""
+            )
             log.warning("%s: %s", where, note)
             notes.append(note)
         return bounded, notes
 
-    def no_trade_band(self, w: float, current: float | None, f: dict[str, Any],
-                      symbol: str | None = None, book: Book | None = None) -> tuple[float, str | None]:
+    def no_trade_band(
+        self, w: float, current: float | None, f: dict[str, Any], symbol: str | None = None, book: Book | None = None
+    ) -> tuple[float, str | None]:
         """Keep the current position when the new target is within ``rebalance_band`` of it.
 
         Small target changes cost spread and commission without changing the risk
@@ -307,8 +339,7 @@ class PortfolioManager(Agent):
         return current, f"within no-trade band ({abs(w - current):.2f} < {band:.2f}): keep {current:+.2f}"
 
 
-def run_risk_team(state: TradingState, analysts: list[RiskAnalyst], pm: PortfolioManager,
-                  rounds: int) -> FinalDecision:
+def run_risk_team(state: TradingState, analysts: list[RiskAnalyst], pm: PortfolioManager, rounds: int) -> FinalDecision:
     f = risk_facts(state, pm.config)
     views: list[RiskView] = []
     for rnd in range(1, max(1, rounds) + 1):

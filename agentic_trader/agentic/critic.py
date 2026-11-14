@@ -32,6 +32,7 @@ exposure than the PM decided (|after| <= |before|, veto included). A failed "err
 ``enforce_errors`` instead of only being noted, and the firm-limit check says "VaR not checked"
 when it was given no risk facts instead of reporting the VaR as within limits.
 """
+
 from __future__ import annotations
 
 import math
@@ -58,8 +59,11 @@ def decision_untrusted(state: TradingState) -> bool:
     """True when the portfolio manager's rationale may quote third-party text: the decision was
     written from a prompt carrying fenced material (a report or lesson, the trader's rationale
     or a risk argument), so it is shown fenced wherever it is quoted later."""
-    return bool(state.untrusted_inputs or (state.proposal is not None and state.proposal.untrusted)
-                or any(v.untrusted for v in state.risk_views))
+    return bool(
+        state.untrusted_inputs
+        or (state.proposal is not None and state.proposal.untrusted)
+        or any(v.untrusted for v in state.risk_views)
+    )
 
 
 def findings_block(findings: list[Finding], confidence: bool = True) -> str:
@@ -91,10 +95,10 @@ class Check:
 @dataclass
 class CriticReport:
     checks: list[Check] = field(default_factory=list)
-    multiplier: float = 1.0          # applied to the decision confidence (<= 1)
+    multiplier: float = 1.0  # applied to the decision confidence (<= 1)
     llm_concerns: list[str] = field(default_factory=list)
     llm_multiplier: float | None = None
-    weight_action: dict[str, Any] | None = None   # set by apply_weight_rule when it acted
+    weight_action: dict[str, Any] | None = None  # set by apply_weight_rule when it acted
 
     @property
     def passed(self) -> bool:
@@ -109,9 +113,14 @@ class CriticReport:
         return any(c.name == "model_rule_divergence" and not c.passed for c in self.checks)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"passed": self.passed, "multiplier": round(self.multiplier, 3),
-                "checks": [c.__dict__ for c in self.checks], "llm_concerns": self.llm_concerns,
-                "llm_multiplier": self.llm_multiplier, "weight_action": self.weight_action}
+        return {
+            "passed": self.passed,
+            "multiplier": round(self.multiplier, 3),
+            "checks": [c.__dict__ for c in self.checks],
+            "llm_concerns": self.llm_concerns,
+            "llm_multiplier": self.llm_multiplier,
+            "weight_action": self.weight_action,
+        }
 
 
 def _anchor(d: Any) -> tuple[float, str]:
@@ -140,17 +149,16 @@ def _set_weight(state: TradingState, new: float) -> None:
     px = state.last_price
     if d.stop_loss is not None and ((new > 0 and d.stop_loss >= px) or (new < 0 and d.stop_loss <= px) or new == 0):
         d.stop_loss = None
-    if d.take_profit is not None and ((new > 0 and d.take_profit <= px) or (new < 0 and d.take_profit >= px)
-                                      or new == 0):
+    if d.take_profit is not None and ((new > 0 and d.take_profit <= px) or (new < 0 and d.take_profit >= px) or new == 0):
         d.take_profit = None
     d.kept = False
 
 
-def _guard(state: TradingState, w: float, config: dict[str, Any],
-           risk_facts: dict[str, Any] | None) -> tuple[float, list[str]]:
+def _guard(state: TradingState, w: float, config: dict[str, Any], risk_facts: dict[str, Any] | None) -> tuple[float, list[str]]:
     """``w`` through ``PortfolioManager.guardrails`` (the PM step's own function)."""
     from ..agents.risk import PortfolioManager
     from ..agents.risk import risk_facts as compute_facts
+
     f = risk_facts if risk_facts and "max_position" in risk_facts else compute_facts(state, config)
     guarded, notes = PortfolioManager(None, config).guardrails(w, f, state.instrument.symbol, state.book)
     return round(float(guarded), 6), notes
@@ -161,8 +169,9 @@ def _shrink_only(new: float, old: float) -> float:
     return math.copysign(min(abs(new), abs(old)), new) if new != 0 else 0.0
 
 
-def enforce_errors(state: TradingState, report: CriticReport, config: dict[str, Any],
-                   risk_facts: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def enforce_errors(
+    state: TradingState, report: CriticReport, config: dict[str, Any], risk_facts: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Round 1 (A5): a failed "error" check acts on the decision instead of only being noted.
 
     ``firm_limits`` re-applies the PM guardrails to the weight (never to a larger size; a weight
@@ -185,8 +194,10 @@ def enforce_errors(state: TradingState, report: CriticReport, config: dict[str, 
             new, notes = 0.0, notes + ["still outside the firm limits -> flat"]
     if abs(new - old) > 1e-12:
         _set_weight(state, new)
-        d.adjustments.append(f"critic error block ({', '.join(names)}): weight {old:+.2f} -> {new:+.2f}"
-                             + (f" ({'; '.join(notes)})" if notes else ""))
+        d.adjustments.append(
+            f"critic error block ({', '.join(names)}): weight {old:+.2f} -> {new:+.2f}"
+            + (f" ({'; '.join(notes)})" if notes else "")
+        )
     cleared: list[str] = []
     if "protective_levels" in names:
         px, w = state.last_price, d.target_weight
@@ -200,13 +211,19 @@ def enforce_errors(state: TradingState, report: CriticReport, config: dict[str, 
             d.adjustments.append(f"critic error block: cleared {', '.join(cleared)} on the wrong side of the entry")
     if set(names) - {"firm_limits", "protective_levels"}:
         report.multiplier = min(report.multiplier, 0.5)
-    return {"checks": names, "from": old, "to": float(d.target_weight),
-            "changed": abs(float(d.target_weight) - old) > 1e-12, "cleared_levels": cleared,
-            "guardrail_notes": list(notes)}
+    return {
+        "checks": names,
+        "from": old,
+        "to": float(d.target_weight),
+        "changed": abs(float(d.target_weight) - old) > 1e-12,
+        "cleared_levels": cleared,
+        "guardrail_notes": list(notes),
+    }
 
 
-def apply_weight_rule(state: TradingState, report: CriticReport, config: dict[str, Any],
-                      risk_facts: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def apply_weight_rule(
+    state: TradingState, report: CriticReport, config: dict[str, Any], risk_facts: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Act on ``state.decision`` when the critic failed an error check or flagged a model/rules
     divergence.
 
@@ -237,10 +254,20 @@ def apply_weight_rule(state: TradingState, report: CriticReport, config: dict[st
     if d is None or rule == "off" or not report.divergence_flagged:
         if errors is None:
             return None
-        record = {"rule": "error_block", "scale": None, "anchor": None, "anchor_source": None,
-                  "from": errors["from"], "to": errors["to"], "changed": errors["changed"], "divergences": [],
-                  "pre_guardrail": errors["to"], "guardrail_clipped": False,
-                  "guardrail_notes": errors["guardrail_notes"], "errors": errors}
+        record = {
+            "rule": "error_block",
+            "scale": None,
+            "anchor": None,
+            "anchor_source": None,
+            "from": errors["from"],
+            "to": errors["to"],
+            "changed": errors["changed"],
+            "divergences": [],
+            "pre_guardrail": errors["to"],
+            "guardrail_clipped": False,
+            "guardrail_notes": errors["guardrail_notes"],
+            "errors": errors,
+        }
         report.weight_action = record
         return record
     anchor, anchor_source = _anchor(d)
@@ -254,16 +281,26 @@ def apply_weight_rule(state: TradingState, report: CriticReport, config: dict[st
         new, notes = _guard(state, new, config, risk_facts)
         new = _shrink_only(new, old)
     flagged = [c.detail for c in report.checks if c.name == "model_rule_divergence" and not c.passed]
-    record = {"rule": rule, "scale": None if rule == "veto" else scale, "anchor": anchor,
-              "anchor_source": anchor_source, "from": first, "to": new, "changed": abs(new - first) > 1e-12,
-              "divergences": flagged, "pre_guardrail": pre_guardrail,
-              "guardrail_clipped": abs(new - pre_guardrail) > 1e-12, "guardrail_notes": list(notes),
-              "errors": errors}
+    record = {
+        "rule": rule,
+        "scale": None if rule == "veto" else scale,
+        "anchor": anchor,
+        "anchor_source": anchor_source,
+        "from": first,
+        "to": new,
+        "changed": abs(new - first) > 1e-12,
+        "divergences": flagged,
+        "pre_guardrail": pre_guardrail,
+        "guardrail_clipped": abs(new - pre_guardrail) > 1e-12,
+        "guardrail_notes": list(notes),
+        "errors": errors,
+    }
     if abs(new - old) > 1e-12:
         _set_weight(state, new)
-        d.adjustments.append(f"critic {rule} toward {anchor_source} {anchor:+.2f}: model/rules divergence, "
-                             f"weight {old:+.2f} -> {new:+.2f}"
-                             + (f" (guardrails: {'; '.join(notes)})" if record["guardrail_clipped"] else ""))
+        d.adjustments.append(
+            f"critic {rule} toward {anchor_source} {anchor:+.2f}: model/rules divergence, "
+            f"weight {old:+.2f} -> {new:+.2f}" + (f" (guardrails: {'; '.join(notes)})" if record["guardrail_clipped"] else "")
+        )
     report.weight_action = record
     return record
 
@@ -274,8 +311,9 @@ class Critic:
         self.llm = llm if config.get("agentic", {}).get("llm_critic", True) else None
         self.divergence = float(config.get("agentic", {}).get("critic_divergence", 0.6))
 
-    def review(self, state: TradingState, findings: list[Finding], evidence: EvidenceStore,
-               risk_facts: dict[str, Any] | None = None) -> CriticReport:
+    def review(
+        self, state: TradingState, findings: list[Finding], evidence: EvidenceStore, risk_facts: dict[str, Any] | None = None
+    ) -> CriticReport:
         rep = CriticReport()
         mult = 1.0
 
@@ -283,8 +321,7 @@ class Critic:
         for f in findings:
             bad = evidence.unresolved(f.evidence_ids)
             if bad:
-                rep.checks.append(Check("evidence_resolves", False,
-                                        f"{f.agent}: unresolved evidence {bad}", "error"))
+                rep.checks.append(Check("evidence_resolves", False, f"{f.agent}: unresolved evidence {bad}", "error"))
                 f.confidence = 0.0
         if not rep.failed:
             rep.checks.append(Check("evidence_resolves", True, f"{len(findings)} findings, all evidence resolves"))
@@ -294,8 +331,9 @@ class Critic:
             if r.source == "llm" and r.rule_signal is not None and not r.abstained:
                 gap = abs(r.signal - r.rule_signal)
                 if gap > self.divergence:
-                    rep.checks.append(Check("model_rule_divergence", False,
-                                            f"{r.analyst}: model {r.signal:+.2f} vs rules {r.rule_signal:+.2f}"))
+                    rep.checks.append(
+                        Check("model_rule_divergence", False, f"{r.analyst}: model {r.signal:+.2f} vs rules {r.rule_signal:+.2f}")
+                    )
                     mult = min(mult, 0.7)
                     for f in findings:
                         if f.agent == r.analyst:
@@ -309,9 +347,13 @@ class Critic:
             strong_bull = [r.analyst for r in votes if r.signal > 0.5]
             strong_bear = [r.analyst for r in votes if r.signal < -0.5]
             if strong_bull and strong_bear and state.debate and state.debate.winner != "balanced":
-                rep.checks.append(Check("analyst_contradiction", False,
-                                        f"{strong_bull} strongly bullish vs {strong_bear} strongly bearish, "
-                                        f"verdict {state.debate.winner}"))
+                rep.checks.append(
+                    Check(
+                        "analyst_contradiction",
+                        False,
+                        f"{strong_bull} strongly bullish vs {strong_bear} strongly bearish, verdict {state.debate.winner}",
+                    )
+                )
                 mult = min(mult, 0.8)
             else:
                 rep.checks.append(Check("analyst_contradiction", True, "no unresolved strong contradiction"))
@@ -329,13 +371,16 @@ class Critic:
             facts = risk_facts or {}
             var = facts.get("var_95_1d")
             if d.target_weight < 0 and facts.get("var_95_1d_short") is not None:
-                var = facts["var_95_1d_short"]   # the short's loss tail; the long tail when a partial dict lacks it
+                var = facts["var_95_1d_short"]  # the short's loss tail; the long tail when a partial dict lacks it
             if var and risk_cfg["max_var_95"] > 0 and var * abs(d.target_weight) > risk_cfg["max_var_95"] + 1e-9:
                 problems.append(f"VaR {var * abs(d.target_weight):.2%} > cap {risk_cfg['max_var_95']:.2%}")
             # A6: without risk facts the VaR limit was never evaluated; say so instead of passing it.
             var_checked = var is not None or risk_cfg["max_var_95"] <= 0 or d.target_weight == 0
-            ok_text = ("size, shorting and VaR within limits" if var_checked
-                       else "size and shorting within limits; VaR not checked (no risk facts)")
+            ok_text = (
+                "size, shorting and VaR within limits"
+                if var_checked
+                else "size and shorting within limits; VaR not checked (no risk facts)"
+            )
             rep.checks.append(Check("firm_limits", not problems, "; ".join(problems) or ok_text, "error"))
             # 5. protective levels
             px, ok = state.last_price, True
@@ -343,8 +388,14 @@ class Critic:
                 ok = (d.stop_loss is None or d.stop_loss < px) and (d.take_profit is None or d.take_profit > px)
             elif d.target_weight < 0:
                 ok = (d.stop_loss is None or d.stop_loss > px) and (d.take_profit is None or d.take_profit < px)
-            rep.checks.append(Check("protective_levels", ok, "stop and target on the correct side"
-                                    if ok else "a protective level sits on the wrong side of the entry", "error"))
+            rep.checks.append(
+                Check(
+                    "protective_levels",
+                    ok,
+                    "stop and target on the correct side" if ok else "a protective level sits on the wrong side of the entry",
+                    "error",
+                )
+            )
             # 6. direction: the trader's tilt must agree with the verdict, and the PM must
             #    not flip the proposal's direction without recording an adjustment. Sizing
             #    below the strategic weight by the risk team is not a directional change.
@@ -359,9 +410,13 @@ class Critic:
                     detail.append(f"verdict {state.debate.winner} but the trader tilted {tilt:+d}")
                 if not flip_ok:
                     detail.append("the PM reversed the proposal's direction without an adjustment")
-                rep.checks.append(Check("direction_vs_verdict", tilt_ok and flip_ok,
-                                        "; ".join(detail) or "proposal tilt agrees with the verdict and the "
-                                        "decision keeps its direction"))
+                rep.checks.append(
+                    Check(
+                        "direction_vs_verdict",
+                        tilt_ok and flip_ok,
+                        "; ".join(detail) or "proposal tilt agrees with the verdict and the decision keeps its direction",
+                    )
+                )
                 if not (tilt_ok and flip_ok):
                     mult = min(mult, 0.8)
 
@@ -380,8 +435,7 @@ class Critic:
                 concerns, m, problems = [], None, [f"{type(e).__name__}: {str(e)[:160]}"]
             rep.llm_concerns, rep.llm_multiplier = concerns, m
             if problems:
-                rep.checks.append(Check("llm_critique_wellformed", False,
-                                        "model critique ignored: " + "; ".join(problems)))
+                rep.checks.append(Check("llm_critique_wellformed", False, "model critique ignored: " + "; ".join(problems)))
             if m is not None:
                 mult = min(mult, m)
         rep.multiplier = mult
@@ -397,14 +451,18 @@ class Critic:
         prompt = (
             f"Review this trading decision for {state.instrument.display} as of {state.as_of.isoformat()}.\n\n"
             f"Analyst reports:\n{state.reports_digest()}\n\nFindings:\n{findings_block(findings)}"
-            f"\n\nDecision: {dec.action.value} {dec.target_weight:+.2f}. " + ("\n" if untrusted else "")
-            + f"{rationale}\n\n"
+            f"\n\nDecision: {dec.action.value} {dec.target_weight:+.2f}. " + ("\n" if untrusted else "") + f"{rationale}\n\n"
             'JSON keys: "concerns" (list of short strings; empty if none), "confidence_multiplier" '
             "(number in [0, 1]: 1 = no concern, lower = less confident). You may only lower confidence."
         )
         text = complete_anon(
-            self.llm, FENCE_NOTE + "You are the independent critic of a trading desk. Find weaknesses, "
-            "contradictions and unsupported claims. Be specific and brief.", prompt, state, deep=True)
+            self.llm,
+            FENCE_NOTE + "You are the independent critic of a trading desk. Find weaknesses, "
+            "contradictions and unsupported claims. Be specific and brief.",
+            prompt,
+            state,
+            deep=True,
+        )
         data = extract_json(text)
         if not isinstance(data, dict) or not data:
             return [], None, ["reply is not a JSON object"]
@@ -414,15 +472,14 @@ class Critic:
             concerns = [str(c)[:200] for c in raw][:8]
         else:
             concerns = []
-            problems.append("concerns missing" if "concerns" not in data
-                            else f"concerns is {type(raw).__name__}, not a list")
+            problems.append("concerns missing" if "concerns" not in data else f"concerns is {type(raw).__name__}, not a list")
         raw_m = data.get("confidence_multiplier")
         if raw_m is None or isinstance(raw_m, bool):
             problems.append("confidence_multiplier missing")
             m = None
         else:
             m = clip(raw_m, 0.0, 1.0, float("nan"))
-            if m != m:   # not a number: nothing to apply
+            if m != m:  # not a number: nothing to apply
                 problems.append(f"confidence_multiplier {raw_m!r} is not a number")
                 m = None
         return concerns, m, problems

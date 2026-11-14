@@ -8,6 +8,7 @@ around them is fixed text. The three source files are also copied to ``docs/resu
 
     .venv\\Scripts\\python.exe scripts/render_v12_doc.py [--in results/v12]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -91,7 +92,7 @@ The test that remains is the forward paper-trading record
 def section(text: str, start: str) -> str:
     i = text.index(start)
     j = text.find("\n### ", i + 1)
-    return text[i:j if j != -1 else len(text)].rstrip().replace("### ", "#### ", 1) + "\n"
+    return text[i : j if j != -1 else len(text)].rstrip().replace("### ", "#### ", 1) + "\n"
 
 
 def main(argv=None) -> int:
@@ -102,12 +103,21 @@ def main(argv=None) -> int:
     tables = (d / "tables.md").read_text(encoding="utf-8")
     out = [INTRO]
     provs = {r: json.load(open(d / f"{r}.json", encoding="utf-8"))["provenance"] for r in RUNS}
-    out.append("Provenance: " + "; ".join(f"`{r}` at commit `{p['git_commit'][:7]}` ({'dirty' if p['git_dirty'] else 'clean'} tree), "
-                                           f"{p['quant_backend']} backend" for r, p in provs.items()) + ".\n")
+    out.append(
+        "Provenance: "
+        + "; ".join(
+            f"`{r}` at commit `{p['git_commit'][:7]}` ({'dirty' if p['git_dirty'] else 'clean'} tree), "
+            f"{p['quant_backend']} backend"
+            for r, p in provs.items()
+        )
+        + ".\n"
+    )
     out.append("\n## Step 1 and 2: the runs on the longer design period\n")
     for r in RUNS:
         out.append(section(tables, f"### portfolio table, {r}:"))
-        out.append(section(tables, f"### Sharpe difference against the run's B&H vol-target (paired block bootstrap over days): {r}\n"))
+        out.append(
+            section(tables, f"### Sharpe difference against the run's B&H vol-target (paired block bootstrap over days): {r}\n")
+        )
     out.append("\n## Step 2: books built with the long/short trend stream\n")
     out.append((d / "combine_ls.md").read_text(encoding="utf-8").split("\n", 1)[1].replace("\n## ", "\n#### ").strip() + "\n")
     out.append("\n## Step 3: the vol-target core with the desk's tilt at size lam\n")

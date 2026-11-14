@@ -26,6 +26,7 @@ evaluation cannot serve a live decision stale rates; ALFRED vintage files are im
 snapshots and never expire. A download is parsed and validated before it is written, so
 a non-CSV body served with HTTP 200 (a proxy interstitial) is never persisted.
 """
+
 from __future__ import annotations
 
 import io
@@ -55,10 +56,10 @@ _VINTAGE_ANCHOR = date(2000, 1, 1)
 @dataclass(frozen=True)
 class FredSeries:
     series_id: str
-    lag_days: int       # observation date + lag = first date the value is known
-    max_age_days: int   # older than this (relative to as_of) -> unavailable
+    lag_days: int  # observation date + lag = first date the value is known
+    max_age_days: int  # older than this (relative to as_of) -> unavailable
     yoy_from_index: bool = False  # transform an index level into % change over 12 obs
-    revised: bool = False         # published values get revised later (use vintages when on)
+    revised: bool = False  # published values get revised later (use vintages when on)
 
 
 # Overnight / policy rates, percent. Never revised.
@@ -71,7 +72,7 @@ RATE_SERIES: dict[str, FredSeries] = {
     "AUD": FredSeries("IRSTCI01AUM156N", 40, 100),
     "CAD": FredSeries("IRSTCI01CAM156N", 40, 100),
     "NZD": FredSeries("IRSTCI01NZM156N", 40, 100),
-    "NOK": FredSeries("IRSTCI01NOM156N", 40, 100),   # SEK's OECD series (IRSTCI01SEM156N) stopped in 2020-10
+    "NOK": FredSeries("IRSTCI01NOM156N", 40, 100),  # SEK's OECD series (IRSTCI01SEM156N) stopped in 2020-10
 }
 
 # Cash-leg (risk-free) rates, percent per annum: the 3-month Treasury bill secondary-market
@@ -101,7 +102,7 @@ def _http_fetch(url: str, timeout: float = 30.0, attempts: int = 2) -> pd.DataFr
             with urlopen(req, timeout=timeout) as r:  # noqa: S310 - fixed https hosts
                 body = r.read().decode("utf-8", errors="replace")
             return pd.read_csv(io.StringIO(body), index_col=0, parse_dates=True)
-        except OSError:                       # URLError, timeouts and dropped connections
+        except OSError:  # URLError, timeouts and dropped connections
             if i + 1 == attempts:
                 raise
             time.sleep(1.0)
@@ -111,9 +112,14 @@ def _http_fetch(url: str, timeout: float = 30.0, attempts: int = 2) -> pd.DataFr
 class FredClient:
     """Downloads each series (or vintage) once per process and answers as-of queries."""
 
-    def __init__(self, vintages: bool = False, vintage_step_days: int = 31,
-                 cache_dir: str | Path | None = None, fetch: Fetcher | None = None,
-                 cache_max_age_days: float | None = DEFAULT_CACHE_MAX_AGE_DAYS):
+    def __init__(
+        self,
+        vintages: bool = False,
+        vintage_step_days: int = 31,
+        cache_dir: str | Path | None = None,
+        fetch: Fetcher | None = None,
+        cache_max_age_days: float | None = DEFAULT_CACHE_MAX_AGE_DAYS,
+    ):
         if vintage_step_days < 1:
             raise ValueError("vintage_step_days must be >= 1")
         self.vintages = bool(vintages)
@@ -187,7 +193,7 @@ class FredClient:
                     return s
                 stale = s
             except ValueError:
-                pass   # an unusable cache file is replaced by a fresh download
+                pass  # an unusable cache file is replaced by a fresh download
         self.requests += 1
         try:
             raw = self._fetch(url)
@@ -195,8 +201,12 @@ class FredClient:
         except Exception as e:
             if stale is None:
                 raise
-            log.warning("FRED %s: re-download of the stale cache file failed (%s); serving the cached "
-                        "table, last observation %s", key, e, stale.index[-1].date())
+            log.warning(
+                "FRED %s: re-download of the stale cache file failed (%s); serving the cached table, last observation %s",
+                key,
+                e,
+                stale.index[-1].date(),
+            )
             return stale
         self._write_cached(key, raw)
         return s
@@ -206,7 +216,8 @@ class FredClient:
         if spec.series_id not in self._cache:
             try:
                 self._cache[spec.series_id] = self._download(
-                    spec.series_id, _URL.format(sid=spec.series_id), spec, self.cache_max_age_days)
+                    spec.series_id, _URL.format(sid=spec.series_id), spec, self.cache_max_age_days
+                )
             except Exception as e:  # network, schema change, discontinued series
                 log.warning("FRED %s unavailable: %s", spec.series_id, e)
                 self._cache[spec.series_id] = None
@@ -223,7 +234,8 @@ class FredClient:
             try:
                 ck = f"{spec.series_id}_v{vd.isoformat()}"
                 self._vintage_cache[key] = self._download(
-                    ck, _VINTAGE_URL.format(sid=spec.series_id, vd=vd.isoformat()), spec, None)
+                    ck, _VINTAGE_URL.format(sid=spec.series_id, vd=vd.isoformat()), spec, None
+                )
             except Exception as e:
                 log.warning("ALFRED %s vintage %s unavailable: %s", spec.series_id, vd, e)
                 self._vintage_cache[key] = None
@@ -298,11 +310,14 @@ def default_client(config: dict | None = None) -> FredClient:
         return _default
     cfg = config or {}
     age = cfg.get("fred_cache_max_age_days", DEFAULT_CACHE_MAX_AGE_DAYS)
-    key = (bool(cfg.get("fred_vintages", False)), int(cfg.get("fred_vintage_step_days", 31)),
-           cfg.get("fred_cache_dir"), None if age is None else float(age))
+    key = (
+        bool(cfg.get("fred_vintages", False)),
+        int(cfg.get("fred_vintage_step_days", 31)),
+        cfg.get("fred_cache_dir"),
+        None if age is None else float(age),
+    )
     if _default is not None and key == _DEFAULT_KEY:
         return _default
     if key not in _defaults:
-        _defaults[key] = FredClient(vintages=key[0], vintage_step_days=key[1], cache_dir=key[2],
-                                    cache_max_age_days=key[3])
+        _defaults[key] = FredClient(vintages=key[0], vintage_step_days=key[1], cache_dir=key[2], cache_max_age_days=key[3])
     return _defaults[key]

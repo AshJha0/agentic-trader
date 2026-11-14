@@ -29,6 +29,7 @@ Worked example. A 95 % forecast with ``sigma = 1 %`` gives VaR 1.64 % and ES 2.0
 1000 days, 50 breaches average a 2.06 % loss, the sum is ``50 * 2.06 / (1000 * 0.05 * 2.06) = 1``
 and Z2 = 0. Losses averaging 3 % give Z2 = ``1 - 3 / 2.06 = -0.46``: the tail is understated.
 """
+
 from __future__ import annotations
 
 import math
@@ -144,6 +145,7 @@ def fit_gjr(returns, use_scipy: bool | None = None) -> GJRParams:
     if use_scipy is not False:
         try:
             from scipy.optimize import minimize
+
             res = minimize(f, x0, method="Nelder-Mead", options={"maxiter": 4000, "xatol": 1e-10, "fatol": 1e-10})
             best = np.asarray(res.x)
         except ImportError:
@@ -151,12 +153,13 @@ def fit_gjr(returns, use_scipy: bool | None = None) -> GJRParams:
                 raise
     if best is None:
         best = _nelder_mead(f, x0, np.array([0.04 * v, 0.03, 0.03, 0.05]))
-        best = _nelder_mead(f, best, np.array([0.02 * v, 0.01, 0.01, 0.02]))   # restart: NM can stall
+        best = _nelder_mead(f, best, np.array([0.02 * v, 0.01, 0.01, 0.02]))  # restart: NM can stall
     return GJRParams(*(float(max(b, 0.0)) for b in best))
 
 
-def gjr_var_es_forecast(returns, level: float = 0.95, window: int = 500, refit_every: int = 250,
-                        params: GJRParams | None = None) -> tuple[np.ndarray, np.ndarray]:
+def gjr_var_es_forecast(
+    returns, level: float = 0.95, window: int = 500, refit_every: int = 250, params: GJRParams | None = None
+) -> tuple[np.ndarray, np.ndarray]:
     """1-day VaR and ES (non-negative loss fractions) forecast *for* each day ``t`` from returns
     strictly before it, aligned with ``returns`` like ``risk_model.var_forecast``. NaN for the
     first ``window`` days. Parameters are refitted every ``refit_every`` days on the trailing
@@ -171,9 +174,9 @@ def gjr_var_es_forecast(returns, level: float = 0.95, window: int = 500, refit_e
     es_mult = _N.pdf(z) / (1.0 - level)
     t = window
     while t < n:
-        p = params or fit_gjr(r[t - window:t])
+        p = params or fit_gjr(r[t - window : t])
         end = min(n, t + refit_every)
-        s2 = gjr_variance(r[:end], p, s2_0=float(np.nanmean(r[max(0, t - window):t] ** 2)))
+        s2 = gjr_variance(r[:end], p, s2_0=float(np.nanmean(r[max(0, t - window) : t] ** 2)))
         sig = np.sqrt(s2[t:end])
         var[t:end] = z * sig
         es[t:end] = es_mult * sig

@@ -7,6 +7,7 @@ script can share it. Covers the standing holiday rules, the one-off full-day clo
 Closures before 2000 and future one-off closures are not modelled; add them to the table
 (or to the OMS ``extra_equity_holidays`` config) when the NYSE announces one.
 """
+
 from __future__ import annotations
 
 from datetime import date, time, timedelta

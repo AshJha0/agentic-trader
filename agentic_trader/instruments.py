@@ -1,12 +1,33 @@
 """Instrument definitions shared by the equity and FX pipelines."""
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
 CURRENCIES = {
-    "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "SEK", "NOK", "DKK",
-    "CNH", "CNY", "HKD", "SGD", "MXN", "ZAR", "TRY", "PLN", "INR", "KRW", "BRL",
+    "USD",
+    "EUR",
+    "GBP",
+    "JPY",
+    "CHF",
+    "AUD",
+    "CAD",
+    "NZD",
+    "SEK",
+    "NOK",
+    "DKK",
+    "CNH",
+    "CNY",
+    "HKD",
+    "SGD",
+    "MXN",
+    "ZAR",
+    "TRY",
+    "PLN",
+    "INR",
+    "KRW",
+    "BRL",
 }
 
 EQUITY = "equity"
@@ -15,8 +36,8 @@ FX = "fx"
 
 @dataclass(frozen=True)
 class Instrument:
-    symbol: str             # canonical: "AAPL" or "EURUSD"
-    asset_class: str        # "equity" | "fx"
+    symbol: str  # canonical: "AAPL" or "EURUSD"
+    asset_class: str  # "equity" | "fx"
     base: str | None = None
     quote: str | None = None
 

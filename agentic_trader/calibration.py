@@ -18,6 +18,7 @@ Offline the rules are deterministic, so dispersion is zero and the anchoring
 slope is whatever the no-trade band produces; the harness exists for the LLM
 desk, where each run costs money and the answer is not a constant.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,8 +44,8 @@ DEFAULT_ANCHORS: tuple[float | None, ...] = (None, -0.5, 0.0, 0.5)
 class CalibrationReport:
     symbol: str
     as_of: str
-    samples: pd.DataFrame            # run, anchor, action, target_weight, confidence, approved, llm_share
-    prompts: str                     # prompt bundle hash
+    samples: pd.DataFrame  # run, anchor, action, target_weight, confidence, approved, llm_share
+    prompts: str  # prompt bundle hash
     meta: dict[str, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------- measures
@@ -53,13 +54,24 @@ class CalibrationReport:
         (and the modal action, a string)."""
         s = self._at(anchor)
         if s.empty:
-            return {"runs": 0, "std": float("nan"), "range": float("nan"), "agreement": float("nan"),
-                    "mean_target": float("nan"), "mean_confidence": float("nan")}
+            return {
+                "runs": 0,
+                "std": float("nan"),
+                "range": float("nan"),
+                "agreement": float("nan"),
+                "mean_target": float("nan"),
+                "mean_confidence": float("nan"),
+            }
         modal = s.action.mode().iloc[0]
-        return {"runs": int(len(s)), "std": float(s.target_weight.std(ddof=1)) if len(s) > 1 else 0.0,
-                "range": float(s.target_weight.max() - s.target_weight.min()),
-                "agreement": float((s.action == modal).mean()), "modal_action": str(modal),
-                "mean_target": float(s.target_weight.mean()), "mean_confidence": float(s.confidence.mean())}
+        return {
+            "runs": int(len(s)),
+            "std": float(s.target_weight.std(ddof=1)) if len(s) > 1 else 0.0,
+            "range": float(s.target_weight.max() - s.target_weight.min()),
+            "agreement": float((s.action == modal).mean()),
+            "modal_action": str(modal),
+            "mean_target": float(s.target_weight.mean()),
+            "mean_confidence": float(s.confidence.mean()),
+        }
 
     def anchoring(self) -> dict[str, Any]:
         """Slope of the mean target weight on the numeric anchor (least squares over anchors)."""
@@ -69,8 +81,12 @@ class CalibrationReport:
         m = s.groupby("anchor").target_weight.mean()
         x, y = m.index.to_numpy(float), m.to_numpy(float)
         slope, intercept = np.polyfit(x, y, 1)
-        return {"anchors": int(len(m)), "slope": float(slope), "intercept": float(intercept),
-                "means": {float(k): round(float(v), 4) for k, v in m.items()}}
+        return {
+            "anchors": int(len(m)),
+            "slope": float(slope),
+            "intercept": float(intercept),
+            "means": {float(k): round(float(v), 4) for k, v in m.items()},
+        }
 
     def base_anchor(self) -> float | None:
         """The anchor dispersion and drift are read at: no book if it was sampled, else the
@@ -81,9 +97,15 @@ class CalibrationReport:
 
     def summary(self) -> dict[str, Any]:
         base = self.dispersion(self.base_anchor())
-        return {"symbol": self.symbol, "as_of": self.as_of, "prompts": self.prompts, "dispersion": base,
-                "anchoring": self.anchoring(), "llm_share": float(self.samples.llm_share.mean()),
-                **{k: v for k, v in self.meta.items() if k in ("usage", "models", "effort")}}
+        return {
+            "symbol": self.symbol,
+            "as_of": self.as_of,
+            "prompts": self.prompts,
+            "dispersion": base,
+            "anchoring": self.anchoring(),
+            "llm_share": float(self.samples.llm_share.mean()),
+            **{k: v for k, v in self.meta.items() if k in ("usage", "models", "effort")},
+        }
 
     def compare(self, earlier: "CalibrationReport") -> dict[str, Any]:
         """Drift against an earlier report on the same state."""
@@ -100,16 +122,25 @@ class CalibrationReport:
         a_then = earlier._at(anchor).action.value_counts(normalize=True)
         actions = sorted(set(a_now.index) | set(a_then.index))
         tv = 0.5 * sum(abs(float(a_now.get(a, 0.0)) - float(a_then.get(a, 0.0))) for a in actions)
-        return {"same_prompts": self.prompts == earlier.prompts, "anchor": anchor,
-                "mean_target_shift": now["mean_target"] - then["mean_target"],
-                "std_change": now["std"] - then["std"],
-                "action_distribution_distance": tv,   # total variation in [0, 1]
-                "anchoring_slope_change": self.anchoring()["slope"] - earlier.anchoring()["slope"]}
+        return {
+            "same_prompts": self.prompts == earlier.prompts,
+            "anchor": anchor,
+            "mean_target_shift": now["mean_target"] - then["mean_target"],
+            "std_change": now["std"] - then["std"],
+            "action_distribution_distance": tv,  # total variation in [0, 1]
+            "anchoring_slope_change": self.anchoring()["slope"] - earlier.anchoring()["slope"],
+        }
 
     # --------------------------------------------------------------- i/o
     def to_dict(self) -> dict[str, Any]:
-        return {"symbol": self.symbol, "as_of": self.as_of, "prompts": self.prompts, "meta": self.meta,
-                "samples": self.samples.to_dict(orient="records"), "summary": self.summary()}
+        return {
+            "symbol": self.symbol,
+            "as_of": self.as_of,
+            "prompts": self.prompts,
+            "meta": self.meta,
+            "samples": self.samples.to_dict(orient="records"),
+            "summary": self.summary(),
+        }
 
     def to_json(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -125,9 +156,14 @@ class CalibrationReport:
         return s[s.anchor.isna()] if anchor is None else s[s.anchor == anchor]
 
 
-def calibrate(graph: TradingGraph, symbol: str | Instrument, as_of: date | str, n: int = 5,
-              anchors: tuple[float | None, ...] = DEFAULT_ANCHORS,
-              progress: Callable[[str], None] | None = None) -> CalibrationReport:
+def calibrate(
+    graph: TradingGraph,
+    symbol: str | Instrument,
+    as_of: date | str,
+    n: int = 5,
+    anchors: tuple[float | None, ...] = DEFAULT_ANCHORS,
+    progress: Callable[[str], None] | None = None,
+) -> CalibrationReport:
     """Run the desk ``n`` times at each anchor on one frozen state and collect the decisions.
 
     ``anchors`` are ``current_weight`` values; ``None`` means no book context. Every run
@@ -142,22 +178,35 @@ def calibrate(graph: TradingGraph, symbol: str | Instrument, as_of: date | str, 
     for anchor in anchors:
         for k in range(n):
             st, dec = graph.propagate(ins, as_of, current_weight=anchor)
-            srcs = _sources(st)   # the same accounting as evaluate()'s agent_sources
+            srcs = _sources(st)  # the same accounting as evaluate()'s agent_sources
             llm_share = srcs.count("llm") / max(1, len(srcs))
-            rows.append({"run": k, "anchor": anchor, "action": dec.action.value, "target_weight": float(dec.target_weight),
-                         "confidence": float(dec.confidence), "approved": bool(dec.approved), "llm_share": llm_share,
-                         "trader_target": float(st.proposal.target_weight) if st.proposal else float("nan")})
+            rows.append(
+                {
+                    "run": k,
+                    "anchor": anchor,
+                    "action": dec.action.value,
+                    "target_weight": float(dec.target_weight),
+                    "confidence": float(dec.confidence),
+                    "approved": bool(dec.approved),
+                    "llm_share": llm_share,
+                    "trader_target": float(st.proposal.target_weight) if st.proposal else float("nan"),
+                }
+            )
             if progress:
-                progress(f"anchor {anchor!s:>5} run {k}: {dec.action.value:<4} target {dec.target_weight:+.2f} "
-                         f"conf {dec.confidence:.2f}")
+                progress(
+                    f"anchor {anchor!s:>5} run {k}: {dec.action.value:<4} target {dec.target_weight:+.2f} "
+                    f"conf {dec.confidence:.2f}"
+                )
     samples = pd.DataFrame(rows)
     cfg = graph.config
-    meta: dict[str, Any] = {"n": n, "anchors": list(anchors), "llm_provider": cfg["llm_provider"],
-                            "provenance": provenance()}
+    meta: dict[str, Any] = {"n": n, "anchors": list(anchors), "llm_provider": cfg["llm_provider"], "provenance": provenance()}
     if graph.llm is not None:
-        meta.update(models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
-                    effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},
-                    anonymized=bool(cfg.get("llm_anonymize")), usage=llm_usage(graph.llm))
+        meta.update(
+            models={"deep": cfg["deep_think_llm"], "quick": cfg["quick_think_llm"]},
+            effort={"deep": cfg["deep_effort"], "quick": cfg["quick_effort"]},
+            anonymized=bool(cfg.get("llm_anonymize")),
+            usage=llm_usage(graph.llm),
+        )
     return CalibrationReport(ins.symbol, as_of.isoformat(), samples, prompt_bundle_hash(cfg), meta)
 
 

@@ -1,4 +1,5 @@
 """Analyst team: each analyst turns raw data into a structured report."""
+
 from __future__ import annotations
 
 import math
@@ -23,8 +24,7 @@ def _last(x) -> float | None:
 def _direction_note(state: TradingState) -> str:
     ins = state.instrument
     if ins.is_fx:
-        return (f"{ins.base} versus {ins.quote} (positive = {ins.display} rate rises, i.e. "
-                f"buy {ins.base} / sell {ins.quote})")
+        return f"{ins.base} versus {ins.quote} (positive = {ins.display} rate rises, i.e. buy {ins.base} / sell {ins.quote})"
     return f"{ins.symbol} shares (positive = price rises)"
 
 
@@ -44,10 +44,8 @@ class Analyst(Agent):
     def prompt(self, facts: dict[str, Any], state: TradingState) -> str:
         # "_"-prefixed facts are private to rules() (e.g. raw headline items) and
         # must never reach the prompt outside a fence.
-        plain = {k: v for k, v in facts.items()
-                 if k not in self.untrusted_keys and not k.startswith("_")}
-        blocks = [untrusted_block(k, [str(x) for x in facts[k]])
-                  for k in self.untrusted_keys if facts.get(k)]
+        plain = {k: v for k, v in facts.items() if k not in self.untrusted_keys and not k.startswith("_")}
+        blocks = [untrusted_block(k, [str(x) for x in facts[k]]) for k in self.untrusted_keys if facts.get(k)]
         return (
             f"Instrument: {state.instrument.display} ({state.instrument.asset_class}). "
             f"As-of date: {state.as_of.isoformat()}. Last close: {state.fmt_px(state.last_price)}.\n"
@@ -65,13 +63,18 @@ class Analyst(Agent):
         # Nothing to analyse -> no model call (saves cost, and the model cannot
         # invent a view from an empty input).
         if not report.abstained:
-            data = self.ask_json(self.prompt(facts, state), ("signal", "confidence", "summary"),
-                                 state=state, numeric=("signal", "confidence"), schema=contracts.ANALYST)
+            data = self.ask_json(
+                self.prompt(facts, state),
+                ("signal", "confidence", "summary"),
+                state=state,
+                numeric=("signal", "confidence"),
+                schema=contracts.ANALYST,
+            )
             if data:
                 kp = data.get("key_points") or []
                 report = AnalystReport(
                     analyst=self.name,
-                    signal=float(data["signal"]),          # range-checked by the contract (R0.4)
+                    signal=float(data["signal"]),  # range-checked by the contract (R0.4)
                     confidence=float(data["confidence"]),
                     summary=str(data["summary"]),
                     key_points=[str(k) for k in kp][:5] if isinstance(kp, list) else [],
@@ -91,11 +94,15 @@ class Analyst(Agent):
 # --------------------------------------------------------------------------
 class TechnicalAnalyst(Analyst):
     name = "technical"
-    role = ("Technical Analyst. You read price action and indicators (trend, momentum, "
-            "mean-reversion, volatility) to forecast the direction over the next 1-4 weeks.")
-    instructions = ("Weigh trend (moving averages), momentum (MACD, returns, 12-1 month "
-                    "time-series momentum), overbought/oversold conditions (RSI, Bollinger "
-                    "%B, KDJ) and volatility (ATR).")
+    role = (
+        "Technical Analyst. You read price action and indicators (trend, momentum, "
+        "mean-reversion, volatility) to forecast the direction over the next 1-4 weeks."
+    )
+    instructions = (
+        "Weigh trend (moving averages), momentum (MACD, returns, 12-1 month "
+        "time-series momentum), overbought/oversold conditions (RSI, Bollinger "
+        "%B, KDJ) and volatility (ATR)."
+    )
 
     def gather(self, state, provider):
         h = state.history
@@ -113,17 +120,23 @@ class TechnicalAnalyst(Analyst):
 
         facts = {
             "close": float(c[-1]),
-            "sma20": _last(quant.sma(c, 20)), "sma50": _last(quant.sma(c, 50)),
+            "sma20": _last(quant.sma(c, 20)),
+            "sma50": _last(quant.sma(c, 50)),
             "sma200": _last(quant.sma(c, 200)),
             "rsi14": _last(quant.rsi(c, 14)),
-            "macd_line": _last(macd_line), "macd_hist": _last(hist),
+            "macd_line": _last(macd_line),
+            "macd_hist": _last(hist),
             "macd_hist_prev": float(hist[-2]) if len(hist) > 1 and not math.isnan(hist[-2]) else None,
             "bollinger_pct_b": _last(pb),
-            "kdj_k": _last(k), "kdj_d": _last(d), "kdj_j": _last(j),
+            "kdj_k": _last(k),
+            "kdj_d": _last(d),
+            "kdj_j": _last(j),
             "atr14": _last(a),
             "realized_vol_20d_annual": _last(quant.realized_vol(c, 20, ppy)),
             "zscore20": _last(quant.zscore(c, 20)),
-            "return_5d": ret(5), "return_20d": ret(20), "return_60d": ret(60),
+            "return_5d": ret(5),
+            "return_20d": ret(20),
+            "return_60d": ret(60),
             # 12-1 month momentum: the year's return skipping the last month, the
             # standard time-series momentum definition (Moskowitz, Ooi, Pedersen 2012).
             "return_12_1m": ret(252, skip=21),
@@ -148,14 +161,12 @@ class TechnicalAnalyst(Analyst):
             golden = f["sma50"] > f["sma200"]
             uptrend, downtrend = golden, not golden
             s += 0.20 if golden else -0.20
-            pts.append(f"50-day SMA {'above' if golden else 'below'} 200-day SMA "
-                       f"({'uptrend' if golden else 'downtrend'} regime)")
+            pts.append(f"50-day SMA {'above' if golden else 'below'} 200-day SMA ({'uptrend' if golden else 'downtrend'} regime)")
         if f["macd_hist"] is not None:
             pos = f["macd_hist"] > 0
             s += 0.15 if pos else -0.15
             rising = f["macd_hist_prev"] is not None and f["macd_hist"] > f["macd_hist_prev"]
-            pts.append(f"MACD histogram {'positive' if pos else 'negative'} and "
-                       f"{'rising' if rising else 'falling'}")
+            pts.append(f"MACD histogram {'positive' if pos else 'negative'} and {'rising' if rising else 'falling'}")
         if f["return_20d"] is not None and f["realized_vol_20d_annual"]:
             scale = f["realized_vol_20d_annual"] * math.sqrt(20 / state.instrument.periods_per_year)
             mom = math.tanh(f["return_20d"] / scale) if scale > 0 else 0.0
@@ -194,8 +205,7 @@ class TechnicalAnalyst(Analyst):
         sig = clip(s, -1, 1)
         conf = clip(0.35 + 0.5 * abs(sig), 0, 0.9) if f["bars"] >= 200 else 0.3
         bias = "bullish" if sig > 0.1 else "bearish" if sig < -0.1 else "neutral"
-        return AnalystReport(self.name, sig, conf,
-                             f"Technical picture is {bias} (score {sig:+.2f}).", pts, f)
+        return AnalystReport(self.name, sig, conf, f"Technical picture is {bias} (score {sig:+.2f}).", pts, f)
 
 
 # --------------------------------------------------------------------------
@@ -206,8 +216,12 @@ class TechnicalAnalyst(Analyst):
 # its term skipped. A window one quarter behind is scored as before.
 STALE_REPORT_DAYS = 120
 STALE_WINDOW_DAYS = 100
-_WINDOW_KEYS = {"revenue": "revenue_period_end", "net_income": "net_income_period_end",
-                "eps": "eps_period_end", "ocf": "ocf_period_end"}
+_WINDOW_KEYS = {
+    "revenue": "revenue_period_end",
+    "net_income": "net_income_period_end",
+    "eps": "eps_period_end",
+    "ocf": "ocf_period_end",
+}
 _WINDOW_LABELS = {"revenue": "revenue figures", "net_income": "net income", "eps": "EPS", "ocf": "cash flow"}
 
 
@@ -221,11 +235,15 @@ def _window_lag(f: dict[str, Any], end: str) -> int | None:
 
 class FundamentalsAnalyst(Analyst):
     name = "fundamentals"
-    role = ("Fundamentals Analyst. You assess a company's intrinsic value and financial "
-            "health from its latest reported financials and insider activity.")
-    instructions = ("Assess valuation (against the sector only when a sector P/E is given), growth, "
-                    "profitability, balance-sheet leverage, cash generation, and earnings surprise "
-                    "and insider activity where they are reported.")
+    role = (
+        "Fundamentals Analyst. You assess a company's intrinsic value and financial "
+        "health from its latest reported financials and insider activity."
+    )
+    instructions = (
+        "Assess valuation (against the sector only when a sector P/E is given), growth, "
+        "profitability, balance-sheet leverage, cash generation, and earnings surprise "
+        "and insider activity where they are reported."
+    )
 
     def gather(self, state, provider):
         return provider.fundamentals(state.instrument, state.as_of)
@@ -238,10 +256,16 @@ class FundamentalsAnalyst(Analyst):
         # behind the report period; neither is scored as if current.
         lag = f.get("lag_days")
         if isinstance(lag, (int, float)) and lag > STALE_REPORT_DAYS:
-            return self.abstain(f"Latest report ({f.get('report_period_end', 'n/a')}) is {int(lag)} days old "
-                                f"at {state.as_of.isoformat()}: no current fundamentals to score.", f)
-        stale = {name: (end, days) for name, key in _WINDOW_KEYS.items()
-                 if (end := f.get(key)) and (days := _window_lag(f, end)) is not None and days > STALE_WINDOW_DAYS}
+            return self.abstain(
+                f"Latest report ({f.get('report_period_end', 'n/a')}) is {int(lag)} days old "
+                f"at {state.as_of.isoformat()}: no current fundamentals to score.",
+                f,
+            )
+        stale = {
+            name: (end, days)
+            for name, key in _WINDOW_KEYS.items()
+            if (end := f.get(key)) and (days := _window_lag(f, end)) is not None and days > STALE_WINDOW_DAYS
+        }
 
         def skipped(name: str, term: str) -> bool:
             if name not in stale:
@@ -294,26 +318,36 @@ class FundamentalsAnalyst(Analyst):
             scored += 1
             pts.append(f"Insiders net {'buyers' if ins > 0 else 'sellers'} ({ins:+d} filings)")
         if not scored:
-            return self.abstain("Every fundamental term is on a window behind the report period: "
-                                + "; ".join(pts), f)
+            return self.abstain("Every fundamental term is on a window behind the report period: " + "; ".join(pts), f)
         sig = clip(s, -1, 1)
         window = f"({f.get('report_period_end', 'n/a')}"
         for name, key in _WINDOW_KEYS.items():
             if f.get(key):
                 window += f"; {_WINDOW_LABELS[name]} through {f[key]}"
-        return AnalystReport(self.name, sig, clip(0.3 + 0.4 * abs(sig), 0, 0.8),
-                             f"Fundamentals score {sig:+.2f} from the latest report {window}).", pts, f)
+        return AnalystReport(
+            self.name,
+            sig,
+            clip(0.3 + 0.4 * abs(sig), 0, 0.8),
+            f"Fundamentals score {sig:+.2f} from the latest report {window}).",
+            pts,
+            f,
+        )
 
 
 # --------------------------------------------------------------------------
 class MacroAnalyst(Analyst):
     """FX counterpart of the Fundamentals Analyst: rates, inflation and valuation."""
+
     name = "macro"
-    role = ("Macro / Rates Analyst for FX. You assess a currency pair from interest-rate "
-            "differentials (carry), inflation differentials (purchasing-power parity) and "
-            "long-run valuation.")
-    instructions = ("Consider carry (policy-rate differential), relative inflation, and how "
-                    "far the pair trades from its long-run (200-day) average.")
+    role = (
+        "Macro / Rates Analyst for FX. You assess a currency pair from interest-rate "
+        "differentials (carry), inflation differentials (purchasing-power parity) and "
+        "long-run valuation."
+    )
+    instructions = (
+        "Consider carry (policy-rate differential), relative inflation, and how "
+        "far the pair trades from its long-run (200-day) average."
+    )
 
     def gather(self, state, provider):
         f = dict(provider.macro(state.instrument, state.as_of))
@@ -330,21 +364,23 @@ class MacroAnalyst(Analyst):
         s, pts = 0.0, []
         rd = f["rate_diff"]
         s += 0.5 * math.tanh(rd / 1.5)
-        pts.append(f"Policy rates {ins.base} {f['base_rate']:.2f}% vs {ins.quote} "
-                   f"{f['quote_rate']:.2f}% -> carry {rd:+.2f}% p.a. "
-                   f"{'favours long' if rd > 0 else 'favours short'} {ins.display}")
+        pts.append(
+            f"Policy rates {ins.base} {f['base_rate']:.2f}% vs {ins.quote} "
+            f"{f['quote_rate']:.2f}% -> carry {rd:+.2f}% p.a. "
+            f"{'favours long' if rd > 0 else 'favours short'} {ins.display}"
+        )
         bi, qi = f.get("base_inflation"), f.get("quote_inflation")
         if bi is not None and qi is not None:
             idiff = bi - qi
             s -= 0.2 * math.tanh(idiff / 2.0)
-            pts.append(f"Inflation {ins.base} {bi:.1f}% vs {ins.quote} {qi:.1f}% "
-                       f"(PPP drag on the higher-inflation currency)")
+            pts.append(f"Inflation {ins.base} {bi:.1f}% vs {ins.quote} {qi:.1f}% (PPP drag on the higher-inflation currency)")
         if (dev := f.get("deviation_from_200d")) is not None:
             s -= 0.2 * math.tanh(dev / 0.08)
             pts.append(f"{ins.display} {dev:+.1%} from its 200-day average")
         sig = clip(s, -1, 1)
-        return AnalystReport(self.name, sig, clip(0.35 + 0.4 * abs(sig), 0, 0.8),
-                             f"Macro backdrop score {sig:+.2f} (carry-led).", pts, f)
+        return AnalystReport(
+            self.name, sig, clip(0.35 + 0.4 * abs(sig), 0, 0.8), f"Macro backdrop score {sig:+.2f} (carry-led).", pts, f
+        )
 
 
 # --------------------------------------------------------------------------
@@ -374,10 +410,14 @@ def _weighted_tone(items: list[NewsItem], state: TradingState, half_life_days: f
 
 class NewsAnalyst(Analyst):
     name = "news"
-    role = ("News Analyst. You monitor company news and macroeconomic headlines and judge "
-            "how they are likely to move the instrument over the coming days.")
-    instructions = ("Judge the net impact of the headlines. Recent and material news "
-                    "(earnings, guidance, central-bank signals, regulation) matters most.")
+    role = (
+        "News Analyst. You monitor company news and macroeconomic headlines and judge "
+        "how they are likely to move the instrument over the coming days."
+    )
+    instructions = (
+        "Judge the net impact of the headlines. Recent and material news "
+        "(earnings, guidance, central-bank signals, regulation) matters most."
+    )
     untrusted_keys = ("headlines",)
 
     def gather(self, state, provider):
@@ -385,9 +425,12 @@ class NewsAnalyst(Analyst):
         items = provider.news(state.instrument, state.as_of, days)
         items = [i for i in items if i.published <= state.as_of]  # hard point-in-time guard
         items.sort(key=lambda i: i.published, reverse=True)
-        return {"lookback_days": days, "count": len(items),
-                "headlines": [f"{i.published.isoformat()} | {i.headline}" for i in items[:25]],
-                "_items": items}
+        return {
+            "lookback_days": days,
+            "count": len(items),
+            "headlines": [f"{i.published.isoformat()} | {i.headline}" for i in items[:25]],
+            "_items": items,
+        }
 
     def rules(self, f, state):
         items = f.pop("_items")
@@ -406,19 +449,23 @@ class NewsAnalyst(Analyst):
         else:
             conf = clip(0.2 + 0.05 * len(items), 0, 0.7)
         f["recency_weighted_tone"] = tone
-        return AnalystReport(self.name, sig, conf,
-                             f"{len(items)} headlines in {f['lookback_days']}d; recency-weighted "
-                             f"tone {tone:+.2f}.", pts, f)
+        return AnalystReport(
+            self.name, sig, conf, f"{len(items)} headlines in {f['lookback_days']}d; recency-weighted tone {tone:+.2f}.", pts, f
+        )
 
 
 # --------------------------------------------------------------------------
 class SentimentAnalyst(Analyst):
     name = "sentiment"
-    role = ("Sentiment Analyst. You gauge crowd sentiment and positioning from social-media "
-            "posts and market-based proxies, flagging when sentiment is extreme enough to be "
-            "a contrarian signal.")
-    instructions = ("Estimate short-term sentiment. Moderate optimism supports the trend; "
-                    "euphoric or capitulating extremes are contrarian warnings.")
+    role = (
+        "Sentiment Analyst. You gauge crowd sentiment and positioning from social-media "
+        "posts and market-based proxies, flagging when sentiment is extreme enough to be "
+        "a contrarian signal."
+    )
+    instructions = (
+        "Estimate short-term sentiment. Moderate optimism supports the trend; "
+        "euphoric or capitulating extremes are contrarian warnings."
+    )
     untrusted_keys = ("sample_posts",)
 
     def gather(self, state, provider):
@@ -449,8 +496,7 @@ class SentimentAnalyst(Analyst):
         if f.get("posts"):
             m = f["mean_post_sentiment"]
             s += 0.6 * m
-            pts.append(f"{f['posts']} social posts, mean tone {m:+.2f}, "
-                       f"{f['bullish_share']:.0%} bullish")
+            pts.append(f"{f['posts']} social posts, mean tone {m:+.2f}, {f['bullish_share']:.0%} bullish")
             if (r := f.get("recent_post_sentiment")) is not None:
                 s += 0.2 * (r - m)
                 pts.append(f"Last-2-day tone {r:+.2f} ({'improving' if r > m else 'fading'})")
@@ -460,13 +506,13 @@ class SentimentAnalyst(Analyst):
         if rsi is not None and (rsi > 78 or rsi < 22):
             extreme = True
             s += -0.3 if rsi > 78 else 0.3
-            pts.append(f"RSI {rsi:.0f} signals crowd {'euphoria' if rsi > 78 else 'capitulation'} "
-                       "(contrarian)")
+            pts.append(f"RSI {rsi:.0f} signals crowd {'euphoria' if rsi > 78 else 'capitulation'} (contrarian)")
         if (vz := f.get("volume_zscore")) is not None and abs(vz) > 2:
             pts.append(f"Volume spike ({vz:+.1f} sigma): attention elevated")
         if not f.get("posts") and not extreme:
-            return AnalystReport(self.name, 0.0, 0.15, "No sentiment data and no crowding "
-                                 "extreme; no view.", pts, f, abstained=True)
+            return AnalystReport(
+                self.name, 0.0, 0.15, "No sentiment data and no crowding extreme; no view.", pts, f, abstained=True
+            )
         sig = clip(s, -1, 1)
         conf = 0.45 if f.get("posts") else 0.15
         return AnalystReport(self.name, sig, conf, f"Crowd sentiment score {sig:+.2f}.", pts, f)
@@ -490,14 +536,20 @@ class AlphaAnalyst(Analyst):
     naively trusting it under the harness would have silently bypassed the significance gate
     that applies when the analyst computes its own snapshot directly.
     """
+
     name = "alpha"
-    role = ("Quantitative Alpha Analyst. You read a library of systematic signals (momentum, "
-            "reversal, breakout, volatility, carry) and their measured predictive power, and "
-            "give a direction for the next one to four weeks.")
-    instructions = ("Only trust a signal whose IC t-statistic clears the 5% Student-t bar for its fold count (2.78 with five folds); report "
-                    "its combined view and the strongest components, and abstain when none qualify.")
+    role = (
+        "Quantitative Alpha Analyst. You read a library of systematic signals (momentum, "
+        "reversal, breakout, volatility, carry) and their measured predictive power, and "
+        "give a direction for the next one to four weeks."
+    )
+    instructions = (
+        "Only trust a signal whose IC t-statistic clears the 5% Student-t bar for its fold count (2.78 with five folds); report "
+        "its combined view and the strongest components, and abstain when none qualify."
+    )
     min_ic_tstat = 2.0
     min_ic_n = 30
+
     # The desk's general lookback (config["lookback_days"], 400 by default) is sized for
     # the other analysts. A 273-day signal like tsmom_12_1 barely produces its first
     # non-NaN value in that window, leaving too few points to ever clear the significance
@@ -516,6 +568,7 @@ class AlphaAnalyst(Analyst):
 
         from ..alpha import alpha_snapshot, compute_alphas, forward_returns
         from ..leakage import ic_purged
+
         if state.alpha:
             return {"latest": dict(state.alpha.get("latest") or {}), "ic": dict(state.alpha.get("ic") or {})}
         ins = state.instrument
@@ -534,25 +587,39 @@ class AlphaAnalyst(Analyst):
 
     def rules(self, f, state):
         from ..alpha import significant_alpha_signal
+
         latest, ic = f.get("latest") or {}, f.get("ic") or {}
         comb, strong_names = significant_alpha_signal(latest, ic, self.min_ic_tstat, self.min_ic_n)
         if comb is None:
             return self.abstain(
                 "No alpha signal clears the significance bar (|t(IC)| at the 5% Student-t bar for its fold count, n >= 30) over the "
-                "lookback." if ic else "Not enough history for the alpha library.", f)
+                "lookback."
+                if ic
+                else "Not enough history for the alpha library.",
+                f,
+            )
         pts = []
         for name in strong_names[:3]:
             v = ic[name]
             val = latest.get(name)
-            pts.append(f"{name}: value {val:+.2f}, IC {v['IC']:+.3f} (t {v['t(IC)']:.1f})"
-                       if val is not None else f"{name}: IC {v['IC']:+.3f}")
+            pts.append(
+                f"{name}: value {val:+.2f}, IC {v['IC']:+.3f} (t {v['t(IC)']:.1f})"
+                if val is not None
+                else f"{name}: IC {v['IC']:+.3f}"
+            )
         sig = clip(comb, -1, 1)
         conf = clip(0.3 + 0.3 * abs(sig) + 0.05 * len(strong_names), 0, 0.8)
         total = sum(1 for v in ic.values() if v.get("IC") is not None)
-        return AnalystReport(self.name, sig, conf,
-                             f"IC-weighted alpha composite {sig:+.2f} from {len(strong_names)} of "
-                             f"{total} signals clearing the 5% Student-t bar for their fold count over the "
-                             "lookback.", pts, f)
+        return AnalystReport(
+            self.name,
+            sig,
+            conf,
+            f"IC-weighted alpha composite {sig:+.2f} from {len(strong_names)} of "
+            f"{total} signals clearing the 5% Student-t bar for their fold count over the "
+            "lookback.",
+            pts,
+            f,
+        )
 
 
 class XAlphaAnalyst(Analyst):
@@ -571,14 +638,19 @@ class XAlphaAnalyst(Analyst):
     instruments and threads, so an evaluation over the whole universe pays for the
     cross-section once per decision date.
     """
+
     name = "xalpha"
-    role = ("Cross-Sectional Alpha Analyst. You rank this instrument against its peer universe on "
-            "systematic signals (momentum, reversal, breakout, volatility, carry) whose cross-sectional "
-            "predictive power has been measured, and give a relative direction for the next one to "
-            "four weeks.")
-    instructions = ("Only trust a signal whose cross-sectional IC t-statistic clears the 5% Student-t bar for its fold count (2.78 with five folds); "
-                    "report the name's rank-based combined view and the strongest components, and abstain "
-                    "when none qualify.")
+    role = (
+        "Cross-Sectional Alpha Analyst. You rank this instrument against its peer universe on "
+        "systematic signals (momentum, reversal, breakout, volatility, carry) whose cross-sectional "
+        "predictive power has been measured, and give a relative direction for the next one to "
+        "four weeks."
+    )
+    instructions = (
+        "Only trust a signal whose cross-sectional IC t-statistic clears the 5% Student-t bar for its fold count (2.78 with five folds); "
+        "report the name's rank-based combined view and the strongest components, and abstain "
+        "when none qualify."
+    )
     min_ic_tstat = 2.0
     min_ic_n = 30
     horizon = 10
@@ -593,9 +665,11 @@ class XAlphaAnalyst(Analyst):
         universe of that class), plus the instrument itself. A mixed list is filtered by
         asset class, so one configured list serves equities and FX."""
         from ..instruments import Instrument
+
         names = self.config.get("xalpha_universe")
         if not names:
             from ..evaluation import CORE_UNIVERSE
+
             names = CORE_UNIVERSE[state.instrument.asset_class]
         out = []
         for n in names:
@@ -616,6 +690,7 @@ class XAlphaAnalyst(Analyst):
 
         from ..instruments import Instrument
         from ..xalpha import _combine_scores, cross_sectional_ic, cs_zscore, forward_return_panel, ic_summary, signal_panels
+
         names = self.universe(state)
         key = (tuple(names), state.as_of, self.horizon, self.lookback_days)
         cache = _xalpha_cache_for(provider)
@@ -650,8 +725,12 @@ class XAlphaAnalyst(Analyst):
                     sc = cs_zscore(panel, groups, min_names=3)
                     scores[n] = sc
                     summ = ic_summary(cross_sectional_ic(sc, fwd, self.min_names), self.horizon, ppy)
-                    ic[n] = {"IC": float(summ["mean IC"]), "t(IC)": float(summ["t(IC)"]),
-                             "t_crit": float(summ["t_crit"]), "n": int(summ["days"])}
+                    ic[n] = {
+                        "IC": float(summ["mean IC"]),
+                        "t(IC)": float(summ["t(IC)"]),
+                        "t_crit": float(summ["t_crit"]),
+                        "n": int(summ["days"]),
+                    }
                 scores["combined"] = _combine_scores(scores, None)
                 snap: dict[str, dict[str, float | None]] = {s: {} for s in frames}
                 for n, sc in scores.items():
@@ -667,31 +746,54 @@ class XAlphaAnalyst(Analyst):
             _xalpha_cache_put(cache, key, cached)
         snap, ic, members = cached
         me = dict(snap.get(state.instrument.symbol) or {})
-        return {"universe": members, "breadth": len(members), "horizon": self.horizon,
-                "latest": {k: v for k, v in me.items() if k != "combined"}, "combined_z": me.get("combined"), "ic": ic}
+        return {
+            "universe": members,
+            "breadth": len(members),
+            "horizon": self.horizon,
+            "latest": {k: v for k, v in me.items() if k != "combined"},
+            "combined_z": me.get("combined"),
+            "ic": ic,
+        }
 
     def rules(self, f, state):
         from ..alpha import significant_alpha_signal
+
         latest, ic = f.get("latest") or {}, f.get("ic") or {}
         if f.get("breadth", 0) < self.min_names:
             return self.abstain(f"Cross-section too thin ({f.get('breadth', 0)} names with enough history).", f)
         if state.instrument.symbol not in (f.get("universe") or []) or not latest:
-            return self.abstain(f"{state.instrument.symbol} has too little history (< 300 bars) to be scored "
-                                f"against the {f.get('breadth', 0)}-name cross-section.", f)
+            return self.abstain(
+                f"{state.instrument.symbol} has too little history (< 300 bars) to be scored "
+                f"against the {f.get('breadth', 0)}-name cross-section.",
+                f,
+            )
         comb, strong = significant_alpha_signal(latest, ic, self.min_ic_tstat, self.min_ic_n)
         if comb is None:
-            return self.abstain("No cross-sectional alpha clears the significance bar (|t(IC)| at the 5% Student-t bar for its fold count, "
-                                "n >= 30) over the lookback." if ic else "Not enough history for the cross-section.", f)
+            return self.abstain(
+                "No cross-sectional alpha clears the significance bar (|t(IC)| at the 5% Student-t bar for its fold count, "
+                "n >= 30) over the lookback."
+                if ic
+                else "Not enough history for the cross-section.",
+                f,
+            )
         pts = []
         for name in strong[:3]:
             v, val = ic[name], latest.get(name)
-            pts.append(f"{name}: z {val:+.2f} vs {f['breadth']} peers, IC {v['IC']:+.3f} (t {v['t(IC)']:.1f})"
-                       if val is not None else f"{name}: IC {v['IC']:+.3f}")
+            pts.append(
+                f"{name}: z {val:+.2f} vs {f['breadth']} peers, IC {v['IC']:+.3f} (t {v['t(IC)']:.1f})"
+                if val is not None
+                else f"{name}: IC {v['IC']:+.3f}"
+            )
         sig = clip(comb, -1, 1)
         conf = clip(0.3 + 0.3 * abs(sig) + 0.05 * len(strong), 0, 0.8)
-        return AnalystReport(self.name, sig, conf,
-                             f"Cross-sectional composite {sig:+.2f} from {len(strong)} significant alpha(s) "
-                             f"across {f['breadth']} names.", pts, f)
+        return AnalystReport(
+            self.name,
+            sig,
+            conf,
+            f"Cross-sectional composite {sig:+.2f} from {len(strong)} significant alpha(s) across {f['breadth']} names.",
+            pts,
+            f,
+        )
 
 
 # One cache per provider (weakly referenced, so it dies with the provider and can never

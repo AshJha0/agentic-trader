@@ -17,6 +17,7 @@ inflate it?
 Sharpe ratios inside these formulas are per period (daily); the public helpers
 convert from annualised figures where they take them.
 """
+
 from __future__ import annotations
 
 import math
@@ -35,13 +36,13 @@ EULER_GAMMA = 0.5772156649015329
 @dataclass(frozen=True)
 class SharpeStats:
     n: int
-    mean: float          # per-period mean return
-    std: float           # per-period std (ddof = 1)
+    mean: float  # per-period mean return
+    std: float  # per-period std (ddof = 1)
     skew: float
-    kurt: float          # non-excess (normal = 3)
-    sharpe: float        # per period
+    kurt: float  # non-excess (normal = 3)
+    sharpe: float  # per period
     sharpe_annual: float
-    t_stat: float        # sharpe * sqrt(n)
+    t_stat: float  # sharpe * sqrt(n)
 
 
 def sharpe_stats(returns, periods_per_year: float = 252.0) -> SharpeStats:
@@ -54,13 +55,14 @@ def sharpe_stats(returns, periods_per_year: float = 252.0) -> SharpeStats:
     if std <= quant.ZERO_VARIANCE_TOL * max(1.0, abs(mean)):
         return SharpeStats(n, mean, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0)
     z = (r - mean) / r.std(ddof=0)
-    skew, kurt = float(np.mean(z ** 3)), float(np.mean(z ** 4))
+    skew, kurt = float(np.mean(z**3)), float(np.mean(z**4))
     sr = mean / std
     return SharpeStats(n, mean, std, skew, kurt, sr, sr * math.sqrt(periods_per_year), sr * math.sqrt(n))
 
 
-def sharpe_ci_bootstrap(returns, periods_per_year: float = 252.0, n_boot: int = 2000,
-                        block: int = 10, ci: float = 0.95, seed: int = 0) -> tuple[float, float]:
+def sharpe_ci_bootstrap(
+    returns, periods_per_year: float = 252.0, n_boot: int = 2000, block: int = 10, ci: float = 0.95, seed: int = 0
+) -> tuple[float, float]:
     """Annualised Sharpe confidence interval from a circular block bootstrap.
 
     Blocks preserve short-range autocorrelation; ``block`` of about 10 days is a
@@ -80,8 +82,7 @@ def sharpe_ci_bootstrap(returns, periods_per_year: float = 252.0, n_boot: int = 
     return (float(lo), float(hi))
 
 
-def probabilistic_sharpe(sr: float, n: int, skew: float = 0.0, kurt: float = 3.0,
-                         sr_benchmark: float = 0.0) -> float:
+def probabilistic_sharpe(sr: float, n: int, skew: float = 0.0, kurt: float = 3.0, sr_benchmark: float = 0.0) -> float:
     """P(true Sharpe > benchmark). ``sr`` and ``sr_benchmark`` are per period."""
     if n <= 1:
         return float("nan")
@@ -106,12 +107,10 @@ def expected_max_sharpe(n_trials: int, var_trials_sr: float) -> float:
     if n_trials <= 1 or var_trials_sr <= 0:
         return 0.0
     n = float(n_trials)
-    return math.sqrt(var_trials_sr) * ((1 - EULER_GAMMA) * _N.inv_cdf(1 - 1 / n)
-                                       + EULER_GAMMA * _N.inv_cdf(1 - 1 / (n * math.e)))
+    return math.sqrt(var_trials_sr) * ((1 - EULER_GAMMA) * _N.inv_cdf(1 - 1 / n) + EULER_GAMMA * _N.inv_cdf(1 - 1 / (n * math.e)))
 
 
-def deflated_sharpe(sr: float, n: int, n_trials: int, var_trials_sr: float,
-                    skew: float = 0.0, kurt: float = 3.0) -> float:
+def deflated_sharpe(sr: float, n: int, n_trials: int, var_trials_sr: float, skew: float = 0.0, kurt: float = 3.0) -> float:
     """PSR of ``sr`` against the expected maximum of ``n_trials`` null trials.
 
     All Sharpe ratios per period. ``var_trials_sr`` is the variance of the
@@ -120,8 +119,9 @@ def deflated_sharpe(sr: float, n: int, n_trials: int, var_trials_sr: float,
     return probabilistic_sharpe(sr, n, skew, kurt, expected_max_sharpe(n_trials, var_trials_sr))
 
 
-def min_track_record(sr: float, sr_benchmark: float = 0.0, skew: float = 0.0, kurt: float = 3.0,
-                     confidence: float = 0.95) -> float:
+def min_track_record(
+    sr: float, sr_benchmark: float = 0.0, skew: float = 0.0, kurt: float = 3.0, confidence: float = 0.95
+) -> float:
     """Periods needed for ``sr`` (per period) to beat the benchmark at ``confidence``.
     Infinite when the Sharpe ratio does not exceed the benchmark."""
     if sr <= sr_benchmark:
@@ -141,9 +141,12 @@ DEFLATED_SHARPE_CAVEAT = (
 
 ABSOLUTE_SELECTION_STATISTIC = (
     "absolute Sharpe against the dispersion of absolute trial Sharpes: NOT a selection test when "
-    "the trials share a common mean (review C1); read deflated_sharpe_prob_differential")
-DIFFERENTIAL_SELECTION_STATISTIC = ("Sharpe of chosen minus control daily returns, control levered to the "
-                                    "chosen volatility unless match_vol=False (differential DSR)")
+    "the trials share a common mean (review C1); read deflated_sharpe_prob_differential"
+)
+DIFFERENTIAL_SELECTION_STATISTIC = (
+    "Sharpe of chosen minus control daily returns, control levered to the "
+    "chosen volatility unless match_vol=False (differential DSR)"
+)
 
 
 def null_trial_sharpe_variance(n: int, sr: float = 0.0, skew: float = 0.0, kurt: float = 3.0) -> float:
@@ -161,9 +164,15 @@ def null_trial_sharpe_variance(n: int, sr: float = 0.0, skew: float = 0.0, kurt:
     return (1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr * sr) / (n - 1)
 
 
-def deflated_sharpe_differential(chosen_returns, control_returns, n_trials: int,
-                                 periods_per_year: float = 252.0, trial_returns=None,
-                                 trial_sharpes_vs_control_annual=None, match_vol: bool = True) -> dict:
+def deflated_sharpe_differential(
+    chosen_returns,
+    control_returns,
+    n_trials: int,
+    periods_per_year: float = 252.0,
+    trial_returns=None,
+    trial_sharpes_vs_control_annual=None,
+    match_vol: bool = True,
+) -> dict:
     """Deflated Sharpe of the chosen variant's *excess over a control* (review C1).
 
     Plain idea: every trial here is a long-biased book on the same names, so their absolute
@@ -210,8 +219,7 @@ def deflated_sharpe_differential(chosen_returns, control_returns, n_trials: int,
         t = np.asarray(trial_returns, dtype=float)
         if t.ndim != 2 or t.shape[0] != c.size:
             raise ValueError("trial_returns must be (periods x trials) on the control's days")
-        diff_trials = np.array([sharpe_stats(t[:, j] - scale(t[:, j]) * c, periods_per_year).sharpe
-                                for j in range(t.shape[1])])
+        diff_trials = np.array([sharpe_stats(t[:, j] - scale(t[:, j]) * c, periods_per_year).sharpe for j in range(t.shape[1])])
         source = "variance of the trials' differential Sharpes (from trial_returns)"
     elif trial_sharpes_vs_control_annual is not None:
         diff_trials = np.asarray(trial_sharpes_vs_control_annual, dtype=float) / math.sqrt(periods_per_year)
@@ -227,20 +235,33 @@ def deflated_sharpe_differential(chosen_returns, control_returns, n_trials: int,
     sr0 = expected_max_sharpe(n_used, var) if math.isfinite(var) else float("nan")
     dsr = probabilistic_sharpe(s.sharpe, s.n, s.skew, s.kurt, sr0) if math.isfinite(sr0) else float("nan")
     mtr = min_track_record(s.sharpe, sr0, s.skew, s.kurt) if math.isfinite(sr0) else float("inf")
-    return {"selection_statistic": DIFFERENTIAL_SELECTION_STATISTIC, "n": s.n, "trials": n_used,
-            "control_scale": k_chosen, "match_vol": match_vol,
-            "sharpe_annual": s.sharpe_annual, "skew": s.skew, "kurtosis": s.kurt,
-            "benchmark_variance_source": source,
-            "expected_max_sharpe_annual": sr0 * math.sqrt(periods_per_year),
-            "deflated_sharpe_prob": dsr,
-            "psr_vs_zero": probabilistic_sharpe(s.sharpe, s.n, s.skew, s.kurt),
-            "min_track_record_periods": None if not math.isfinite(mtr) else mtr}
+    return {
+        "selection_statistic": DIFFERENTIAL_SELECTION_STATISTIC,
+        "n": s.n,
+        "trials": n_used,
+        "control_scale": k_chosen,
+        "match_vol": match_vol,
+        "sharpe_annual": s.sharpe_annual,
+        "skew": s.skew,
+        "kurtosis": s.kurt,
+        "benchmark_variance_source": source,
+        "expected_max_sharpe_annual": sr0 * math.sqrt(periods_per_year),
+        "deflated_sharpe_prob": dsr,
+        "psr_vs_zero": probabilistic_sharpe(s.sharpe, s.n, s.skew, s.kurt),
+        "min_track_record_periods": None if not math.isfinite(mtr) else mtr,
+    }
 
 
-def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: float = 252.0,
-                     n_trials: int | None = None, pre_registry_trials: int = 0,
-                     trial_returns=None, control_returns=None,
-                     trial_sharpes_vs_control_annual=None) -> dict:
+def selection_report(
+    chosen_returns,
+    trial_sharpes_annual,
+    periods_per_year: float = 252.0,
+    n_trials: int | None = None,
+    pre_registry_trials: int = 0,
+    trial_returns=None,
+    control_returns=None,
+    trial_sharpes_vs_control_annual=None,
+) -> dict:
     """Everything a reader needs to judge a chosen variant after a search.
 
     Which statistic (review 2026-11-12, C1): ``"selection_statistic"`` says it. Without
@@ -283,77 +304,97 @@ def selection_report(chosen_returns, trial_sharpes_annual, periods_per_year: flo
     if n_measured > 1:
         sd_annual = float(np.std(trial_sharpes_annual, ddof=1))
         if s.sharpe_annual > float(np.max(trial_sharpes_annual)) + 3.0 * sd_annual:
-            warning = ("chosen Sharpe exceeds the best trial by more than three trial standard deviations: "
-                       "the trials are probably not the same statistic as the chosen series")
+            warning = (
+                "chosen Sharpe exceeds the best trial by more than three trial standard deviations: "
+                "the trials are probably not the same statistic as the chosen series"
+            )
     var_trials = float(trials.var(ddof=1)) if n_measured > 1 else 0.0
     sr0 = expected_max_sharpe(n_trials, var_trials)
     lo, hi = sharpe_ci_bootstrap(chosen_returns, periods_per_year)
     return {
-        "n": s.n, "sharpe_annual": round(s.sharpe_annual, 3), "t_stat": round(s.t_stat, 2),
+        "n": s.n,
+        "sharpe_annual": round(s.sharpe_annual, 3),
+        "t_stat": round(s.t_stat, 2),
         **({"statistic_warning": warning} if warning else {}),
-        "skew": round(s.skew, 3), "kurtosis": round(s.kurt, 2),
+        "skew": round(s.skew, 3),
+        "kurtosis": round(s.kurt, 2),
         "bootstrap_ci_95": (round(lo, 3), round(hi, 3)),
         "psr_vs_zero": round(probabilistic_sharpe(s.sharpe, s.n, s.skew, s.kurt), 3),
-        "trials": n_trials, "trials_measured": n_measured, "expected_max_sharpe_annual": round(sr0 * math.sqrt(periods_per_year), 3),
+        "trials": n_trials,
+        "trials_measured": n_measured,
+        "expected_max_sharpe_annual": round(sr0 * math.sqrt(periods_per_year), 3),
         "deflated_sharpe_prob": round(deflated_sharpe(s.sharpe, s.n, n_trials, var_trials, s.skew, s.kurt), 3),
-        "min_track_record_periods": (None if not math.isfinite(m := min_track_record(s.sharpe, sr0, s.skew, s.kurt))
-                                     else round(m)),
+        "min_track_record_periods": (
+            None if not math.isfinite(m := min_track_record(s.sharpe, sr0, s.skew, s.kurt)) else round(m)
+        ),
         "caveat": DEFLATED_SHARPE_CAVEAT if n_trials > 1 else None,
-        **(_pre_registry_rows(s, n_trials, pre_registry_trials, var_trials, periods_per_year)
-           if pre_registry_trials > 0 else {}),
+        **(_pre_registry_rows(s, n_trials, pre_registry_trials, var_trials, periods_per_year) if pre_registry_trials > 0 else {}),
         **(_effective_rows(s, trial_returns, var_trials) if trial_returns is not None else {}),
-        "selection_statistic": ABSOLUTE_SELECTION_STATISTIC if control_returns is None
-        else DIFFERENTIAL_SELECTION_STATISTIC,
-        **(_differential_rows(chosen_returns, control_returns, n_trials, periods_per_year, trial_returns,
-                              trial_sharpes_vs_control_annual) if control_returns is not None else {}),
+        "selection_statistic": ABSOLUTE_SELECTION_STATISTIC if control_returns is None else DIFFERENTIAL_SELECTION_STATISTIC,
+        **(
+            _differential_rows(
+                chosen_returns, control_returns, n_trials, periods_per_year, trial_returns, trial_sharpes_vs_control_annual
+            )
+            if control_returns is not None
+            else {}
+        ),
     }
 
 
-def _differential_rows(chosen_returns, control_returns, n_trials: int, periods_per_year: float,
-                       trial_returns, trial_sharpes_vs_control_annual) -> dict:
-    e = deflated_sharpe_differential(chosen_returns, control_returns, n_trials, periods_per_year,
-                                     trial_returns=trial_returns,
-                                     trial_sharpes_vs_control_annual=trial_sharpes_vs_control_annual)
+def _differential_rows(
+    chosen_returns, control_returns, n_trials: int, periods_per_year: float, trial_returns, trial_sharpes_vs_control_annual
+) -> dict:
+    e = deflated_sharpe_differential(
+        chosen_returns,
+        control_returns,
+        n_trials,
+        periods_per_year,
+        trial_returns=trial_returns,
+        trial_sharpes_vs_control_annual=trial_sharpes_vs_control_annual,
+    )
     mtr = e["min_track_record_periods"]
-    return {"differential_sharpe_annual": round(e["sharpe_annual"], 3),
-            "differential_expected_max_sharpe_annual": round(e["expected_max_sharpe_annual"], 3),
-            "differential_benchmark_variance_source": e["benchmark_variance_source"],
-            "deflated_sharpe_prob_differential": round(e["deflated_sharpe_prob"], 3),
-            "differential_min_track_record_periods": None if mtr is None else round(mtr)}
+    return {
+        "differential_sharpe_annual": round(e["sharpe_annual"], 3),
+        "differential_expected_max_sharpe_annual": round(e["expected_max_sharpe_annual"], 3),
+        "differential_benchmark_variance_source": e["benchmark_variance_source"],
+        "deflated_sharpe_prob_differential": round(e["deflated_sharpe_prob"], 3),
+        "differential_min_track_record_periods": None if mtr is None else round(mtr),
+    }
 
 
 def _effective_rows(s: SharpeStats, trial_returns, var_trials: float) -> dict:
     e = deflated_sharpe_effective(s.sharpe, s.n, trial_returns, var_trials, s.skew, s.kurt)
-    return {"trials_effective": round(e["n_eff"], 2), "trials_mean_corr": round(e["mean_corr"], 3),
-            "deflated_sharpe_prob_effective": round(e["deflated_sharpe_prob"], 3),
-            "effective_trials_method": "participation ratio of trial-return correlation eigenvalues; "
-                                       "trial-Sharpe variance / (1 - mean correlation)"}
+    return {
+        "trials_effective": round(e["n_eff"], 2),
+        "trials_mean_corr": round(e["mean_corr"], 3),
+        "deflated_sharpe_prob_effective": round(e["deflated_sharpe_prob"], 3),
+        "effective_trials_method": "participation ratio of trial-return correlation eigenvalues; "
+        "trial-Sharpe variance / (1 - mean correlation)",
+    }
 
 
-def _pre_registry_rows(s: SharpeStats, n_trials: int, pre: int, var_trials: float,
-                       periods_per_year: float) -> dict:
+def _pre_registry_rows(s: SharpeStats, n_trials: int, pre: int, var_trials: float, periods_per_year: float) -> dict:
     total = n_trials + int(pre)
     sr0 = expected_max_sharpe(total, var_trials)
     return {
         "trials_pre_registry_estimate": int(pre),
         "trials_incl_pre_registry": total,
         "expected_max_sharpe_annual_incl_pre_registry": round(sr0 * math.sqrt(periods_per_year), 3),
-        "deflated_sharpe_prob_incl_pre_registry": round(
-            deflated_sharpe(s.sharpe, s.n, total, var_trials, s.skew, s.kurt), 3),
+        "deflated_sharpe_prob_incl_pre_registry": round(deflated_sharpe(s.sharpe, s.n, total, var_trials, s.skew, s.kurt), 3),
     }
 
 
 # ------------------------------------------------------ across instruments
 @dataclass(frozen=True)
 class PairedBootstrap:
-    n: int                   # instruments with both values
-    mean_diff: float         # mean(a - b) over instruments
-    ci_low: float            # bootstrap percentile interval of the mean difference
+    n: int  # instruments with both values
+    mean_diff: float  # mean(a - b) over instruments
+    ci_low: float  # bootstrap percentile interval of the mean difference
     ci_high: float
-    p_value: float           # two-sided, null-centred (bootstrap.null_centred_pvalue; round 2, C12)
-    wins: int                # instruments where a > b
-    scheme: str = "instruments"   # "instruments" (plain) or "clusters" (whole groups resampled)
-    n_groups: int = 0        # distinct group labels among the finite pairs (0 when none were given)
+    p_value: float  # two-sided, null-centred (bootstrap.null_centred_pvalue; round 2, C12)
+    wins: int  # instruments where a > b
+    scheme: str = "instruments"  # "instruments" (plain) or "clusters" (whole groups resampled)
+    n_groups: int = 0  # distinct group labels among the finite pairs (0 when none were given)
     # the pre-round-2 p (share of resamples on the other side of zero, doubled), kept for comparison
     p_value_percentile: float = float("nan")
     # what the interval is conditional on (review C8): instruments are resampled, the time path is not
@@ -397,15 +438,16 @@ def benjamini_hochberg(p_values, q: float = 0.05) -> np.ndarray:
         return out
     # BH: reject every hypothesis up to the largest k whose own p clears its threshold.
     largest = int(np.max(np.flatnonzero(ok)))
-    out[order[:largest + 1]] = True
+    out[order[: largest + 1]] = True
     return out
 
 
 MIN_CLUSTER_GROUPS = 5
 
 
-def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0,
-                     groups=None, min_groups: int = MIN_CLUSTER_GROUPS) -> PairedBootstrap:
+def paired_bootstrap(
+    a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0, groups=None, min_groups: int = MIN_CLUSTER_GROUPS
+) -> PairedBootstrap:
     """Bootstrap the mean paired difference ``a - b`` across instruments.
 
     The time-series bootstrap (``sharpe_ci_bootstrap``) asks whether one instrument's
@@ -490,12 +532,22 @@ def paired_bootstrap(a, b, n_boot: int = 10_000, ci: float = 0.95, seed: int = 0
         means = _two_stage_cluster_means(d, codes, n_groups, n_boot, rng)
     lo, hi = np.quantile(means, [(1 - ci) / 2, 1 - (1 - ci) / 2])
     tail = float(min((means <= 0).mean(), (means >= 0).mean()))
-    return PairedBootstrap(n, mean, float(lo), float(hi), null_centred_pvalue(means, mean), wins, scheme,
-                           n_groups, p_value_percentile=min(1.0, 2.0 * tail))
+    return PairedBootstrap(
+        n,
+        mean,
+        float(lo),
+        float(hi),
+        null_centred_pvalue(means, mean),
+        wins,
+        scheme,
+        n_groups,
+        p_value_percentile=min(1.0, 2.0 * tail),
+    )
 
 
-def _two_stage_cluster_means(d: np.ndarray, codes: np.ndarray, n_groups: int, n_boot: int,
-                             rng: np.random.Generator) -> np.ndarray:
+def _two_stage_cluster_means(
+    d: np.ndarray, codes: np.ndarray, n_groups: int, n_boot: int, rng: np.random.Generator
+) -> np.ndarray:
     """Replicate pooled means: ``n_groups`` groups drawn with replacement, then each drawn
     group's own size of instruments drawn with replacement from inside it."""
     sizes = np.bincount(codes, minlength=n_groups)
@@ -503,7 +555,7 @@ def _two_stage_cluster_means(d: np.ndarray, codes: np.ndarray, n_groups: int, n_
     members = np.zeros((n_groups, widest), dtype=int)
     for g in range(n_groups):
         gi = np.flatnonzero(codes == g)
-        members[g, :gi.size] = gi
+        members[g, : gi.size] = gi
     drawn = rng.integers(0, n_groups, size=(n_boot, n_groups))
     sz = sizes[drawn]
     # one uniform per padded slot, scaled to the drawn group's size; slots past it are masked
@@ -526,7 +578,7 @@ def rolling_var_forecast(returns, window: int = 250, alpha: float = 0.95) -> np.
     r = np.asarray(returns, dtype=float)
     out = np.full(r.size, np.nan)
     for t in range(window, r.size):
-        w = r[t - window:t]
+        w = r[t - window : t]
         w = w[np.isfinite(w)]
         if w.size >= 20:
             out[t] = quant.historical_var(w, alpha)
@@ -547,13 +599,14 @@ class VarBacktest:
     the position sizes built on top of an uncalibrated VaR were wrong in any particular
     direction.
     """
+
     n: int
     breaches: int
     breach_rate: float
     expected_rate: float
     kupiec_lr: float
     kupiec_p: float
-    christoffersen_lr: float | None   # None when there are too few breaches to test independence
+    christoffersen_lr: float | None  # None when there are too few breaches to test independence
     christoffersen_p: float | None
     conditional_coverage_p: float | None
 
@@ -629,22 +682,31 @@ def var_backtest(returns, var_forecasts, alpha: float = 0.95) -> VarBacktest:
         p_cc = _chi2_2df_p(lr_uc + lr_ind)
     else:
         p_ind = None
-    return VarBacktest(n, x, rate, p, round(lr_uc, 4), round(kupiec_p, 4),
-                       None if lr_ind is None else round(lr_ind, 4), p_ind,
-                       None if p_cc is None else round(p_cc, 4))
+    return VarBacktest(
+        n,
+        x,
+        rate,
+        p,
+        round(lr_uc, 4),
+        round(kupiec_p, 4),
+        None if lr_ind is None else round(lr_ind, 4),
+        p_ind,
+        None if p_cc is None else round(p_cc, 4),
+    )
 
 
 # ------------------------------------------------------------- portfolio-level intervals
 @dataclass(frozen=True)
 class SharpeDifference:
     """Sharpe(a) - Sharpe(b) on the same days, with a paired circular block bootstrap over time."""
-    n: int                    # days used (both series finite)
+
+    n: int  # days used (both series finite)
     sharpe_a: float
     sharpe_b: float
     diff: float
     ci_low: float
     ci_high: float
-    p_value: float            # two-sided, null-centred (bootstrap.null_centred_pvalue; round 2, C12)
+    p_value: float  # two-sided, null-centred (bootstrap.null_centred_pvalue; round 2, C12)
     block: int
     n_boot: int
     # the pre-round-2 p (share of resamples on the other side of zero, doubled), kept for comparison
@@ -672,8 +734,9 @@ def _sharpe_rows(x: np.ndarray, periods_per_year: float) -> np.ndarray:
         return np.where(real, mean / np.where(real, sd, 1.0) * math.sqrt(periods_per_year), 0.0)
 
 
-def paired_sharpe_block_bootstrap(a, b, periods_per_year: float = 252.0, rf=None, block: int = 10,
-                                  n_boot: int = 5000, ci: float = 0.95, seed: int = 0) -> SharpeDifference:
+def paired_sharpe_block_bootstrap(
+    a, b, periods_per_year: float = 252.0, rf=None, block: int = 10, n_boot: int = 5000, ci: float = 0.95, seed: int = 0
+) -> SharpeDifference:
     """Is one strategy's Sharpe higher than another's over the *same days*?
 
     The cross-instrument bootstrap (``paired_bootstrap``) treats instruments as the unit of
@@ -710,8 +773,9 @@ def paired_sharpe_block_bootstrap(a, b, periods_per_year: float = 252.0, rf=None
     else:
         other = np.mean(diffs <= 0.0) if point > 0 else np.mean(diffs >= 0.0)
         p_pct = float(min(1.0, 2.0 * other))
-    return SharpeDifference(n, sa, sb, point, float(lo), float(hi), null_centred_pvalue(diffs, point),
-                            blk, n_boot, p_value_percentile=p_pct)
+    return SharpeDifference(
+        n, sa, sb, point, float(lo), float(hi), null_centred_pvalue(diffs, point), blk, n_boot, p_value_percentile=p_pct
+    )
 
 
 # ------------------------------------- time-block primary for paired tables (round 2, C8)
@@ -724,13 +788,14 @@ class TimeBlockPaired:
     with ``two_way`` also instruments. ``secondary`` is the cross-instrument
     ``paired_bootstrap`` on the same per-instrument Sharpes: conditional on the realised path,
     reported beside the primary, never instead of it. p-values are null-centred (C12)."""
+
     n_days: int
     n_instruments: int
     mean_diff: float
     ci_low: float
     ci_high: float
     p_value: float
-    scheme: str               # "time-block" or "two-way (instruments x time-block)"
+    scheme: str  # "time-block" or "two-way (instruments x time-block)"
     block: int
     n_boot: int
     secondary: PairedBootstrap
@@ -748,15 +813,24 @@ def _column_sharpes(x: np.ndarray, periods_per_year: float) -> np.ndarray:
     xz = np.where(ok, x, 0.0)
     mean = xz.sum(axis=0) / np.maximum(cnt, 1)
     dev = np.where(ok, x - mean, 0.0)
-    sd = np.sqrt((dev ** 2).sum(axis=0) / np.maximum(cnt - 1, 1))
+    sd = np.sqrt((dev**2).sum(axis=0) / np.maximum(cnt - 1, 1))
     real = sd > quant.ZERO_VARIANCE_TOL * np.maximum(1.0, np.abs(mean))
     with np.errstate(divide="ignore", invalid="ignore"):
         sr = np.where(real, mean / np.where(real, sd, 1.0) * math.sqrt(periods_per_year), 0.0)
     return np.where(cnt >= 3, sr, np.nan)
 
 
-def paired_time_block(a, b, periods_per_year: float = 252.0, block: int = 10, n_boot: int = 2000,
-                      ci: float = 0.95, seed: int = 0, two_way: bool = False, groups=None) -> TimeBlockPaired:
+def paired_time_block(
+    a,
+    b,
+    periods_per_year: float = 252.0,
+    block: int = 10,
+    n_boot: int = 2000,
+    ci: float = 0.95,
+    seed: int = 0,
+    two_way: bool = False,
+    groups=None,
+) -> TimeBlockPaired:
     """Time-block bootstrap of the mean per-instrument Sharpe difference (review C8).
 
     ``a`` and ``b`` are (days x instruments) daily return matrices for the two strategies on
@@ -775,8 +849,14 @@ def paired_time_block(a, b, periods_per_year: float = 252.0, block: int = 10, n_
     both = np.isfinite(x) & np.isfinite(y)
     x, y = np.where(both, x, np.nan), np.where(both, y, np.nan)
     d_inst = _column_sharpes(x, periods_per_year) - _column_sharpes(y, periods_per_year)
-    secondary = paired_bootstrap(_column_sharpes(x, periods_per_year), _column_sharpes(y, periods_per_year),
-                                 n_boot=max(n_boot, 10), ci=ci, seed=seed, groups=groups)
+    secondary = paired_bootstrap(
+        _column_sharpes(x, periods_per_year),
+        _column_sharpes(y, periods_per_year),
+        n_boot=max(n_boot, 10),
+        ci=ci,
+        seed=seed,
+        groups=groups,
+    )
     live = np.isfinite(d_inst)
     n_t, k = x.shape[0], int(live.sum())
     scheme = "two-way (instruments x time-block)" if two_way else "time-block"
@@ -796,12 +876,18 @@ def paired_time_block(a, b, periods_per_year: float = 252.0, block: int = 10, n_
         reps[i] = np.nanmean(di) if np.isfinite(di).any() else np.nan
     reps = reps[np.isfinite(reps)]
     lo, hi = np.quantile(reps, [(1 - ci) / 2, 1 - (1 - ci) / 2])
-    return TimeBlockPaired(n_t, k, point, float(lo), float(hi), null_centred_pvalue(reps, point), scheme,
-                           blk, n_boot, secondary)
+    return TimeBlockPaired(n_t, k, point, float(lo), float(hi), null_centred_pvalue(reps, point), scheme, blk, n_boot, secondary)
 
 
-def paired_time_block_table(cases, periods_per_year: float = 252.0, fdr_q: float = 0.05, block: int = 10,
-                            n_boot: int = 2000, seed: int = 0, two_way: bool = False) -> list[dict]:
+def paired_time_block_table(
+    cases,
+    periods_per_year: float = 252.0,
+    fdr_q: float = 0.05,
+    block: int = 10,
+    n_boot: int = 2000,
+    seed: int = 0,
+    two_way: bool = False,
+) -> list[dict]:
     """The "BH-significant" paired table with the time-block interval as the primary (C8).
 
     ``cases``: iterable of dicts with ``label`` (e.g. ``"holdout / Buy&Hold"``), ``a`` and
@@ -813,16 +899,28 @@ def paired_time_block_table(cases, periods_per_year: float = 252.0, fdr_q: float
     only the per-instrument summary rows, not the daily series) as a significance headline."""
     rows, p = [], []
     for c in cases:
-        r = paired_time_block(c["a"], c["b"], periods_per_year, block=block, n_boot=n_boot, seed=seed,
-                              two_way=two_way, groups=c.get("groups"))
+        r = paired_time_block(
+            c["a"], c["b"], periods_per_year, block=block, n_boot=n_boot, seed=seed, two_way=two_way, groups=c.get("groups")
+        )
         pv = r.p_value if math.isfinite(r.ci_low) else float("nan")
         p.append(pv)
         s = r.secondary
-        rows.append({"label": c["label"], "primary": r.scheme, "days": r.n_days, "n": r.n_instruments,
-                     "mean Sharpe diff": r.mean_diff, "ci95 low": r.ci_low, "ci95 high": r.ci_high, "p": pv,
-                     "secondary": "cross-instrument, " + s.conditioning,
-                     "secondary ci95 low": s.ci_low, "secondary ci95 high": s.ci_high,
-                     "secondary p": s.p_value})
+        rows.append(
+            {
+                "label": c["label"],
+                "primary": r.scheme,
+                "days": r.n_days,
+                "n": r.n_instruments,
+                "mean Sharpe diff": r.mean_diff,
+                "ci95 low": r.ci_low,
+                "ci95 high": r.ci_high,
+                "p": pv,
+                "secondary": "cross-instrument, " + s.conditioning,
+                "secondary ci95 low": s.ci_low,
+                "secondary ci95 high": s.ci_high,
+                "secondary p": s.p_value,
+            }
+        )
     flags = benjamini_hochberg(np.asarray(p, dtype=float), fdr_q) if rows else np.zeros(0, dtype=bool)
     for row, f in zip(rows, flags):
         row["significant"] = bool(f)
@@ -845,11 +943,11 @@ def newey_west_lag(n: int, horizon: int = 1) -> int:
 @dataclass(frozen=True)
 class NeweyWest:
     mean: float
-    se: float        # HAC standard error of the mean
-    t: float         # mean / se
-    lag: int         # Bartlett truncation lag used
-    n: int           # finite observations
-    n_eff: float     # n * gamma0 / long-run variance (<= n under positive autocorrelation)
+    se: float  # HAC standard error of the mean
+    t: float  # mean / se
+    lag: int  # Bartlett truncation lag used
+    n: int  # finite observations
+    n_eff: float  # n * gamma0 / long-run variance (<= n under positive autocorrelation)
 
     @property
     def p_value(self) -> float:
@@ -899,7 +997,7 @@ def _ranks(a: np.ndarray) -> np.ndarray:
         while j + 1 < sa.size and sa[j + 1] == sa[i]:
             j += 1
         if j > i:
-            r[order[i:j + 1]] = (i + j) / 2.0
+            r[order[i : j + 1]] = (i + j) / 2.0
         i = j + 1
     return r
 
@@ -962,18 +1060,23 @@ def effective_trials(trial_returns) -> tuple[float, float]:
         return float(k), 0.0
     c = np.corrcoef(x, rowvar=False)
     ev = np.clip(np.linalg.eigvalsh(c), 0.0, None)
-    n_eff = float(ev.sum() ** 2 / (ev ** 2).sum())
+    n_eff = float(ev.sum() ** 2 / (ev**2).sum())
     rho = float((c.sum() - k) / (k * (k - 1)))
     return n_eff, rho
 
 
-def deflated_sharpe_effective(sr: float, n: int, trial_returns, var_trials_sr: float,
-                              skew: float = 0.0, kurt: float = 3.0) -> dict:
+def deflated_sharpe_effective(
+    sr: float, n: int, trial_returns, var_trials_sr: float, skew: float = 0.0, kurt: float = 3.0
+) -> dict:
     """DSR at the effective number of trials with the correlation-corrected trial-Sharpe
     variance (``effective_trials``). Sharpe ratios per period. Returns ``n_eff``,
     ``mean_corr``, ``var_trials_corrected`` and ``deflated_sharpe_prob``."""
     n_eff, rho = effective_trials(trial_returns)
     var_c = var_trials_sr / max(1.0 - rho, 1e-6) if rho > 0 else var_trials_sr
     m = max(1, int(round(n_eff)))
-    return {"n_eff": n_eff, "mean_corr": rho, "var_trials_corrected": var_c,
-            "deflated_sharpe_prob": deflated_sharpe(sr, n, m, var_c, skew, kurt)}
+    return {
+        "n_eff": n_eff,
+        "mean_corr": rho,
+        "var_trials_corrected": var_c,
+        "deflated_sharpe_prob": deflated_sharpe(sr, n, m, var_c, skew, kurt),
+    }

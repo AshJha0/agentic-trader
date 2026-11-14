@@ -61,6 +61,7 @@ replicated" and the cell is not adopted; memory and no effect cannot then be tol
 Evidence class: design arithmetic and unit tests with fake models; no decisive or post-cutoff
 row had been run when the metric was amended.
 """
+
 from __future__ import annotations
 
 import json
@@ -78,14 +79,14 @@ Z_975, Z_80, Z_90, Z_95 = 1.959964, 0.841621, 1.281552, 1.644854
 FUTILITY_IC = 0.03
 FUTILITY_EVERY = 1000
 FUTILITY_MIN_DATES = 40
-SECONDS_PER_CALL = (50.0, 100.0)      # the planning range on the owner's CPU (llm_study.py)
-DEFAULT_RHO = 0.3                    # legacy planning value (pooled design effect); kept for comparison
-MIN_NAMES = 5                        # usable names an asset class needs on a date to be scored
-FIT_BINS = 20                        # most quantile bins of the rule signal in the pooled fit
-FIT_ROWS_PER_BIN = 50                # fewer rows than this per bin: use fewer bins
-COPY_SD_RATIO = 0.05                 # residual sd below this share of the model's sd: a copy of the rule
-MAX_FALLBACK_SHARE = 0.10            # prereg: above this the cell is inadmissible
-PREREG_SIGNED = "docs/evaluation/v16_preregistration.md"        # exists only once the owner has signed
+SECONDS_PER_CALL = (50.0, 100.0)  # the planning range on the owner's CPU (llm_study.py)
+DEFAULT_RHO = 0.3  # legacy planning value (pooled design effect); kept for comparison
+MIN_NAMES = 5  # usable names an asset class needs on a date to be scored
+FIT_BINS = 20  # most quantile bins of the rule signal in the pooled fit
+FIT_ROWS_PER_BIN = 50  # fewer rows than this per bin: use fewer bins
+COPY_SD_RATIO = 0.05  # residual sd below this share of the model's sd: a copy of the rule
+MAX_FALLBACK_SHARE = 0.10  # prereg: above this the cell is inadmissible
+PREREG_SIGNED = "docs/evaluation/v16_preregistration.md"  # exists only once the owner has signed
 PREREG_DRAFT = "docs/evaluation/v16_preregistration_DRAFT.md"
 
 
@@ -110,15 +111,22 @@ class DesignCell:
 
 
 DECISIVE = DesignCell(
-    "decisive_ta", "technical-analyst-only local model, weekly design dates 2016-2021, 5-day horizon, "
-    "incremental IC over the rule signal", "2016-01-04", "2021-12-31")
+    "decisive_ta",
+    "technical-analyst-only local model, weekly design dates 2016-2021, 5-day horizon, incremental IC over the rule signal",
+    "2016-01-04",
+    "2021-12-31",
+)
 POSTCUTOFF = DesignCell(
-    "postcutoff_ta", "technical-analyst-only local model, weekly dates 2025-07 to 2026-10 (post-training "
-    "leakage control), 5-day horizon, incremental IC over the rule signal", "2025-07-01", "2026-10-30",
+    "postcutoff_ta",
+    "technical-analyst-only local model, weekly dates 2025-07 to 2026-10 (post-training "
+    "leakage control), 5-day horizon, incremental IC over the rule signal",
+    "2025-07-01",
+    "2026-10-30",
     label="leakage control",
     holdout_basis="dates after the model's release (qwen2.5, September 2024), so recall of them is "
-                  "impossible and the recall gate does not apply; owner sign-off 2026-11-09 (prereg data "
-                  "note); the Sharpe holdout look for LLM cells ends 2025-06-30 (amendment 2026-11-12)")
+    "impossible and the recall gate does not apply; owner sign-off 2026-11-09 (prereg data "
+    "note); the Sharpe holdout look for LLM cells ends 2025-06-30 (amendment 2026-11-12)",
+)
 DESIGN_CELLS: tuple[DesignCell, ...] = (DECISIVE, POSTCUTOFF)
 
 
@@ -131,6 +139,7 @@ def weekly_dates(cell: DesignCell) -> list[date]:
     2026-11-12 amendment the holiday itself was used, so equities were read on Friday's bar
     and FX on Monday's in the same cross-section (review C6)."""
     from .nyse_calendar import is_session
+
     d, end = date.fromisoformat(cell.start), date.fromisoformat(cell.end)
     while d.weekday() >= 5:
         d += timedelta(days=1)
@@ -146,34 +155,48 @@ def weekly_dates(cell: DesignCell) -> list[date]:
 
 
 def asset_class_of(symbol: str | None) -> str:
-    """"equity" or "fx" for a symbol the instrument parser knows, else "all" (one group)."""
+    """ "equity" or "fx" for a symbol the instrument parser knows, else "all" (one group)."""
     if not symbol:
         return "all"
     try:
         from .instruments import Instrument
+
         return str(Instrument.parse(symbol).asset_class)
     except Exception:
         return "all"
 
 
-def mde_ic_dates(n_dates: int, group_sizes: Sequence[int], power_z: float = Z_80,
-                 alpha_z: float = Z_975) -> dict[str, Any]:
+def mde_ic_dates(n_dates: int, group_sizes: Sequence[int], power_z: float = Z_80, alpha_z: float = Z_975) -> dict[str, Any]:
     """Planning MDE of the mean per-date residual IC (see the module docstring)."""
     gs = [int(g) for g in group_sizes if g >= MIN_NAMES]
     n = sum(gs)
     var_t = sum((g / n) ** 2 / (g - 1) for g in gs) if n else float("inf")
     se = math.sqrt(var_t / n_dates) if n_dates > 0 else float("inf")
-    return {"n_dates": n_dates, "group_sizes": gs, "sd_per_date": math.sqrt(var_t), "se": se,
-            "mde": (alpha_z + power_z) * se, "mde_one_sided_95": (Z_95 + power_z) * se}
+    return {
+        "n_dates": n_dates,
+        "group_sizes": gs,
+        "sd_per_date": math.sqrt(var_t),
+        "se": se,
+        "mde": (alpha_z + power_z) * se,
+        "mde_one_sided_95": (Z_95 + power_z) * se,
+    }
 
 
-def mde_ic(n_dates: int, n_names: int, rho: float = DEFAULT_RHO, power_z: float = Z_80,
-           alpha_z: float = Z_975) -> dict[str, float]:
+def mde_ic(
+    n_dates: int, n_names: int, rho: float = DEFAULT_RHO, power_z: float = Z_80, alpha_z: float = Z_975
+) -> dict[str, float]:
     deff = 1 + (n_names - 1) * rho
     n_eff = n_dates * n_names / deff
     se = 1 / math.sqrt(n_eff) if n_eff > 0 else float("inf")
-    return {"n_dates": n_dates, "n_names": n_names, "rho": rho, "design_effect": deff, "n_eff": n_eff,
-            "se": se, "mde": (alpha_z + power_z) * se}
+    return {
+        "n_dates": n_dates,
+        "n_names": n_names,
+        "rho": rho,
+        "design_effect": deff,
+        "n_eff": n_eff,
+        "se": se,
+        "mde": (alpha_z + power_z) * se,
+    }
 
 
 def mde_sharpe_diff(years: float, corr: float, power_z: float = Z_80, alpha_z: float = Z_975) -> float:
@@ -183,38 +206,56 @@ def mde_sharpe_diff(years: float, corr: float, power_z: float = Z_80, alpha_z: f
 
 def first_pass_mde() -> dict[str, Any]:
     """Why the v0.16 first pass is descriptive: its MDEs at 80 % power, 5 % two-sided."""
-    return {"label": "descriptive (cannot accept or reject an edge)",
-            "sharpe_mde_corr0.7_6y": mde_sharpe_diff(6.0, 0.7),
-            "ic_mde_neff60": (Z_975 + Z_80) / math.sqrt(60),
-            "periods": 19, "note": "19 usable periods about 115 days apart; effective n about 60 decisions"}
+    return {
+        "label": "descriptive (cannot accept or reject an edge)",
+        "sharpe_mde_corr0.7_6y": mde_sharpe_diff(6.0, 0.7),
+        "ic_mde_neff60": (Z_975 + Z_80) / math.sqrt(60),
+        "periods": 19,
+        "note": "19 usable periods about 115 days apart; effective n about 60 decisions",
+    }
 
 
-def dry_run(cell: DesignCell, names: Sequence[str], seconds_per_call: tuple[float, float] = SECONDS_PER_CALL,
-            rho: float = DEFAULT_RHO) -> dict[str, Any]:
+def dry_run(
+    cell: DesignCell, names: Sequence[str], seconds_per_call: tuple[float, float] = SECONDS_PER_CALL, rho: float = DEFAULT_RHO
+) -> dict[str, Any]:
     dates = weekly_dates(cell)
     sizes = Counter(asset_class_of(n) for n in names)
     decisions = len(dates) * len(names)
     calls = decisions * cell.calls_per_decision
     lo, hi = (calls * s / 3600 for s in seconds_per_call)
-    return {"cell": cell.name, "label": cell.label, "trial_name": cell.trial_name, "dates": len(dates),
-            "first_date": dates[0].isoformat() if dates else None,
-            "last_date": dates[-1].isoformat() if dates else None, "names": len(names),
-            "decisions": decisions, "calls": calls, "cpu_hours": [round(lo, 1), round(hi, 1)],
-            "cpu_days": [round(lo / 24, 1), round(hi / 24, 1)], "horizon_days": cell.horizon_days,
-            "mde": mde_ic_dates(len(dates), list(sizes.values())),
-            "mde_legacy_pooled": mde_ic(len(dates), len(names), rho), "futility": futility_rule(),
-            "holdout_basis": cell.holdout_basis}
+    return {
+        "cell": cell.name,
+        "label": cell.label,
+        "trial_name": cell.trial_name,
+        "dates": len(dates),
+        "first_date": dates[0].isoformat() if dates else None,
+        "last_date": dates[-1].isoformat() if dates else None,
+        "names": len(names),
+        "decisions": decisions,
+        "calls": calls,
+        "cpu_hours": [round(lo, 1), round(hi, 1)],
+        "cpu_days": [round(lo / 24, 1), round(hi / 24, 1)],
+        "horizon_days": cell.horizon_days,
+        "mde": mde_ic_dates(len(dates), list(sizes.values())),
+        "mde_legacy_pooled": mde_ic(len(dates), len(names), rho),
+        "futility": futility_rule(),
+        "holdout_basis": cell.holdout_basis,
+    }
 
 
 def futility_rule() -> str:
-    return (f"after {FUTILITY_MIN_DATES} dates, at every {FUTILITY_EVERY} decisions: stop if residual "
-            f"IC + {Z_90:.4f} x SE < {FUTILITY_IC} (one-sided 90 % upper bound); no efficacy stop")
+    return (
+        f"after {FUTILITY_MIN_DATES} dates, at every {FUTILITY_EVERY} decisions: stop if residual "
+        f"IC + {Z_90:.4f} x SE < {FUTILITY_IC} (one-sided 90 % upper bound); no efficacy stop"
+    )
 
 
 # ---- metrics ----------------------------------------------------------------------------------
 
+
 def _spearman(x: np.ndarray, y: np.ndarray) -> float | None:
     from .recall_audit import spearman
+
     v = spearman(list(x), list(y))
     return None if v is None or not math.isfinite(v) else v
 
@@ -242,7 +283,7 @@ def _ranks(x: np.ndarray) -> np.ndarray:
         j = i
         while j + 1 < len(xs) and xs[j + 1] == xs[i]:
             j += 1
-        r[order[i:j + 1]] = (i + j) / 2.0 + 1.0
+        r[order[i : j + 1]] = (i + j) / 2.0 + 1.0
         i = j + 1
     return r
 
@@ -288,8 +329,13 @@ def rule_fit_residuals(model: np.ndarray, rule: np.ndarray) -> tuple[np.ndarray,
     e = m - fit
     sd_m, sd_e = (float(np.std(m)), float(np.std(e))) if n else (0.0, 0.0)
     copy = bool(sd_e <= COPY_SD_RATIO * sd_m)
-    return e, {"bins": k, "sd_model": sd_m, "sd_residual": sd_e,
-               "r2": 1.0 - (sd_e / sd_m) ** 2 if sd_m > 0 else None, "copy_of_rule": copy}
+    return e, {
+        "bins": k,
+        "sd_model": sd_m,
+        "sd_residual": sd_e,
+        "r2": 1.0 - (sd_e / sd_m) ** 2 if sd_m > 0 else None,
+        "copy_of_rule": copy,
+    }
 
 
 def residual_ic(resid: np.ndarray, fwd: np.ndarray, sd_resid: float) -> float | None:
@@ -344,11 +390,11 @@ def incremental_ic(rows: Sequence[dict[str, Any]], *, lag: int = 1, min_names: i
     fits: dict[str, dict[str, Any]] = {}
     for g in classes:
         rs = [r for d in sorted(by_d) for r in by_d[d].get(g, [])]
-        e, info = rule_fit_residuals(np.array([r["signal_model"] for r in rs], float),
-                                     np.array([r["signal_rule"] for r in rs], float))
+        e, info = rule_fit_residuals(
+            np.array([r["signal_model"] for r in rs], float), np.array([r["signal_rule"] for r in rs], float)
+        )
         fits[g] = info | {"rows": len(rs), "resid": {id(r): float(v) for r, v in zip(rs, e)}}
-    series: dict[str, list[float]] = {k: [] for k in ("primary", "paired_difference", "model", "rule",
-                                                       "legacy_model_minus_rule")}
+    series: dict[str, list[float]] = {k: [] for k in ("primary", "paired_difference", "model", "rule", "legacy_model_minus_rule")}
     small = 0
     for d in sorted(by_d):
         acc: dict[str, list[tuple[float, int]]] = {k: [] for k in series if k != "legacy_model_minus_rule"}
@@ -362,8 +408,7 @@ def incremental_ic(rows: Sequence[dict[str, Any]], *, lag: int = 1, min_names: i
             m = np.array([r["signal_model"] for r in rs], float)
             q = np.array([r["signal_rule"] for r in rs], float)
             fit = fits[g]
-            res = residual_ic(np.array([fit["resid"][id(r)] for r in rs]), f,
-                              0.0 if fit["copy_of_rule"] else fit["sd_residual"])
+            res = residual_ic(np.array([fit["resid"][id(r)] for r in rs]), f, 0.0 if fit["copy_of_rule"] else fit["sd_residual"])
             if res is not None:
                 acc["primary"].append((res, len(rs)))
             im, iq = _spearman(m, f), _spearman(q, f)
@@ -378,8 +423,10 @@ def incremental_ic(rows: Sequence[dict[str, Any]], *, lag: int = 1, min_names: i
             if w:
                 series[k].append(sum(v * n for v, n in vals) / w)
         if len(pooled) >= min_names:
-            v = _spearman(np.array([r["signal_model"] - r["signal_rule"] for r in pooled], float),
-                          np.array([r["fwd_ret"] for r in pooled], float))
+            v = _spearman(
+                np.array([r["signal_model"] - r["signal_rule"] for r in pooled], float),
+                np.array([r["fwd_ret"] for r in pooled], float),
+            )
             if v is not None:
                 series["legacy_model_minus_rule"].append(v)
 
@@ -388,14 +435,25 @@ def incremental_ic(rows: Sequence[dict[str, Any]], *, lag: int = 1, min_names: i
             return {"ic": None, "se": None, "t": None, "dates": 0}
         se = newey_west_se(xs, lag)
         mu = float(np.mean(xs))
-        return {"ic": mu, "se": se, "t": mu / se if se and se > 0 else None, "dates": len(xs),
-                "ci95": [mu - Z_975 * se, mu + Z_975 * se], "upper90_one_sided": mu + Z_90 * se,
-                "lower95_one_sided": mu - Z_95 * se}
-    return {**{k: summ(v) for k, v in series.items()},
-            "metric": "residual IC: model signal net of a pooled fit on the rule, within asset class (2026-11-12)",
-            "rule_fit": {g: {k: v for k, v in f.items() if k != "resid"} for g, f in fits.items()},
-            "excluded_rows": sum(counts.values()), "excluded": counts, "rows_in_small_classes": small,
-            "rows": sum(len(rs) for gs in by_d.values() for rs in gs.values())}
+        return {
+            "ic": mu,
+            "se": se,
+            "t": mu / se if se and se > 0 else None,
+            "dates": len(xs),
+            "ci95": [mu - Z_975 * se, mu + Z_975 * se],
+            "upper90_one_sided": mu + Z_90 * se,
+            "lower95_one_sided": mu - Z_95 * se,
+        }
+
+    return {
+        **{k: summ(v) for k, v in series.items()},
+        "metric": "residual IC: model signal net of a pooled fit on the rule, within asset class (2026-11-12)",
+        "rule_fit": {g: {k: v for k, v in f.items() if k != "resid"} for g, f in fits.items()},
+        "excluded_rows": sum(counts.values()),
+        "excluded": counts,
+        "rows_in_small_classes": small,
+        "rows": sum(len(rs) for gs in by_d.values() for rs in gs.values()),
+    }
 
 
 def futility_stop(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -414,23 +472,42 @@ def replication_verdict(decisive: dict[str, Any], postcutoff: dict[str, Any] | N
     interval of its residual IC lies above zero. A pass is adopted only if the post-cutoff
     cell is admissible and its one-sided 95 % lower bound is above zero (review B2: the
     burden is on replication, so a low-powered control cannot wave a memory effect through)."""
+
     def ok(rep: dict[str, Any] | None) -> bool:
-        return rep is not None and bool(rep) and rep.get("fallback_share") is not None and rep["fallback_share"] <= MAX_FALLBACK_SHARE
+        return (
+            rep is not None
+            and bool(rep)
+            and rep.get("fallback_share") is not None
+            and rep["fallback_share"] <= MAX_FALLBACK_SHARE
+        )
+
     d = decisive["metric"]["primary"]
     if not ok(decisive) or d["ic"] is None:
         return {"design_pass": False, "replicated": None, "adopt": False, "verdict": "design cell inadmissible or empty"}
     if not d["ci95"][0] > 0:
-        return {"design_pass": False, "replicated": None, "adopt": False,
-                "verdict": "no added information on the design dates (95 % interval includes zero)"}
+        return {
+            "design_pass": False,
+            "replicated": None,
+            "adopt": False,
+            "verdict": "no added information on the design dates (95 % interval includes zero)",
+        }
     p = (postcutoff or {}).get("metric", {}).get("primary")
     if not ok(postcutoff) or not p or p["ic"] is None:
-        return {"design_pass": True, "replicated": None, "adopt": False,
-                "verdict": "design pass; post-cutoff cell missing or inadmissible, so not adopted"}
+        return {
+            "design_pass": True,
+            "replicated": None,
+            "adopt": False,
+            "verdict": "design pass; post-cutoff cell missing or inadmissible, so not adopted",
+        }
     rep_ok = bool(p["lower95_one_sided"] > 0)
-    return {"design_pass": True, "replicated": rep_ok, "adopt": rep_ok,
-            "verdict": "design pass replicated after the training cutoff" if rep_ok else
-            "design pass not replicated after the training cutoff: not adopted "
-            "(memory and no effect cannot be told apart)"}
+    return {
+        "design_pass": True,
+        "replicated": rep_ok,
+        "adopt": rep_ok,
+        "verdict": "design pass replicated after the training cutoff"
+        if rep_ok
+        else "design pass not replicated after the training cutoff: not adopted (memory and no effect cannot be told apart)",
+    }
 
 
 def prereg_document(root: Path | str = ".") -> Path:
@@ -448,11 +525,14 @@ def prereg_gate(root: Path | str = ".") -> dict[str, str]:
     ``PreregNotSigned`` while only the draft exists: a registered cell is scored only under
     a document that can no longer move (review B4)."""
     import hashlib
+
     p = Path(root) / PREREG_SIGNED
     if not p.is_file():
-        raise PreregNotSigned(f"{PREREG_SIGNED} does not exist: the pre-registration is still a draft. "
-                              "Sign it (python scripts/sign_prereg.py; see docs/evaluation/v16_prereg_amendment_2026-11-12.md) "
-                              "before a registered cell runs.")
+        raise PreregNotSigned(
+            f"{PREREG_SIGNED} does not exist: the pre-registration is still a draft. "
+            "Sign it (python scripts/sign_prereg.py; see docs/evaluation/v16_prereg_amendment_2026-11-12.md) "
+            "before a registered cell runs."
+        )
     text = p.read_text(encoding="utf-8")
     if "DRAFT" in text.splitlines()[0] or "not signed" in text[:600]:
         raise PreregNotSigned(f"{PREREG_SIGNED} still says it is a draft")
@@ -464,6 +544,7 @@ def holdout_access(cell: DesignCell, recall_path: str | Path | None = None) -> d
     nothing. One that overlaps it needs either the cell's recorded ``holdout_basis`` or a
     passing v2 recall audit (``evaluation.require_recall_pass`` raises ``HoldoutLocked``)."""
     from .evaluation import DEFAULT_RECALL_AUDIT_PATH, require_recall_pass, touches_holdout
+
     if not touches_holdout({cell.name: (cell.start, cell.end)}):
         return {"touches_holdout": False}
     if cell.holdout_basis:
@@ -474,10 +555,12 @@ def holdout_access(cell: DesignCell, recall_path: str | Path | None = None) -> d
 
 # ---- runner -----------------------------------------------------------------------------------
 
+
 def forward_return(provider: Any, instrument: Any, bar_date: date, horizon: int) -> tuple[float | None, str | None]:
     """Close-to-close return over ``horizon`` bars after ``bar_date`` (scoring only; never shown
     to the model). Returns (return, end bar date) or (None, None) when the bars do not exist."""
     import pandas as pd
+
     h = provider.history(instrument, bar_date - timedelta(days=5), bar_date + timedelta(days=3 * horizon + 10))
     c = h["Close"].astype(float)
     c = c[c.index >= pd.Timestamp(bar_date)]
@@ -486,9 +569,19 @@ def forward_return(provider: Any, instrument: Any, bar_date: date, horizon: int)
     return float(c.iloc[horizon] / c.iloc[0] - 1.0), str(c.index[horizon].date())
 
 
-def run_cell(cell: DesignCell, names: Sequence[str], graph: Any, llm: Any, out: Path, *, header: dict[str, Any],
-             limit: int = 0, shift_bars: int = 0, echo: Callable[[str], None] = print,
-             futility_check: bool = True) -> list[dict[str, Any]]:
+def run_cell(
+    cell: DesignCell,
+    names: Sequence[str],
+    graph: Any,
+    llm: Any,
+    out: Path,
+    *,
+    header: dict[str, Any],
+    limit: int = 0,
+    shift_bars: int = 0,
+    echo: Callable[[str], None] = print,
+    futility_check: bool = True,
+) -> list[dict[str, Any]]:
     """Run a design cell: per (date, name) one anonymised technical-analyst call, rule signal
     from the same analyst on the same state, forward return scored from the bars after the
     decision. Checkpointed JSONL with lineage (``study_lineage``); resume skips done keys.
@@ -496,6 +589,7 @@ def run_cell(cell: DesignCell, names: Sequence[str], graph: Any, llm: Any, out: 
     from .agents.analysts import TechnicalAnalyst
     from .anonymize import Anonymizer
     from .study_lineage import market_lineage, prompt_sha256, stamp
+
     out.parent.mkdir(parents=True, exist_ok=True)
     done = set()
     rows: list[dict[str, Any]] = []
@@ -520,7 +614,7 @@ def run_cell(cell: DesignCell, names: Sequence[str], graph: Any, llm: Any, out: 
             seen: list[tuple[str, str]] = []
 
             class _Rec:
-                _seen = seen   # bound now, per grid cell
+                _seen = seen  # bound now, per grid cell
 
                 def __init__(self, inner):
                     self.inner = inner
@@ -535,29 +629,40 @@ def run_cell(cell: DesignCell, names: Sequence[str], graph: Any, llm: Any, out: 
                 def complete(self, system, prompt, *, deep):
                     self._seen.append((system, prompt))
                     return self.inner.complete(system, prompt, deep=deep)
+
             rep = TechnicalAnalyst(_Rec(llm) if llm is not None else None, graph.config).run(state, graph.provider)
             bar = state.history.index[-1].date()
             fwd, fwd_end = forward_return(graph.provider, state.instrument, bar, cell.horizon_days)
             ev = getattr(llm, "last_call", None) if llm is not None else None
             ev = ev if isinstance(ev, dict) else {}
             model_ok = rep.source == "llm"
-            row = {"cell": cell.name, "symbol": n, "as_of": d.isoformat(),
-                   "signal_model": float(rep.signal) if model_ok else None,
-                   "signal_rule": float(rep.rule_signal if model_ok and rep.rule_signal is not None else rep.signal),
-                   "source": rep.source, "abstained": bool(rep.abstained),
-                   "fwd_ret": fwd, "fwd_end": fwd_end,
-                   "prompt_sha256": prompt_sha256(*seen[-1]) if seen else None,
-                   "prompt_eval_count": ev.get("prompt_eval_count"), "eval_count": ev.get("eval_count"),
-                   "truncated": ev.get("truncated"), "stop_reason": ev.get("stop_reason"),
-                   "model_served": ev.get("model_served"),
-                   **market_lineage(state.history, None)}
+            row = {
+                "cell": cell.name,
+                "symbol": n,
+                "as_of": d.isoformat(),
+                "signal_model": float(rep.signal) if model_ok else None,
+                "signal_rule": float(rep.rule_signal if model_ok and rep.rule_signal is not None else rep.signal),
+                "source": rep.source,
+                "abstained": bool(rep.abstained),
+                "fwd_ret": fwd,
+                "fwd_end": fwd_end,
+                "prompt_sha256": prompt_sha256(*seen[-1]) if seen else None,
+                "prompt_eval_count": ev.get("prompt_eval_count"),
+                "eval_count": ev.get("eval_count"),
+                "truncated": ev.get("truncated"),
+                "stop_reason": ev.get("stop_reason"),
+                "model_served": ev.get("model_served"),
+                **market_lineage(state.history, None),
+            }
             row["horizon_days"] = cell.horizon_days
             stamp(row, header)
             fh.write(json.dumps(row, default=str) + "\n")
             fh.flush()
             rows.append(row)
-            echo(f"[{k}/{len(grid)}] {cell.name} {d} {n}: model={row['signal_model']} rule={row['signal_rule']:+.2f} "
-                 f"fwd={fwd} {time.time() - t0:.0f}s")
+            echo(
+                f"[{k}/{len(grid)}] {cell.name} {d} {n}: model={row['signal_model']} rule={row['signal_rule']:+.2f} "
+                f"fwd={fwd} {time.time() - t0:.0f}s"
+            )
             if futility_check and len(rows) % FUTILITY_EVERY == 0:
                 fs = futility_stop(rows)
                 echo(f"futility look at {len(rows)} rows: {fs['reason']} stop={fs['stop']}")
@@ -568,17 +673,27 @@ def run_cell(cell: DesignCell, names: Sequence[str], graph: Any, llm: Any, out: 
 
 def report(cell: DesignCell, rows: Sequence[dict[str, Any]], names: Sequence[str]) -> dict[str, Any]:
     from .study_lineage import row_vintage_status
+
     ic = incremental_ic(rows)
     n = len(rows)
     fell_back = sum(r.get("signal_model") is None for r in rows)
     trunc = sum(bool(r.get("truncated")) for r in rows)
     share = fell_back / n if n else None
-    return {"cell": cell.name, "label": cell.label, "trial_name": cell.trial_name, "rows": n,
-            "fallback_share": share, "admissible": share is not None and share <= MAX_FALLBACK_SHARE,
-            "truncated_share": trunc / n if n else None, "holdout_basis": cell.holdout_basis,
-            "headers": sorted({str(r.get("header_id")) for r in rows}),
-            "legacy_rows": sum(row_vintage_status(r) == "legacy" for r in rows),
-            "metric": ic, "futility": futility_stop(rows), "planned": dry_run(cell, names)}
+    return {
+        "cell": cell.name,
+        "label": cell.label,
+        "trial_name": cell.trial_name,
+        "rows": n,
+        "fallback_share": share,
+        "admissible": share is not None and share <= MAX_FALLBACK_SHARE,
+        "truncated_share": trunc / n if n else None,
+        "holdout_basis": cell.holdout_basis,
+        "headers": sorted({str(r.get("header_id")) for r in rows}),
+        "legacy_rows": sum(row_vintage_status(r) == "legacy" for r in rows),
+        "metric": ic,
+        "futility": futility_stop(rows),
+        "planned": dry_run(cell, names),
+    }
 
 
 def describe() -> list[dict[str, Any]]:
@@ -589,14 +704,17 @@ def main(argv: list[str] | None = None) -> int:
     """``python -m agentic_trader.study_design --dry-run`` prints counts, runtime and MDEs."""
     import argparse
     from .evaluation import CORE_UNIVERSE, TRIALS
+
     ap = argparse.ArgumentParser(description="Powered P2 design cells (N3, N9): dry run")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--rho", type=float, default=DEFAULT_RHO)
     a = ap.parse_args(argv)
     names = CORE_UNIVERSE["equity"] + CORE_UNIVERSE["fx"]
     registered = {t.name for t in TRIALS}
-    out = {"first_pass": first_pass_mde(),
-           "cells": [dry_run(c, names, rho=a.rho) | {"registered": c.trial_name in registered} for c in DESIGN_CELLS]}
+    out = {
+        "first_pass": first_pass_mde(),
+        "cells": [dry_run(c, names, rho=a.rho) | {"registered": c.trial_name in registered} for c in DESIGN_CELLS],
+    }
     print(json.dumps(out, indent=1))
     return 0
 

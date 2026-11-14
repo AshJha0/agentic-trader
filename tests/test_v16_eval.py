@@ -1,5 +1,6 @@
 """PLAN.md 2.7: the frozen analyst eval set, its deterministic checkers, the judge plumbing and
 the agreement statistic. No model is called: replies come from fake LLMs and hand-written rows."""
+
 from __future__ import annotations
 
 import json
@@ -42,7 +43,7 @@ def test_frozen_set_shape():
     for it in fenced:
         f = it["rubric"]["fence"]
         body = it["prompt"].split('<untrusted_data source="%s">' % f["key"])[1].split("</untrusted_data>")[0]
-        assert f["canary"] in body                       # the injection sits inside the fence
+        assert f["canary"] in body  # the injection sits inside the fence
         assert f["canary"] not in it["prompt"].split("<untrusted_data")[0]
     for it in ITEMS:
         assert it["prompt"].startswith("Instrument: ") and "JSON keys:" in it["prompt"]
@@ -53,21 +54,24 @@ def test_frozen_set_matches_generator():
     assert json.loads(json.dumps(ev.build_items())) == ITEMS
 
 
-@pytest.mark.parametrize("text,want", [
-    ("RSI14 is 49.4 and Q4 revenue rose 3.2%", [(49.4, 1), (3.2, 1)]),
-    ("price 1,234.50 and -0.65 diff; the 10-K says", [(1234.5, 2), (0.65, 2)]),
-    ("ZX-2188", [(2188.0, 0)]),
-])
+@pytest.mark.parametrize(
+    "text,want",
+    [
+        ("RSI14 is 49.4 and Q4 revenue rose 3.2%", [(49.4, 1), (3.2, 1)]),
+        ("price 1,234.50 and -0.65 diff; the 10-K says", [(1234.5, 2), (0.65, 2)]),
+        ("ZX-2188", [(2188.0, 0)]),
+    ],
+)
 def test_numbers_in(text, want):
-    assert ev.numbers_in(text) == want              # signs dropped: matching compares |values|
+    assert ev.numbers_in(text) == want  # signs dropped: matching compares |values|
 
 
 def test_matching_rule():
-    assert ev.matches(3.2, 1, -0.032)          # percent, sign ignored
-    assert ev.matches(25, 0, 0.0025)           # basis points
+    assert ev.matches(3.2, 1, -0.032)  # percent, sign ignored
+    assert ev.matches(25, 0, 0.0025)  # basis points
     assert ev.matches(1.27, 2, 1.2734)
     assert not ev.matches(1.3, 1, 1.2)
-    assert ev.matches(9, 0, 0.0923)            # rounded percent
+    assert ev.matches(9, 0, 0.0923)  # rounded percent
 
 
 def test_checker_on_clear_cases():
@@ -93,9 +97,15 @@ def test_fence_checker():
 
 def test_parse_reply_contract():
     assert ev.parse_reply('{"signal": 0.1, "confidence": 0.5, "summary": "x"}')["signal"] == 0.1
-    assert ev.parse_reply("```json\n{\"signal\": 0, \"confidence\": 1, \"summary\": \"x\"}\n```") is not None
-    for bad in (None, "", "not json", '{"signal": "0.1", "confidence": 0.5, "summary": "x"}',
-                '{"signal": true, "confidence": 0.5, "summary": "x"}', '{"signal": 0.1, "confidence": 0.5}'):
+    assert ev.parse_reply('```json\n{"signal": 0, "confidence": 1, "summary": "x"}\n```') is not None
+    for bad in (
+        None,
+        "",
+        "not json",
+        '{"signal": "0.1", "confidence": 0.5, "summary": "x"}',
+        '{"signal": true, "confidence": 0.5, "summary": "x"}',
+        '{"signal": 0.1, "confidence": 0.5}',
+    ):
         assert ev.parse_reply(bad) is None
 
 
@@ -114,7 +124,7 @@ def test_calibration_subset():
     cal = ev.load_calibration()
     assert len(cal) == 30 and len({r["cal_id"] for r in cal}) == 30
     assert all(r["item_id"] in BY_ID for r in cal)
-    for c in ev.CRITERIA:                       # both verdicts present for every criterion
+    for c in ev.CRITERIA:  # both verdicts present for every criterion
         assert {r["labels"][c] for r in cal} == {True, False}
     # The deterministic checker against the hand labels: fence and facts exact; numbers lose a
     # few whole-number coincidences (documented in eval_set; c25, c27). c05 agreed with its label
@@ -137,7 +147,7 @@ def test_run_check_resume_and_smoke(tmp_path):
     assert v16_eval.main(["run", "--limit", "5", "--out", str(out)], llm=llm) == 0
     assert llm.calls == 5 and llm.last_schema is contracts.ANALYST
     assert v16_eval.main(["run", "--limit", "7", "--out", str(out)], llm=llm) == 0
-    assert llm.calls == 7                                    # resumed: only two new calls
+    assert llm.calls == 7  # resumed: only two new calls
     rows = [json.loads(x) for x in out.read_text().splitlines()]
     assert len(rows) == 7 and all(r["raw"] and r["parsed"] for r in rows)
     assert out.with_suffix(".meta.json").exists()
@@ -157,6 +167,7 @@ def test_run_check_resume_and_smoke(tmp_path):
 def test_run_records_exceptions(tmp_path):
     def boom(s, p):
         raise RuntimeError("down")
+
     out = tmp_path / "r.jsonl"
     assert v16_eval.main(["run", "--limit", "2", "--out", str(out)], llm=FakeLLM(boom)) == 0
     rows = [json.loads(x) for x in out.read_text().splitlines()]
@@ -177,18 +188,17 @@ def test_judge_and_agreement(tmp_path):
     assert v16_eval.main(["judge", "--calibration", "--out", str(jout)], llm=llm) == 0
     assert llm.calls == 30 and llm.last_schema is ev.JUDGE_SCHEMA
     assert v16_eval.main(["judge", "--calibration", "--out", str(jout)], llm=llm) == 0
-    assert llm.calls == 30                                   # fully resumed
+    assert llm.calls == 30  # fully resumed
     aout = tmp_path / "agree.json"
     assert v16_eval.main(["agreement", "--judged", str(jout), "--out", str(aout)]) == 0
     res = json.loads(aout.read_text())
     assert res["n_scored"] == 30
     for c in ev.CRITERIA:
         assert res["criteria"][c]["judge_kappa"] == pytest.approx(1.0)
-    assert res["criteria"]["no_invented_numbers"]["checker_agree"] == 28      # c05 agrees since R0.2
+    assert res["criteria"]["no_invented_numbers"]["checker_agree"] == 28  # c05 agrees since R0.2
     # an unparseable judge is counted, and smoke fails on it
     j2 = tmp_path / "j2.jsonl"
-    assert v16_eval.main(["judge", "--calibration", "--smoke", "--out", str(j2)],
-                         llm=FakeLLM(lambda s, p: "nope")) == 1
+    assert v16_eval.main(["judge", "--calibration", "--smoke", "--out", str(j2)], llm=FakeLLM(lambda s, p: "nope")) == 1
     a2 = tmp_path / "a2.json"
     assert v16_eval.main(["agreement", "--smoke", "--judged", str(j2), "--out", str(a2)]) == 1
     assert json.loads(a2.read_text())["judge_unparseable"] == 3
@@ -207,7 +217,8 @@ def test_judge_on_run_replies(tmp_path):
     run = tmp_path / "run.jsonl"
     v16_eval.main(["run", "--limit", "3", "--out", str(run)], llm=FakeLLM(_ok_reply))
     j = tmp_path / "j.jsonl"
-    judge = FakeLLM(lambda s, p: json.dumps({"used_facts": False, "no_invented_numbers": True,
-                                              "respected_fence": True, "reason": "r"}))
+    judge = FakeLLM(
+        lambda s, p: json.dumps({"used_facts": False, "no_invented_numbers": True, "respected_fence": True, "reason": "r"})
+    )
     assert v16_eval.main(["judge", "--replies", str(run), "--out", str(j)], llm=judge) == 0
     assert judge.calls == 3

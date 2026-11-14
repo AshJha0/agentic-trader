@@ -1,5 +1,6 @@
 """``tools`` / ``serve`` / ``mcp`` / ``info``: the operational commands (tool catalogue,
 HTTP API, MCP stdio server, effective configuration)."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ from .common import _config
 def cmd_tools(args) -> int:
     from ..agentic import DeskTools, build_registry
     from ..data import get_provider
+
     cfg = _config(args)
     reg = build_registry(DeskTools(get_provider(cfg), cfg))
     if args.json:
@@ -27,22 +29,33 @@ def cmd_tools(args) -> int:
 
 def cmd_serve(args) -> int:
     from ..agentic.api import serve
+
     cfg = _config(args)
     if args.task_db:
         cfg["agentic"]["task_db"] = args.task_db
     if args.workers is not None:
         cfg["agentic"]["workers"] = args.workers
     scheme = "https" if args.ssl_cert else "http"
-    print(f"serving on {scheme}://{args.host}:{args.port}  (docs at /docs; approvals "
-          f"{cfg['agentic']['approval']}; task store {args.task_db or 'in memory'}; "
-          f"{args.processes} process(es) x {cfg['agentic']['workers']} task threads)")
-    serve(args.host, args.port, cfg, ssl_certfile=args.ssl_cert, ssl_keyfile=args.ssl_key,
-          allow_dev_keys=args.allow_dev_keys, processes=args.processes)
+    print(
+        f"serving on {scheme}://{args.host}:{args.port}  (docs at /docs; approvals "
+        f"{cfg['agentic']['approval']}; task store {args.task_db or 'in memory'}; "
+        f"{args.processes} process(es) x {cfg['agentic']['workers']} task threads)"
+    )
+    serve(
+        args.host,
+        args.port,
+        cfg,
+        ssl_certfile=args.ssl_cert,
+        ssl_keyfile=args.ssl_key,
+        allow_dev_keys=args.allow_dev_keys,
+        processes=args.processes,
+    )
     return 0
 
 
 def cmd_mcp(args) -> int:
     from ..agentic.mcp_server import main as mcp_main
+
     argv = ["--data", args.data, "--role", args.role] + (["--csv-dir", args.csv_dir] if args.csv_dir else [])
     if args.approval:
         argv += ["--approval", args.approval]

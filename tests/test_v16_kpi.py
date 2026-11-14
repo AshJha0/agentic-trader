@@ -1,12 +1,12 @@
 """PLAN 6.4: KPI table on fixture records (offline, no model calls)."""
+
 import json
 from pathlib import Path
 
 import pytest
 
 from agentic_trader.cli import main
-from agentic_trader.kpi import (KPIRecord, brier, calibration_bins, hit_rate, kpi_table,
-                                load_records, sharpe)
+from agentic_trader.kpi import KPIRecord, brier, calibration_bins, hit_rate, kpi_table, load_records, sharpe
 
 FIX = Path(__file__).parent / "fixtures" / "kpi_records.jsonl"
 
@@ -53,8 +53,9 @@ def test_validation():
     with pytest.raises(ValueError):
         KPIRecord.from_dict({"as_of": "d", "symbol": "A"})
     with pytest.raises(ValueError):
-        KPIRecord.from_dict({"as_of": "d", "symbol": "A", "model_signal": 1, "rule_signal": 0,
-                             "outcome_return": 0.1, "prob_up": 1.5})
+        KPIRecord.from_dict(
+            {"as_of": "d", "symbol": "A", "model_signal": 1, "rule_signal": 0, "outcome_return": 0.1, "prob_up": 1.5}
+        )
     with pytest.raises(ValueError):
         kpi_table([])
 

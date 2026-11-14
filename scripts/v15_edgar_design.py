@@ -26,6 +26,7 @@ process (never written to the repo). Network for ``download`` and for the Yahoo 
 
     .venv\\Scripts\\python.exe scripts/v15_edgar_design.py download|tone|rag|show ACCESSION
 """
+
 from __future__ import annotations
 
 import argparse
@@ -91,8 +92,7 @@ def cmd_coverage() -> None:
     for sym in NAMES:
         for r in rows_in_window(p, sym):
             secs = extract_sections(p.document(r), r["form"])
-            print(sym, r["form"], r["accession"], r["accepted"].date(),
-                  {k: len(v) for k, v in secs.items()}, flush=True)
+            print(sym, r["form"], r["accession"], r["accepted"].date(), {k: len(v) for k, v in secs.items()}, flush=True)
 
 
 def cmd_tone() -> None:
@@ -121,11 +121,22 @@ def cmd_tone() -> None:
         ics = np.array([per[s]["decay"][hz]["ic"] for s in NAMES], float)
         ics = ics[np.isfinite(ics)]
         se = ics.std(ddof=1) / np.sqrt(ics.size) if ics.size > 1 else float("nan")
-        pooled[hz] = {"mean_ic": float(ics.mean()), "t_across_names": float(ics.mean() / se),
-                      "names": int(ics.size), "positive": int((ics > 0).sum())}
-    res = {"trial": "v0.15 EDGAR filing tone change (lexicon diff, 10-K/10-Q)", "period": PERIODS["design"],
-           "names": NAMES, "params": {"hold_bars": 63, "scale": 0.5, "n_folds": 5},
-           "filings": n_filings, "section_changes": n_changes, "pooled": pooled, "per_name": per}
+        pooled[hz] = {
+            "mean_ic": float(ics.mean()),
+            "t_across_names": float(ics.mean() / se),
+            "names": int(ics.size),
+            "positive": int((ics > 0).sum()),
+        }
+    res = {
+        "trial": "v0.15 EDGAR filing tone change (lexicon diff, 10-K/10-Q)",
+        "period": PERIODS["design"],
+        "names": NAMES,
+        "params": {"hold_bars": 63, "scale": 0.5, "n_folds": 5},
+        "filings": n_filings,
+        "section_changes": n_changes,
+        "pooled": pooled,
+        "per_name": per,
+    }
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "edgar_tone_design.json").write_text(json.dumps(res, indent=2, default=str), encoding="utf-8")
     print(json.dumps(pooled, indent=2))
@@ -140,6 +151,7 @@ RAG_MIN_CHARS = 1500
 
 def design_corpus():
     from agentic_trader.agentic.research_rag import ResearchCorpus
+
     p = provider()
     secs = []
     for sym in NAMES:
@@ -149,6 +161,7 @@ def design_corpus():
 
 def cmd_rag() -> None:
     from agentic_trader.agentic.research_rag import comparison_table, evaluate_retrieval, load_questions
+
     t0 = time.time()
     corpus = design_corpus()
     qs = load_questions(QUESTIONS)
@@ -160,17 +173,29 @@ def cmd_rag() -> None:
         raise SystemExit(f"gold passages not visible at the question's as_of: {late}")
     # how hard the point-in-time filter is exercised: same-symbol, same-section passages that
     # the filter hides because they were accepted after as_of (later dividends, CCARs, rulings)
-    hidden = sum(1 for q in qs for p in corpus.passages
-                 if p.visible_date > q.as_of and p.symbol == corpus.get(q.gold[0]).symbol
-                 and p.section == corpus.get(q.gold[0]).section)
+    hidden = sum(
+        1
+        for q in qs
+        for p in corpus.passages
+        if p.visible_date > q.as_of and p.symbol == corpus.get(q.gold[0]).symbol and p.section == corpus.get(q.gold[0]).section
+    )
     reps = [evaluate_retrieval(corpus, qs, m) for m in ("tfidf", "hybrid")]
     print(comparison_table(reps))
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "edgar_rag_eval.json").write_text(json.dumps(
-        {"passages": len(corpus), "questions": len(qs), "distinct_as_of": len({q.as_of for q in qs}),
-         "later_same_symbol_section_passages_hidden": hidden,
-         "reports": [{**r.__dict__, "passes_gate": r.passes_gate} for r in reps],
-         "seconds": round(time.time() - t0, 1)}, indent=2), encoding="utf-8")
+    (OUT / "edgar_rag_eval.json").write_text(
+        json.dumps(
+            {
+                "passages": len(corpus),
+                "questions": len(qs),
+                "distinct_as_of": len({q.as_of for q in qs}),
+                "later_same_symbol_section_passages_hidden": hidden,
+                "reports": [{**r.__dict__, "passes_gate": r.passes_gate} for r in reps],
+                "seconds": round(time.time() - t0, 1),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def cmd_find(terms: list[str]) -> None:

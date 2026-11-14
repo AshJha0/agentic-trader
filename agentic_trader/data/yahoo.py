@@ -31,6 +31,7 @@ Point-in-time caveats, handled conservatively:
 EDGAR needs a contact User-Agent (``EDGAR_USER_AGENT``); without one both fall
 back to the Yahoo-only behaviour with a single warning.
 """
+
 from __future__ import annotations
 
 import logging
@@ -91,9 +92,10 @@ class YahooProvider(MarketDataProvider):
         self._covered: dict[str, tuple[date, date]] = {}  # range of complete bars already downloaded
         self._news: dict[str, list] = {}  # one headline fetch per symbol per provider
         self._actions: dict[str, pd.DataFrame] = {}  # unadjusted close + splits, per symbol, lazily
-        self._actions_day: dict[str, date] = {}      # the calendar day each action table was downloaded
-        self._lock = threading.RLock()   # history() misses download once even from worker threads
+        self._actions_day: dict[str, date] = {}  # the calendar day each action table was downloaded
+        self._lock = threading.RLock()  # history() misses download once even from worker threads
         from .edgar import EdgarClient
+
         self.edgar = EdgarClient.from_config(config)
 
     def reconfigured(self, config: dict) -> "YahooProvider":
@@ -110,23 +112,37 @@ class YahooProvider(MarketDataProvider):
         ratio on ex-dates, 0 elsewhere): complete bars only, downloaded once per symbol per day."""
         with self._lock:
             today = _today()
-            downloaded = self._actions_day.get(sym)   # None: a table supplied by the caller (tests)
+            downloaded = self._actions_day.get(sym)  # None: a table supplied by the caller (tests)
             if sym not in self._actions or (downloaded is not None and downloaded != today):
-                df = _yf().download(sym, start="1990-01-01", end=(today + timedelta(days=1)).isoformat(),
-                                    auto_adjust=False, actions=True, progress=False)
+                df = _yf().download(
+                    sym,
+                    start="1990-01-01",
+                    end=(today + timedelta(days=1)).isoformat(),
+                    auto_adjust=False,
+                    actions=True,
+                    progress=False,
+                )
                 if df is None or df.empty:
                     raise ValueError(f"no Yahoo corporate-action history for {sym}")
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
+
                 def action(col: str) -> pd.Series:
                     # A column Yahoo leaves out (no splits or dividends ever) is all zeros.
                     if col not in df.columns:
                         return pd.Series(0.0, index=df.index)
                     return pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-                out = pd.DataFrame({"RawClose": pd.to_numeric(df["Close"], errors="coerce"),
-                                    "Split": action("Stock Splits"), "Dividend": action("Dividends")})
-                out.index = pd.to_datetime(out.index).tz_localize(None) if getattr(out.index, "tz", None) else pd.to_datetime(out.index)
+                out = pd.DataFrame(
+                    {
+                        "RawClose": pd.to_numeric(df["Close"], errors="coerce"),
+                        "Split": action("Stock Splits"),
+                        "Dividend": action("Dividends"),
+                    }
+                )
+                out.index = (
+                    pd.to_datetime(out.index).tz_localize(None) if getattr(out.index, "tz", None) else pd.to_datetime(out.index)
+                )
                 self._actions[sym] = _complete_bars(out.sort_index(), today)
                 self._actions_day[sym] = today
             return self._actions[sym]
@@ -172,9 +188,9 @@ class YahooProvider(MarketDataProvider):
         return float(upto.iloc[-1]) * factor
 
     def _download(self, sym: str, start: date, end: date) -> pd.DataFrame:
-        df = _yf().download(sym, start=start.isoformat(),
-                            end=(end + timedelta(days=1)).isoformat(),
-                            auto_adjust=True, progress=False)
+        df = _yf().download(
+            sym, start=start.isoformat(), end=(end + timedelta(days=1)).isoformat(), auto_adjust=True, progress=False
+        )
         if df is None or df.empty:
             return _empty_bars()
         if isinstance(df.columns, pd.MultiIndex):
@@ -253,8 +269,7 @@ class YahooProvider(MarketDataProvider):
             if lo <= d <= as_of:
                 provider = content.get("provider") or {}
                 src = provider.get("displayName", "") if isinstance(provider, dict) else ""
-                out.append(NewsItem(d, title, source=src or item.get("publisher", ""),
-                                    summary=content.get("summary", "") or ""))
+                out.append(NewsItem(d, title, source=src or item.get("publisher", ""), summary=content.get("summary", "") or ""))
         return out
 
     def fundamentals(self, instrument: Instrument, as_of: date) -> dict[str, Any]:
@@ -263,8 +278,9 @@ class YahooProvider(MarketDataProvider):
         if self.edgar is not None:
             try:
                 price = self.as_traded_close(instrument, as_of)
-                f = self.edgar.fundamentals(instrument.symbol, as_of, price=price,
-                                            splits=self.splits(instrument) if price is not None else None)
+                f = self.edgar.fundamentals(
+                    instrument.symbol, as_of, price=price, splits=self.splits(instrument) if price is not None else None
+                )
             except Exception as e:
                 log.warning("edgar fundamentals failed for %s: %s", instrument.symbol, e)
                 f = {}

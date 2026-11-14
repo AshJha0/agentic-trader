@@ -23,6 +23,7 @@ accepted, so the cache never expires). The SEC asks for a descriptive User-Agent
 and the default User-Agent is a generic research string, configurable via
 ``config["edgar_text_user_agent"]`` or ``EDGAR_USER_AGENT``.
 """
+
 from __future__ import annotations
 
 import html
@@ -54,6 +55,7 @@ _FENCE_RE = re.compile(r"<\s*/?\s*untrusted_data\b[^>]*>?", re.I)
 class FilingSection:
     """One section of one filing. SHARED CONTRACT (the RAG lane builds on it): do not change
     the fields. ``visible_date`` is the UTC acceptance time; ``text`` is untrusted."""
+
     symbol: str
     accession: str
     form: str
@@ -105,8 +107,10 @@ _PERIODIC: dict[str, dict[str, tuple[str, tuple[str, ...]]]] = {
 # more complete discussion of risks.", "Item 1A: Risk Factors in JPMorgan Chase's 2016 Annual
 # Report on Form 10-K ..."). Taken as headings they started or ended sections in the wrong place
 # (found on the 2015-2021 filings of the core names; tests/test_v15_edgar_real.py).
-_CROSS_REF = re.compile(r"(?i)\b(of this|in this|in our|for a|see|refer|referenced|included in|set forth|"
-                        r"contained in|annual report|form\s*10-?[kq]|incorporated|discussed)\b")
+_CROSS_REF = re.compile(
+    r"(?i)\b(of this|in this|in our|for a|see|refer|referenced|included in|set forth|"
+    r"contained in|annual report|form\s*10-?[kq]|incorporated|discussed)\b"
+)
 _MAX_HEADING_LINE = 150
 # A periodic-report section shorter than this is a pointer elsewhere ("appears on pages 40-145",
 # "see Exhibit 99", "no material changes"), not text whose tone can be compared; omitted.
@@ -115,7 +119,7 @@ MIN_PERIODIC_CHARS = 1000
 
 def _is_heading(text: str, m: re.Match) -> bool:
     eol = text.find("\n", m.start() + 1)
-    line = text[m.start(): eol if eol != -1 else len(text)].strip()
+    line = text[m.start() : eol if eol != -1 else len(text)].strip()
     return len(line) <= _MAX_HEADING_LINE and not _CROSS_REF.search(line)
 
 
@@ -129,8 +133,7 @@ def _cut(text: str, start: str, ends: tuple[str, ...], exclude: re.Pattern | Non
     is taken so the table of contents (heading followed at once by the next heading) loses.
     Lines that are cross-references, not headings, neither start nor end a span."""
     best = ""
-    end_re = re.compile("|".join(_item_re(e)[len("(?im)"):] for e in ends) + r"|^\s*signatures?\s*$",
-                        re.I | re.M)
+    end_re = re.compile("|".join(_item_re(e)[len("(?im)") :] for e in ends) + r"|^\s*signatures?\s*$", re.I | re.M)
     for m in re.finditer(_item_re(start), text):
         if not _is_heading(text, m):
             continue
@@ -142,7 +145,7 @@ def _cut(text: str, start: str, ends: tuple[str, ...], exclude: re.Pattern | Non
             if e is None or _is_heading(text, e):
                 break
             pos = e.end()
-        span = text[m.end(): e.start() if e else len(text)].strip()
+        span = text[m.end() : e.start() if e else len(text)].strip()
         if len(span) > len(best):
             best = span
     return best
@@ -159,8 +162,11 @@ def extract_sections(text: str, form: str) -> dict[str, str]:
                 out[label] = s
     elif base == "8-K":
         for code in ITEMS_8K:
-            s = _cut(text, code, tuple(c for c in ("1.01", "2.01", "2.02", "2.03", "3.01", "5.02", "5.07",
-                                                   "7.01", "8.01", "9.01") if c != code))
+            s = _cut(
+                text,
+                code,
+                tuple(c for c in ("1.01", "2.01", "2.02", "2.03", "3.01", "5.02", "5.07", "7.01", "8.01", "9.01") if c != code),
+            )
             if s:
                 out[code] = s
     return out
@@ -192,6 +198,7 @@ def chunk_text(text: str, max_chars: int = 4000, overlap: int = 200) -> list[str
 # ------------------------------------------------------------------ provider
 def _http_fetch(url: str, user_agent: str, timeout: float = 30.0) -> bytes:
     from urllib.request import Request, urlopen
+
     req = Request(url, headers={"User-Agent": user_agent, "Accept-Encoding": "identity"})
     with urlopen(req, timeout=timeout) as r:  # noqa: S310 - fixed https hosts
         return r.read()
@@ -212,9 +219,15 @@ class EdgarProvider:
     """Filing sections for a ticker, point in time. ``fetch(url) -> bytes`` is injectable so
     tests run offline from fixtures."""
 
-    def __init__(self, user_agent: str | None = None, cache_dir: str | os.PathLike | None = None,
-                 fetch: Callable[[str], bytes] | None = None, min_interval: float = 0.11,
-                 forms: tuple[str, ...] = FORMS, ciks: dict[str, str] | None = None):
+    def __init__(
+        self,
+        user_agent: str | None = None,
+        cache_dir: str | os.PathLike | None = None,
+        fetch: Callable[[str], bytes] | None = None,
+        min_interval: float = 0.11,
+        forms: tuple[str, ...] = FORMS,
+        ciks: dict[str, str] | None = None,
+    ):
         self.user_agent = user_agent or os.environ.get("EDGAR_USER_AGENT") or DEFAULT_USER_AGENT
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self._fetch = fetch or (lambda u: _http_fetch(u, self.user_agent))
@@ -230,9 +243,11 @@ class EdgarProvider:
     def from_config(cls, config: dict) -> "EdgarProvider | None":
         if not config.get("edgar_text", False):
             return None
-        return cls(user_agent=config.get("edgar_text_user_agent"),
-                   cache_dir=config.get("edgar_text_cache_dir", "results/edgar_text_cache"),
-                   ciks=config.get("edgar_ciks"))
+        return cls(
+            user_agent=config.get("edgar_text_user_agent"),
+            cache_dir=config.get("edgar_text_cache_dir", "results/edgar_text_cache"),
+            ciks=config.get("edgar_ciks"),
+        )
 
     # transport -----------------------------------------------------------------
     def _get(self, url: str) -> bytes:
@@ -281,8 +296,7 @@ class EdgarProvider:
         if cik is not None:
             sub = self._json(SUBMISSIONS_URL.format(name=f"CIK{cik}.json"))
             pages = [sub.get("filings", {}).get("recent", {})]
-            pages += [self._json(SUBMISSIONS_URL.format(name=f["name"]))
-                      for f in sub.get("filings", {}).get("files", [])]
+            pages += [self._json(SUBMISSIONS_URL.format(name=f["name"])) for f in sub.get("filings", {}).get("files", [])]
             for p in pages:
                 n = len(p.get("form", []))
                 for i in range(n):
@@ -292,9 +306,15 @@ class EdgarProvider:
                     items = (p.get("items") or [""] * n)[i] or ""
                     if form == "8-K" and not any(c in items.split(",") for c in ITEMS_8K):
                         continue
-                    rows.append({"cik": cik, "accession": p["accessionNumber"][i], "form": form,
-                                 "doc": (p.get("primaryDocument") or [""] * n)[i],
-                                 "accepted": _parse_accepted((p.get("acceptanceDateTime") or [None] * n)[i])})
+                    rows.append(
+                        {
+                            "cik": cik,
+                            "accession": p["accessionNumber"][i],
+                            "form": form,
+                            "doc": (p.get("primaryDocument") or [""] * n)[i],
+                            "accepted": _parse_accepted((p.get("acceptanceDateTime") or [None] * n)[i]),
+                        }
+                    )
         rows.sort(key=lambda r: (r["accepted"] is None, r["accepted"] or datetime.min.replace(tzinfo=timezone.utc)))
         self._mem[key] = rows
         return rows
@@ -319,8 +339,10 @@ class EdgarProvider:
             except Exception as e:  # one unreadable document loses its sections, not the ticker
                 log.warning("EDGAR document %s unreadable: %s", row["accession"], e)
                 secs = {}
-            self._mem[key] = [FilingSection(symbol.upper(), row["accession"], row["form"], label,
-                                            row["accepted"], neutralise(t)) for label, t in secs.items()]
+            self._mem[key] = [
+                FilingSection(symbol.upper(), row["accession"], row["form"], label, row["accepted"], neutralise(t))
+                for label, t in secs.items()
+            ]
         return self._mem[key]
 
     def sections(self, symbol: str, as_of: datetime) -> list[FilingSection]:

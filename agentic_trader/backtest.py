@@ -24,6 +24,7 @@ are not allowed), and ``Carry``, the FX carry premium held at the desk's own str
 size (point-in-time rate differential / ``fx_carry_neutral_scale``, capped at
 ``fx_carry_neutral_cap``); ``Carry`` is flat on equities.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -68,11 +69,18 @@ class ComparisonReport:
         for name, r in self.results.items():
             m = r.metrics
             rows[name] = {
-                "CR%": 100 * m.cumulative_return, "AR%": 100 * m.annualized_return,
-                "Vol%": 100 * m.annualized_vol, "Sharpe": m.sharpe, "t(SR)": m.sharpe_tstat,
-                "Sortino": m.sortino, "MDD%": 100 * m.max_drawdown, "Calmar": m.calmar,
-                "Win%": 100 * m.win_rate, "Exp%": 100 * m.avg_exposure,
-                "Trades": m.num_trades, "Stops": r.stop_exits,
+                "CR%": 100 * m.cumulative_return,
+                "AR%": 100 * m.annualized_return,
+                "Vol%": 100 * m.annualized_vol,
+                "Sharpe": m.sharpe,
+                "t(SR)": m.sharpe_tstat,
+                "Sortino": m.sortino,
+                "MDD%": 100 * m.max_drawdown,
+                "Calmar": m.calmar,
+                "Win%": 100 * m.win_rate,
+                "Exp%": 100 * m.avg_exposure,
+                "Trades": m.num_trades,
+                "Stops": r.stop_exits,
                 "Impact%": 100 * r.impact_paid,
             }
         df = pd.DataFrame(rows).T
@@ -113,8 +121,9 @@ def fx_account_currency(config: dict) -> bool:
     return bool((config.get("backtest", {}) or {}).get("fx_account_currency", True))
 
 
-def quote_fx_series(ins: Instrument, provider: MarketDataProvider, index: pd.DatetimeIndex,
-                    start: date, end: date) -> np.ndarray | None:
+def quote_fx_series(
+    ins: Instrument, provider: MarketDataProvider, index: pd.DatetimeIndex, start: date, end: date
+) -> np.ndarray | None:
     """USD value of one unit of ``ins``'s quote currency at each date of ``index`` (review D5).
 
     None when no conversion is needed: equities, XXXUSD pairs (the quote is the account
@@ -131,13 +140,15 @@ def quote_fx_series(ins: Instrument, provider: MarketDataProvider, index: pd.Dat
     close = close[~close.index.duplicated(keep="last")].sort_index()
     aligned = close.reindex(close.index.union(index)).ffill().reindex(index).to_numpy(dtype=float)
     if np.isnan(aligned).any() or (aligned <= 0).any():
-        raise ValueError(f"{ins.display}: no {pair.display} close on or before every bar; "
-                         f"cannot convert the {q} P&L to {ACCOUNT_CCY}")
+        raise ValueError(
+            f"{ins.display}: no {pair.display} close on or before every bar; cannot convert the {q} P&L to {ACCOUNT_CCY}"
+        )
     return aligned if usd_quoted else 1.0 / aligned
 
 
-def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
-                        provider: MarketDataProvider, start: date) -> quant.BacktestConfig:
+def backtest_config_for(
+    ins: Instrument, config: dict, prices: np.ndarray, provider: MarketDataProvider, start: date
+) -> quant.BacktestConfig:
     """Cost, carry and shorting model for an instrument.
 
     The FX spread is converted from pips to bps at the window's *first* price (not
@@ -187,9 +198,9 @@ def backtest_config_for(ins: Instrument, config: dict, prices: np.ndarray,
     return cfg
 
 
-def participation_capper(full: pd.DataFrame, mask, ins: Instrument, config: dict,
-                         capital: float, capital_share: np.ndarray | None = None
-                         ) -> Callable[[np.ndarray], np.ndarray]:
+def participation_capper(
+    full: pd.DataFrame, mask, ins: Instrument, config: dict, capital: float, capital_share: np.ndarray | None = None
+) -> Callable[[np.ndarray], np.ndarray]:
     """Weight-path transform for ``costs.backtest_participation_cap`` (v0.17, review C1).
 
     None (default) returns the identity, so every published number is unchanged. A fraction
@@ -205,6 +216,7 @@ def participation_capper(full: pd.DataFrame, mask, ins: Instrument, config: dict
     if cap is None or ins.is_fx or "Volume" not in full:
         return lambda w: w
     from .execution_realism import cap_participation
+
     m = np.asarray(mask, dtype=bool)
     adv = pd.Series(full["Volume"].to_numpy(dtype=float)).rolling(20).mean().to_numpy()[m]
     px = full["Close"].to_numpy(dtype=float)[m]
@@ -212,8 +224,8 @@ def participation_capper(full: pd.DataFrame, mask, ins: Instrument, config: dict
 
     def apply(w: np.ndarray) -> np.ndarray:
         n = len(w)
-        return cap_participation(w, px[:n], adv[:n], capital, float(cap),
-                                 equity=None if sleeve is None else sleeve[:n])
+        return cap_participation(w, px[:n], adv[:n], capital, float(cap), equity=None if sleeve is None else sleeve[:n])
+
     return apply
 
 
@@ -237,9 +249,13 @@ def _cash_rate(rf: np.ndarray) -> np.ndarray | None:
     return None if np.isnan(rf).all() else rf
 
 
-def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
-                        periods_per_year: float | None = None,
-                        as_traded_close: np.ndarray | None = None) -> np.ndarray | None:
+def impact_coefficients(
+    full: pd.DataFrame,
+    ins: Instrument,
+    config: dict,
+    periods_per_year: float | None = None,
+    as_traded_close: np.ndarray | None = None,
+) -> np.ndarray | None:
     """Per-bar square-root impact coefficient ``K_t`` for the backtester, or ``None`` when off.
 
     The execution simulator (``algo.simulate_execution``) prices a slice of ``q`` units at
@@ -276,7 +292,7 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
         adv_notional = costs.get("fx_adv_notional")
         if not adv_notional:
             return None
-        ratio = np.full(len(close), capital / float(adv_notional))   # q / ADV in notional terms
+        ratio = np.full(len(close), capital / float(adv_notional))  # q / ADV in notional terms
     else:
         volume = full["Volume"].to_numpy(float) if "Volume" in full else np.zeros(len(close))
         adv = pd.Series(volume).rolling(20).mean().to_numpy()
@@ -291,34 +307,38 @@ def impact_coefficients(full: pd.DataFrame, ins: Instrument, config: dict,
     if algo and algo != "vwap":
         n = 288 if ins.is_fx else 78
         kappa = costs.get("ac_kappa")
-        kappa = 3.0 if kappa is None else float(kappa)   # 0 is TWAP, not "unset"
+        kappa = 3.0 if kappa is None else float(kappa)  # 0 is TWAP, not "unset"
         ratio_algo = algo_cost_ratio(algo, n, "fx" if ins.is_fx else "equity", kappa)
         # A NaN coefficient means "no impact" to the engine, so a non-finite schedule cost must
         # fail loudly rather than silently switch impact off.
         if not np.isfinite(ratio_algo) or ratio_algo <= 0:
-            raise ValueError(f"execution algo {algo!r} (kappa {costs.get('ac_kappa')}) has a non-finite "
-                             f"cost ratio {ratio_algo}; impact cannot be charged")
+            raise ValueError(
+                f"execution algo {algo!r} (kappa {costs.get('ac_kappa')}) has a non-finite "
+                f"cost ratio {ratio_algo}; impact cannot be charged"
+            )
         k = k * ratio_algo
     return np.where(np.isfinite(k), k, np.nan)
 
 
-TSMOM_LOOKBACK, TSMOM_SKIP = 252, 21   # 12-1 month time-series momentum, in trading days
+TSMOM_LOOKBACK, TSMOM_SKIP = 252, 21  # 12-1 month time-series momentum, in trading days
 
 
-def tsmom_weights(close: np.ndarray, vol_target_weight: np.ndarray, allow_short: bool,
-                  lookback: int = TSMOM_LOOKBACK, skip: int = TSMOM_SKIP) -> np.ndarray:
+def tsmom_weights(
+    close: np.ndarray, vol_target_weight: np.ndarray, allow_short: bool, lookback: int = TSMOM_LOOKBACK, skip: int = TSMOM_SKIP
+) -> np.ndarray:
     """Time-series momentum at the vol-target size: sign(close[t-skip] / close[t-lookback] - 1)
     times the vol-target weight, 0 until ``lookback`` bars exist, long-only when shorts are
     not allowed (a negative signal goes flat, not short). The sign is ``quant.strat_tsmom``."""
     return quant.strat_tsmom(close, (lookback,), skip, allow_short) * vol_target_weight
 
 
-TSMOM_HORIZONS = (21, 63, 252)   # 1, 3 and 12 months, in trading days
-LONG_SHORT_STREAMS = frozenset({"TSMOM(L/S)"})   # run with shorts allowed whatever the desk's mandate
+TSMOM_HORIZONS = (21, 63, 252)  # 1, 3 and 12 months, in trading days
+LONG_SHORT_STREAMS = frozenset({"TSMOM(L/S)"})  # run with shorts allowed whatever the desk's mandate
 
 
-def tsmom_multi_weights(close: np.ndarray, vol_target_weight: np.ndarray,
-                        horizons: tuple[int, ...] = TSMOM_HORIZONS) -> np.ndarray:
+def tsmom_multi_weights(
+    close: np.ndarray, vol_target_weight: np.ndarray, horizons: tuple[int, ...] = TSMOM_HORIZONS
+) -> np.ndarray:
     """Time-series momentum as in Moskowitz, Ooi and Pedersen (2012): the average sign of the
     trailing return over several horizons (1, 3 and 12 months), long AND short, at the
     vol-target size. 0 until the longest horizon exists. Each sign uses closes up to the bar
@@ -336,10 +356,16 @@ def carry_weights(carry_annual: np.ndarray | None, n: int, scale: float, cap: fl
     return np.clip(rd / scale, -cap, cap)
 
 
-def baseline_weights(full: pd.DataFrame, allow_short: bool, target_vol: float = 0.15,
-                     max_position: float = 1.0,
-                     periods_per_year: float = 252.0, carry_annual: np.ndarray | None = None,
-                     carry_scale: float = 2.0, carry_cap: float = 0.5) -> dict[str, np.ndarray]:
+def baseline_weights(
+    full: pd.DataFrame,
+    allow_short: bool,
+    target_vol: float = 0.15,
+    max_position: float = 1.0,
+    periods_per_year: float = 252.0,
+    carry_annual: np.ndarray | None = None,
+    carry_scale: float = 2.0,
+    carry_cap: float = 0.5,
+) -> dict[str, np.ndarray]:
     c, h, l = (full[k].to_numpy() for k in ("Close", "High", "Low"))
     rv = quant.realized_vol(c, 20, periods_per_year)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -362,15 +388,21 @@ def _parse(d: date | str) -> date:
     return date.fromisoformat(d) if isinstance(d, str) else d
 
 
-def run_agent_backtest(symbol: str, start: date | str, end: date | str,
-                       config: dict | None = None, rebalance_every: int = 5,
-                       provider: MarketDataProvider | None = None, llm: LLM | None = None,
-                       asset_class: str | None = None,
-                       on_decision: Callable[[FinalDecision], None] | None = None,
-                       include_agent: bool = True,
-                       capital_share: pd.Series | None = None,
-                       rebalance_offset: int = 0,
-                       stop_check: Callable[[], bool] | None = None) -> ComparisonReport:
+def run_agent_backtest(
+    symbol: str,
+    start: date | str,
+    end: date | str,
+    config: dict | None = None,
+    rebalance_every: int = 5,
+    provider: MarketDataProvider | None = None,
+    llm: LLM | None = None,
+    asset_class: str | None = None,
+    on_decision: Callable[[FinalDecision], None] | None = None,
+    include_agent: bool = True,
+    capital_share: pd.Series | None = None,
+    rebalance_offset: int = 0,
+    stop_check: Callable[[], bool] | None = None,
+) -> ComparisonReport:
     """Walk-forward backtest of the desk and the baselines on one instrument.
 
     ``capital_share`` (a date-indexed fraction of ``initial_capital``, for a portfolio sleeve)
@@ -412,8 +444,7 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
     carry = None if carry_full is None else np.asarray(carry_full, dtype=float)[np.asarray(mask, dtype=bool)]
     rf = risk_free_series(provider, window.index, cfg)
     cash = _cash_rate(rf)
-    ohlc = dict(open=window["Open"].to_numpy(), high=window["High"].to_numpy(),
-                low=window["Low"].to_numpy())
+    ohlc = dict(open=window["Open"].to_numpy(), high=window["High"].to_numpy(), low=window["Low"].to_numpy())
     atc = getattr(provider, "as_traded_closes", None)
     k_full = impact_coefficients(full, ins, cfg, as_traded_close=atc(ins, full.index) if callable(atc) else None)
     impact = None if k_full is None else k_full[np.asarray(mask, dtype=bool)]
@@ -424,16 +455,23 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
             raise ValueError("capital_share must be a non-negative fraction on every bar of the window")
     if impact is not None and share is not None:
         impact = impact * np.sqrt(share)
-    qfx = quote_fx_series(ins, provider, window.index, start - timedelta(days=cfg["lookback_days"]), end) \
-        if fx_account_currency(cfg) else None
+    qfx = (
+        quote_fx_series(ins, provider, window.index, start - timedelta(days=cfg["lookback_days"]), end)
+        if fx_account_currency(cfg)
+        else None
+    )
 
     results: dict[str, quant.BacktestResult] = {}
     decisions: list[FinalDecision] = []
     capw = participation_capper(full, mask, ins, cfg, float(cfg["initial_capital"]), share)
     if include_agent:
-        graph = TradingGraph(cfg, provider=provider,
-                             llm=llm if llm is not None else get_llm(cfg),
-                             memory=DecisionMemory(None), on_event=lambda *_: None)
+        graph = TradingGraph(
+            cfg,
+            provider=provider,
+            llm=llm if llm is not None else get_llm(cfg),
+            memory=DecisionMemory(None),
+            on_event=lambda *_: None,
+        )
         n = len(window)
         w = np.zeros(n)
         stop, take = np.full(n, np.nan), np.full(n, np.nan)
@@ -451,12 +489,18 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                 # The weight the desk actually holds coming into bar i: replay the engine on the
                 # bars so far (its last position is the previous decision's units drifted with
                 # the market, or 0 after a stop / take exit or ruin).
-                held = float(quant.run_backtest(
-                    prices[:i + 1], capw(w[:i + 1]), bt,
-                    **{k: (None if v is None else v[:i + 1]) for k, v in extras.items()}).positions[i])
+                held = float(
+                    quant.run_backtest(
+                        prices[: i + 1],
+                        capw(w[: i + 1]),
+                        bt,
+                        **{k: (None if v is None else v[: i + 1]) for k, v in extras.items()},
+                    ).positions[i]
+                )
             st, dec = graph.propagate(ins, window.index[i].date(), current_weight=held)
             if stop_check is not None and stop_check():
                 from .batch import PassPending
+
                 raise PassPending(f"{ins.display} {window.index[i].date()}")
             for s in _sources(st):
                 sources[s] = sources.get(s, 0) + 1
@@ -478,17 +522,28 @@ def run_agent_backtest(symbol: str, start: date | str, end: date | str,
                 on_decision(dec)
         results[AGENT] = quant.run_backtest(prices, capw(w), bt, **extras)
 
-    for name, weights in baseline_weights(full, bt.allow_short, cfg["risk"]["target_vol"],
-                                          cfg["risk"]["max_position"], ins.periods_per_year,
-                                          carry_annual=carry_full,
-                                          carry_scale=float(cfg["risk"].get("fx_carry_neutral_scale", 2.0)),
-                                          carry_cap=float(cfg["risk"].get("fx_carry_neutral_cap", 0.5))).items():
+    for name, weights in baseline_weights(
+        full,
+        bt.allow_short,
+        cfg["risk"]["target_vol"],
+        cfg["risk"]["max_position"],
+        ins.periods_per_year,
+        carry_annual=carry_full,
+        carry_scale=float(cfg["risk"].get("fx_carry_neutral_scale", 2.0)),
+        carry_cap=float(cfg["risk"].get("fx_carry_neutral_cap", 0.5)),
+    ).items():
         bt_name = dc_replace(bt, allow_short=True) if name in LONG_SHORT_STREAMS else bt
-        results[name] = quant.run_backtest(prices, capw(weights[mask]), bt_name, carry=carry, impact=impact,
-                                           cash_rate=cash, open=ohlc["open"] if bt.fill_next_open else None,
-                                           quote_fx=qfx)
-    return ComparisonReport(ins, window.index, results, decisions, bt, carry,
-                            sources if include_agent else {}, prices, rf)
+        results[name] = quant.run_backtest(
+            prices,
+            capw(weights[mask]),
+            bt_name,
+            carry=carry,
+            impact=impact,
+            cash_rate=cash,
+            open=ohlc["open"] if bt.fill_next_open else None,
+            quote_fx=qfx,
+        )
+    return ComparisonReport(ins, window.index, results, decisions, bt, carry, sources if include_agent else {}, prices, rf)
 
 
 def _sources(state) -> list[str]:
@@ -505,49 +560,69 @@ def _sources(state) -> list[str]:
 @dataclass
 class PortfolioReport:
     """Sleeves, one per instrument, combined daily with a weighting scheme."""
+
     symbols: list[str]
     dates: pd.DatetimeIndex
-    returns: pd.DataFrame            # strategy -> portfolio daily returns
+    returns: pd.DataFrame  # strategy -> portfolio daily returns
     metrics: dict[str, quant.Metrics]
     sleeves: dict[str, ComparisonReport]
     weighting: str = "equal"
-    allocations: pd.DataFrame | None = None   # capital share per sleeve over time (agent strategy)
-    rf: np.ndarray | float | None = None      # per-bar (or constant) annual risk-free rate the metrics used
+    allocations: pd.DataFrame | None = None  # capital share per sleeve over time (agent strategy)
+    rf: np.ndarray | float | None = None  # per-bar (or constant) annual risk-free rate the metrics used
 
     def table(self) -> pd.DataFrame:
         rows = {}
         for name, m in self.metrics.items():
-            rows[name] = {"CR%": 100 * m.cumulative_return, "AR%": 100 * m.annualized_return,
-                          "Vol%": 100 * m.annualized_vol, "Sharpe": m.sharpe,
-                          "t(SR)": m.sharpe_tstat, "MDD%": 100 * m.max_drawdown,
-                          "Calmar": m.calmar, "Exp%": 100 * m.avg_exposure}
+            rows[name] = {
+                "CR%": 100 * m.cumulative_return,
+                "AR%": 100 * m.annualized_return,
+                "Vol%": 100 * m.annualized_vol,
+                "Sharpe": m.sharpe,
+                "t(SR)": m.sharpe_tstat,
+                "MDD%": 100 * m.max_drawdown,
+                "Calmar": m.calmar,
+                "Exp%": 100 * m.avg_exposure,
+            }
         return pd.DataFrame(rows).T.round(2)
 
-    def sharpe_difference(self, a: str = AGENT, b: str = "B&H vol-target", block: int = 10,
-                          n_boot: int = 5000, seed: int = 0):
+    def sharpe_difference(self, a: str = AGENT, b: str = "B&H vol-target", block: int = 10, n_boot: int = 5000, seed: int = 0):
         """Sharpe(a) - Sharpe(b) over the same days with a paired block bootstrap over time
         (``stats.paired_sharpe_block_bootstrap``), on the same excess-return convention as
         ``metrics``: the interval a portfolio-level comparison needs, which the
         cross-instrument bootstrap cannot give."""
         from .stats import paired_sharpe_block_bootstrap
+
         ppy = max(r.instrument.periods_per_year for r in self.sleeves.values())
         # ``metrics`` are computed from the equity curve, whose first return (bar 0, before
         # any position) does not exist, and pair the return over (t-1, t] with rf[t-1], the
         # rate credited over that bar; use the same bars and pairing so sharpe_a equals
         # metrics[a].sharpe.
         rf = self.rf[:-1] if isinstance(self.rf, np.ndarray) else self.rf
-        return paired_sharpe_block_bootstrap(self.returns[a].to_numpy(dtype=float)[1:],
-                                             self.returns[b].to_numpy(dtype=float)[1:], ppy,
-                                             rf=rf, block=block, n_boot=n_boot, seed=seed)
+        return paired_sharpe_block_bootstrap(
+            self.returns[a].to_numpy(dtype=float)[1:],
+            self.returns[b].to_numpy(dtype=float)[1:],
+            ppy,
+            rf=rf,
+            block=block,
+            n_boot=n_boot,
+            seed=seed,
+        )
 
 
-def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | str,
-                           config: dict | None = None, rebalance_every: int = 5,
-                           provider: MarketDataProvider | None = None, llm: LLM | None = None,
-                           on_decision: Callable[[FinalDecision], None] | None = None,
-                           weighting: str = "equal", cov_window: int = 120,
-                           class_budgets: dict[str, float] | None = None,
-                           rebalance_offset: int = 0) -> PortfolioReport:
+def run_portfolio_backtest(
+    symbols: list[str],
+    start: date | str,
+    end: date | str,
+    config: dict | None = None,
+    rebalance_every: int = 5,
+    provider: MarketDataProvider | None = None,
+    llm: LLM | None = None,
+    on_decision: Callable[[FinalDecision], None] | None = None,
+    weighting: str = "equal",
+    cov_window: int = 120,
+    class_budgets: dict[str, float] | None = None,
+    rebalance_offset: int = 0,
+) -> PortfolioReport:
     """Run every symbol as its own sleeve and combine the sleeves.
 
     Each sleeve is a full walk-forward backtest (costs, carry, stops) of the agent
@@ -578,6 +653,7 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
     if not symbols:
         raise ValueError("run_portfolio_backtest needs at least one symbol")
     from .portfolio import METHODS, construct
+
     if weighting not in METHODS:
         raise ValueError(f"weighting must be one of {METHODS}")
     if class_budgets is not None and (any(v < 0 for v in class_budgets.values()) or sum(class_budgets.values()) <= 0):
@@ -591,8 +667,7 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
     # can be charged impact for the capital it is actually given.
     lookback_start = start_d - timedelta(days=cfg["lookback_days"])
     history = {s: provider.history(ins, lookback_start, end_d) for s, ins in instruments.items()}
-    in_window = {s: h.index[(h.index >= pd.Timestamp(start_d)) & (h.index <= pd.Timestamp(end_d))]
-                 for s, h in history.items()}
+    in_window = {s: h.index[(h.index >= pd.Timestamp(start_d)) & (h.index <= pd.Timestamp(end_d))] for s, h in history.items()}
     idx = pd.DatetimeIndex(sorted(set().union(*in_window.values())))
     ppy = max(ins.periods_per_year for ins in instruments.values())
 
@@ -622,9 +697,17 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
                 hist = inst_returns[inst_returns.index < d].tail(cov_window)
                 if len(hist) >= 20:
                     try:
-                        pw = construct({s: 1.0 for s in keys}, hist, weighting,  # type: ignore[arg-type]
-                                       periods_per_year=ppy, max_weight=1.0, gross_cap=1.0, target_vol=None,
-                                       groups=groups if class_budgets else None, group_budgets=class_budgets)
+                        pw = construct(
+                            {s: 1.0 for s in keys},
+                            hist,
+                            weighting,  # type: ignore[arg-type]
+                            periods_per_year=ppy,
+                            max_weight=1.0,
+                            gross_cap=1.0,
+                            target_vol=None,
+                            groups=groups if class_budgets else None,
+                            group_budgets=class_budgets,
+                        )
                         current = np.array([pw.allocation[pw.symbols.index(s)] for s in keys])
                     except ValueError:
                         pass  # keep the previous allocation on a degenerate window
@@ -632,24 +715,48 @@ def run_portfolio_backtest(symbols: list[str], start: date | str, end: date | st
         alloc = pd.DataFrame.from_dict(rows, orient="index", columns=keys).reindex(idx)
         alloc_hist = alloc
 
-    sleeves = {s: run_agent_backtest(s, start, end, cfg, rebalance_every, provider, llm,
-                                     on_decision=on_decision, capital_share=alloc[s],
-                                     rebalance_offset=rebalance_offset) for s in keys}
+    sleeves = {
+        s: run_agent_backtest(
+            s,
+            start,
+            end,
+            cfg,
+            rebalance_every,
+            provider,
+            llm,
+            on_decision=on_decision,
+            capital_share=alloc[s],
+            rebalance_offset=rebalance_offset,
+        )
+        for s in keys
+    }
     strategies = list(next(iter(sleeves.values())).results)
     rf = risk_free_series(provider, idx, cfg)
     rf_arg = cfg["risk_free_annual"] if np.isnan(rf).all() else rf
 
     rets, metrics = {}, {}
     for name in strategies:
+
         def frame(attr, name=name):
-            return pd.DataFrame({s: pd.Series(np.abs(getattr(r.results[name], attr)), index=r.dates)
-                                 for s, r in sleeves.items()}).reindex(idx).fillna(0.0)
-        per = pd.DataFrame({s: pd.Series(r.results[name].returns, index=r.dates)
-                            for s, r in sleeves.items()}).reindex(idx).fillna(0.0)
+            return (
+                pd.DataFrame({s: pd.Series(np.abs(getattr(r.results[name], attr)), index=r.dates) for s, r in sleeves.items()})
+                .reindex(idx)
+                .fillna(0.0)
+            )
+
+        per = (
+            pd.DataFrame({s: pd.Series(r.results[name].returns, index=r.dates) for s, r in sleeves.items()})
+            .reindex(idx)
+            .fillna(0.0)
+        )
         port = (per * alloc).sum(axis=1)
         rets[name] = port
         equity = cfg["initial_capital"] * np.cumprod(1.0 + port.to_numpy())
-        metrics[name] = quant.compute_metrics(equity, (frame("positions") * alloc).sum(axis=1).to_numpy(), ppy,
-                                              rf_arg, traded=(frame("traded") * alloc).sum(axis=1).to_numpy())
-    return PortfolioReport(list(symbols), idx, pd.DataFrame(rets, index=idx), metrics, sleeves,
-                           weighting, alloc_hist, rf_arg)
+        metrics[name] = quant.compute_metrics(
+            equity,
+            (frame("positions") * alloc).sum(axis=1).to_numpy(),
+            ppy,
+            rf_arg,
+            traded=(frame("traded") * alloc).sum(axis=1).to_numpy(),
+        )
+    return PortfolioReport(list(symbols), idx, pd.DataFrame(rets, index=idx), metrics, sleeves, weighting, alloc_hist, rf_arg)

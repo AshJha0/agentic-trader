@@ -22,6 +22,7 @@ are always served on one basis:
 Optional ``<SYMBOL>_news.csv`` with columns Date,Headline[,Source,Sentiment] supplies
 point-in-time news.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,7 +38,7 @@ from .base import MarketDataProvider, NewsItem, cash_rates, clean_ohlcv, clip_hi
 
 log = logging.getLogger(__name__)
 
-SPLIT_JUMP = 0.05   # a day-over-day move of the Adj Close / Close factor above this is a split, not a dividend
+SPLIT_JUMP = 0.05  # a day-over-day move of the Adj Close / Close factor above this is a split, not a dividend
 
 
 def split_factor(factor: pd.Series) -> tuple[pd.Series, pd.Index]:
@@ -57,8 +58,8 @@ def split_factor(factor: pd.Series) -> tuple[pd.Series, pd.Index]:
     jump = known / known.shift(1)
     is_split = ((jump - 1.0).abs() > SPLIT_JUMP).to_numpy()
     ratio = pd.Series(np.where(is_split, 1.0 / jump.to_numpy(), 1.0), index=known.index)  # pre / post at a split
-    after = ratio.iloc[::-1].cumprod().iloc[::-1]                  # product over rows >= t
-    comp = after.shift(-1, fill_value=1.0)                         # product over rows > t
+    after = ratio.iloc[::-1].cumprod().iloc[::-1]  # product over rows >= t
+    comp = after.shift(-1, fill_value=1.0)  # product over rows > t
     return comp.reindex(factor.index).fillna(1.0), known.index[is_split]
 
 
@@ -80,16 +81,21 @@ def one_basis(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
             known = known[~known.index.duplicated(keep="last")].sort_index()
             if known.empty:
                 factor = pd.Series(1.0, index=factor.index)
-                log.warning("%s: Adj Close is blank on every row with a Close; served on the raw Close basis",
-                            name or "price file")
+                log.warning(
+                    "%s: Adj Close is blank on every row with a Close; served on the raw Close basis", name or "price file"
+                )
             else:
                 # Nearest dated row with a factor: a split is a step, so the neighbour's factor
                 # is exact away from ex-dates and the closest guess on one.
                 pos = known.index.get_indexer(factor.index[gap], method="nearest")
                 factor.loc[gap] = known.to_numpy()[pos]
-                log.warning("%s: Adj Close blank on %d row(s) with a valid Close (first %s); adjusted with "
-                            "the nearest dated row's factor", name or "price file", int(gap.sum()),
-                            factor.index[gap][0])
+                log.warning(
+                    "%s: Adj Close blank on %d row(s) with a valid Close (first %s); adjusted with "
+                    "the nearest dated row's factor",
+                    name or "price file",
+                    int(gap.sum()),
+                    factor.index[gap][0],
+                )
         for col in ("Open", "High", "Low"):
             if col in df:
                 df[col] = pd.to_numeric(df[col], errors="coerce") * factor
@@ -97,15 +103,22 @@ def one_basis(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
         if "Volume" in df:
             comp, splits = split_factor(factor)
             if len(splits):
-                log.info("%s: %d split(s) detected from the adjustment factor (%s); Volume rescaled across them",
-                         name or "price file", len(splits), ", ".join(str(d)[:10] for d in splits[:5]))
+                log.info(
+                    "%s: %d split(s) detected from the adjustment factor (%s); Volume rescaled across them",
+                    name or "price file",
+                    len(splits),
+                    ", ".join(str(d)[:10] for d in splits[:5]),
+                )
             df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce") / comp
     else:
         dropped = [c for c in ("Open", "High", "Low") if c in df]
         if dropped:
-            log.warning("%s has Adj Close but no Close: %s dropped (they cannot be put on the adjusted "
-                        "basis), so intraday levels are unavailable for this file", name or "price file",
-                        "/".join(dropped))
+            log.warning(
+                "%s has Adj Close but no Close: %s dropped (they cannot be put on the adjusted "
+                "basis), so intraday levels are unavailable for this file",
+                name or "price file",
+                "/".join(dropped),
+            )
             df = df.drop(columns=dropped)
         df["Close"] = adj
     return df.drop(columns=["Adj Close"])
@@ -158,6 +171,5 @@ class CSVProvider(MarketDataProvider):
             s = getattr(r, "Sentiment", None)
             s = None if s is None or (isinstance(s, float) and math.isnan(s)) else float(s)
             src = getattr(r, "Source", "")
-            out.append(NewsItem(r.Date.date(), r.Headline.strip(),
-                                src if isinstance(src, str) else "", sentiment=s))
+            out.append(NewsItem(r.Date.date(), r.Headline.strip(), src if isinstance(src, str) else "", sentiment=s))
         return out

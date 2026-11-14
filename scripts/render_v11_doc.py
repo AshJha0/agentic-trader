@@ -10,6 +10,7 @@ table is copied verbatim.
 
     .venv\\Scripts\\python.exe scripts/render_v11_doc.py [--in results/v11]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,18 +23,51 @@ ROOT = Path(__file__).resolve().parents[1]
 
 SECTIONS = [
     ("Headline, core (15)", ["summary: core (15), design", "summary: core (15), holdout", "head to head: core (15)"]),
-    ("Headline, extended (45)", ["summary: extended (45), design", "summary: extended (45), holdout", "head to head: extended (45)"]),
-    ("Paired Sharpe against every baseline", ["paired Sharpe, agent minus baseline: core (15)", "paired Sharpe, agent minus baseline: extended (45)",
-                                              "paired Sharpe, agent minus baseline: all 60"]),
-    ("Drawdown and Calmar against the two controls", ["paired MDD%, agent minus control: core (15)", "paired MDD%, agent minus control: extended (45)",
-                                                        "paired Calmar, agent minus control: core (15)", "paired Calmar, agent minus control: extended (45)",
-                                                        "summary by asset class: core (15) equity (10), holdout", "paired MDD% by asset class, agent minus control: core (15) equity (10)"]),
-    ("The 15-sleeve portfolio", ["portfolio: design", "portfolio Sharpe difference (paired block bootstrap over days): design",
-                                 "portfolio: holdout", "portfolio Sharpe difference (paired block bootstrap over days): holdout",
-                                 "cash leg on vs off: holdout"]),
-    ("Re-checks under the v0.11 engine", ["EDGAR on (a) vs off (b)", "FX carry rule on (a) vs off (b)", "with the cross-sectional analyst (a) vs default (b)",
-                                          "with the alpha analyst, corrected gate (a) vs default (b)", "track-record size cut off (a) vs on (b)",
-                                          "cash leg off (a) vs on (b)", "v0.3+ rules (a) vs v0.2 rules (b), core"]),
+    (
+        "Headline, extended (45)",
+        ["summary: extended (45), design", "summary: extended (45), holdout", "head to head: extended (45)"],
+    ),
+    (
+        "Paired Sharpe against every baseline",
+        [
+            "paired Sharpe, agent minus baseline: core (15)",
+            "paired Sharpe, agent minus baseline: extended (45)",
+            "paired Sharpe, agent minus baseline: all 60",
+        ],
+    ),
+    (
+        "Drawdown and Calmar against the two controls",
+        [
+            "paired MDD%, agent minus control: core (15)",
+            "paired MDD%, agent minus control: extended (45)",
+            "paired Calmar, agent minus control: core (15)",
+            "paired Calmar, agent minus control: extended (45)",
+            "summary by asset class: core (15) equity (10), holdout",
+            "paired MDD% by asset class, agent minus control: core (15) equity (10)",
+        ],
+    ),
+    (
+        "The 15-sleeve portfolio",
+        [
+            "portfolio: design",
+            "portfolio Sharpe difference (paired block bootstrap over days): design",
+            "portfolio: holdout",
+            "portfolio Sharpe difference (paired block bootstrap over days): holdout",
+            "cash leg on vs off: holdout",
+        ],
+    ),
+    (
+        "Re-checks under the v0.11 engine",
+        [
+            "EDGAR on (a) vs off (b)",
+            "FX carry rule on (a) vs off (b)",
+            "with the cross-sectional analyst (a) vs default (b)",
+            "with the alpha analyst, corrected gate (a) vs default (b)",
+            "track-record size cut off (a) vs on (b)",
+            "cash leg off (a) vs on (b)",
+            "v0.3+ rules (a) vs v0.2 rules (b), core",
+        ],
+    ),
     ("Execution and impact", ["execution algorithm, $1B holdout portfolio", "impact sweep, core universe"]),
     ("VaR coverage", ["VaR coverage: rolling historical VaR", "VaR coverage: the desk's own per-instrument forecast"]),
     ("Selection statistics on one statistic", ["trials registry:", "selection statistics for the frozen rules"]),
@@ -77,8 +111,11 @@ def main(argv=None) -> int:
     tables = (d / "tables.md").read_text(encoding="utf-8")
     manifest = json.load(open(d / "manifest.json", encoding="utf-8"))
     prov = manifest["provenance"]
-    out = [INTRO, f"Measured {manifest['finished']} at commit `{prov['git_commit'][:7]}` "
-           f"({'dirty' if prov['git_dirty'] else 'clean'} tree), {prov['quant_backend']} backend, {manifest['seconds']} s.\n"]
+    out = [
+        INTRO,
+        f"Measured {manifest['finished']} at commit `{prov['git_commit'][:7]}` "
+        f"({'dirty' if prov['git_dirty'] else 'clean'} tree), {prov['quant_backend']} backend, {manifest['seconds']} s.\n",
+    ]
     missing = []
     for title, keys in SECTIONS:
         out.append(f"\n## {title}\n")

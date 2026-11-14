@@ -6,6 +6,7 @@ Offline by default (synthetic prices, rule-based agents) so it runs in seconds.
 Pass --live to use Claude + Yahoo Finance; that makes one full agent run per
 rebalance date per symbol, so check your API budget first.
 """
+
 import sys
 
 from agentic_trader import make_config, run_agent_backtest

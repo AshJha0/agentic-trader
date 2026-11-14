@@ -22,6 +22,7 @@ dated corpus.
   hand-labelled question set; :func:`analyst_retriever` refuses to hand retrieval to the
   analysts unless recall@5 >= 0.8 (``RECALL_GATE``).
 """
+
 from __future__ import annotations
 
 import json
@@ -44,6 +45,7 @@ CENTRAL_BANKS = ("FOMC", "ECB", "BoE", "BoJ")
 
 class FilingSectionLike(Protocol):
     """Duck type of ``agentic_trader.data.edgar.FilingSection`` (shared contract)."""
+
     symbol: str
     accession: str
     form: str
@@ -66,8 +68,8 @@ def _utc(ts: datetime | date | str) -> datetime:
 @dataclass(frozen=True)
 class ResearchPassage:
     id: str
-    source: str              # "edgar" | "central_bank"
-    symbol: str              # ticker, or the bank ("FOMC", "ECB", ...)
+    source: str  # "edgar" | "central_bank"
+    symbol: str  # ticker, or the bank ("FOMC", "ECB", ...)
     accession: str
     form: str
     section: str
@@ -77,12 +79,22 @@ class ResearchPassage:
 
     @property
     def metadata(self) -> dict[str, str]:
-        return {"symbol": self.symbol, "accession": self.accession,
-                "visible_date": self.visible_date.isoformat(), "section": self.section}
+        return {
+            "symbol": self.symbol,
+            "accession": self.accession,
+            "visible_date": self.visible_date.isoformat(),
+            "section": self.section,
+        }
 
     def to_dict(self, score: float | None = None) -> dict[str, Any]:
-        d: dict[str, Any] = {"id": self.id, "source": self.source, "form": self.form, "title": self.title,
-             "text": self.text, **self.metadata}
+        d: dict[str, Any] = {
+            "id": self.id,
+            "source": self.source,
+            "form": self.form,
+            "title": self.title,
+            "text": self.text,
+            **self.metadata,
+        }
         if score is not None:
             d["score"] = round(score, 4)
         return d
@@ -124,15 +136,26 @@ def passages_from_filings(sections: Iterable[FilingSectionLike], min_chars: int 
         if min_chars > 0:
             paras = _merge_paragraphs(paras, min_chars)
         for i, para in enumerate(paras):
-            out.append(ResearchPassage(f"{s.accession}#{s.section}#{i}", "edgar", s.symbol, s.accession,
-                                       s.form, s.section, vis, para, f"{s.symbol} {s.form} {s.section}"))
+            out.append(
+                ResearchPassage(
+                    f"{s.accession}#{s.section}#{i}",
+                    "edgar",
+                    s.symbol,
+                    s.accession,
+                    s.form,
+                    s.section,
+                    vis,
+                    para,
+                    f"{s.symbol} {s.form} {s.section}",
+                )
+            )
     return out
 
 
 @dataclass(frozen=True)
 class CentralBankStatement:
     bank: str
-    released: datetime       # release time, UTC
+    released: datetime  # release time, UTC
     title: str
     text: str
 
@@ -160,8 +183,19 @@ def passages_from_statements(statements: Iterable[CentralBankStatement]) -> list
     out = []
     for st in statements:
         for i, para in enumerate(_paragraphs(st.text)):
-            out.append(ResearchPassage(f"{st.accession}#statement#{i}", "central_bank", st.bank, st.accession,
-                                       "statement", "statement", st.released, para, st.title))
+            out.append(
+                ResearchPassage(
+                    f"{st.accession}#statement#{i}",
+                    "central_bank",
+                    st.bank,
+                    st.accession,
+                    "statement",
+                    "statement",
+                    st.released,
+                    para,
+                    st.title,
+                )
+            )
     return out
 
 
@@ -196,8 +230,10 @@ def embeddings_available() -> bool:
 class _LocalEmbedder:
     """Optional local sentence embeddings (``pip install agentic-trader[rag]``). Lazy import;
     the model is a local download, never a paid API."""
+
     def __init__(self, model: str = "sentence-transformers/all-MiniLM-L6-v2"):
         from sentence_transformers import SentenceTransformer
+
         self.model = SentenceTransformer(model)
 
     def encode(self, texts: Sequence[str]) -> np.ndarray:
@@ -249,8 +285,9 @@ class ResearchCorpus:
             self._emb = self._embedder.encode([self._doc_text(p) for p in self.passages])
 
     @classmethod
-    def build(cls, filings: Iterable[FilingSectionLike] = (), statements: Iterable[CentralBankStatement] = (),
-              min_chars: int = 0, **kw) -> "ResearchCorpus":
+    def build(
+        cls, filings: Iterable[FilingSectionLike] = (), statements: Iterable[CentralBankStatement] = (), min_chars: int = 0, **kw
+    ) -> "ResearchCorpus":
         return cls(passages_from_filings(filings, min_chars) + passages_from_statements(statements), **kw)
 
     @staticmethod
@@ -276,8 +313,15 @@ class ResearchCorpus:
             self._cache[n] = (emb, mat, _Bm25(texts))
         return self._cache[n]
 
-    def search(self, query: str, as_of: datetime | date | str, k: int = 5, method: str = "tfidf",
-               symbol: str | None = None, source: str | None = None) -> list[Hit]:
+    def search(
+        self,
+        query: str,
+        as_of: datetime | date | str,
+        k: int = 5,
+        method: str = "tfidf",
+        symbol: str | None = None,
+        source: str | None = None,
+    ) -> list[Hit]:
         if method not in ("tfidf", "hybrid"):
             raise ValueError(f"unknown retrieval method {method!r}")
         cut = _utc(as_of)
@@ -285,8 +329,11 @@ class ResearchCorpus:
         if n == 0 or not query.strip():
             return []
         emb, mat, bm25 = self._index(n)
-        allowed = [i for i in range(n) if (symbol is None or self.passages[i].symbol == symbol)
-                   and (source is None or self.passages[i].source == source)]
+        allowed = [
+            i
+            for i in range(n)
+            if (symbol is None or self.passages[i].symbol == symbol) and (source is None or self.passages[i].source == source)
+        ]
         if not allowed:
             return []
         tf = mat @ emb.embed(query)
@@ -321,20 +368,27 @@ def to_document_blocks(hits: Sequence[Hit | ResearchPassage]) -> list[dict[str, 
     blocks = []
     for h in hits:
         p = h.passage if isinstance(h, Hit) else h
-        blocks.append({"type": "document",
-                       "source": {"type": "text", "media_type": "text/plain", "data": p.text},
-                       "title": p.id,
-                       "context": json.dumps(p.metadata, sort_keys=True),
-                       "citations": {"enabled": True}})
+        blocks.append(
+            {
+                "type": "document",
+                "source": {"type": "text", "media_type": "text/plain", "data": p.text},
+                "title": p.id,
+                "context": json.dumps(p.metadata, sort_keys=True),
+                "citations": {"enabled": True},
+            }
+        )
     return blocks
 
 
-def build_cited_request(question: str, hits: Sequence[Hit | ResearchPassage], model: str = "claude-opus-5-5",
-                        max_tokens: int = 1024) -> dict[str, Any]:
+def build_cited_request(
+    question: str, hits: Sequence[Hit | ResearchPassage], model: str = "claude-opus-5-5", max_tokens: int = 1024
+) -> dict[str, Any]:
     """The Messages API payload for a cited answer. Built only; nothing is sent."""
-    return {"model": model, "max_tokens": max_tokens,
-            "messages": [{"role": "user",
-                          "content": to_document_blocks(hits) + [{"type": "text", "text": question}]}]}
+    return {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": to_document_blocks(hits) + [{"type": "text", "text": question}]}],
+    }
 
 
 @dataclass
@@ -374,8 +428,13 @@ def citations_from_response(response: dict[str, Any]) -> list[dict[str, Any]]:
     out = []
     for block in response.get("content", []):
         for cit in block.get("citations") or []:
-            out.append({"cited_text": cit.get("cited_text"), "document_index": cit.get("document_index"),
-                        "document_title": cit.get("document_title")})
+            out.append(
+                {
+                    "cited_text": cit.get("cited_text"),
+                    "document_index": cit.get("document_index"),
+                    "document_title": cit.get("document_title"),
+                }
+            )
     return out
 
 
@@ -385,7 +444,7 @@ class Question:
     id: str
     text: str
     as_of: datetime
-    gold: tuple[str, ...]          # gold passage ids
+    gold: tuple[str, ...]  # gold passage ids
     gold_accession: str
 
 
@@ -406,10 +465,11 @@ def load_eval_corpus(path: Path | str = EVAL_DIR / "corpus.json", **kw) -> Resea
         section: str
         visible_date: datetime
         text: str
-    secs = [_Section(r["symbol"], r["accession"], r["form"], r["section"], _utc(r["visible_date"]), r["text"])
-            for r in raw["filings"]]
-    sts = [CentralBankStatement(r["bank"], _utc(r["released"]), r.get("title", ""), r["text"])
-           for r in raw["statements"]]
+
+    secs = [
+        _Section(r["symbol"], r["accession"], r["form"], r["section"], _utc(r["visible_date"]), r["text"]) for r in raw["filings"]
+    ]
+    sts = [CentralBankStatement(r["bank"], _utc(r["released"]), r.get("title", ""), r["text"]) for r in raw["statements"]]
     return ResearchCorpus.build(secs, sts, **kw)  # type: ignore[arg-type]  # _Section is FilingSectionLike at runtime
 
 
@@ -426,8 +486,9 @@ class RetrievalReport:
         return self.recall_at_5 >= RECALL_GATE
 
 
-def evaluate_retrieval(corpus: ResearchCorpus, questions: Sequence[Question], method: str = "tfidf",
-                       k: int = 5) -> RetrievalReport:
+def evaluate_retrieval(
+    corpus: ResearchCorpus, questions: Sequence[Question], method: str = "tfidf", k: int = 5
+) -> RetrievalReport:
     if not questions:
         raise ValueError("empty question set")
     rec = mrr = acc = 0.0
@@ -443,10 +504,12 @@ def evaluate_retrieval(corpus: ResearchCorpus, questions: Sequence[Question], me
 
 
 def comparison_table(reports: Sequence[RetrievalReport]) -> str:
-    lines = ["| method | questions | recall@5 | MRR | accession recall@5 | gate (>= 0.8) |",
-             "|---|---|---|---|---|---|"]
-    lines += [f"| {r.method} | {r.n} | {r.recall_at_5:.3f} | {r.mrr:.3f} | {r.accession_recall_at_5:.3f} | "
-              f"{'pass' if r.passes_gate else 'FAIL'} |" for r in reports]
+    lines = ["| method | questions | recall@5 | MRR | accession recall@5 | gate (>= 0.8) |", "|---|---|---|---|---|---|"]
+    lines += [
+        f"| {r.method} | {r.n} | {r.recall_at_5:.3f} | {r.mrr:.3f} | {r.accession_recall_at_5:.3f} | "
+        f"{'pass' if r.passes_gate else 'FAIL'} |"
+        for r in reports
+    ]
     return "\n".join(lines)
 
 
@@ -454,16 +517,19 @@ class RetrievalGateError(RuntimeError):
     pass
 
 
-def analyst_retriever(corpus: ResearchCorpus, questions: Sequence[Question] | None = None,
-                      method: str = "tfidf") -> Callable[..., list[Hit]]:
+def analyst_retriever(
+    corpus: ResearchCorpus, questions: Sequence[Question] | None = None, method: str = "tfidf"
+) -> Callable[..., list[Hit]]:
     """The only way analysts get research retrieval: measured first, refused below the gate."""
     report = evaluate_retrieval(corpus, questions if questions is not None else load_questions(), method)
     if not report.passes_gate:
-        raise RetrievalGateError(f"{method} recall@5 {report.recall_at_5:.3f} < {RECALL_GATE}: "
-                                 "retrieval is not available to analysts")
+        raise RetrievalGateError(
+            f"{method} recall@5 {report.recall_at_5:.3f} < {RECALL_GATE}: retrieval is not available to analysts"
+        )
 
     def retrieve(query: str, as_of, k: int = 5, **kw) -> list[Hit]:
         return corpus.search(query, as_of, k=k, method=method, **kw)
+
     retrieve.report = report  # type: ignore[attr-defined]
     return retrieve
 
@@ -472,9 +538,11 @@ def analyst_retriever(corpus: ResearchCorpus, questions: Sequence[Question] | No
 RUNBOOK_TRIAL_NAME = "v0.15 policy-runbook RAG removed (decision ablation)"
 
 
-def runbook_rag_ablation(symbols: Sequence[str] = ("AAPL", "MSFT", "EURUSD"),
-                         dates: Sequence[date] = (date(2024, 3, 1), date(2024, 6, 3), date(2024, 9, 2)),
-                         config: dict | None = None) -> dict[str, Any]:
+def runbook_rag_ablation(
+    symbols: Sequence[str] = ("AAPL", "MSFT", "EURUSD"),
+    dates: Sequence[date] = (date(2024, 3, 1), date(2024, 6, 3), date(2024, 9, 2)),
+    config: dict | None = None,
+) -> dict[str, Any]:
     """Run the agentic harness on the rules path (no LLM, synthetic data, offline) with the
     policy-runbook knowledge base and with one that returns nothing, and count decisions that
     differ. On the rules path the passages only feed LLM prompts, so the expected answer is
@@ -488,7 +556,7 @@ def runbook_rag_ablation(symbols: Sequence[str] = ("AAPL", "MSFT", "EURUSD"),
         def search(self, query, k=3, min_score=0.05):
             return []
 
-        def __len__(self) -> int:     # truthy, so DeskTools does not fall back to the default base
+        def __len__(self) -> int:  # truthy, so DeskTools does not fall back to the default base
             return 1
 
     cfg = config or make_config(memory_path=None)
@@ -504,6 +572,5 @@ def runbook_rag_ablation(symbols: Sequence[str] = ("AAPL", "MSFT", "EURUSD"),
                 out.append((dec.action.value, round(dec.target_weight, 10)) if dec else None)
             diff = out[0] != out[1]
             changed += diff
-            rows.append({"symbol": sym, "as_of": d.isoformat(), "with_rag": out[0], "without_rag": out[1],
-                         "changed": diff})
+            rows.append({"symbol": sym, "as_of": d.isoformat(), "with_rag": out[0], "without_rag": out[1], "changed": diff})
     return {"trial": RUNBOOK_TRIAL_NAME, "cells": len(rows), "changed": changed, "rows": rows}

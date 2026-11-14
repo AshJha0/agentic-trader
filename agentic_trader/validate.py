@@ -18,6 +18,7 @@ trade dates; a date on which one sleeve has no bar (a US equity holiday on which
 trades) is not a common date, so a multi-sleeve rebalance waits for the next date on
 which every sleeve has a bar.
 """
+
 from __future__ import annotations
 
 import math
@@ -85,13 +86,13 @@ def bar_problems(df: pd.DataFrame, asset_class: str, max_gap_days: int | None = 
         wide = days > limit
         if wide.any():
             i = int(np.argmax(wide))
-            reasons.append(f"gap of {days[i]:.0f} days from {idx[i].date()} to {idx[i + 1].date()} "
-                           f"(limit {limit} for {asset_class})")
+            reasons.append(
+                f"gap of {days[i]:.0f} days from {idx[i].date()} to {idx[i + 1].date()} (limit {limit} for {asset_class})"
+            )
     return reasons
 
 
-def require_valid_bars(df: pd.DataFrame, asset_class: str, label: str,
-                       max_gap_days: int | None = None) -> pd.DataFrame:
+def require_valid_bars(df: pd.DataFrame, asset_class: str, label: str, max_gap_days: int | None = None) -> pd.DataFrame:
     """Return ``df`` unchanged if ``bar_problems`` finds nothing, else raise ``BarValidationError``."""
     reasons = bar_problems(df, asset_class, max_gap_days)
     if reasons:
@@ -130,8 +131,7 @@ def survivorship_statement(symbol: str, first_bar: date | None, design_start: da
         return f"{symbol}: no bars from the provider; absent from the table, not evidence"
     if first_bar <= design_start:
         return f"{symbol}: trading at design start {design_start} (first bar {first_bar})"
-    return (f"{symbol}: listed {first_bar}, after design start {design_start}; "
-            f"chosen with hindsight, survivorship bias possible")
+    return f"{symbol}: listed {first_bar}, after design start {design_start}; chosen with hindsight, survivorship bias possible"
 
 
 def cap_short_notional(weight: float, cap: float | None) -> float:

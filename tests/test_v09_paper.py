@@ -1,4 +1,5 @@
 """v0.9 phase 4: the daily paper-trading record recomputes from the freeze date, on synthetic data."""
+
 import importlib.util
 import json
 from pathlib import Path
@@ -21,10 +22,10 @@ def _paper():
     from datetime import date
 
     from agentic_trader.config import make_config
+
     copy = Path(tempfile.mkdtemp()) / "paper_freeze.json"
     shutil.copy(mod.FREEZE_FILE, copy)
-    mod.refreeze(copy, make_config(data_provider="synthetic", memory_path=None), "tests-current-engine",
-                 "tests", date.today())
+    mod.refreeze(copy, make_config(data_provider="synthetic", memory_path=None), "tests-current-engine", "tests", date.today())
     mod.FREEZE_FILE = copy
     return mod
 
@@ -33,14 +34,22 @@ def test_paper_record_is_recomputed_appended_and_revisions_are_logged(tmp_path):
     mod = _paper()
     out = tmp_path / "paper"
     assert mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2023-12-29", "--out", str(out)]) == 0
-    assert not (out / "ledger.csv").exists()                      # before the freeze: nothing recorded
+    assert not (out / "ledger.csv").exists()  # before the freeze: nothing recorded
     # on the freeze session itself there is one bar and no return yet: a clean no-op, not a crash
     assert mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2024-01-02", "--out", str(out)]) == 0
     assert not (out / "ledger.csv").exists()
     assert mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2024-02-15", "--out", str(out)]) == 0
     first = pd.read_csv(out / "ledger.csv", index_col=0, parse_dates=True)
-    cols = {"core15/AgenticTrader", "core15/B&H vol-target", "core15/Buy&Hold", "etf11/B&H vol-target",
-            "etf11/TSMOM(12-1)", "fx15/Carry", "fx15/TSMOM(12-1)", "rf"}
+    cols = {
+        "core15/AgenticTrader",
+        "core15/B&H vol-target",
+        "core15/Buy&Hold",
+        "etf11/B&H vol-target",
+        "etf11/TSMOM(12-1)",
+        "fx15/Carry",
+        "fx15/TSMOM(12-1)",
+        "rf",
+    }
     assert cols <= set(first.columns) and first.index[0].date().isoformat() == "2024-01-02"
     assert 25 <= len(first) <= 35
     text = (out / "summary.md").read_text(encoding="utf-8")
@@ -76,13 +85,13 @@ def test_ledger_is_append_only_and_a_revised_recomputation_is_logged_not_absorbe
 
     def shifted(as_of, cfg, provider, freeze, exposure=None, coverage=None):
         f = real(as_of, cfg, provider, freeze)
-        f.iloc[5, 0] += 0.005                                          # a restated return on an old session
+        f.iloc[5, 0] += 0.005  # a restated return on an old session
         return f
 
     monkeypatch.setattr(mod, "recompute", shifted)
     assert mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2024-02-16", "--out", str(out)]) == 0
     led = pd.read_csv(out / "ledger.csv", index_col=0, parse_dates=True)
-    pd.testing.assert_frame_equal(led.loc[first.index], first)          # the ledger kept its rows
+    pd.testing.assert_frame_equal(led.loc[first.index], first)  # the ledger kept its rows
     assert len(led) == len(first) + 1
     rec = pd.read_csv(out / "ledger_recomputed.csv", index_col=0, parse_dates=True)
     assert abs(rec.iloc[5, 0] - first.iloc[5, 0] - 0.005) < 1e-12
@@ -93,8 +102,10 @@ def test_ledger_is_append_only_and_a_revised_recomputation_is_logged_not_absorbe
     # a recomputation that ends before the ledger is refused
     with pytest.raises(SystemExit, match="shrink"):
         mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2024-02-10", "--out", str(out)])
-    assert mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2024-02-10", "--out", str(out),
-                     "--allow-shrink"]) == 0
+    assert (
+        mod.main(["--data", "synthetic", "--freeze", "2024-01-02", "--as-of", "2024-02-10", "--out", str(out), "--allow-shrink"])
+        == 0
+    )
 
 
 def test_a_truncated_sleeve_is_a_failure_not_a_no_op(tmp_path, monkeypatch):

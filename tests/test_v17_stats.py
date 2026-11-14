@@ -1,4 +1,5 @@
 """v0.17 lane L3: research honesty (R1.2-R1.5, N4-N8, N10)."""
+
 from __future__ import annotations
 
 import json
@@ -35,7 +36,7 @@ def test_newey_west_lag_zero_is_iid_t_with_n_denominator():
 
 
 def test_newey_west_lag_rule():
-    assert stats.newey_west_lag(1000) == 6          # floor(4 * 10 ** (2/9)) = floor(6.67)
+    assert stats.newey_west_lag(1000) == 6  # floor(4 * 10 ** (2/9)) = floor(6.67)
     assert stats.newey_west_lag(100) == 4
     assert stats.newey_west_lag(1000, horizon=10) == 10
 
@@ -44,7 +45,7 @@ def test_hac_t_is_smaller_than_naive_t_on_overlapping_returns():
     rng = np.random.default_rng(1)
     e = rng.standard_normal(3000)
     h = 10
-    over = np.convolve(e, np.ones(h), "valid") + 0.5   # overlapping sums: strong MA(h-1)
+    over = np.convolve(e, np.ones(h), "valid") + 0.5  # overlapping sums: strong MA(h-1)
     naive = over.mean() / (over.std(ddof=1) / math.sqrt(over.size))
     nw = stats.newey_west_t(over, horizon=h)
     assert nw.lag >= h and abs(nw.t) < 0.6 * abs(naive)
@@ -70,9 +71,9 @@ def test_blocked_fold_ic_carries_nw_and_mde_and_honest_label():
     s = rng.standard_normal(1500)
     f = rng.standard_normal(1500)
     r = leakage.ic_blocked_folds(s, f, horizon=1)
-    assert leakage.ic_purged is leakage.ic_blocked_folds        # old name kept
+    assert leakage.ic_purged is leakage.ic_blocked_folds  # old name kept
     assert math.isfinite(r.t_nw) and r.nw_lag >= 1
-    assert 0.03 < r.mde_ic < 0.12          # ~1200 scored pairs -> about 0.08
+    assert 0.03 < r.mde_ic < 0.12  # ~1200 scored pairs -> about 0.08
     assert "no fit" in r.method and "purge inactive" in r.method
     g = r.as_gate()
     assert {"t_NW", "MDE_IC", "df"} <= set(g) and g["df"] == r.k - 1
@@ -93,13 +94,14 @@ def _entry(t_fold, t_nw, n=200):
 
 def test_gate_family_bh_removes_nominal_passes_in_a_big_null_family():
     from statistics import NormalDist
+
     # 400 null tests: NW p-values spread uniformly on (0, 1); entry 0 has p ~ 0.028 and a
     # nominal fold-t pass, the kind of row that used to read as a discovery.
     ps = (np.arange(400) + 0.5) / 400
     fam = {("a", i, 10): _entry(0.5, NormalDist().inv_cdf(1 - p / 2)) for i, p in enumerate(ps)}
     fam[("a", 0, 10)] = _entry(3.0, 2.2)
     fam[("real", 0, 10)] = _entry(6.0, 6.0)
-    res = leakage.gate_family_bh(fam, q=0.05)          # default: Newey-West p
+    res = leakage.gate_family_bh(fam, q=0.05)  # default: Newey-West p
     assert res[("a", 0, 10)]["nominal"] and not res[("a", 0, 10)]["passes"]
     assert res[("real", 0, 10)]["passes"]
     # a lone test with the same NW t passes: the family, not the statistic, changed the verdict
@@ -138,13 +140,12 @@ def test_effective_trials_extremes_and_correction():
     n_eff, rho = stats.effective_trials(ind)
     assert n_eff == pytest.approx(10, rel=0.05) and abs(rho) < 0.05
     common = rng.standard_normal((2000, 1))
-    corr = common + 0.1 * rng.standard_normal((2000, 10))      # one-rule ablations
+    corr = common + 0.1 * rng.standard_normal((2000, 10))  # one-rule ablations
     n_eff2, rho2 = stats.effective_trials(corr)
     assert n_eff2 < 1.5 and rho2 > 0.9
     e = stats.deflated_sharpe_effective(0.05, 1500, corr, 1e-4)
     assert e["var_trials_corrected"] == pytest.approx(1e-4 / (1 - rho2))
-    rep = stats.selection_report(0.0005 + 0.01 * rng.standard_normal(1500), [0.3, 0.32, 0.31, 0.29],
-                                 trial_returns=corr)
+    rep = stats.selection_report(0.0005 + 0.01 * rng.standard_normal(1500), [0.3, 0.32, 0.31, 0.29], trial_returns=corr)
     assert "deflated_sharpe_prob_effective" in rep and "participation ratio" in rep["effective_trials_method"]
 
 
@@ -152,13 +153,19 @@ def test_effective_trials_extremes_and_correction():
 def _recall(t_hits, m_hits=1, near=5, n=200, unparsed=0):
     def row(k, p0):
         return {"hits": k, "n": n, "rate": k / n, "chance": p0}
-    return {"n": n, "unparsed": unparsed, "ticker": row(t_hits, 1 / 15), "month": row(m_hits, 1 / 72),
-            "month_within_1": row(near, 3 / 72)}
+
+    return {
+        "n": n,
+        "unparsed": unparsed,
+        "ticker": row(t_hits, 1 / 15),
+        "month": row(m_hits, 1 / 72),
+        "month_within_1": row(near, 3 / 72),
+    }
 
 
 def test_recall_verdict_worked_example():
     assert evaluation.recall_audit_verdict(_recall(20), legacy=True)["passed"]
-    assert not evaluation.recall_audit_verdict(_recall(20))["passed"]      # void as a gate (review B3)
+    assert not evaluation.recall_audit_verdict(_recall(20))["passed"]  # void as a gate (review B3)
     v = evaluation.recall_audit_verdict(_recall(21), legacy=True)
     assert not v["passed"] and "ticker" in v["reasons"][0]
     assert v["bounds"]["ticker"] == pytest.approx(1 / 15 + 2 * math.sqrt((1 / 15) * (14 / 15) / 200))
@@ -173,19 +180,22 @@ def test_require_recall_pass_guard(tmp_path):
     bad.write_text(json.dumps(_recall(40)), encoding="utf-8")
     with pytest.raises(evaluation.HoldoutLocked):
         evaluation.require_recall_pass(bad)
-    void = tmp_path / "v016.json"                       # a clean v0.16 result no longer unlocks anything
+    void = tmp_path / "v016.json"  # a clean v0.16 result no longer unlocks anything
     void.write_text(json.dumps(_recall(10)), encoding="utf-8")
     with pytest.raises(evaluation.HoldoutLocked, match="void"):
         evaluation.require_recall_pass(void)
-    v2 = {"recall_flagged": False, "reasons": [], "real": {"n": 200}, "placebo": {"n": 60},
-          "equivalence": {"passed": True}}
+    v2 = {"recall_flagged": False, "reasons": [], "real": {"n": 200}, "placebo": {"n": 60}, "equivalence": {"passed": True}}
     good = tmp_path / "good.json"
     good.write_text(json.dumps(v2), encoding="utf-8")
     assert evaluation.require_recall_pass(good)["passed"]
-    for broken in ({**v2, "recall_flagged": True}, {**v2, "real": {"n": 40}}, {**v2, "placebo": None},
-                   {**v2, "equivalence": {"passed": False, "reason": "cannot reject"}},
-                   {k: v for k, v in v2.items() if k != "equivalence"},
-                   {k: v for k, v in v2.items() if k != "recall_flagged"} | {"recall_flagged": None}):
+    for broken in (
+        {**v2, "recall_flagged": True},
+        {**v2, "real": {"n": 40}},
+        {**v2, "placebo": None},
+        {**v2, "equivalence": {"passed": False, "reason": "cannot reject"}},
+        {k: v for k, v in v2.items() if k != "equivalence"},
+        {k: v for k, v in v2.items() if k != "recall_flagged"} | {"recall_flagged": None},
+    ):
         good.write_text(json.dumps(broken), encoding="utf-8")
         with pytest.raises(evaluation.HoldoutLocked):
             evaluation.require_recall_pass(good)
@@ -197,18 +207,23 @@ def test_evaluate_refuses_local_model_holdout_without_recall(tmp_path):
 
     class FakeLLM:  # never called: the guard fires first
         pass
+
     with pytest.raises(evaluation.HoldoutLocked):
-        evaluation.evaluate(["AAPL"], {"holdout": evaluation.PERIODS["holdout"]},
-                            config={"llm_provider": "local", "recall_audit_path": str(tmp_path / "none.json")},
-                            llm=FakeLLM())
+        evaluation.evaluate(
+            ["AAPL"],
+            {"holdout": evaluation.PERIODS["holdout"]},
+            config={"llm_provider": "local", "recall_audit_path": str(tmp_path / "none.json")},
+            llm=FakeLLM(),
+        )
 
 
 def test_prereg_states_recall_precondition_and_no_hand_count():
     from agentic_trader.study_design import prereg_document
+
     text = prereg_document(ROOT).read_text(encoding="utf-8")
     assert "Precondition: the 2.4 recall audit must pass" in text
     assert "require_recall_pass" in text
-    assert not re.search(r"\(\d+ at writing\)", text)                    # N10
+    assert not re.search(r"\(\d+ at writing\)", text)  # N10
     ev = (ROOT / "docs/evaluation/evaluation.md").read_text(encoding="utf-8")
     assert "62 to 65" not in ev and "Breadth: 15 names" in ev
 
@@ -241,8 +256,9 @@ def test_model_changed_none_and_table_rows():
 
 def test_model_changed_ci_brackets_zero_for_noise():
     rng = np.random.default_rng(7)
-    recs = [_rec(f"d{i}", "A", float(rng.choice([-1, 1])), float(rng.choice([-1, 1])), float(rng.normal(0, 0.01)))
-            for i in range(300)]
+    recs = [
+        _rec(f"d{i}", "A", float(rng.choice([-1, 1])), float(rng.choice([-1, 1])), float(rng.normal(0, 0.01))) for i in range(300)
+    ]
     a = kpi.model_changed_attribution(recs, n_boot=1000)
     assert a["ci_total"][0] < 0 < a["ci_total"][1]
 
@@ -260,7 +276,7 @@ def test_grouped_ic_does_not_mix_classes():
     fwd = sig.copy()
     fwd[eq] = sig[eq] + 50.0
     fwd[fx] = sig[fx] * 0.01 - 50.0
-    sig[fx] = sig[fx] + 10.0     # FX signals high, FX returns low: pooled IC is negative
+    sig[fx] = sig[fx] + 10.0  # FX signals high, FX returns low: pooled IC is negative
     g = xalpha.grouped_cross_sectional_ic(sig, fwd, groups, min_names=5)
     pooled = xalpha.cross_sectional_ic(sig, fwd, min_names=5)
     assert np.allclose(g.to_numpy(), 1.0)
@@ -285,6 +301,7 @@ def test_significance_gated_no_fixed_two_bar():
 
 
 def test_gate_entry_recovers_df():
-    e = xalpha.gate_entry({"mean IC": 0.02, "t(IC)": 1.0, "t_crit": leakage.student_t_crit(4), "days": 500,
-                           "t_NW": 1.2, "MDE_IC": 0.01})
+    e = xalpha.gate_entry(
+        {"mean IC": 0.02, "t(IC)": 1.0, "t_crit": leakage.student_t_crit(4), "days": 500, "t_NW": 1.2, "MDE_IC": 0.01}
+    )
     assert e["df"] == 4 and e["n"] == 500

@@ -1,4 +1,5 @@
 """v0.14 ops (PLAN 4.10/4.11): price-vintage hash, freshness rule, idempotent publish, workflow files."""
+
 import importlib.util
 import json
 import shutil
@@ -31,7 +32,7 @@ def test_vintage_hash_is_stable_and_moves_with_any_price():
     assert base == ops.vintage_hash({key: _frame()}) and len(base) == 64
     other = ("TLT", "2026-11-01", "2026-11-06")
     assert ops.vintage_hash({key: _frame(), other: _frame()}) == ops.vintage_hash({other: _frame(), key: _frame()})
-    assert ops.vintage_hash({key: _frame((100.0, 101.5, 99.25 + 1e-9))}) != base   # a restated close
+    assert ops.vintage_hash({key: _frame((100.0, 101.5, 99.25 + 1e-9))}) != base  # a restated close
     assert ops.vintage_hash({("SPY", "2026-11-01", "2026-11-07"): _frame()}) != base  # a different request
 
 
@@ -49,14 +50,17 @@ def test_vintage_recorder_passes_calls_through_and_keeps_each_frame():
     assert rec.name == "fake" and list(rec.frames) == [("SPY", "2026-11-01", "2026-11-06")]
 
 
-@pytest.mark.parametrize("last, today, stale", [
-    ("2026-11-05", "2026-11-06", 1),   # Thu -> Fri
-    ("2026-11-06", "2026-11-07", 0),   # Fri -> Sat: the weekend adds nothing
-    ("2026-11-06", "2026-11-09", 1),   # Fri -> Mon
-    ("2026-11-05", "2026-11-09", 2),   # Thu -> Mon: still within the limit
-    ("2026-11-04", "2026-11-09", 3),   # Wed -> Mon: stale
-    ("2026-11-06", "2026-11-06", 0),
-])
+@pytest.mark.parametrize(
+    "last, today, stale",
+    [
+        ("2026-11-05", "2026-11-06", 1),  # Thu -> Fri
+        ("2026-11-06", "2026-11-07", 0),  # Fri -> Sat: the weekend adds nothing
+        ("2026-11-06", "2026-11-09", 1),  # Fri -> Mon
+        ("2026-11-05", "2026-11-09", 2),  # Thu -> Mon: still within the limit
+        ("2026-11-04", "2026-11-09", 3),  # Wed -> Mon: stale
+        ("2026-11-06", "2026-11-06", 0),
+    ],
+)
 def test_business_day_arithmetic(last, today, stale):
     assert _ops().business_days_stale(date.fromisoformat(last), date.fromisoformat(today)) == stale
 
@@ -64,9 +68,9 @@ def test_business_day_arithmetic(last, today, stale):
 def test_freshness_rule_skips_without_a_record_and_fails_past_two_business_days(tmp_path):
     ops = _ops()
     runs = tmp_path / "runs.jsonl"
-    assert ops.freshness(runs, date(2026, 11, 9))[0]                       # first run: no file
+    assert ops.freshness(runs, date(2026, 11, 9))[0]  # first run: no file
     runs.write_text("", encoding="utf-8")
-    assert ops.freshness(runs, date(2026, 11, 9))[0]                       # empty file
+    assert ops.freshness(runs, date(2026, 11, 9))[0]  # empty file
     runs.write_text("\n".join(json.dumps({"as_of": d}) for d in ("2026-11-05", "2026-11-04")) + "\n", encoding="utf-8")
     ok, msg = ops.freshness(runs, date(2026, 11, 9))
     assert ok and "2026-11-05" in msg
@@ -94,6 +98,7 @@ def test_commit_helper_is_idempotent(tmp_path):
 
 def test_every_slow_marked_test_still_exists():
     from tests.conftest import SLOW
+
     for node in SLOW:
         path, name = node.split("::")
         assert f"def {name}(" in (ROOT / path).read_text(encoding="utf-8"), node

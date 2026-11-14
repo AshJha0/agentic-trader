@@ -1,4 +1,5 @@
 """Default configuration. Copy and override with ``make_config(**overrides)``."""
+
 from __future__ import annotations
 
 import copy
@@ -22,9 +23,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # A non-loopback local_llm_url is refused unless this is True (review N8); the resolved
     # host and this flag are recorded in each call's evidence (LocalLLM.last_call).
     "allow_remote_llm": False,
-    "local_llm_model": None,       # Ollama model name; required when llm_provider is "local"
+    "local_llm_model": None,  # Ollama model name; required when llm_provider is "local"
     "local_llm_timeout_s": 120,
-    "local_llm_seed": None,        # sampling seed sent to Ollama; only matters when temperature > 0
+    "local_llm_seed": None,  # sampling seed sent to Ollama; only matters when temperature > 0
     # Decoding temperature for the local model. 0 (greedy) is the desk default: replies are
     # deterministic and a different seed reproduces the same reply (review A1, v0.17 R0.1).
     "local_llm_temperature": 0.0,
@@ -46,7 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Floor under every input-token estimate used for admission and timeout billing (0 = none).
     # Raise it for a deliberately pessimistic hard cap.
     "llm_min_input_tokens": 0,
-    "llm_timeout_s": 300,   # per request; adaptive thinking on the deep tier can take minutes
+    "llm_timeout_s": 300,  # per request; adaptive thinking on the deep tier can take minutes
     # Attempts after the first for a request that timed out, was rate limited, hit a 5xx or lost
     # its connection. AnthropicLLM runs the retry loop itself (the SDK client makes none), so a
     # timed-out attempt is billed at its estimated maximum whether or not a later attempt succeeds.
@@ -75,7 +76,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "llm_anonymize": False,
     # Keep llm_anonymize False on a model run (a deliberate de-anonymised control).
     "allow_deanonymized_llm": False,
-
     # ---- Workflow ------------------------------------------------------------
     "analysts": None,  # None -> default set per asset class (see graph.DEFAULT_ANALYSTS)
     # v0.15 LLM text analysts wired into the desk (text_analysts.text_reports). [] = off (the
@@ -83,10 +83,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # "macro_text" reads central-bank statements; both point in time at the decision cut-off.
     "text_analysts": [],
     "text_analyst_options": {
-        "central_bank_path": None,        # JSON file/dir of {bank, released, title, text}
-        "research_retrieval": False,      # extra passages via research_rag.analyst_retriever (0.8 gate)
-        "research_corpus_path": None,     # corpus JSON (eval-corpus format); None = the statements only
-        "retrieval_questions_path": None, # labelled questions for the gate (None = packaged set)
+        "central_bank_path": None,  # JSON file/dir of {bank, released, title, text}
+        "research_retrieval": False,  # extra passages via research_rag.analyst_retriever (0.8 gate)
+        "research_corpus_path": None,  # corpus JSON (eval-corpus format); None = the statements only
+        "retrieval_questions_path": None,  # labelled questions for the gate (None = packaged set)
         "retrieval_method": "tfidf",
         "retrieval_k": 3,
         # A11: estimated-token budget for the fundamentals_text prompt (llm.estimate_tokens);
@@ -96,8 +96,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_debate_rounds": 2,
     "max_risk_discuss_rounds": 1,
     "analyst_weights": {
-        "technical": 1.0, "fundamentals": 1.0, "macro": 1.0, "news": 0.7, "sentiment": 0.5,
-        "alpha": 1.0, "xalpha": 1.0,
+        "technical": 1.0,
+        "fundamentals": 1.0,
+        "macro": 1.0,
+        "news": 0.7,
+        "sentiment": 0.5,
+        "alpha": 1.0,
+        "xalpha": 1.0,
     },
     # Peer universe for the cross-sectional alpha analyst (None -> the core universe of the
     # instrument's asset class). The instrument itself is always included.
@@ -108,13 +113,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # risk-stance blend) with combine.desk_forecast: trailing purged IC per signal, shrunk to
     # zero unless significant, mu = IC x vol x z, mean-variance tilt, turnover penalty.
     # Only "window" (bars) is a registered trial parameter; the rest were fixed before any run.
-    "combination": {"method": "rules", "window": 504, "horizon": 10, "risk_aversion": 2.5,
-                    "turnover_penalty": 0.0005},
+    "combination": {"method": "rules", "window": 504, "horizon": 10, "risk_aversion": 2.5, "turnover_penalty": 0.0005},
     # Gaussian-HMM regime label (regime.py) fitted on fit_start..min(as_of, fit_end), fit_end
     # being the design end. "enabled" adds the label as a fact; "condition" (needs method
     # "ic") estimates ICs and sizing vol on bars of the current regime only.
-    "regime": {"enabled": False, "condition": False, "states": 2, "fit_start": "2008-07-01",
-               "fit_end": "2021-12-31"},
+    "regime": {"enabled": False, "condition": False, "states": 2, "fit_start": "2008-07-01", "fit_end": "2021-12-31"},
     # Split-conformal interval on the IC forecast (needs method "ic"); the PM scales the tilt
     # by min(1, |mu| / half-width). alpha is the miscoverage rate. design "v17" (review N7):
     # non-overlapping, regime-masked, volatility-normalised calibration residuals; "v14"
@@ -125,14 +128,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # docs/evaluation/evaluation.md). None of these three improved risk-adjusted
     # returns there, so they are off; they stay available for research.
     "rules": {
-        "tsmom": False,                    # 12-1 month time-series momentum in the technical view
+        "tsmom": False,  # 12-1 month time-series momentum in the technical view
         "trend_filtered_reversal": False,  # RSI/Bollinger fades only when not fighting the 200d trend
-        "abstain_without_data": False,     # analysts with no data do not vote in the consensus
+        "abstain_without_data": False,  # analysts with no data do not vote in the consensus
         # v0.5.1: the FX analogue of the equity strategic weight. Chosen on the core FX pairs'
         # design period (mean Sharpe -0.03 -> +0.11) and then judged on data no choice had
         # touched, where it improved every slice (extended crosses design -0.24 -> -0.15,
         # holdout +0.12 -> +0.31, reserve -0.63 -> +0.22). RULES_V03 turns it off.
-        "fx_carry_neutral": True,          # FX strategic weight = point-in-time carry / scale, capped
+        "fx_carry_neutral": True,  # FX strategic weight = point-in-time carry / scale, capped
         # v0.8: the trader's 0.75x size cut when memory's hit rate over the last >= 5 resolved
         # calls is below 40%. On in every published backtest so far (never measured
         # separately); the switch exists so the docs pass can measure it on the design period.
@@ -142,11 +145,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # rather than a zero vote at confidence 0.7 (trial "news confidence by count (v0.8 rule)").
         "news_tone_mass": True,
     },
-
     # ---- Data ----------------------------------------------------------------
     "data_provider": "synthetic",  # "synthetic" | "yahoo" | "csv"
     "csv_dir": "data",
-    "lookback_days": 400,          # calendar days of history handed to analysts and desk tools
+    "lookback_days": 400,  # calendar days of history handed to analysts and desk tools
     # The alpha library's window (the alpha analyst and the quant.alpha / quant.xalpha
     # tools). Longer than lookback_days because IC needs hundreds of forward returns
     # after a 273-day signal (tsmom_12_1) has produced its first value.
@@ -160,21 +162,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_data_staleness_days": 7,  # refuse to decide if the latest bar is older than this
     "news_lookback_days": 7,
     "synthetic_seed": 7,
-
     # ---- Risk limits (enforced by the Portfolio Manager after any LLM output) --
     "risk": {
-        "max_position": 1.0,       # |target weight| cap (1.0 = 100% of equity notional)
+        "max_position": 1.0,  # |target weight| cap (1.0 = 100% of equity notional)
         # Round 1 (review A3): a model PM's weight may sit at most pm_model_band from the rules
         # weight computed on the same inputs; a gap above pm_model_flag is logged on the decision.
         "pm_model_band": 0.25,
         "pm_model_flag": 0.10,
-        "target_vol": 0.15,        # annualised vol target used by the neutral risk analyst
+        "target_vol": 0.15,  # annualised vol target used by the neutral risk analyst
         # v0.11: the aggressive risk analyst sizes at 1.25x the vol-targeted weight instead of
         # max(1.25 x proposal, vol target); under the 1.0 cap the old rule pinned the aggressive
         # view at the cap and gave the blended book a fixed 25% floor. Chosen on the design
         # period (trial "aggressive stance at the cap (v0.8 rule)").
         "aggressive_vol_scaled": True,
-        "max_var_95": 0.02,        # cap on 1-day 95% historical VaR of the position
+        "max_var_95": 0.02,  # cap on 1-day 95% historical VaR of the position
         # Book-level risk aggregation. Per-instrument VaR above is
         # exactly that -- per instrument; a desk running several sleeves at once (TradingGraph
         # .scan(), which already threads a positions dict across a watchlist) has no check
@@ -193,8 +194,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # or "historical" (the plain quantile of the book history, the rule before v0.14).
         "book_var_method": DEFAULT_VAR_METHOD,
         "min_trade_weight": 0.05,  # smaller targets are rounded to flat
-        "rebalance_band": 0.10,    # keep the current position if the new target is within this
-                                   # distance of it (a no-trade band; 0 disables)
+        "rebalance_band": 0.10,  # keep the current position if the new target is within this
+        # distance of it (a no-trade band; 0 disables)
         # Strategic (benchmark) weight per asset class: the position held with no
         # directional view; conviction tilts around it. Equities default to fully
         # invested (they carry a risk premium); FX to flat. v0.2 used 0 for both.
@@ -211,7 +212,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "stop_atr_mult": 2.0,
         "take_profit_atr_mult": 3.0,
     },
-
     # ---- Costs / backtest ----------------------------------------------------
     "costs": {
         "equity_cost_bps": 1.0,
@@ -257,7 +257,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     # ---- Execution planning (algo.plan_execution: the `execute` command, execution.plan) ---
     "execution": {
-        "fx_lot_size": 1000.0,       # FX orders are rounded down to whole lots of the base currency
+        "fx_lot_size": 1000.0,  # FX orders are rounded down to whole lots of the base currency
         # Cap on one ticket's notional in account_currency, enforced by policy before approval
         # and again by execution.submit_order. None = initial_capital * risk.max_position.
         "max_order_notional": None,
@@ -266,7 +266,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # price (plan_id alone is a checksum anyone can compute, not authentication).
         "allow_external_plans": False,
     },
-
     # ---- FX macro inputs -----------------------------------------------------
     # "auto": synthetic data uses the static table below; real data (yahoo, csv) uses
     #         point-in-time FRED rates only -- a date with no FRED value for either leg
@@ -282,26 +281,41 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "fred_vintages": False,
     "fred_vintage_step_days": 31,
     "fred_cache_dir": None,
-    "fred_cache_max_age_days": 1,     # re-download a cached latest-vintage series older than this (None = never)
+    "fred_cache_max_age_days": 1,  # re-download a cached latest-vintage series older than this (None = never)
     # SEC EDGAR point-in-time fundamentals and filing-stream news for real-data equities
     # (yahoo provider). Free and keyless, but the SEC requires a contact User-Agent:
     # EDGAR_USER_AGENT="Name email@domain" in the environment or .env (never committed),
     # or edgar_user_agent here. Without it EDGAR is skipped with one warning.
     "edgar": True,
     "edgar_user_agent": None,
-    "edgar_cache_dir": None,          # on-disk JSON cache (one file per SEC endpoint call)
-    "edgar_cache_max_age_days": 7,    # re-fetch a cached endpoint file older than this (None = never)
-    "edgar_ciks": {},                 # ticker -> CIK overrides (predecessor filers)
+    "edgar_cache_dir": None,  # on-disk JSON cache (one file per SEC endpoint call)
+    "edgar_cache_max_age_days": 7,  # re-fetch a cached endpoint file older than this (None = never)
+    "edgar_ciks": {},  # ticker -> CIK overrides (predecessor filers)
     # Illustrative policy-rate / CPI levels (percent), roughly mid-2025. NOT live data.
     "fx_policy_rates": {
-        "USD": 4.25, "EUR": 2.00, "GBP": 4.00, "JPY": 0.50, "CHF": 0.00,
-        "AUD": 3.60, "CAD": 2.75, "NZD": 3.00, "SEK": 2.00, "NOK": 4.25,
+        "USD": 4.25,
+        "EUR": 2.00,
+        "GBP": 4.00,
+        "JPY": 0.50,
+        "CHF": 0.00,
+        "AUD": 3.60,
+        "CAD": 2.75,
+        "NZD": 3.00,
+        "SEK": 2.00,
+        "NOK": 4.25,
     },
     "fx_inflation": {
-        "USD": 2.7, "EUR": 2.0, "GBP": 3.6, "JPY": 3.0, "CHF": 0.1,
-        "AUD": 2.1, "CAD": 1.7, "NZD": 2.7, "SEK": 0.8, "NOK": 3.0,
+        "USD": 2.7,
+        "EUR": 2.0,
+        "GBP": 3.6,
+        "JPY": 3.0,
+        "CHF": 0.1,
+        "AUD": 2.1,
+        "CAD": 1.7,
+        "NZD": 2.7,
+        "SEK": 0.8,
+        "NOK": 3.0,
     },
-
     # ---- Agentic layer (agentic_trader.agentic) ----------------------------------
     "agentic": {
         # auto | queued | deny | signed: what happens to REQUIRE_APPROVAL. Either the mode string
@@ -314,11 +328,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # memory.remember; governance.MemoryTool) on the tool surface. remember changes state,
         # so it goes through the approval gateway like an order.
         "memory_tool": False,
-        "llm_planner": False,        # let the model propose the plan (validated either way)
-        "llm_critic": True,          # optional model critique (lowers confidence; a flag can cut the weight)
-        "llm_reporter": True,        # model-written executive summary (audited either way)
-        "use_alpha_tool": True,      # run quant.alpha in the canonical plan
-        "critic_divergence": 0.6,    # max |model signal - rule signal| before the critic flags it
+        "llm_planner": False,  # let the model propose the plan (validated either way)
+        "llm_critic": True,  # optional model critique (lowers confidence; a flag can cut the weight)
+        "llm_reporter": True,  # model-written executive summary (audited either way)
+        "use_alpha_tool": True,  # run quant.alpha in the canonical plan
+        "critic_divergence": 0.6,  # max |model signal - rule signal| before the critic flags it
         # v0.17 R2.1: what a flagged divergence does to the position (critic.apply_weight_rule).
         # "scale": tilt from the neutral weight x critic_weight_scale; "veto": neutral weight;
         # "off": confidence only (the v0.16 behaviour).
@@ -327,31 +341,35 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Run the critic on the plain graph path (backtest, P2 study) too. Off by default so
         # results produced before v0.17 are unchanged; the "critic_on" study cell turns it on.
         "critic_in_graph": False,
-        "critic_graph_llm": False,   # the model critique on the graph path (confidence only)
+        "critic_graph_llm": False,  # the model critique on the graph path (confidence only)
         "tool_timeout_s": 30.0,
-        "symbol_universe": None,     # list of allowed symbols for tool calls (None = any valid)
+        "symbol_universe": None,  # list of allowed symbols for tool calls (None = any valid)
         "deny_tools": [],
         # Argument guards (policy) and plan budget (validator); v0.8 agentic-services fixes.
-        "max_symbols_per_call": 60,          # longest `symbols` list one tool call may name
-        "max_plan_lookback_bars": 200_000,   # symbols x lookback days a plan's tool steps may load in total
-        "max_retained_runs": 256,            # finished runs kept in memory per harness (older ones are evicted)
+        "max_symbols_per_call": 60,  # longest `symbols` list one tool call may name
+        "max_plan_lookback_bars": 200_000,  # symbols x lookback days a plan's tool steps may load in total
+        "max_retained_runs": 256,  # finished runs kept in memory per harness (older ones are evicted)
         # Owner id stamped on the runs an instance drives (None = host:pid:random). A stable id per
         # deployment slot is safe across a rolling restart: the sweep fails only records whose
         # heartbeat lease has expired, never a live sibling's just because it shares the id.
         "instance_id": None,
-        "lease_s": 90.0,                     # a live run's heartbeat lease (>= 1 s); only expired records are swept
-        "task_db": None,             # SQLite path for a persistent task store (None = in memory only)
-        "workers": 4,                # task threads per API process
-        "queue_limit": 64,           # tasks accepted but unfinished per process; beyond it POST /tasks -> 503
+        "lease_s": 90.0,  # a live run's heartbeat lease (>= 1 s); only expired records are swept
+        "task_db": None,  # SQLite path for a persistent task store (None = in memory only)
+        "workers": 4,  # task threads per API process
+        "queue_limit": 64,  # tasks accepted but unfinished per process; beyond it POST /tasks -> 503
         # At startup, mark FAILED the store records whose heartbeat lease has expired or that have no
         # owner (never a live sibling's, whatever instance id it shares); the parent does it once for
         # --processes N. The periodic sweep runs regardless.
         "sweep_interrupted": True,
         # API keys -> roles for `agentic-trader serve`. Development values only.
-        "api_keys": {"dev-viewer-key": "viewer", "dev-analyst-key": "analyst",
-                     "dev-trader-key": "trader", "dev-risk-key": "risk", "dev-admin-key": "admin"},
+        "api_keys": {
+            "dev-viewer-key": "viewer",
+            "dev-analyst-key": "analyst",
+            "dev-trader-key": "trader",
+            "dev-risk-key": "risk",
+            "dev-admin-key": "admin",
+        },
     },
-
     # ---- Output --------------------------------------------------------------
     "results_dir": "results",
     "memory_path": "results/memory.jsonl",  # None -> in-memory only
@@ -375,10 +393,18 @@ def _merge(base: dict, over: dict) -> dict:
 
 # Settings that reproduce v0.2 rule behaviour, for before/after comparisons.
 RULES_V02: dict[str, Any] = {
-    "rules": {"tsmom": False, "trend_filtered_reversal": False, "abstain_without_data": False,
-              "fx_carry_neutral": False, "news_tone_mass": False},
-    "risk": {"rebalance_band": 0.0, "neutral_weight": {"equity": 0.0, "fx": 0.0},
-             "aggressive_vol_scaled": False},   # v0.11 sizing rule off: the v0.2 desk sized at the cap
+    "rules": {
+        "tsmom": False,
+        "trend_filtered_reversal": False,
+        "abstain_without_data": False,
+        "fx_carry_neutral": False,
+        "news_tone_mass": False,
+    },
+    "risk": {
+        "rebalance_band": 0.0,
+        "neutral_weight": {"equity": 0.0, "fx": 0.0},
+        "aggressive_vol_scaled": False,
+    },  # v0.11 sizing rule off: the v0.2 desk sized at the cap
     "backtest": {"use_stops": False},
 }
 

@@ -14,6 +14,7 @@ fixed in one place:
 * a **Finding** is a claim made by an agent, citing evidence ids;
 * a **PolicyDecision** says whether a tool call may run, and which rule decided.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -48,8 +49,7 @@ TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     TaskState.CREATED: frozenset({TaskState.PLANNING, TaskState.CANCELLED}),
     TaskState.PLANNING: frozenset({TaskState.VALIDATING_PLAN, TaskState.FAILED, TaskState.CANCELLED}),
     TaskState.VALIDATING_PLAN: frozenset({TaskState.EXECUTING, TaskState.FAILED, TaskState.CANCELLED}),
-    TaskState.EXECUTING: frozenset({TaskState.AWAITING_APPROVAL, TaskState.CRITIQUING,
-                                    TaskState.FAILED, TaskState.CANCELLED}),
+    TaskState.EXECUTING: frozenset({TaskState.AWAITING_APPROVAL, TaskState.CRITIQUING, TaskState.FAILED, TaskState.CANCELLED}),
     TaskState.AWAITING_APPROVAL: frozenset({TaskState.EXECUTING, TaskState.FAILED, TaskState.CANCELLED}),
     TaskState.CRITIQUING: frozenset({TaskState.VALIDATING_EVIDENCE, TaskState.FAILED, TaskState.CANCELLED}),
     TaskState.VALIDATING_EVIDENCE: frozenset({TaskState.FINALISING, TaskState.FAILED, TaskState.CANCELLED}),
@@ -61,11 +61,11 @@ TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
 
 
 class StepType(str, Enum):
-    TOOL = "tool"            # call a catalogued tool (policy-gated, yields evidence)
-    AGENT = "agent"          # run one of the firm's agents / stages
-    CRITIC = "critic"        # governance: deterministic + optional LLM critique
-    VALIDATE = "validate"    # governance: drop findings whose evidence does not resolve
-    FINALISE = "finalise"    # governance: audited report
+    TOOL = "tool"  # call a catalogued tool (policy-gated, yields evidence)
+    AGENT = "agent"  # run one of the firm's agents / stages
+    CRITIC = "critic"  # governance: deterministic + optional LLM critique
+    VALIDATE = "validate"  # governance: drop findings whose evidence does not resolve
+    FINALISE = "finalise"  # governance: audited report
     HUMAN_APPROVAL = "human_approval"  # explicit pause for a person
 
 
@@ -73,18 +73,18 @@ GOVERNANCE_STEPS = (StepType.CRITIC, StepType.VALIDATE, StepType.FINALISE)
 
 
 class EvidenceType(str, Enum):
-    DATA = "DATA"                  # raw provider output (prices, headlines, rates)
-    CALCULATION = "CALCULATION"    # deterministic derivation (indicators, VaR, alpha)
-    DOCUMENT = "DOCUMENT"          # retrieved knowledge passage
+    DATA = "DATA"  # raw provider output (prices, headlines, rates)
+    CALCULATION = "CALCULATION"  # deterministic derivation (indicators, VaR, alpha)
+    DOCUMENT = "DOCUMENT"  # retrieved knowledge passage
     MODEL_OUTPUT = "MODEL_OUTPUT"  # LLM reply (structured)
-    DECISION = "DECISION"          # an agent's structured decision document
-    APPROVAL = "APPROVAL"          # a human or gateway approval record
+    DECISION = "DECISION"  # an agent's structured decision document
+    APPROVAL = "APPROVAL"  # a human or gateway approval record
 
 
 class RiskLevel(str, Enum):
-    LOW = "low"        # read-only data and calculations
+    LOW = "low"  # read-only data and calculations
     MEDIUM = "medium"  # retrieval, model calls, decision documents
-    HIGH = "high"      # anything that would move capital or change configuration
+    HIGH = "high"  # anything that would move capital or change configuration
 
 
 class PolicyOutcome(str, Enum):
@@ -113,14 +113,27 @@ class Capability(str, Enum):
 
 ROLE_CAPABILITIES: dict[Role, frozenset[Capability]] = {
     Role.VIEWER: frozenset({Capability.READ_MARKET_DATA, Capability.READ_KNOWLEDGE}),
-    Role.ANALYST: frozenset({Capability.READ_MARKET_DATA, Capability.READ_KNOWLEDGE,
-                             Capability.RUN_ANALYTICS, Capability.RUN_MODELS}),
-    Role.TRADER: frozenset({Capability.READ_MARKET_DATA, Capability.READ_KNOWLEDGE,
-                            Capability.RUN_ANALYTICS, Capability.RUN_MODELS,
-                            Capability.PROPOSE_TRADES}),
-    Role.RISK: frozenset({Capability.READ_MARKET_DATA, Capability.READ_KNOWLEDGE,
-                          Capability.RUN_ANALYTICS, Capability.RUN_MODELS,
-                          Capability.APPROVE_TRADES}),
+    Role.ANALYST: frozenset(
+        {Capability.READ_MARKET_DATA, Capability.READ_KNOWLEDGE, Capability.RUN_ANALYTICS, Capability.RUN_MODELS}
+    ),
+    Role.TRADER: frozenset(
+        {
+            Capability.READ_MARKET_DATA,
+            Capability.READ_KNOWLEDGE,
+            Capability.RUN_ANALYTICS,
+            Capability.RUN_MODELS,
+            Capability.PROPOSE_TRADES,
+        }
+    ),
+    Role.RISK: frozenset(
+        {
+            Capability.READ_MARKET_DATA,
+            Capability.READ_KNOWLEDGE,
+            Capability.RUN_ANALYTICS,
+            Capability.RUN_MODELS,
+            Capability.APPROVE_TRADES,
+        }
+    ),
     Role.ADMIN: frozenset(Capability),
 }
 
@@ -136,18 +149,20 @@ def utc_now() -> datetime:
 
 def canonical_json(obj: Any) -> str:
     """Deterministic JSON for hashing: sorted keys, dates as ISO, floats as repr."""
+
     def default(o: Any) -> Any:
         if isinstance(o, (date, datetime)):
             return o.isoformat()
         if isinstance(o, Enum):
             return o.value
-        if hasattr(o, "tolist"):          # numpy arrays / scalars
+        if hasattr(o, "tolist"):  # numpy arrays / scalars
             return o.tolist()
-        if hasattr(o, "to_dict"):         # pandas objects
+        if hasattr(o, "to_dict"):  # pandas objects
             return o.to_dict()
         if hasattr(o, "__dataclass_fields__"):
             return {k: getattr(o, k) for k in o.__dataclass_fields__}
         return repr(o)
+
     return json.dumps(obj, sort_keys=True, default=default, separators=(",", ":"), allow_nan=True)
 
 
@@ -166,10 +181,10 @@ class ToolAnnotations:
 
 @dataclass(frozen=True)
 class ToolDescriptor:
-    name: str                       # "server.tool", e.g. "market_data.news"
+    name: str  # "server.tool", e.g. "market_data.news"
     server: str
     description: str
-    input_schema: dict[str, Any]    # JSON schema derived from the Python signature
+    input_schema: dict[str, Any]  # JSON schema derived from the Python signature
     annotations: ToolAnnotations = ToolAnnotations()
 
     @property
@@ -210,26 +225,44 @@ class ToolResult:
 class Evidence:
     id: str
     type: EvidenceType
-    source: str                     # tool name, agent name or document id
-    summary: str                    # one line, human-readable
-    digest: str                     # SHA-256 of the canonical payload
+    source: str  # tool name, agent name or document id
+    summary: str  # one line, human-readable
+    digest: str  # SHA-256 of the canonical payload
     correlation_id: str
     created_at: datetime = field(default_factory=utc_now)
     arguments: dict[str, Any] = field(default_factory=dict)
     payload: Any = field(default=None, compare=False, repr=False)
 
     @staticmethod
-    def build(type_: EvidenceType, source: str, summary: str, payload: Any,
-              correlation_id: str, arguments: dict[str, Any] | None = None,
-              prefix: str | None = None) -> "Evidence":
-        return Evidence(id=new_id(prefix or _PREFIX[type_]), type=type_, source=source,
-                        summary=summary, digest=digest(payload), correlation_id=correlation_id,
-                        arguments=dict(arguments or {}), payload=payload)
+    def build(
+        type_: EvidenceType,
+        source: str,
+        summary: str,
+        payload: Any,
+        correlation_id: str,
+        arguments: dict[str, Any] | None = None,
+        prefix: str | None = None,
+    ) -> "Evidence":
+        return Evidence(
+            id=new_id(prefix or _PREFIX[type_]),
+            type=type_,
+            source=source,
+            summary=summary,
+            digest=digest(payload),
+            correlation_id=correlation_id,
+            arguments=dict(arguments or {}),
+            payload=payload,
+        )
 
 
-_PREFIX = {EvidenceType.DATA: "DATA", EvidenceType.CALCULATION: "CALC",
-           EvidenceType.DOCUMENT: "DOC", EvidenceType.MODEL_OUTPUT: "MODEL",
-           EvidenceType.DECISION: "DEC", EvidenceType.APPROVAL: "APPR"}
+_PREFIX = {
+    EvidenceType.DATA: "DATA",
+    EvidenceType.CALCULATION: "CALC",
+    EvidenceType.DOCUMENT: "DOC",
+    EvidenceType.MODEL_OUTPUT: "MODEL",
+    EvidenceType.DECISION: "DEC",
+    EvidenceType.APPROVAL: "APPR",
+}
 
 
 @dataclass
@@ -237,6 +270,7 @@ class Finding:
     """A claim by an agent. ``evidence_ids`` must resolve in the task's store. ``untrusted``
     carries the source document's flag: the claim was written from third-party text (or text
     derived from it) and is shown fenced in every later prompt."""
+
     id: str
     agent: str
     claim: str
@@ -247,18 +281,25 @@ class Finding:
     untrusted: bool = False
 
     @staticmethod
-    def make(agent: str, claim: str, confidence: float, evidence_ids: list[str] | tuple[str, ...],
-             numbers: dict[str, float] | None = None, tags: tuple[str, ...] = (),
-             untrusted: bool = False) -> "Finding":
-        return Finding(new_id("FIND"), agent, claim, float(confidence), tuple(evidence_ids),
-                       dict(numbers or {}), tags, bool(untrusted))
+    def make(
+        agent: str,
+        claim: str,
+        confidence: float,
+        evidence_ids: list[str] | tuple[str, ...],
+        numbers: dict[str, float] | None = None,
+        tags: tuple[str, ...] = (),
+        untrusted: bool = False,
+    ) -> "Finding":
+        return Finding(
+            new_id("FIND"), agent, claim, float(confidence), tuple(evidence_ids), dict(numbers or {}), tags, bool(untrusted)
+        )
 
 
 # ----------------------------------------------------------------- policy
 @dataclass(frozen=True)
 class PolicyDecision:
     outcome: PolicyOutcome
-    rule: str                       # name of the rule that decided
+    rule: str  # name of the rule that decided
     reason: str
 
     @property
@@ -271,22 +312,28 @@ class PolicyDecision:
 class PlanStep:
     id: str
     type: StepType
-    name: str                       # tool name, agent stage name, or governance name
+    name: str  # tool name, agent stage name, or governance name
     arguments: dict[str, Any] = field(default_factory=dict)
     depends_on: tuple[str, ...] = ()
     rationale: str = ""
 
     @staticmethod
-    def make(type_: StepType, name: str, arguments: dict[str, Any] | None = None,
-             depends_on: tuple[str, ...] = (), rationale: str = "", id_: str | None = None) -> "PlanStep":
+    def make(
+        type_: StepType,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        depends_on: tuple[str, ...] = (),
+        rationale: str = "",
+        id_: str | None = None,
+    ) -> "PlanStep":
         return PlanStep(id_ or new_id("STEP"), type_, name, dict(arguments or {}), depends_on, rationale)
 
 
 @dataclass(frozen=True)
 class Plan:
     steps: tuple[PlanStep, ...]
-    source: str = "canonical"       # "canonical" | "llm" | "llm+repaired"
-    notes: tuple[str, ...] = ()     # what the validator changed
+    source: str = "canonical"  # "canonical" | "llm" | "llm+repaired"
+    notes: tuple[str, ...] = ()  # what the validator changed
 
 
 # ------------------------------------------------------------------- task
@@ -296,6 +343,6 @@ class Task:
     as_of: date
     role: Role = Role.TRADER
     current_weight: float | None = None
-    question: str = ""              # free text from the requester, shown to the planner
+    question: str = ""  # free text from the requester, shown to the planner
     id: str = field(default_factory=lambda: new_id("TASK"))
     created_at: datetime = field(default_factory=utc_now)

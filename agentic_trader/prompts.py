@@ -31,6 +31,7 @@ The hashes are SHA-256 over UTF-8 text, truncated to 16 hex characters; the
 ``bundle`` hash covers every entry in name order, so a single number identifies
 the whole prompt set.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -72,8 +73,7 @@ def _agent_entry(agent: Agent) -> dict[str, str]:
     sources = [_source(c) for c in chain]
     if any(src == SOURCE_UNAVAILABLE for src in sources):
         return {"system": _h(agent.system_prompt), "template": SOURCE_UNAVAILABLE}
-    return {"system": _h(agent.system_prompt),
-            "template": _h("\n".join(f"{c.__name__}:{src}" for c, src in zip(chain, sources)))}
+    return {"system": _h(agent.system_prompt), "template": _h("\n".join(f"{c.__name__}:{src}" for c, src in zip(chain, sources)))}
 
 
 def shared_prompt_code() -> dict[str, Callable[..., Any] | type]:
@@ -83,6 +83,7 @@ def shared_prompt_code() -> dict[str, Callable[..., Any] | type]:
     """
     from . import anonymize, memory, state
     from .agents import analysts, base, researchers, risk, trader
+
     return {
         "Agent.system_prompt": base.Agent.system_prompt.fget,  # type: ignore[attr-defined]  # property object
         "Agent._complete": base.Agent._complete,
@@ -118,6 +119,7 @@ def shared_prompt_constants() -> dict[str, str]:
     see them through the functions that read them), rendered as stable text. Looked up at
     call time, like ``shared_prompt_code``."""
     from . import anonymize, state
+
     return {
         "state._TAG": str(state._TAG),
         "anonymize.PRICE_KEYS": repr(sorted(anonymize.PRICE_KEYS)),
@@ -147,9 +149,15 @@ def prompt_registry(config: dict) -> dict[str, Any]:
     agent uses, and a ``bundle`` hash over all of them.
     """
     agents: dict[str, Agent] = {f"analyst:{name}": cls(None, config) for name, cls in ANALYSTS.items()}
-    agents.update({"bull": BullResearcher(None, config), "bear": BearResearcher(None, config),
-                   "facilitator": DebateFacilitator(None, config), "trader": Trader(None, config),
-                   "pm": PortfolioManager(None, config)})
+    agents.update(
+        {
+            "bull": BullResearcher(None, config),
+            "bear": BearResearcher(None, config),
+            "facilitator": DebateFacilitator(None, config),
+            "trader": Trader(None, config),
+            "pm": PortfolioManager(None, config),
+        }
+    )
     for stance in ("aggressive", "neutral", "conservative"):
         agents[f"risk:{stance}"] = RiskAnalyst(None, config, stance)
     entries = {name: _agent_entry(a) for name, a in sorted(agents.items())}

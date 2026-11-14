@@ -8,6 +8,7 @@ attribution and combination reports are appended verbatim when present. Writes
 
     .venv\\Scripts\\python.exe scripts/render_v09_tables.py [--in results/v09]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,8 +35,10 @@ def md(df: pd.DataFrame, index: bool = True, floatfmt: str = ".2f") -> str:
     if index:
         df = df.reset_index()
     cols = list(df.columns)
-    lines = ["| " + " | ".join(str(c) for c in cols) + " |",
-             "|" + "|".join("--:" if pd.api.types.is_numeric_dtype(df[c]) else ":--" for c in cols) + "|"]
+    lines = [
+        "| " + " | ".join(str(c) for c in cols) + " |",
+        "|" + "|".join("--:" if pd.api.types.is_numeric_dtype(df[c]) else ":--" for c in cols) + "|",
+    ]
     for _, row in df.iterrows():
         cells = []
         for c in cols:
@@ -53,15 +56,21 @@ def diff_line(d: dict) -> str:
 
 
 def section_run(name: str, p: dict, d: Path) -> None:
-    label = (f"{name}: {len(p['symbols'])} sleeves, {p['weighting']}"
-             + (f", class budgets {p['class_budgets']}" if p.get("class_budgets") else "")
-             + f", {p['start']} -> {p['end']}, provenance {p['provenance']['git_commit'][:7]}"
-             + (" dirty" if p['provenance'].get('git_dirty') else " clean"))
+    label = (
+        f"{name}: {len(p['symbols'])} sleeves, {p['weighting']}"
+        + (f", class budgets {p['class_budgets']}" if p.get("class_budgets") else "")
+        + f", {p['start']} -> {p['end']}, provenance {p['provenance']['git_commit'][:7]}"
+        + (" dirty" if p["provenance"].get("git_dirty") else " clean")
+    )
     emit(f"portfolio table, {label}", md(pd.DataFrame(p["table"]).T))
-    rows = [{"stream": s, "Sharpe": p["metrics"][s]["sharpe"], "Sharpe - B&H vol-target [95% CI] p": diff_line(v)}
-            for s, v in p["sharpe_vs_vol_target"].items()]
-    emit(f"Sharpe difference against the run's B&H vol-target (paired block bootstrap over days): {name}",
-         md(pd.DataFrame(rows), index=False))
+    rows = [
+        {"stream": s, "Sharpe": p["metrics"][s]["sharpe"], "Sharpe - B&H vol-target [95% CI] p": diff_line(v)}
+        for s, v in p["sharpe_vs_vol_target"].items()
+    ]
+    emit(
+        f"Sharpe difference against the run's B&H vol-target (paired block bootstrap over days): {name}",
+        md(pd.DataFrame(rows), index=False),
+    )
     alloc = d / f"{name}_allocations.csv"
     if alloc.exists():
         a = pd.read_csv(alloc, index_col=0, parse_dates=True)

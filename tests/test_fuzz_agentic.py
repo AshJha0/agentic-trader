@@ -7,6 +7,7 @@ else may escape, and the invariants the rest of the system relies on (plans end 
 governance, every tool step is pinned to the task, a decision is always made) must
 hold for every input.
 """
+
 import json
 import re
 from datetime import date
@@ -19,8 +20,16 @@ from hypothesis import example, given, settings, strategies as st  # noqa: E402
 from agentic_trader import Instrument, make_config  # noqa: E402
 from agentic_trader.agentic import DeskTools, build_registry  # noqa: E402
 from agentic_trader.agentic.domain import (  # noqa: E402
-    Capability, PolicyDecision, PolicyOutcome, RiskLevel, Role, StepType, Task, ToolAnnotations,
-    ToolDescriptor, ToolRequest,
+    Capability,
+    PolicyDecision,
+    PolicyOutcome,
+    RiskLevel,
+    Role,
+    StepType,
+    Task,
+    ToolAnnotations,
+    ToolDescriptor,
+    ToolRequest,
 )
 from agentic_trader.agentic.planner import MAX_STEPS, validate_plan  # noqa: E402
 from agentic_trader.agentic.policy import PolicyEngine  # noqa: E402
@@ -37,10 +46,18 @@ TASK = Task("AAPL", date(2024, 3, 1))
 INS = Instrument.parse("AAPL")
 
 # JSON-ish values, including the shapes a model tends to produce by mistake.
-scalars = st.one_of(st.none(), st.booleans(), st.integers(-10**6, 10**6), st.floats(allow_nan=True, allow_infinity=True),
-                    st.text(max_size=40), st.dates().map(lambda d: d.isoformat()), st.just("2024-13-45"))
-json_values = st.recursive(scalars, lambda c: st.one_of(st.lists(c, max_size=4), st.dictionaries(st.text(max_size=8), c, max_size=4)),
-                           max_leaves=8)
+scalars = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(-(10**6), 10**6),
+    st.floats(allow_nan=True, allow_infinity=True),
+    st.text(max_size=40),
+    st.dates().map(lambda d: d.isoformat()),
+    st.just("2024-13-45"),
+)
+json_values = st.recursive(
+    scalars, lambda c: st.one_of(st.lists(c, max_size=4), st.dictionaries(st.text(max_size=8), c, max_size=4)), max_leaves=8
+)
 prop_types = st.sampled_from(["integer", "number", "boolean", "string", "array", "object", "date", None])
 
 
@@ -98,20 +115,40 @@ def test_real_tool_schemas_never_crash_on_random_arguments(name, args):
 
 
 # ------------------------------------------------------------------ validate_plan
-step_dicts = st.fixed_dictionaries({}, optional={
-    "type": st.one_of(st.sampled_from(["tool", "agent", "critic", "validate", "finalise", "human_approval", "order"]),
-                      st.text(max_size=8), st.integers()),
-    "name": st.one_of(st.sampled_from(TOOL_NAMES + ["analyst:technical", "analyst:alpha", "analyst:bogus", "debate",
-                                                    "trader", "risk", "execution.submit_order"]), st.text(max_size=12), st.none()),
-    "arguments": st.one_of(st.dictionaries(st.sampled_from(["symbol", "as_of", "lookback_days", "horizon", "query", "k", "junk"]),
-                                           json_values, max_size=4), json_values),
-    "rationale": st.one_of(st.text(max_size=300), st.integers()),
-})
+step_dicts = st.fixed_dictionaries(
+    {},
+    optional={
+        "type": st.one_of(
+            st.sampled_from(["tool", "agent", "critic", "validate", "finalise", "human_approval", "order"]),
+            st.text(max_size=8),
+            st.integers(),
+        ),
+        "name": st.one_of(
+            st.sampled_from(
+                TOOL_NAMES
+                + ["analyst:technical", "analyst:alpha", "analyst:bogus", "debate", "trader", "risk", "execution.submit_order"]
+            ),
+            st.text(max_size=12),
+            st.none(),
+        ),
+        "arguments": st.one_of(
+            st.dictionaries(
+                st.sampled_from(["symbol", "as_of", "lookback_days", "horizon", "query", "k", "junk"]), json_values, max_size=4
+            ),
+            json_values,
+        ),
+        "rationale": st.one_of(st.text(max_size=300), st.integers()),
+    },
+)
 raw_plans = st.lists(st.one_of(step_dicts, json_values), max_size=40)
 
 
-@given(raw=raw_plans, analysts=st.lists(st.sampled_from(["technical", "fundamentals", "news", "sentiment", "alpha"]),
-                                        min_size=1, max_size=5, unique=True))
+@given(
+    raw=raw_plans,
+    analysts=st.lists(
+        st.sampled_from(["technical", "fundamentals", "news", "sentiment", "alpha"]), min_size=1, max_size=5, unique=True
+    ),
+)
 @FUZZ
 def test_validate_plan_always_yields_a_safe_plan(raw, analysts):
     plan = validate_plan(raw, TASK, INS, analysts, REGISTRY)
@@ -126,7 +163,7 @@ def test_validate_plan_always_yields_a_safe_plan(raw, analysts):
     for s in tools:
         assert s.name in REGISTRY
         desc = REGISTRY.get(s.name).descriptor
-        assert desc.annotations.read_only                              # a plan never schedules an order
+        assert desc.annotations.read_only  # a plan never schedules an order
         props = desc.input_schema["properties"]
         assert set(s.arguments) <= set(props)
         if "symbol" in props:
@@ -146,16 +183,45 @@ def test_validate_plan_always_yields_a_safe_plan(raw, analysts):
 
 # ----------------------------------------------------------------- policy engine
 tool_descriptors = st.builds(
-    ToolDescriptor, name=st.sampled_from(TOOL_NAMES + ["x.y"]), server=st.just("x"), description=st.just("d"),
+    ToolDescriptor,
+    name=st.sampled_from(TOOL_NAMES + ["x.y"]),
+    server=st.just("x"),
+    description=st.just("d"),
     input_schema=st.just({"type": "object", "properties": {}}),
-    annotations=st.builds(ToolAnnotations, read_only=st.booleans(), risk=st.sampled_from(list(RiskLevel)),
-                          required=st.frozensets(st.sampled_from(list(Capability)), max_size=3)))
-arg_dicts = st.dictionaries(st.sampled_from(["symbol", "as_of", "start", "end", "weight", "target_weight", "current_weight",
-                                             "proposed_weight", "lookback_days", "other"]), json_values, max_size=5)
+    annotations=st.builds(
+        ToolAnnotations,
+        read_only=st.booleans(),
+        risk=st.sampled_from(list(RiskLevel)),
+        required=st.frozensets(st.sampled_from(list(Capability)), max_size=3),
+    ),
+)
+arg_dicts = st.dictionaries(
+    st.sampled_from(
+        [
+            "symbol",
+            "as_of",
+            "start",
+            "end",
+            "weight",
+            "target_weight",
+            "current_weight",
+            "proposed_weight",
+            "lookback_days",
+            "other",
+        ]
+    ),
+    json_values,
+    max_size=5,
+)
 
 
-@given(tool=tool_descriptors, args=arg_dicts, role=st.sampled_from(list(Role)),
-       deny=st.lists(st.sampled_from(TOOL_NAMES), max_size=2), universe=st.one_of(st.none(), st.lists(st.sampled_from(["AAPL", "MSFT"]))))
+@given(
+    tool=tool_descriptors,
+    args=arg_dicts,
+    role=st.sampled_from(list(Role)),
+    deny=st.lists(st.sampled_from(TOOL_NAMES), max_size=2),
+    universe=st.one_of(st.none(), st.lists(st.sampled_from(["AAPL", "MSFT"]))),
+)
 @FUZZ
 def test_policy_always_decides_and_never_allows_what_it_must_not(tool, args, role, deny, universe):
     engine = PolicyEngine({"deny_tools": deny, "symbol_universe": universe, "max_position": 1.0})
@@ -167,7 +233,7 @@ def test_policy_always_decides_and_never_allows_what_it_must_not(tool, args, rol
     elif tool.annotations.required - caps:
         assert d.outcome is PolicyOutcome.DENY
     elif not tool.annotations.read_only:
-        assert d.outcome is not PolicyOutcome.ALLOW                  # state changes are never waved through
+        assert d.outcome is not PolicyOutcome.ALLOW  # state changes are never waved through
         if Capability.PROPOSE_TRADES not in caps:
             assert d.outcome is PolicyOutcome.DENY
     if d.outcome is PolicyOutcome.ALLOW:
@@ -181,8 +247,13 @@ def test_policy_always_decides_and_never_allows_what_it_must_not(tool, args, rol
 
 
 # ------------------------------------------------- model replies and third-party text
-@given(text=st.one_of(st.text(max_size=400), st.builds(json.dumps, json_values),
-                      st.builds(lambda v, pre, post: pre + json.dumps(v) + post, json_values, st.text(max_size=30), st.text(max_size=30))))
+@given(
+    text=st.one_of(
+        st.text(max_size=400),
+        st.builds(json.dumps, json_values),
+        st.builds(lambda v, pre, post: pre + json.dumps(v) + post, json_values, st.text(max_size=30), st.text(max_size=30)),
+    )
+)
 @FUZZ
 def test_extract_json_returns_a_dict_or_none(text):
     out = extract_json(text)
@@ -192,15 +263,19 @@ def test_extract_json_returns_a_dict_or_none(text):
 fragments = st.sampled_from([f"<{_TAG}", f"</{_TAG}", f"</{_TAG}>", f"< / {_TAG} >", f"<{_TAG.upper()} x=1>", ">", "\n"])
 
 
-@given(lines=st.lists(st.one_of(st.text(max_size=120), fragments, st.builds(lambda a, b: a + b, fragments, st.text(max_size=20))),
-                      max_size=6), label=st.text(min_size=1, max_size=10))
+@given(
+    lines=st.lists(
+        st.one_of(st.text(max_size=120), fragments, st.builds(lambda a, b: a + b, fragments, st.text(max_size=20))), max_size=6
+    ),
+    label=st.text(min_size=1, max_size=10),
+)
 @example(lines=[f"<{_TAG}"], label="x")
 @example(lines=[f"</{_TAG}", ">"], label="x")
 @FUZZ
 def test_untrusted_block_cannot_be_closed_from_inside(lines, label):
     block = untrusted_block(label, lines)
     body = block.split("\n", 1)[1].rsplit("\n", 1)[0]
-    assert re.search(rf"<\s*/?\s*{_TAG}", body, flags=re.I | re.S) is None   # the tag itself, not e.g. <untrusted_data0>
+    assert re.search(rf"<\s*/?\s*{_TAG}", body, flags=re.I | re.S) is None  # the tag itself, not e.g. <untrusted_data0>
     assert block.startswith(f"<{_TAG} ") and block.endswith(f"</{_TAG}>")
 
 
@@ -208,8 +283,12 @@ def test_untrusted_block_cannot_be_closed_from_inside(lines, label):
 @FUZZ
 def test_plan_cap_never_drops_the_desk_stages(n_tools):
     raw = [{"type": "tool", "name": "market_data.history", "arguments": {"symbol": "AAPL"}}] * n_tools
-    raw += [{"type": "agent", "name": "analyst:technical"}, {"type": "agent", "name": "debate"},
-            {"type": "agent", "name": "trader"}, {"type": "agent", "name": "risk"}]
+    raw += [
+        {"type": "agent", "name": "analyst:technical"},
+        {"type": "agent", "name": "debate"},
+        {"type": "agent", "name": "trader"},
+        {"type": "agent", "name": "risk"},
+    ]
     plan = validate_plan(raw, TASK, INS, ["technical"], REGISTRY)
     agents = [s.name for s in plan.steps if s.type is StepType.AGENT]
     assert agents == ["analyst:technical", "debate", "trader", "risk"]

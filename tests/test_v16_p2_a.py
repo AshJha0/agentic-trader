@@ -1,4 +1,5 @@
 """Offline checks for scripts/v16_local_study.py (plan items 2.4 and 2.6) with fake LLMs only."""
+
 from __future__ import annotations
 
 import json
@@ -41,8 +42,7 @@ class FakeAnalyst:
         m = re.search(r'"rsi14":\s*([-0-9.e]+)', prompt)
         rsi = float(m.group(1)) if m else 50.0
         jitter = 0.01 * (self.seed % 3 - 1) if self.temperature > 0 else 0.0
-        return json.dumps({"signal": (50 - rsi) / 100 + jitter, "confidence": 0.5, "summary": "x",
-                           "key_points": []})
+        return json.dumps({"signal": (50 - rsi) / 100 + jitter, "confidence": 0.5, "summary": "x", "key_points": []})
 
 
 @pytest.fixture(scope="module")
@@ -72,7 +72,7 @@ def test_parse_and_score_recall():
 
 def test_stats():
     assert v16.binom_sf(0, 10, 0.3) == pytest.approx(1.0)
-    assert v16.binom_sf(10, 10, 0.5) == pytest.approx(0.5 ** 10)
+    assert v16.binom_sf(10, 10, 0.5) == pytest.approx(0.5**10)
     lo, hi = v16.wilson(20, 200)
     assert lo < 0.1 < hi
     r = v16.rate_row(40, 200, 1 / 15)
@@ -126,20 +126,28 @@ def test_calibration_states_are_frozen():
 
 def test_smoke_exit_codes(tmp_path):
     args = ["--data", "synthetic", "--smoke", "--repeats", "1", "--anchor-values", "30"]
-    assert v16.main(["calibration", "--out", str(tmp_path / "c.json"), *args],
-                    llm_factory=lambda a: FakeAnalyst()) == 0
+    assert v16.main(["calibration", "--out", str(tmp_path / "c.json"), *args], llm_factory=lambda a: FakeAnalyst()) == 0
     assert (tmp_path / "c.smoke.json").exists()
-    assert v16.main(["calibration", "--out", str(tmp_path / "d.json"), *args],
-                    llm_factory=lambda a: FakeAnalyst(bad=True)) == 1
-    assert v16.main(["recall", "--out", str(tmp_path / "r.json"), "--data", "synthetic", "--smoke"],
-                    llm_factory=lambda a: FakeRecall(lambda p: "no idea")) == 1
-    assert v16.main(["recall", "--out", str(tmp_path / "r2.json"), "--data", "synthetic", "--smoke"],
-                    llm_factory=lambda a: FakeRecall()) == 0
+    assert v16.main(["calibration", "--out", str(tmp_path / "d.json"), *args], llm_factory=lambda a: FakeAnalyst(bad=True)) == 1
+    assert (
+        v16.main(
+            ["recall", "--out", str(tmp_path / "r.json"), "--data", "synthetic", "--smoke"],
+            llm_factory=lambda a: FakeRecall(lambda p: "no idea"),
+        )
+        == 1
+    )
+    assert (
+        v16.main(
+            ["recall", "--out", str(tmp_path / "r2.json"), "--data", "synthetic", "--smoke"], llm_factory=lambda a: FakeRecall()
+        )
+        == 0
+    )
 
 
 def test_drift_cli(graph, tmp_path):
-    res = v16.run_calibration(FakeAnalyst(), graph, tmp_path / "a.json", limit=2, repeats=1,
-                              anchor_values=(30.0,), log=lambda m: None)
+    res = v16.run_calibration(
+        FakeAnalyst(), graph, tmp_path / "a.json", limit=2, repeats=1, anchor_values=(30.0,), log=lambda m: None
+    )
     full = tmp_path / "a_full.json"
     full.write_text(json.dumps(res, default=str), encoding="utf-8")
     assert v16.main(["drift", "--a", str(full), "--b", str(full), "--out", str(tmp_path / "d.json")]) == 0

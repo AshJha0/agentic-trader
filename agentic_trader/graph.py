@@ -9,6 +9,7 @@ stage methods (``prepare``, ``run_analyst``, ``run_debate``, ``run_trader``,
 ``run_risk``, ``record``) so the agentic harness can execute the same stages
 under a plan, with policy checks and evidence, without a second orchestration.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,8 +21,17 @@ from typing import TYPE_CHECKING, Callable
 
 import pandas as pd
 
-from .agents import (ANALYSTS, BearResearcher, BullResearcher, DebateFacilitator,
-                     PortfolioManager, RiskAnalyst, Trader, run_debate, run_risk_team)
+from .agents import (
+    ANALYSTS,
+    BearResearcher,
+    BullResearcher,
+    DebateFacilitator,
+    PortfolioManager,
+    RiskAnalyst,
+    Trader,
+    run_debate,
+    run_risk_team,
+)
 from .anonymize import Anonymizer, enforce_llm_anonymize
 from .config import make_config
 from .data import MarketDataProvider, get_provider
@@ -42,6 +52,7 @@ class _ResearchSeries:
     """One provider's research history for one name, from a fixed first bar to
     ``config["research_history_end"]``, with the per-bar inputs built on it once.
     ``provider`` is held so the ``id()`` in the cache key cannot be reused."""
+
     provider: MarketDataProvider
     hist: pd.DataFrame
     inputs: "SignalInputs | None" = None
@@ -59,21 +70,29 @@ Event = Callable[[str, str], None]  # (stage, message)
 
 
 class TradingGraph:
-    def __init__(self, config: dict | None = None, provider: MarketDataProvider | None = None,
-                 llm: LLM | None = None, memory: DecisionMemory | None = None,
-                 on_event: Event | None = None):
+    def __init__(
+        self,
+        config: dict | None = None,
+        provider: MarketDataProvider | None = None,
+        llm: LLM | None = None,
+        memory: DecisionMemory | None = None,
+        on_event: Event | None = None,
+    ):
         self.config = make_config(config)
         self.provider = provider or get_provider(self.config)
         self.llm = llm if llm is not None else get_llm(self.config)
         if self.llm is not None:
             self.llm = budget_llm(self.llm, self.config)
-            enforce_llm_anonymize(self.config)   # N8: a model run is anonymised unless opted out
-        self.memory = memory if memory is not None else DecisionMemory(
-            self.config.get("memory_path"), max_staleness_days=self.max_staleness_days)
+            enforce_llm_anonymize(self.config)  # N8: a model run is anonymised unless opted out
+        self.memory = (
+            memory
+            if memory is not None
+            else DecisionMemory(self.config.get("memory_path"), max_staleness_days=self.max_staleness_days)
+        )
         self.on_event = on_event or (lambda stage, msg: log.info("[%s] %s", stage, msg))
         self._research: dict[tuple[int, str, date], _ResearchSeries] = {}
-        self.text_inputs: TextInputs | None = None   # built from the config on first use
-        self.text_llm = None      # backend for the text analysts (None = self.llm)
+        self.text_inputs: TextInputs | None = None  # built from the config on first use
+        self.text_llm = None  # backend for the text analysts (None = self.llm)
 
         c, m = self.config, self.llm
         self.bull, self.bear = BullResearcher(m, c), BearResearcher(m, c)
@@ -104,10 +123,15 @@ class TradingGraph:
                 out.append(n)
         return out
 
-    def prepare(self, symbol: str | Instrument, as_of: date | str, asset_class: str | None = None,
-                current_weight: float | None = None,
-                provider: MarketDataProvider | None = None,
-                book: Book | None = None) -> TradingState:
+    def prepare(
+        self,
+        symbol: str | Instrument,
+        as_of: date | str,
+        asset_class: str | None = None,
+        current_weight: float | None = None,
+        provider: MarketDataProvider | None = None,
+        book: Book | None = None,
+    ) -> TradingState:
         """Load point-in-time data, apply the guards, consult memory; no agent runs yet.
 
         ``book`` is the rest of the current book (other symbols' positions and an aligned
@@ -126,31 +150,44 @@ class TradingGraph:
         # An outage the desk tolerates at the end of the series (max_data_staleness_days) is
         # tolerated inside it too, so the gap limit is the larger of the two.
         asset_class = "fx" if ins.is_fx else "equity"
-        require_valid_bars(hist, asset_class, f"{ins.display} history to {as_of}",
-                           max(MAX_GAP_DAYS[asset_class], self.max_staleness_days))
+        require_valid_bars(
+            hist, asset_class, f"{ins.display} history to {as_of}", max(MAX_GAP_DAYS[asset_class], self.max_staleness_days)
+        )
         if len(hist) < 30:
-            raise ValueError(f"not enough history for {ins.display} up to {as_of} "
-                             f"({len(hist)} bars)")
+            raise ValueError(f"not enough history for {ins.display} up to {as_of} ({len(hist)} bars)")
         # Decisions are for the last available bar (as_of may be a weekend/holiday),
         # but never on a price so old it no longer describes the market.
         bar_date = hist.index[-1].date()
         stale = (as_of - bar_date).days
         if stale > self.max_staleness_days:
-            raise ValueError(f"latest {ins.display} bar is {bar_date}, {stale} days before "
-                             f"{as_of}: refusing to decide on stale data")
-        state = TradingState(ins, as_of, hist, current_weight=current_weight, book=book,
-                             provider_name=getattr(provider, "name", ""), price_basis=series_basis(provider))
+            raise ValueError(
+                f"latest {ins.display} bar is {bar_date}, {stale} days before {as_of}: refusing to decide on stale data"
+            )
+        state = TradingState(
+            ins,
+            as_of,
+            hist,
+            current_weight=current_weight,
+            book=book,
+            provider_name=getattr(provider, "name", ""),
+            price_basis=series_basis(provider),
+        )
         if self.llm is not None and self.config.get("llm_anonymize"):
             state.anon = Anonymizer(ins, as_of, state.last_price)
 
         # Outcomes are valued on this very series (which ends at as_of), by the provider
         # that recorded them, so a rebase or a provider switch cannot fake a verdict.
-        self.memory.resolve(ins.symbol, as_of, hist, provider=state.provider_name,
-                            price_basis=state.price_basis, max_staleness_days=self.max_staleness_days)
+        self.memory.resolve(
+            ins.symbol,
+            as_of,
+            hist,
+            provider=state.provider_name,
+            price_basis=state.price_basis,
+            max_staleness_days=self.max_staleness_days,
+        )
         state.lessons = self.memory.lessons(ins.symbol, as_of, provider=state.provider_name)
         state.track_record = self.memory.track_record(ins.symbol, as_of, provider=state.provider_name)
-        self.on_event("data", f"{ins.display} {ins.asset_class}: {len(hist)} bars to {bar_date}, "
-                              f"last {state.last_price:.6g}")
+        self.on_event("data", f"{ins.display} {ins.asset_class}: {len(hist)} bars to {bar_date}, last {state.last_price:.6g}")
         self._research_forecast(state, provider)
         return state
 
@@ -180,11 +217,12 @@ class TradingGraph:
             hist = provider.history(ins, start, as_of)
             hist = hist[hist.index <= pd.Timestamp(as_of)]
         else:
-            hist = series.hist.iloc[:int(series.hist.index.searchsorted(pd.Timestamp(as_of), "right"))]
+            hist = series.hist.iloc[: int(series.hist.index.searchsorted(pd.Timestamp(as_of), "right"))]
         n = len(hist)
         labels = None
         if reg["enabled"]:
             from .regime import REGIME_NAMES, RegimeSeries
+
             k = int(reg["states"])
             # Refit monthly: the fit ends at the earlier of the design end and the first day
             # of the as-of month, so every fit uses bars before the decision only.
@@ -193,17 +231,18 @@ class TradingGraph:
                 rs = RegimeSeries(hist["Close"], provider.risk_free_series(hist.index), ins.periods_per_year)
             else:
                 if series.regime is None:
-                    series.regime = RegimeSeries(series.hist["Close"], provider.risk_free_series(series.hist.index),
-                                                 ins.periods_per_year)
+                    series.regime = RegimeSeries(
+                        series.hist["Close"], provider.risk_free_series(series.hist.index), ins.periods_per_year
+                    )
                 rs = series.regime
             lab, probs, _ = rs.labels(n - 1, k, pd.Timestamp(reg["fit_start"]), fit_end)
             if probs is not None:
-                state.regime = {"label": int(lab[-1]), "name": REGIME_NAMES[k][int(lab[-1])],
-                                "prob": float(probs[int(lab[-1])])}
+                state.regime = {"label": int(lab[-1]), "name": REGIME_NAMES[k][int(lab[-1])], "prob": float(probs[int(lab[-1])])}
                 if reg["condition"]:
                     labels = lab
         if use_ic:
             from .combine import desk_forecast, signal_inputs
+
             cfg = {**comb, "conformal": conf}
             if series is None:
                 carry = provider.carry_series(ins, hist.index) if ins.is_fx else None
@@ -214,8 +253,9 @@ class TradingGraph:
                     series.inputs = signal_inputs(series.hist, ins, cfg, carry)
                 state.forecast = desk_forecast(hist, ins, cfg, None, labels, series.inputs.head(n))
 
-    def _research_series(self, provider: MarketDataProvider, state: TradingState, start: date,
-                         floor: date | None) -> _ResearchSeries | None:
+    def _research_series(
+        self, provider: MarketDataProvider, state: TradingState, start: date, floor: date | None
+    ) -> _ResearchSeries | None:
         """The cached research series when it can stand in for the per-decision history.
 
         That needs ``config["research_history_end"]`` at or after the as-of date and a first
@@ -239,13 +279,11 @@ class TradingGraph:
             self._research[key] = series
         return series
 
-    def run_analyst(self, state: TradingState, name: str,
-                    provider: MarketDataProvider | None = None) -> AnalystReport:
+    def run_analyst(self, state: TradingState, name: str, provider: MarketDataProvider | None = None) -> AnalystReport:
         if name not in ANALYSTS:
             raise ValueError(f"unknown analyst {name!r}; choose from {sorted(ANALYSTS)}")
         r = ANALYSTS[name](self.llm, self.config).run(state, provider or self.provider)
-        self.on_event("analyst", f"{r.analyst:<12} signal {r.signal:+.2f} conf {r.confidence:.2f} "
-                                 f"[{r.source}] {r.summary}")
+        self.on_event("analyst", f"{r.analyst:<12} signal {r.signal:+.2f} conf {r.confidence:.2f} [{r.source}] {r.summary}")
         return r
 
     def run_text_analysts(self, state: TradingState) -> list[AnalystReport]:
@@ -260,21 +298,21 @@ class TradingGraph:
         if not names:
             return []
         from .text_analysts import TextInputs, text_reports
+
         if self.text_inputs is None:
             self.text_inputs = TextInputs.from_config(self.config)
         llm = self.text_llm if self.text_llm is not None else self.llm
         reports = text_reports(names, llm, self.text_inputs, state.instrument, state.as_of, anon=state.anon)
         for r in reports:
             state.reports[r.analyst] = r
-            self.on_event("analyst", f"{r.analyst:<12} signal {r.signal:+.2f} conf {r.confidence:.2f} "
-                                     f"[{r.source}] {r.summary}")
+            self.on_event("analyst", f"{r.analyst:<12} signal {r.signal:+.2f} conf {r.confidence:.2f} [{r.source}] {r.summary}")
         return reports
 
     def run_debate(self, state: TradingState, rounds: int | None = None) -> DebateOutcome:
-        d = run_debate(state, self.bull, self.bear, self.facilitator,
-                       self.config["max_debate_rounds"] if rounds is None else rounds)
-        self.on_event("debate", f"{len(d.turns)} turns -> winner {d.winner}, score {d.score:+.2f} "
-                                f"[{d.source}]")
+        d = run_debate(
+            state, self.bull, self.bear, self.facilitator, self.config["max_debate_rounds"] if rounds is None else rounds
+        )
+        self.on_event("debate", f"{len(d.turns)} turns -> winner {d.winner}, score {d.score:+.2f} [{d.source}]")
         return d
 
     def run_trader(self, state: TradingState) -> TradeProposal:
@@ -283,14 +321,14 @@ class TradingGraph:
         return p
 
     def run_risk(self, state: TradingState, rounds: int | None = None) -> FinalDecision:
-        dec = run_risk_team(state, self.risk_team, self.pm,
-                            self.config["max_risk_discuss_rounds"] if rounds is None else rounds)
-        views = ", ".join(f"{v.stance[:4]} {v.recommended_weight:+.2f}"
-                          for v in state.risk_views[-len(self.risk_team):])
+        dec = run_risk_team(state, self.risk_team, self.pm, self.config["max_risk_discuss_rounds"] if rounds is None else rounds)
+        views = ", ".join(f"{v.stance[:4]} {v.recommended_weight:+.2f}" for v in state.risk_views[-len(self.risk_team) :])
         self.on_event("risk", views)
-        self.on_event("decision", f"{dec.action.value} target weight {dec.target_weight:+.2f} "
-                                  f"(approved={dec.approved}) [{dec.source}]"
-                                  + (f" | {'; '.join(dec.adjustments)}" if dec.adjustments else ""))
+        self.on_event(
+            "decision",
+            f"{dec.action.value} target weight {dec.target_weight:+.2f} "
+            f"(approved={dec.approved}) [{dec.source}]" + (f" | {'; '.join(dec.adjustments)}" if dec.adjustments else ""),
+        )
         return dec
 
     def record(self, state: TradingState) -> None:
@@ -299,10 +337,17 @@ class TradingGraph:
         if dec is None:
             raise ValueError("no decision to record")
         summary = self._guarded_summary(state, dec.rationale)
-        self.memory.record(state.instrument.symbol, state.as_of, dec.action.value, dec.target_weight,
-                           state.last_price, summary,
-                           horizon_days=state.proposal.horizon_days if state.proposal else 10,
-                           provider=state.provider_name, price_basis=state.price_basis)
+        self.memory.record(
+            state.instrument.symbol,
+            state.as_of,
+            dec.action.value,
+            dec.target_weight,
+            state.last_price,
+            summary,
+            horizon_days=state.proposal.horizon_days if state.proposal else 10,
+            provider=state.provider_name,
+            price_basis=state.price_basis,
+        )
         if self.config.get("save_reports"):
             path = self.save_report(state)
             self.on_event("report", f"saved {path}")
@@ -317,6 +362,7 @@ class TradingGraph:
         if not ag.get("memory_output_guard", True):
             return text
         from .agentic.output_guard import check_output
+
         ins = state.instrument
         allowed = {ins.symbol, getattr(ins, "display", ins.symbol)}
         allowed.update(str(s) for s in (ag.get("symbol_universe") or ()))
@@ -331,10 +377,14 @@ class TradingGraph:
         return f"[summary withheld by output guard: {', '.join(kinds)}]"
 
     # ---------------------------------------------------------- pipeline
-    def propagate(self, symbol: str | Instrument, as_of: date | str,
-                  asset_class: str | None = None,
-                  current_weight: float | None = None,
-                  book: Book | None = None) -> tuple[TradingState, FinalDecision]:
+    def propagate(
+        self,
+        symbol: str | Instrument,
+        as_of: date | str,
+        asset_class: str | None = None,
+        current_weight: float | None = None,
+        book: Book | None = None,
+    ) -> tuple[TradingState, FinalDecision]:
         """Run the desk once for ``symbol`` with information up to the close of ``as_of``.
 
         ``current_weight`` is the position held going into the decision (portfolio
@@ -364,11 +414,13 @@ class TradingGraph:
         critic's multiplier as in the harness. Returns the ``CriticReport``."""
         from .agentic.critic import Critic, apply_weight_rule
         from .agentic.evidence import EvidenceStore
+
         acfg = self.config.get("agentic", {})
         llm = self.llm if acfg.get("critic_graph_llm", False) else None
         critic = Critic({**self.config, "agentic": {**acfg, "llm_critic": llm is not None}}, llm)
         # Round 1 (A6): the critic gets the same risk facts as the PM, so its VaR limit check runs.
         from .agents.risk import risk_facts
+
         facts = risk_facts(state, self.config) if state.decision is not None else None
         rep = critic.review(state, [], EvidenceStore(), facts)
         act = apply_weight_rule(state, rep, self.config, facts)
@@ -380,9 +432,9 @@ class TradingGraph:
             self.on_event("critic", f"{act['rule']}: weight {act['from']:+.2f} -> {act['to']:+.2f}")
         return rep
 
-    def scan(self, symbols: list[str], as_of: date | str,
-             positions: dict[str, float] | None = None,
-             book_lookback_days: int = 250) -> pd.DataFrame:
+    def scan(
+        self, symbols: list[str], as_of: date | str, positions: dict[str, float] | None = None, book_lookback_days: int = 250
+    ) -> pd.DataFrame:
         """Run the desk over a watchlist and return one row per symbol.
 
         A symbol that fails (no data, stale data, bad ticker) gets a row with its
@@ -409,6 +461,7 @@ class TradingGraph:
         book_returns = None
         if self.config["risk"].get("max_book_var_95"):
             from .portfolio import MIN_BOOK_OBS
+
             start = as_of_d - timedelta(days=book_lookback_days)
             cols = {}
             watch = set()
@@ -431,9 +484,13 @@ class TradingGraph:
                     col = pd.Series(dtype=float)
                 bars = int(col.notna().sum())
                 if bars < MIN_BOOK_OBS:
-                    log.warning("scan: %s has %d bars of book history (need %d); a book holding it "
-                                "cannot be VaR-checked and is flattened rather than sized",
-                                ins.symbol, bars, MIN_BOOK_OBS)
+                    log.warning(
+                        "scan: %s has %d bars of book history (need %d); a book holding it "
+                        "cannot be VaR-checked and is flattened rather than sized",
+                        ins.symbol,
+                        bars,
+                        MIN_BOOK_OBS,
+                    )
                 cols[ins.symbol] = col
             if cols:
                 book_returns = pd.DataFrame(cols)
@@ -444,19 +501,27 @@ class TradingGraph:
                 if book_returns is not None:
                     others = {s: w for s, w in positions.items() if s != ins.symbol}
                     book = Book(others, book_returns)
-                state, d = self.propagate(ins, as_of,
-                                          current_weight=positions.get(ins.symbol), book=book)
+                state, d = self.propagate(ins, as_of, current_weight=positions.get(ins.symbol), book=book)
                 votes = [r for r in state.reports.values() if not r.abstained]
                 assert state.debate is not None  # propagate always runs the debate
-                rows.append({
-                    "symbol": ins.symbol, "asset_class": ins.asset_class,
-                    "last": state.last_price, "action": d.action.value,
-                    "target_weight": d.target_weight, "confidence": round(d.confidence, 3),
-                    "stop_loss": d.stop_loss, "take_profit": d.take_profit,
-                    "debate": state.debate.winner, "score": round(state.debate.score, 3),
-                    "analysts_voting": len(votes), "approved": d.approved,
-                    "adjustments": "; ".join(d.adjustments), "error": "",
-                })
+                rows.append(
+                    {
+                        "symbol": ins.symbol,
+                        "asset_class": ins.asset_class,
+                        "last": state.last_price,
+                        "action": d.action.value,
+                        "target_weight": d.target_weight,
+                        "confidence": round(d.confidence, 3),
+                        "stop_loss": d.stop_loss,
+                        "take_profit": d.take_profit,
+                        "debate": state.debate.winner,
+                        "score": round(state.debate.score, 3),
+                        "analysts_voting": len(votes),
+                        "approved": d.approved,
+                        "adjustments": "; ".join(d.adjustments),
+                        "error": "",
+                    }
+                )
             except Exception as e:  # one bad symbol must not kill a watchlist run
                 log.warning("scan: %s failed: %s", sym, e)
                 rows.append({"symbol": sym.upper(), "action": "ERROR", "error": str(e)})

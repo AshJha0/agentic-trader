@@ -1,5 +1,6 @@
 """v0.17 R0.2 (review B1): the frozen eval items are anonymised exactly as the P2 study's prompts
 are, so eval scores describe the prompt distribution the trading cells see. No model is called."""
+
 from __future__ import annotations
 
 import json
@@ -13,8 +14,7 @@ from agentic_trader.evaluation import CORE_UNIVERSE
 ITEMS = ev.load_items()
 EVAL_NAMES = ["AAPL", "MSFT", "NVDA", "JPM", "XOM", "KO", "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "PAPERNAV"]
 CODES = ["EUR", "USD", "GBP", "JPY", "AUD", "CHF", "CAD"]
-COMPANIES = ["Apple", "Microsoft", "Nvidia", "JPMorgan", "Exxon", "Coca-Cola", "Amazon", "Alphabet", "Google",
-             "Tesla", "Meta"]
+COMPANIES = ["Apple", "Microsoft", "Nvidia", "JPMorgan", "Exxon", "Coca-Cola", "Amazon", "Alphabet", "Google", "Tesla", "Meta"]
 TICKERS = sorted({*EVAL_NAMES, *(n for names in CORE_UNIVERSE.values() for n in names), *CODES})
 
 

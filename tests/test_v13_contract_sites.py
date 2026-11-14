@@ -1,5 +1,6 @@
 """Every ``ask_json`` call site passes a schema whose ``required`` keys equal the call's
 ``required`` tuple and whose properties cover every ``numeric`` key (schema and gate agree)."""
+
 from __future__ import annotations
 
 import ast

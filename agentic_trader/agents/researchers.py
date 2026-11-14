@@ -1,4 +1,5 @@
 """Researcher team: bull vs bear debate moderated by a facilitator."""
+
 from __future__ import annotations
 
 from .. import contracts
@@ -6,8 +7,7 @@ from ..state import AnalystReport, DebateOutcome, DebateTurn, TradingState
 from .base import Agent, clip
 
 
-def consensus_score(state: TradingState, weights: dict[str, float],
-                    skip_abstained: bool = False) -> tuple[float, float]:
+def consensus_score(state: TradingState, weights: dict[str, float], skip_abstained: bool = False) -> tuple[float, float]:
     """Confidence- and role-weighted average analyst signal, and the mean confidence.
 
     With ``skip_abstained`` an analyst that had no data does not vote: counting it
@@ -34,9 +34,11 @@ class Researcher(Agent):
     @property
     def role(self) -> str:  # type: ignore[override]
         view = "bullish (argue FOR" if self.side == "bull" else "bearish (argue AGAINST"
-        return (f"{self.side.title()} Researcher. You take the {view} a long position) and "
-                "debate the opposing researcher. Use evidence from the analyst reports, rebut "
-                "the other side's latest points directly, and stay concise (<= 150 words).")
+        return (
+            f"{self.side.title()} Researcher. You take the {view} a long position) and "
+            "debate the opposing researcher. Use evidence from the analyst reports, rebut "
+            "the other side's latest points directly, and stay concise (<= 150 words)."
+        )
 
     def _supporting(self, state: TradingState) -> list[AnalystReport]:
         sgn = 1 if self.side == "bull" else -1
@@ -52,21 +54,26 @@ class Researcher(Agent):
         sup, opp = self._supporting(state), self._opposing(state)
         parts = []
         if not sup:
-            parts.append(f"No analyst supports the {self.side} case outright; the {self.side} "
-                         "view rests on the absence of strong opposing evidence.")
+            parts.append(
+                f"No analyst supports the {self.side} case outright; the {self.side} "
+                "view rests on the absence of strong opposing evidence."
+            )
         else:
             pick = sup[(rnd - 1) % len(sup)]
             pts = "; ".join(pick.key_points[:3]) or pick.summary
-            parts.append(f"The {pick.analyst} analyst ({pick.signal:+.2f}, conf "
-                         f"{pick.confidence:.2f}) backs the {self.side} case: {pts}.")
+            parts.append(
+                f"The {pick.analyst} analyst ({pick.signal:+.2f}, conf {pick.confidence:.2f}) backs the {self.side} case: {pts}."
+            )
             if len(sup) > 1:
                 others = ", ".join(r.analyst for r in sup if r is not pick)
                 parts.append(f"This is corroborated by {others}.")
         if history and opp:
             weakest = min(opp, key=lambda r: r.confidence)
-            parts.append(f"The opposing case leans on {opp[0].analyst}, but the "
-                         f"{weakest.analyst} evidence is only {weakest.confidence:.0%} "
-                         "confident and should be discounted.")
+            parts.append(
+                f"The opposing case leans on {opp[0].analyst}, but the "
+                f"{weakest.analyst} evidence is only {weakest.confidence:.0%} "
+                "confident and should be discounted."
+            )
         return " ".join(parts)
 
     def speak(self, state: TradingState, rnd: int, history: list[DebateTurn]) -> DebateTurn:
@@ -94,9 +101,11 @@ class BearResearcher(Researcher):
 class DebateFacilitator(Agent):
     name = "facilitator"
     deep = True
-    role = ("Debate Facilitator. You review the bull/bear debate and the analyst reports, "
-            "decide which side made the stronger evidence-based case, and record the "
-            "prevailing view as a structured verdict for the trader.")
+    role = (
+        "Debate Facilitator. You review the bull/bear debate and the analyst reports, "
+        "decide which side made the stronger evidence-based case, and record the "
+        "prevailing view as a structured verdict for the trader."
+    )
 
     def judge(self, state: TradingState, turns: list[DebateTurn]) -> DebateOutcome:
         weights = self.config["analyst_weights"]
@@ -111,34 +120,45 @@ class DebateFacilitator(Agent):
         n_abs = len(state.reports) - len(voting)
         untrusted = state.untrusted_inputs or any(t.untrusted for t in turns)
         outcome = DebateOutcome(
-            winner, score, conviction,
+            winner,
+            score,
+            conviction,
             f"Weighted analyst consensus {score:+.2f} ({n_bull} bullish vs {n_bear} bearish "
             f"reports, mean confidence {avg_conf:.2f}"
-            + (f", {n_abs} without data" if n_abs else "") + f"); prevailing view: {winner}.",
-            turns, untrusted=untrusted)
+            + (f", {n_abs} without data" if n_abs else "")
+            + f"); prevailing view: {winner}.",
+            turns,
+            untrusted=untrusted,
+        )
 
         prompt = (
             f"Instrument: {state.instrument.display}, as of {state.as_of.isoformat()}.\n\n"
             f"Analyst reports:\n{state.reports_digest()}\n\nDebate transcript:\n"
             + state.debate_block(turns, rounds=True)
             + '\n\nJSON keys: "winner" ("bull", "bear" or "balanced"), "score" (number in '
-              '[-1, 1]; the direction and strength of the prevailing view), "conviction" '
-              '(number in [0, 1]), "summary" (2-4 sentences recording the decisive arguments).'
+            '[-1, 1]; the direction and strength of the prevailing view), "conviction" '
+            '(number in [0, 1]), "summary" (2-4 sentences recording the decisive arguments).'
         )
-        data = self.ask_json(prompt, ("winner", "score", "summary"), state=state,
-                             numeric=("score", "conviction"), schema=contracts.FACILITATOR)
+        data = self.ask_json(
+            prompt, ("winner", "score", "summary"), state=state, numeric=("score", "conviction"), schema=contracts.FACILITATOR
+        )
         if data:
             w = str(data["winner"]).lower()
             outcome = DebateOutcome(
                 w if w in ("bull", "bear", "balanced") else winner,
                 clip(data["score"], -1, 1),
                 clip(data.get("conviction"), 0, 1, conviction),
-                str(data["summary"]), turns, source="llm", untrusted=untrusted)
+                str(data["summary"]),
+                turns,
+                source="llm",
+                untrusted=untrusted,
+            )
         return outcome
 
 
-def run_debate(state: TradingState, bull: BullResearcher, bear: BearResearcher,
-               facilitator: DebateFacilitator, rounds: int) -> DebateOutcome:
+def run_debate(
+    state: TradingState, bull: BullResearcher, bear: BearResearcher, facilitator: DebateFacilitator, rounds: int
+) -> DebateOutcome:
     turns: list[DebateTurn] = []
     for rnd in range(1, max(1, rounds) + 1):
         turns.append(bull.speak(state, rnd, turns))

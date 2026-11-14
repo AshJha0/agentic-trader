@@ -26,6 +26,7 @@ Writes ``results/v09/combine.{md,json}``.
 
     .venv\\Scripts\\python.exe scripts/combine_v09.py [--in results/v09]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,12 +46,16 @@ from agentic_trader.provenance import provenance  # noqa: E402
 from agentic_trader.stats import paired_sharpe_block_bootstrap, sharpe_stats  # noqa: E402
 
 PPY = 260.0
-TREND = "TSMOM(12-1)"          # --trend "TSMOM(L/S)" selects the v0.12 long/short multi-horizon stream
+TREND = "TSMOM(12-1)"  # --trend "TSMOM(L/S)" selects the v0.12 long/short multi-horizon stream
 
 
 def stream_map(trend: str = TREND) -> dict:
-    return {"beta": ("etf11_rp", "B&H vol-target"), "trend_etf": ("etf11_rp", trend),
-            "trend_fx": ("fx15_rp", trend), "carry": ("fx15_rp", "Carry")}
+    return {
+        "beta": ("etf11_rp", "B&H vol-target"),
+        "trend_etf": ("etf11_rp", trend),
+        "trend_fx": ("fx15_rp", trend),
+        "carry": ("fx15_rp", "Carry"),
+    }
 
 
 STREAMS = stream_map()
@@ -71,7 +76,7 @@ def load_streams(inp: Path, trend: str = TREND) -> tuple[pd.DataFrame, pd.Series
         frames[name] = f[col]
         rfs.append(f["rf"])
     streams = pd.DataFrame(frames).sort_index()
-    rf = pd.concat(rfs, axis=1, sort=True).max(axis=1).reindex(streams.index).ffill()   # one bill rate
+    rf = pd.concat(rfs, axis=1, sort=True).max(axis=1).reindex(streams.index).ffill()  # one bill rate
     return streams.fillna(0.0), rf
 
 
@@ -89,7 +94,7 @@ def risk_parity_shares(ex: np.ndarray, window: int, every: int) -> np.ndarray:
     current = np.full(k, 1.0 / k)
     for t in range(T):
         if t >= window and (t - window) % every == 0:
-            hist = ex[t - window:t]
+            hist = ex[t - window : t]
             try:
                 w = risk_parity_weights(estimate_cov(hist))
                 if np.all(np.isfinite(w)) and w.sum() > 0:
@@ -117,8 +122,14 @@ def metrics(ex: np.ndarray) -> dict:
     s = sharpe_stats(ex, PPY)
     eq = np.cumprod(1.0 + ex)
     mdd = float((1.0 - eq / np.maximum.accumulate(eq)).max())
-    return {"sharpe": s.sharpe_annual, "t": s.t_stat, "vol_pct": s.std * np.sqrt(PPY) * 100,
-            "excess_return_annual_pct": s.mean * PPY * 100, "mdd_pct": mdd * 100, "n": s.n}
+    return {
+        "sharpe": s.sharpe_annual,
+        "t": s.t_stat,
+        "vol_pct": s.std * np.sqrt(PPY) * 100,
+        "excess_return_annual_pct": s.mean * PPY * 100,
+        "mdd_pct": mdd * 100,
+        "n": s.n,
+    }
 
 
 def main(argv=None) -> int:
@@ -133,42 +144,64 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     inp = Path(a.inp)
     streams, rf = load_streams(inp, a.trend)
-    ex = excess(streams, rf)                                       # (T-1, k) excess returns
+    ex = excess(streams, rf)  # (T-1, k) excess returns
     names = list(streams.columns)
     base = ex[:, names.index("beta")]
-    out = {"streams": {n: metrics(ex[:, i]) for i, n in enumerate(names)},
-           "correlation": pd.DataFrame(np.corrcoef(ex.T), index=names, columns=names).round(3).to_dict(),
-           "books": {}, "settings": vars(a) | {"ppy": PPY}, "provenance": provenance()}
+    out = {
+        "streams": {n: metrics(ex[:, i]) for i, n in enumerate(names)},
+        "correlation": pd.DataFrame(np.corrcoef(ex.T), index=names, columns=names).round(3).to_dict(),
+        "books": {},
+        "settings": vars(a) | {"ppy": PPY},
+        "provenance": provenance(),
+    }
     for book, members in BOOKS.items():
         cols = [names.index(m) for m in members]
         sub = ex[:, cols]
         shares = risk_parity_shares(sub, a.window, a.every) if len(cols) > 1 else np.ones((sub.shape[0], 1))
         r = (sub * shares).sum(axis=1)
-        entry = {"members": members, "mean_shares": dict(zip(members, shares.mean(axis=0).round(3).tolist())),
-                 "metrics": metrics(r), "vs_base": asdict(paired_sharpe_block_bootstrap(r, base, PPY, block=10, n_boot=5000))}
+        entry = {
+            "members": members,
+            "mean_shares": dict(zip(members, shares.mean(axis=0).round(3).tolist())),
+            "metrics": metrics(r),
+            "vs_base": asdict(paired_sharpe_block_bootstrap(r, base, PPY, block=10, n_boot=5000)),
+        }
         sc = drawdown_overlay(r, a.dd_window, a.dd_limit)
         ro = r * sc
-        entry["with_drawdown_overlay"] = {"metrics": metrics(ro), "share_of_days_halved": float((sc < 1).mean()),
-                                          "vs_base": asdict(paired_sharpe_block_bootstrap(ro, base, PPY, block=10, n_boot=5000))}
+        entry["with_drawdown_overlay"] = {
+            "metrics": metrics(ro),
+            "share_of_days_halved": float((sc < 1).mean()),
+            "vs_base": asdict(paired_sharpe_block_bootstrap(ro, base, PPY, block=10, n_boot=5000)),
+        }
         out["books"][book] = entry
     (inp / f"combine{a.tag}.json").write_text(json.dumps(out, indent=1, default=float), encoding="utf-8")
     period = f"{streams.index[0].date()} -> {streams.index[-1].date()}"
-    lines = [f"# v0.9 phase 3: strategy combination, {period}, 260 periods/year\n",
-             "## streams (excess returns)\n", "| stream | Sharpe | t | vol % | excess return %/yr | MDD % | n |", "|:--|--:|--:|--:|--:|--:|--:|"]
+    lines = [
+        f"# v0.9 phase 3: strategy combination, {period}, 260 periods/year\n",
+        "## streams (excess returns)\n",
+        "| stream | Sharpe | t | vol % | excess return %/yr | MDD % | n |",
+        "|:--|--:|--:|--:|--:|--:|--:|",
+    ]
     for n, m in out["streams"].items():
-        lines.append(f"| {n} | {m['sharpe']:.2f} | {m['t']:.2f} | {m['vol_pct']:.2f} | {m['excess_return_annual_pct']:+.2f} | {m['mdd_pct']:.2f} | {m['n']} |")
+        lines.append(
+            f"| {n} | {m['sharpe']:.2f} | {m['t']:.2f} | {m['vol_pct']:.2f} | {m['excess_return_annual_pct']:+.2f} | {m['mdd_pct']:.2f} | {m['n']} |"
+        )
     lines += ["", "## correlation of daily excess returns\n", "| | " + " | ".join(names) + " |", "|:--|" + "--:|" * len(names)]
     for n in names:
         lines.append(f"| {n} | " + " | ".join(f"{out['correlation'][m][n]:.2f}" for m in names) + " |")
-    lines += ["", "## books (risk parity across streams; block-bootstrap Sharpe difference vs the base)\n",
-              "| book | mean shares | Sharpe | vol % | MDD % | Sharpe − base [95% CI] p | with DD overlay: Sharpe / MDD % / days halved | overlay − base [95% CI] p |",
-              "|:--|:--|--:|--:|--:|:--|:--|:--|"]
+    lines += [
+        "",
+        "## books (risk parity across streams; block-bootstrap Sharpe difference vs the base)\n",
+        "| book | mean shares | Sharpe | vol % | MDD % | Sharpe − base [95% CI] p | with DD overlay: Sharpe / MDD % / days halved | overlay − base [95% CI] p |",
+        "|:--|:--|--:|--:|--:|:--|:--|:--|",
+    ]
     for book, e in out["books"].items():
         m, d, o, od = e["metrics"], e["vs_base"], e["with_drawdown_overlay"]["metrics"], e["with_drawdown_overlay"]["vs_base"]
-        lines.append(f"| {book} | {e['mean_shares']} | {m['sharpe']:.2f} | {m['vol_pct']:.2f} | {m['mdd_pct']:.2f} "
-                     f"| {d['diff']:+.2f} [{d['ci_low']:+.2f}, {d['ci_high']:+.2f}] p {d['p_value']:.3f} "
-                     f"| {o['sharpe']:.2f} / {o['mdd_pct']:.2f} / {e['with_drawdown_overlay']['share_of_days_halved']:.0%} "
-                     f"| {od['diff']:+.2f} [{od['ci_low']:+.2f}, {od['ci_high']:+.2f}] p {od['p_value']:.3f} |")
+        lines.append(
+            f"| {book} | {e['mean_shares']} | {m['sharpe']:.2f} | {m['vol_pct']:.2f} | {m['mdd_pct']:.2f} "
+            f"| {d['diff']:+.2f} [{d['ci_low']:+.2f}, {d['ci_high']:+.2f}] p {d['p_value']:.3f} "
+            f"| {o['sharpe']:.2f} / {o['mdd_pct']:.2f} / {e['with_drawdown_overlay']['share_of_days_halved']:.0%} "
+            f"| {od['diff']:+.2f} [{od['ci_low']:+.2f}, {od['ci_high']:+.2f}] p {od['p_value']:.3f} |"
+        )
     lines.append("")
     text = "\n".join(lines) + "\n"
     (inp / f"combine{a.tag}.md").write_text(text, encoding="utf-8")

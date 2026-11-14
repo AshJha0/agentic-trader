@@ -30,6 +30,7 @@ in-loop hook is one line in ``quant/pycore.py`` (and the C++ mirror), next to ``
 
 described in docs/review/v017_notes/L8_quant_rest.md.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -38,12 +39,13 @@ import numpy as np
 
 from . import quant
 
-DEFAULT_FUNDING_SPREAD_BPS = 50.0   # over rf on borrowed notional (|w| > 1); convention
-DEFAULT_CASH_SPREAD_BPS = 0.0       # under rf on idle cash; 0 keeps unlevered results unchanged
+DEFAULT_FUNDING_SPREAD_BPS = 50.0  # over rf on borrowed notional (|w| > 1); convention
+DEFAULT_CASH_SPREAD_BPS = 0.0  # under rf on idle cash; 0 keeps unlevered results unchanged
 
 
-def financing_drag(w, funding_spread_annual: float = DEFAULT_FUNDING_SPREAD_BPS / 1e4,
-                   cash_spread_annual: float = DEFAULT_CASH_SPREAD_BPS / 1e4) -> np.ndarray:
+def financing_drag(
+    w, funding_spread_annual: float = DEFAULT_FUNDING_SPREAD_BPS / 1e4, cash_spread_annual: float = DEFAULT_CASH_SPREAD_BPS / 1e4
+) -> np.ndarray:
     """Annualised financing cost rate (a non-negative fraction of equity) for held weights ``w``:
     ``max(|w| - 1, 0) * funding_spread + max(1 - |w|, 0) * cash_spread``. Divide by periods
     per year for a per-bar figure. NaN weights count as flat."""
@@ -53,10 +55,13 @@ def financing_drag(w, funding_spread_annual: float = DEFAULT_FUNDING_SPREAD_BPS 
     return np.maximum(a - 1.0, 0.0) * funding_spread_annual + np.maximum(1.0 - a, 0.0) * cash_spread_annual
 
 
-def apply_financing(result: quant.BacktestResult, periods_per_year: float,
-                    funding_spread_bps: float = DEFAULT_FUNDING_SPREAD_BPS,
-                    cash_spread_bps: float = DEFAULT_CASH_SPREAD_BPS,
-                    risk_free_annual=0.0) -> quant.BacktestResult:
+def apply_financing(
+    result: quant.BacktestResult,
+    periods_per_year: float,
+    funding_spread_bps: float = DEFAULT_FUNDING_SPREAD_BPS,
+    cash_spread_bps: float = DEFAULT_CASH_SPREAD_BPS,
+    risk_free_annual=0.0,
+) -> quant.BacktestResult:
     """A copy of ``result`` with the financing drag taken out of each bar's return.
 
     ``result.positions[t]`` is the weight held over ``(t, t+1]`` and ``result.returns[t+1]``
@@ -69,7 +74,7 @@ def apply_financing(result: quant.BacktestResult, periods_per_year: float,
     pos = np.asarray(result.positions, dtype=float)
     drag = financing_drag(pos[:-1], funding_spread_bps / 1e4, cash_spread_bps / 1e4) / periods_per_year
     if result.ruined_at >= 0:
-        drag[result.ruined_at:] = 0.0
+        drag[result.ruined_at :] = 0.0
     r[1:] = r[1:] - drag
     r = np.maximum(r, -1.0)
     e0 = float(result.equity[0])
@@ -78,9 +83,14 @@ def apply_financing(result: quant.BacktestResult, periods_per_year: float,
     return replace(result, equity=equity, returns=r, metrics=metrics)
 
 
-def run_backtest_financed(prices, target_weights, config: quant.BacktestConfig,
-                          funding_spread_bps: float = DEFAULT_FUNDING_SPREAD_BPS,
-                          cash_spread_bps: float = DEFAULT_CASH_SPREAD_BPS, **extras) -> quant.BacktestResult:
+def run_backtest_financed(
+    prices,
+    target_weights,
+    config: quant.BacktestConfig,
+    funding_spread_bps: float = DEFAULT_FUNDING_SPREAD_BPS,
+    cash_spread_bps: float = DEFAULT_CASH_SPREAD_BPS,
+    **extras,
+) -> quant.BacktestResult:
     """``quant.run_backtest`` (with ``run_backtest_ex`` extras when given) followed by
     ``apply_financing``: the engine entry point with the financing parameter."""
     if extras:

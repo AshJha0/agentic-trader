@@ -23,6 +23,7 @@ series is aligned with the returns exactly as ``stats.rolling_var_forecast`` is,
 Factor exposures, stress rows and the capacity row are plain functions over return series so
 that table renderers can call them; none of them fetches data.
 """
+
 from __future__ import annotations
 
 import math
@@ -38,8 +39,8 @@ from .stats import rolling_var_forecast
 
 VarMethod = Literal["historical", "ewma", "fhs"]
 VAR_METHODS: tuple[str, ...] = ("historical", "ewma", "fhs")
-EWMA_LAMBDA = 0.94      # RiskMetrics daily decay; not tuned on any period of this repository
-MIN_RESIDUALS = 20      # standardised residuals below which an FHS quantile is not trusted
+EWMA_LAMBDA = 0.94  # RiskMetrics daily decay; not tuned on any period of this repository
+MIN_RESIDUALS = 20  # standardised residuals below which an FHS quantile is not trusted
 
 
 # ---------------------------------------------------------------- VaR forecasts
@@ -89,16 +90,16 @@ def _forecasts(r: np.ndarray, method: str, window: int, alpha: float, lam: float
     for t in range(window, r.size + 1):
         if not np.isfinite(sig[t]):
             continue
-        z = resid[t - window:t]
+        z = resid[t - window : t]
         z = z[np.isfinite(z)]
         if z.size >= MIN_RESIDUALS:
             out[t] = max(0.0, -float(np.quantile(z, 1.0 - alpha))) * sig[t]
     return out
 
 
-def var_forecast(returns, method: VarMethod = DEFAULT_VAR_METHOD,
-                 window: int = 250, alpha: float = 0.95,
-                 lam: float = EWMA_LAMBDA) -> np.ndarray:
+def var_forecast(
+    returns, method: VarMethod = DEFAULT_VAR_METHOD, window: int = 250, alpha: float = 0.95, lam: float = EWMA_LAMBDA
+) -> np.ndarray:
     """1-day VaR (a non-negative loss fraction) forecast *for* each day ``t`` from returns
     strictly before it, aligned with ``returns``; a drop-in for ``stats.rolling_var_forecast``
     (``method="historical"`` reproduces it exactly) whose output ``stats.var_backtest`` judges.
@@ -112,9 +113,9 @@ def var_forecast(returns, method: VarMethod = DEFAULT_VAR_METHOD,
     return _forecasts(r, method, window, alpha, lam)[:-1]
 
 
-def var_next(returns, method: VarMethod = DEFAULT_VAR_METHOD,
-             window: int = 250, alpha: float = 0.95,
-             lam: float = EWMA_LAMBDA) -> float | None:
+def var_next(
+    returns, method: VarMethod = DEFAULT_VAR_METHOD, window: int = 250, alpha: float = 0.95, lam: float = EWMA_LAMBDA
+) -> float | None:
     """VaR for the day after ``returns`` ends, by the same rule as ``var_forecast``; ``None``
     when it cannot be formed (too short a history). For a history shorter than ``window``
     the whole history is used as the window, so a short book is still checked when it has at
@@ -139,9 +140,9 @@ def var_next(returns, method: VarMethod = DEFAULT_VAR_METHOD,
 # ---------------------------------------------------------------- factor exposures
 FACTOR_PROXIES: dict[str, str] = {
     # Free daily proxies every provider here can supply (Yahoo live, synthetic in tests).
-    "market": "SPY",     # US equity market
-    "rates": "IEF",      # 7-10y Treasuries: long this = long duration
-    "usd": "UUP",        # US dollar index fund: long this = long USD
+    "market": "SPY",  # US equity market
+    "rates": "IEF",  # 7-10y Treasuries: long this = long duration
+    "usd": "UUP",  # US dollar index fund: long this = long USD
     "momentum": "MTUM",  # US momentum factor fund
 }
 
@@ -150,6 +151,7 @@ def factor_returns(provider, start, end, proxies: dict[str, str] | None = None) 
     """Daily close-to-close returns of the factor proxies from ``provider`` (any
     ``MarketDataProvider``), one column per factor name, on the union of their dates."""
     from .instruments import Instrument
+
     cols = {}
     for name, sym in (proxies or FACTOR_PROXIES).items():
         h = provider.history(Instrument.parse(sym), start, end)
@@ -172,7 +174,7 @@ def factor_exposures(returns: pd.Series, factors: pd.DataFrame, window: int = 12
     out = np.full((len(df), k + 2), np.nan)
     data = df.to_numpy(float)
     for i in range(window - 1, len(df)):
-        w = data[i - window + 1:i + 1]
+        w = data[i - window + 1 : i + 1]
         w = w[np.isfinite(w).all(axis=1)]
         if len(w) < 2 * (k + 1):
             continue
@@ -190,9 +192,9 @@ STRESS_WINDOWS: dict[str, tuple[str, str]] = {
     # Peak-to-trough episodes by the S&P 500, inclusive. 2022 lies inside the evaluation
     # holdout period: a 2022 row reports a series that has already been run there, it is not
     # a licence to choose anything on it.
-    "2008": ("2008-09-01", "2009-03-09"),   # Lehman to the March 2009 low
-    "2020": ("2020-02-19", "2020-03-23"),   # COVID crash
-    "2022": ("2022-01-03", "2022-10-12"),   # rates shock
+    "2008": ("2008-09-01", "2009-03-09"),  # Lehman to the March 2009 low
+    "2020": ("2020-02-19", "2020-03-23"),  # COVID crash
+    "2022": ("2022-01-03", "2022-10-12"),  # rates shock
 }
 
 
@@ -204,22 +206,26 @@ def stress_rows(returns: pd.Series, windows: dict[str, tuple[str, str]] | None =
     """
     rows = []
     for name, (a, b) in (windows or STRESS_WINDOWS).items():
-        r = returns.loc[pd.Timestamp(a):pd.Timestamp(b)].dropna().to_numpy(float)
+        r = returns.loc[pd.Timestamp(a) : pd.Timestamp(b)].dropna().to_numpy(float)
         if r.size == 0:
-            rows.append({"window": name, "days": 0, "CR%": np.nan, "worst_day%": np.nan,
-                         "MDD%": np.nan, "Vol%": np.nan})
+            rows.append({"window": name, "days": 0, "CR%": np.nan, "worst_day%": np.nan, "MDD%": np.nan, "Vol%": np.nan})
             continue
         eq = np.cumprod(1.0 + r)
-        rows.append({"window": name, "days": int(r.size), "CR%": 100 * (eq[-1] - 1.0),
-                     "worst_day%": 100 * float(r.min()),
-                     "MDD%": 100 * quant.max_drawdown(np.append(1.0, eq)),
-                     "Vol%": 100 * float(r.std(ddof=1)) * math.sqrt(252) if r.size > 1 else np.nan})
+        rows.append(
+            {
+                "window": name,
+                "days": int(r.size),
+                "CR%": 100 * (eq[-1] - 1.0),
+                "worst_day%": 100 * float(r.min()),
+                "MDD%": 100 * quant.max_drawdown(np.append(1.0, eq)),
+                "Vol%": 100 * float(r.std(ddof=1)) * math.sqrt(252) if r.size > 1 else np.nan,
+            }
+        )
     return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------- capacity row
-def capacity_aum(impact_drag_annual: float, ann_vol: float, capital: float,
-                 sharpe_cost: float = 0.1) -> float:
+def capacity_aum(impact_drag_annual: float, ann_vol: float, capital: float, sharpe_cost: float = 0.1) -> float:
     """AUM at which modelled market impact costs ``sharpe_cost`` of annual Sharpe.
 
     Under the backtester's square-root impact model (``backtest.impact_coefficients``) a
@@ -240,8 +246,7 @@ def capacity_aum(impact_drag_annual: float, ann_vol: float, capital: float,
     return capital * (sharpe_cost * ann_vol / impact_drag_annual) ** 2
 
 
-def capacity_row(result, capital: float, periods_per_year: float = 252.0,
-                 sharpe_cost: float = 0.1) -> dict[str, float]:
+def capacity_row(result, capital: float, periods_per_year: float = 252.0, sharpe_cost: float = 0.1) -> dict[str, float]:
     """``capacity_aum`` from a ``quant.BacktestResult`` run at ``capital`` with impact on:
     returns the annual impact drag, the annual volatility and the capacity AUM."""
     r = np.asarray(result.returns, dtype=float)
@@ -251,5 +256,4 @@ def capacity_row(result, capital: float, periods_per_year: float = 252.0,
     years = r.size / periods_per_year
     drag = float(result.impact_paid) / years
     vol = float(r.std(ddof=1)) * math.sqrt(periods_per_year)
-    return {"impact_drag%": 100 * drag, "Vol%": 100 * vol,
-            "capacity_aum": capacity_aum(drag, vol, capital, sharpe_cost)}
+    return {"impact_drag%": 100 * drag, "Vol%": 100 * vol, "capacity_aum": capacity_aum(drag, vol, capital, sharpe_cost)}

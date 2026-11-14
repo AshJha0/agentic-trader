@@ -20,8 +20,7 @@ def test_instrument_parsing():
     assert Instrument.parse("^GSPC").asset_class == "equity"
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "EUR/XYZ", "ABC=X", "AAPL MSFT", "AA$PL",
-                                 "TOOLONGTICKER12"])
+@pytest.mark.parametrize("bad", ["", "   ", "EUR/XYZ", "ABC=X", "AAPL MSFT", "AA$PL", "TOOLONGTICKER12"])
 def test_instrument_parsing_rejects_bad_symbols(bad):
     with pytest.raises(ValueError):
         Instrument.parse(bad)
@@ -34,10 +33,13 @@ def test_instrument_parsing_rejects_unknown_asset_class():
         Instrument.parse("AAPL", "fx")
 
 
-@pytest.mark.parametrize("symbol,expected", [
-    ("AAPL", {"technical", "fundamentals", "news", "sentiment"}),
-    ("EURUSD", {"technical", "macro", "news", "sentiment"}),
-])
+@pytest.mark.parametrize(
+    "symbol,expected",
+    [
+        ("AAPL", {"technical", "fundamentals", "news", "sentiment"}),
+        ("EURUSD", {"technical", "macro", "news", "sentiment"}),
+    ],
+)
 def test_propagate_offline(symbol, expected):
     g = TradingGraph(CFG, memory=DecisionMemory(None), on_event=lambda *_: None)
     state, dec = g.propagate(symbol, date(2024, 3, 1))
@@ -60,6 +62,7 @@ def test_deterministic_offline():
 
 def test_memory_resolves_only_past():
     import pandas as pd
+
     m = DecisionMemory(None)
     # One consistent series, +1 per bar: the outcome is read at the horizon bar of the
     # series the desk sees at each visit, never from a price handed in by the visit.
@@ -99,8 +102,10 @@ class StubLLM:
         if "Facilitator" in system:
             return '{"winner": "bull", "score": 0.6, "conviction": 0.7, "summary": "Bull wins."}'
         if "Trader." in system:
-            return ('```json\n{"action": "BUY", "target_weight": 0.9, "confidence": 0.7, '
-                    '"stop_loss": 1, "take_profit": null, "horizon_days": 5, "rationale": "r"}\n```')
+            return (
+                '```json\n{"action": "BUY", "target_weight": 0.9, "confidence": 0.7, '
+                '"stop_loss": 1, "take_profit": null, "horizon_days": 5, "rationale": "r"}\n```'
+            )
         if "Risk Analyst" in system:
             # in range (v0.17 R0.4 rejects out-of-range replies instead of clipping them)
             return f'{{"recommended_weight": {CFG["risk"]["max_position"]}, "argument": "size up"}}'
@@ -130,6 +135,7 @@ def test_llm_garbage_falls_back_to_rules():
     class Garbage:
         def complete(self, *a, **k):
             return "I cannot produce JSON today."
+
     g = TradingGraph(CFG, llm=Garbage(), memory=DecisionMemory(None), on_event=lambda *_: None)
     state, dec = g.propagate("EURUSD", "2024-03-01")
     assert all(r.source == "rules" for r in state.reports.values())

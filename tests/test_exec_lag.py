@@ -5,6 +5,7 @@
 engine exactly; lag k must equal shifting every decision-tied input by k; and a signal that
 peeks one bar ahead must stop earning at lag 1.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -33,8 +34,19 @@ def _inputs(T: int = 300, seed: int = 7):
     stop = np.where(w > 0, p * 0.97, p * 1.03)
     take = np.where(w > 0, p * 1.05, p * 0.95)
     reb = (rng.random(T) < 0.3).astype(float)
-    return dict(p=p, o=o, h=h, l=lo, w=w, stop=stop, take=take, reb=reb,
-                imp=np.full(T, 0.001), car=np.full(T, 0.01), cash=np.full(T, 0.02))
+    return dict(
+        p=p,
+        o=o,
+        h=h,
+        l=lo,
+        w=w,
+        stop=stop,
+        take=take,
+        reb=reb,
+        imp=np.full(T, 0.001),
+        car=np.full(T, 0.01),
+        cash=np.full(T, 0.02),
+    )
 
 
 def _cfg(**kw) -> BacktestConfig:
@@ -43,8 +55,15 @@ def _cfg(**kw) -> BacktestConfig:
 
 def _run(engine, d, cfg, *, levels=True, w=None, stop=None, take=None, reb=None):
     w = d["w"] if w is None else w
-    kw = dict(carry=d["car"], open=d["o"], high=d["h"], low=d["l"], rebalance=d["reb"] if reb is None else reb,
-              impact=d["imp"], cash_rate=d["cash"])
+    kw = dict(
+        carry=d["car"],
+        open=d["o"],
+        high=d["h"],
+        low=d["l"],
+        rebalance=d["reb"] if reb is None else reb,
+        impact=d["imp"],
+        cash_rate=d["cash"],
+    )
     if levels:
         kw.update(stop=d["stop"] if stop is None else stop, take=d["take"] if take is None else take)
     if engine is quant:
@@ -58,7 +77,7 @@ def _sha(r) -> str:
 
 def _shift(a, k, fill):
     out = np.full_like(a, fill)
-    out[k:] = a[:a.size - k]
+    out[k:] = a[: a.size - k]
     return out
 
 
@@ -83,8 +102,15 @@ def test_lag0_is_bit_identical_to_old_engine():
 def test_lag_k_equals_shifting_decisions(k):
     d = _inputs()
     lagged = _run(pycore, d, _cfg(exec_lag=k))
-    shifted = _run(pycore, d, _cfg(), w=_shift(d["w"], k, np.nan), stop=_shift(d["stop"], k, np.nan),
-                   take=_shift(d["take"], k, np.nan), reb=_shift(d["reb"], k, 0.0))
+    shifted = _run(
+        pycore,
+        d,
+        _cfg(),
+        w=_shift(d["w"], k, np.nan),
+        stop=_shift(d["stop"], k, np.nan),
+        take=_shift(d["take"], k, np.nan),
+        reb=_shift(d["reb"], k, 0.0),
+    )
     for a in ("equity", "positions", "traded", "exits", "returns"):
         np.testing.assert_array_equal(getattr(lagged, a), getattr(shifted, a))
     assert [(t.index, t.price) for t in lagged.trades] == [(t.index, t.price) for t in shifted.trades]
@@ -121,8 +147,9 @@ def test_next_open_with_stop_inside_the_entry_bar():
     p, o, h, lo = _levels_case()
     lo[1] = 99.0
     stop = np.array([100.0, 100.0, 100.0, 100.0])
-    r = pycore.run_backtest_ex(p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True),
-                               open=o, high=h, low=lo, stop=stop)
+    r = pycore.run_backtest_ex(
+        p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True), open=o, high=h, low=lo, stop=stop
+    )
     np.testing.assert_allclose(r.equity, 100_000 * np.array([1.0, 100 / 105, 100 / 105, 100 / 105]), rtol=1e-14)
     assert [(t.index, t.price) for t in r.trades] == [(1, 105.0), (1, 100.0)]
     assert r.exits.tolist() == [0.0, 1.0, 0.0, 0.0]
@@ -134,8 +161,9 @@ def test_next_open_stop_gapped_through_exits_at_the_open():
     # open) exits at the open: no intrabar move is booked after the overnight leg.
     p, o, h, lo = _levels_case()
     stop = np.array([90.0, 104.0, 104.0, 104.0])
-    r = pycore.run_backtest_ex(p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True),
-                               open=o, high=h, low=lo, stop=stop)
+    r = pycore.run_backtest_ex(
+        p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True), open=o, high=h, low=lo, stop=stop
+    )
     np.testing.assert_allclose(r.equity, 100_000 * np.array([1.0, 110 / 105, 100 / 105, 100 / 105]), rtol=1e-14)
     assert r.trades[-1].index == 2 and r.trades[-1].price == 100.0
     assert r.exits.tolist() == [0.0, 0.0, 1.0, 0.0]
@@ -144,15 +172,22 @@ def test_next_open_stop_gapped_through_exits_at_the_open():
 def test_next_open_take_profit_and_stop_slippage():
     p, o, h, lo = _levels_case()
     take = np.full(4, 115.0)
-    r = pycore.run_backtest_ex(p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True),
-                               open=o, high=h, low=lo, take=take)
+    r = pycore.run_backtest_ex(
+        p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True), open=o, high=h, low=lo, take=take
+    )
     np.testing.assert_allclose(r.equity[-1], 100_000 * 115 / 105, rtol=1e-14)
     # Slippage on a gapped stop: open less the half spread (floored at the low).
     stop = np.array([90.0, 104.0, 104.0, 104.0])
     lo[2] = 99.0
-    r = pycore.run_backtest_ex(p, np.ones(4), BacktestConfig(cost_bps=0.0, fill_next_open=True,
-                                                            stop_half_spread=0.005),
-                               open=o, high=h, low=lo, stop=stop)
+    r = pycore.run_backtest_ex(
+        p,
+        np.ones(4),
+        BacktestConfig(cost_bps=0.0, fill_next_open=True, stop_half_spread=0.005),
+        open=o,
+        high=h,
+        low=lo,
+        stop=stop,
+    )
     np.testing.assert_allclose(r.equity[-1], 100_000 * 110 / 105 * (100 / 110) * 0.995, rtol=1e-14)
 
 
@@ -184,15 +219,24 @@ def test_validation():
     with pytest.raises(ValueError, match="needs open"):
         pycore.run_backtest_ex(p, np.ones(5), BacktestConfig(fill_next_open=True))
     # Next-open fills combine with stop/take levels (v0.18 lane A, L2): no longer an error.
-    r = pycore.run_backtest_ex(p, np.ones(5), BacktestConfig(fill_next_open=True), open=p, high=p, low=p,
-                               stop=p * 0.9)
+    r = pycore.run_backtest_ex(p, np.ones(5), BacktestConfig(fill_next_open=True), open=p, high=p, low=p, stop=p * 0.9)
     assert r.exits.sum() == 0.0
 
 
 @pytest.mark.skipif(quant.BACKEND != "cpp", reason="C++ extension not built")
-@pytest.mark.parametrize("k,next_open,levels,slip", [
-    (0, False, True, 0.0), (1, False, True, 0.0), (3, False, True, 0.0), (0, True, False, 0.0),
-    (2, True, False, 0.0), (0, True, True, 0.0), (2, True, True, 0.0), (1, True, True, 5e-4)])
+@pytest.mark.parametrize(
+    "k,next_open,levels,slip",
+    [
+        (0, False, True, 0.0),
+        (1, False, True, 0.0),
+        (3, False, True, 0.0),
+        (0, True, False, 0.0),
+        (2, True, False, 0.0),
+        (0, True, True, 0.0),
+        (2, True, True, 0.0),
+        (1, True, True, 5e-4),
+    ],
+)
 def test_cpp_matches_numpy(k, next_open, levels, slip):
     d = _inputs()
     cfg = _cfg(exec_lag=k, fill_next_open=next_open, stop_half_spread=slip, stop_range_frac=slip * 100)
@@ -220,5 +264,10 @@ def test_config_plumbing():
     bt = backtest_config_for(ins, cfg, px, None, date(2020, 1, 2))  # type: ignore[arg-type]
     assert (bt.exec_lag, bt.fill_next_open) == (1, True)
     with pytest.raises(ValueError, match="backtest.fill"):
-        backtest_config_for(ins, make_config(backtest={"fill": "vwap"}), px, None,  # type: ignore[arg-type]
-                            date(2020, 1, 2))
+        backtest_config_for(
+            ins,
+            make_config(backtest={"fill": "vwap"}),
+            px,
+            None,  # type: ignore[arg-type]
+            date(2020, 1, 2),
+        )

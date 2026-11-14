@@ -1,6 +1,7 @@
 """LLM-evaluation plumbing, tested offline with stand-in models: prompt
 anonymisation, cost accounting, the shared thread-safe budget, and parallel
 evaluation."""
+
 import json
 import re
 import threading
@@ -27,7 +28,7 @@ def test_anonymizer_equity_names_dates_prices():
     s = a.scrub(text)
     assert re.search(r"(?<![A-Za-z0-9])AAPL(?![A-Za-z0-9])", s) is None
     assert s.startswith("STOCK_X beat on D-2")
-    assert "AAPLX" in s and "XAAPL" in s                  # only whole tokens are replaced
+    assert "AAPLX" in s and "XAAPL" in s  # only whole tokens are replaced
     assert "D-61" in s and s.endswith("as of D0")
     assert a.px(180.0) == 100.0 and a.unpx(95.0) == pytest.approx(171.0)
     assert a.facts({"close": 180.0, "rsi14": 70.0, "sma50": 171.0}) == {"close": 100.0, "rsi14": 70.0, "sma50": 95.0}
@@ -55,9 +56,17 @@ class Recorder:
         with self.lock:
             self.prompts.append(prompt)
         if "Trader." in system:
-            return json.dumps({"action": "BUY", "target_weight": 0.8, "confidence": 0.6,
-                               "stop_loss": self.trader_stop, "take_profit": 110,
-                               "horizon_days": 10, "rationale": "STOCK_X looks strong"})
+            return json.dumps(
+                {
+                    "action": "BUY",
+                    "target_weight": 0.8,
+                    "confidence": 0.6,
+                    "stop_loss": self.trader_stop,
+                    "take_profit": 110,
+                    "horizon_days": 10,
+                    "rationale": "STOCK_X looks strong",
+                }
+            )
         return None
 
 
@@ -79,16 +88,16 @@ def test_anonymized_prompts_leak_no_name_date_or_price(symbol):
     # The trader answered in rebased units: stop 95 -> 95% of the real last close.
     if not ins.is_fx:
         assert st.proposal.stop_loss == pytest.approx(0.95 * last)
-        assert st.proposal.rationale == "AAPL looks strong"      # name restored for the audit trail
+        assert st.proposal.rationale == "AAPL looks strong"  # name restored for the audit trail
 
 
 def test_anonymization_is_off_without_an_llm_and_forced_with_one():
     st, _ = TradingGraph(make_config(CFG, llm_anonymize=True), **QUIET).propagate("AAPL", "2024-03-01")
-    assert st.anon is None                                       # rules have no memory to leak from
-    rec = Recorder()                                             # v0.17 (N8): forced on with a model
+    assert st.anon is None  # rules have no memory to leak from
+    rec = Recorder()  # v0.17 (N8): forced on with a model
     TradingGraph(CFG, llm=rec, **QUIET).propagate("AAPL", "2024-03-01")
     assert rec.prompts and not any("AAPL" in p for p in rec.prompts)
-    ctl = Recorder()                                             # deliberate de-anonymised control
+    ctl = Recorder()  # deliberate de-anonymised control
     TradingGraph(make_config(CFG, allow_deanonymized_llm=True), llm=ctl, **QUIET).propagate("AAPL", "2024-03-01")
     assert any("AAPL" in p for p in ctl.prompts)
 
@@ -96,8 +105,10 @@ def test_anonymization_is_off_without_an_llm_and_forced_with_one():
 # -------------------------------------------------------- cost tracking
 def test_usage_tracker_prices_by_serving_model():
     u = UsageTracker()
-    u.add("claude-opus-5", SimpleNamespace(input_tokens=1_000_000, output_tokens=100_000,
-                                           cache_read_input_tokens=0, cache_creation_input_tokens=0))
+    u.add(
+        "claude-opus-5",
+        SimpleNamespace(input_tokens=1_000_000, output_tokens=100_000, cache_read_input_tokens=0, cache_creation_input_tokens=0),
+    )
     u.add("claude-haiku-4-5", SimpleNamespace(input_tokens=2_000_000, output_tokens=0))
     u.add("some-future-model", SimpleNamespace(input_tokens=5, output_tokens=5))
     u.add("claude-haiku-4-5-20251001", SimpleNamespace(input_tokens=1_000_000, output_tokens=0))  # dated id
@@ -107,10 +118,11 @@ def test_usage_tracker_prices_by_serving_model():
     assert s["by_model"]["claude-opus-5"]["cost_usd"] == pytest.approx(5.0 + 2.5)
     assert s["by_model"]["claude-haiku-4-5"]["cost_usd"] == pytest.approx(2.0)
     assert s["by_model"]["claude-haiku-4-5-20251001"]["cost_usd"] == pytest.approx(1.0)  # family price
-    assert s["by_model"]["some-future-model"]["cost_usd"] is None   # unknown price: not guessed
+    assert s["by_model"]["some-future-model"]["cost_usd"] is None  # unknown price: not guessed
     assert s["cost_usd"] == pytest.approx(10.5)
     from agentic_trader.llm import price_for
-    assert price_for("claude-opus-5-5-20260101") == (4.0, 20.0)     # longest matching family wins
+
+    assert price_for("claude-opus-5-5-20260101") == (4.0, 20.0)  # longest matching family wins
     assert price_for("claude-opus-5-20260101") == (5.0, 25.0)
 
 
@@ -118,9 +130,9 @@ def test_budget_is_thread_safe():
     class Slow:
         def complete(self, *a, **k):
             return None
+
     b = BudgetedLLM(Slow(), 50)
-    threads = [threading.Thread(target=lambda: [b.complete("s", "p", deep=True) for _ in range(40)])
-               for _ in range(8)]
+    threads = [threading.Thread(target=lambda: [b.complete("s", "p", deep=True) for _ in range(40)]) for _ in range(8)]
     for t in threads:
         t.start()
     for t in threads:
@@ -134,28 +146,44 @@ def test_llm_usage_helper_handles_non_tracking_models():
 
 # --------------------------------------------------- parallel evaluation
 def test_parallel_evaluation_matches_sequential():
-    kw = dict(symbols=["AAPL", "EURUSD", "MSFT"], periods={"q": ("2024-01-02", "2024-03-28")},
-              config=CFG, rebalance_every=10)
+    kw = dict(symbols=["AAPL", "EURUSD", "MSFT"], periods={"q": ("2024-01-02", "2024-03-28")}, config=CFG, rebalance_every=10)
     seq, par = evaluate(**kw), evaluate(**kw, workers=3)
     pd.testing.assert_frame_equal(seq.rows, par.rows)
-    assert "usage" not in seq.meta                    # offline: nothing to account
+    assert "usage" not in seq.meta  # offline: nothing to account
 
 
 def test_evaluation_counts_llm_outputs_and_shares_one_budget():
     rec = Recorder()
     cfg = make_config(CFG, max_llm_calls=30)
     budget = BudgetedLLM(rec, 30)
-    res = evaluate(["AAPL", "NVDA"], {"q": ("2024-01-02", "2024-02-29")}, cfg, rebalance_every=10,
-                   llm=budget, workers=2)
-    assert budget.calls == 30 and len(rec.prompts) == 30          # one budget across both runs
+    res = evaluate(["AAPL", "NVDA"], {"q": ("2024-01-02", "2024-02-29")}, cfg, rebalance_every=10, llm=budget, workers=2)
+    assert budget.calls == 30 and len(rec.prompts) == 30  # one budget across both runs
     src = res.meta["agent_sources"]
-    assert src["llm"] > 0 and src["rules"] > 0                    # trader answered; others fell back
+    assert src["llm"] > 0 and src["rules"] > 0  # trader answered; others fell back
     assert res.meta["budget_refused"] > 0 and res.meta["usage"] is None
 
 
 def test_cli_accepts_llm_run_flags(capsys):
-    assert main(["evaluate", "AAPL", "--periods", "q1_2024", "--every", "20", "--workers", "2",
-                 "--anonymize", "--deep-effort", "medium", "--max-llm-calls", "5"]) == 0
+    assert (
+        main(
+            [
+                "evaluate",
+                "AAPL",
+                "--periods",
+                "q1_2024",
+                "--every",
+                "20",
+                "--workers",
+                "2",
+                "--anonymize",
+                "--deep-effort",
+                "medium",
+                "--max-llm-calls",
+                "5",
+            ]
+        )
+        == 0
+    )
     with pytest.raises(SystemExit):
         main(["evaluate", "--deep-effort", "extreme"])
     with pytest.raises(ValueError):
