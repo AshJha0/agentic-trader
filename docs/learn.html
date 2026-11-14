@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentic-trader learning hub</title>
+<style>
+:root{--teal:#16697a;--green:#16a085;--ink:#1a1a2e;--muted:#556;--bg:#f7f8fa;--surface:#fff;
+  --line:#e3e8ec;--row:#eef1f4;--th:#f3f7f8;--note:#fff8ec;--code-bg:#10222a;--code-ink:#d7e3ea;
+  --head-bg:#16697a;--head-ink:#fff;--link:#16697a;--shadow:rgba(0,0,0,.12)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--teal:#5fc4d6;--green:#3fbf9f;
+  --ink:#e4e8ee;--muted:#a3adb8;--bg:#11161c;--surface:#1a2129;--line:#2c3640;--row:#26303a;--th:#1f2932;
+  --note:#2a2418;--code-bg:#0b1419;--code-ink:#d7e3ea;--head-bg:#0f4c58;--head-ink:#f2f6f8;--link:#7fd3e2;
+  --shadow:rgba(0,0,0,.5)}}
+:root[data-theme="dark"]{--teal:#5fc4d6;--green:#3fbf9f;--ink:#e4e8ee;--muted:#a3adb8;--bg:#11161c;
+  --surface:#1a2129;--line:#2c3640;--row:#26303a;--th:#1f2932;--note:#2a2418;--code-bg:#0b1419;
+  --code-ink:#d7e3ea;--head-bg:#0f4c58;--head-ink:#f2f6f8;--link:#7fd3e2;--shadow:rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+html,body{overflow-x:hidden}
+body{font-family:'Segoe UI',Arial,sans-serif;margin:0;color:var(--ink);background:var(--bg);line-height:1.5}
+a{color:var(--link)}
+header{background:var(--head-bg);color:var(--head-ink);padding:2.5rem 0}
+header a{color:var(--head-ink)}
+header h1{margin:0 0 .5rem;font-size:2.2rem}
+header p{margin:0;max-width:52rem;opacity:.92;line-height:1.5}
+.wrap{max-width:64rem;margin:0 auto;padding:0 2rem}
+nav{margin-top:1.2rem}
+nav a{display:inline-block;background:var(--green);color:#fff;text-decoration:none;
+  padding:.55rem 1.1rem;margin:.25rem .6rem .25rem 0;border-radius:4px;font-weight:600}
+nav a.secondary{background:rgba(255,255,255,.15)}
+h2{color:var(--teal);border-bottom:2px solid var(--line);padding-bottom:.3rem;margin-top:2.5rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(17rem,100%),1fr));gap:1rem;margin:1.2rem 0}
+.card{background:var(--surface);box-shadow:0 1px 3px var(--shadow);padding:1rem 1.2rem;border-radius:4px;min-width:0}
+.card h3{margin:.1rem 0 .5rem;font-size:1.02rem;color:var(--teal)}
+.card p{margin:0;font-size:.9rem;color:var(--muted);line-height:1.45}
+pre{background:var(--code-bg);color:var(--code-ink);padding:1rem 1.2rem;border-radius:4px;overflow-x:auto;
+  font-size:.85rem;line-height:1.5;max-width:100%}
+.numbers{background:var(--surface);box-shadow:0 1px 3px var(--shadow);border-radius:4px;overflow-wrap:anywhere;
+  padding:1rem 1.4rem;font-family:Consolas,monospace;font-size:.88rem;line-height:1.7}
+.honest{background:var(--note);border-left:4px solid var(--green);padding:.8rem 1.2rem;
+  border-radius:4px;font-size:.92rem;line-height:1.55;margin:1.2rem 0}
+.boundary{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(13rem,100%),1fr));gap:.6rem;margin:1rem 0}
+.boundary div{background:var(--surface);border-top:3px solid var(--green);box-shadow:0 1px 3px var(--shadow);
+  border-radius:4px;padding:.7rem .9rem;font-size:.88rem;line-height:1.4}
+.boundary strong{display:block;color:var(--teal);margin-bottom:.2rem}
+.tablewrap{overflow-x:auto;margin:1rem 0;max-width:100%}
+table.results{border-collapse:collapse;background:var(--surface);box-shadow:0 1px 3px var(--shadow);
+  border-radius:4px;font-size:.88rem;min-width:36rem;width:100%}
+table.results th,table.results td{padding:.45rem .7rem;text-align:right;border-bottom:1px solid var(--row)}
+table.results th:first-child,table.results td:first-child{text-align:left}
+table.results th{color:var(--teal);font-weight:600;background:var(--th)}
+table.results tr.agent td{font-weight:600}
+.caption{font-size:.85rem;color:var(--muted);margin:.3rem 0 1rem}
+.state{background:var(--surface);box-shadow:0 1px 3px var(--shadow);border-radius:4px;padding:1rem 1.4rem;margin:1.2rem 0}
+.state ul{margin:.4rem 0;padding-left:1.2rem}
+.state li{margin:.35rem 0}
+.diagram{background:var(--surface);box-shadow:0 1px 3px var(--shadow);border-radius:4px;padding:1rem;margin:1rem 0;overflow-x:auto}
+.diagram pre.mermaid{background:transparent;color:var(--ink);padding:0;margin:0;text-align:center}
+details{margin:1.2rem 0}
+details summary{cursor:pointer;color:var(--teal);padding:.5rem 0}
+footer{margin:3rem 0 2rem;color:var(--muted);font-size:.85rem;text-align:center}
+@media (max-width:640px){.wrap{padding:0 16px}header{padding:1.6rem 0}header h1{font-size:1.7rem}
+  nav a{padding:.45rem .8rem;margin:.2rem .3rem .2rem 0;font-size:.9rem}.numbers{padding:.8rem}}
+.step{background:var(--surface);box-shadow:0 1px 3px var(--shadow);border-radius:4px;padding:.9rem 1.2rem;margin:1rem 0}
+.step h3{margin:.1rem 0 .4rem;color:var(--teal);font-size:1.05rem}
+.step p{margin:.35rem 0}
+.links{font-size:.88rem;color:var(--muted)}
+.toc a{margin-right:.8rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>Learning hub</h1>
+    <p>A guided path through agentic-trader: how the AI works, how the quant works, where each recipe and guide section lives, the diagrams, and the current results.</p>
+    <nav>
+      <a href="index.html">Home</a>
+      <a class="secondary" href="#ai">AI track</a>
+      <a class="secondary" href="#quant">Quant track</a>
+      <a class="secondary" href="#cookbook">Cookbook map</a>
+      <a class="secondary" href="#learnmap">LEARN map</a>
+      <a class="secondary" href="#diagrams">Diagrams</a>
+      <a class="secondary" href="#results">Results</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap">
+<h2 id="intro">Who this is for and how to use it</h2>
+<p>This page is a map of the project for three readers: students who want to see how an agentic AI system and a quant backtest fit together, researchers who want to check how results were tested, and desk engineers who want the code paths behind each control. Work through the two tracks in order, or jump to the cookbook and guide maps. Each step is a short summary with links into <code>LEARN.md</code>, <code>COOKBOOK.md</code> and the source; the linked text is the authority.</p>
+<div class="honest">Evidence classes used in the repository docs (docs/learn/ai_learning_path.md): <strong>code</strong> (what the source does), <strong>offline test</strong>, <strong>synthetic fixture</strong> (numbers that say nothing about markets), <strong>arithmetic</strong>, <strong>measured</strong> (a real run, with its file), <strong>planning estimate</strong>. Every number on this page is copied from a named repository file.</div>
+<h2 id="ai">How AI works here</h2>
+<div class="step"><h3>1. LLM basics, as used here</h3><p>The language model is Claude, called through <code>agentic_trader/llm.py</code>, or a small local model. It is off by default (<code>llm_provider: "offline"</code>), and every published backtest number except one small experiment comes from the rules, not from a model (docs/ai/ai.md, the short version). When it is on, it is handed facts the code already fetched and asked for judgement over them.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#2-llms">LLMs</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#3-local-models">Local models</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md#2-the-language-model">The language model</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/agentic_trader/llm.py">agentic_trader/llm.py</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/agentic_trader/local_llm.py">agentic_trader/local_llm.py</a></p></div>
+<div class="step"><h3>2. Agents and roles</h3><p>An agent is a Python class with one job: analysts (technical, fundamentals or macro-rates, news, sentiment, alpha) write structured reports, bull and bear researchers debate them, the trader sizes around a strategic weight, a three-view risk team argues the size and the portfolio manager decides inside hard limits. Every agent gathers facts with tools, applies transparent rules, and only then may ask a model to reason over the same facts.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#1-why-a-desk-of-specialist-agents">Why a desk of specialist agents?</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#3-the-analyst-team">The analyst team</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#4-debate-as-a-decision-mechanism">Debate as a decision mechanism</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md#1-the-agents-on-the-desk">The agents on the desk</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#1-agents-and-the-harness">Agents and the harness</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/agentic_trader/graph.py">agentic_trader/graph.py</a></p></div>
+<div class="step"><h3>3. Tools, the policy gateway and MCP</h3><p>Data is reached only through catalogued tools. Each call passes a policy gate that allows, denies or queues it for approval by explicit rule, and leaves SHA-256 evidence. The same tools are exposed over MCP and the HTTP API, under the same policy.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#9-tools-as-the-only-way-to-reach-data">Tools as the only way to reach data</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#11-policy-who-may-do-what-explained-by-rule">Policy: who may do what, explained by rule</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#17-mcp-the-api-and-observability">MCP, the API and observability</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#6-tools-and-mcp">Tools and MCP</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/agentic_trader/agentic/policy.py">agentic_trader/agentic/policy.py</a></p></div>
+<div class="step"><h3>4. Retrieval, point in time</h3><p>Retrieval runs over the desk's own runbooks and policies with a dependency-free hashed TF-IDF index; there is no embedding model. Research retrieval sits behind a gate: it is measured before an analyst may use it, and documents dated after the decision date are not visible.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#16-retrieval-over-the-desks-own-rules">Retrieval over the desk&#x27;s own rules</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#54-measuring-retrieval-before-an-analyst-may-use-it">Measuring retrieval before an analyst may use it</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#7-rag">RAG</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md#6-retrieval-rag">Retrieval (RAG)</a></p></div>
+<div class="step"><h3>5. Guardrails and the boundary</h3><p>The design rule: the model may interpret, the code decides what is allowed. Data is fetched by code, numbers are computed by code, and limits are enforced by code after the model has spoken. Model output must pass a structured contract gate, and the critic can only lower confidence, never raise it.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#7-where-the-llm-sits-and-where-it-does-not">Where the LLM sits, and where it does not</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#51-structured-outputs-and-the-contract-gate">Structured outputs and the contract gate</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#14-the-critic-can-only-lower-confidence">The critic can only lower confidence</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#5-guardrails">Guardrails</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/ai/ai.md#4-hard-limits-after-the-model">Hard limits after the model</a></p></div>
+<div class="step"><h3>6. Prompt injection red team</h3><p>Untrusted text (news, filings) is contained before it reaches a prompt, and a red-team suite tries to push instructions through it. Since v0.17 the red team has a control arm, so a pass rate is compared with what an unprotected path would do; the numbers cover the attacks in the suite, not every attack.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#55-red-teaming-the-fence-and-what-the-numbers-do-and-do-not-cover">Red-teaming the fence, and what the numbers do and do not cover</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#65-a-red-team-needs-a-control-arm">A red team needs a control arm</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/threat-model/threat-model.md">docs/threat-model/threat-model.md</a></p></div>
+<div class="step"><h3>7. How the model is evaluated</h3><p>The LLM study was pre-registered: each cell is a trial, the model is scored by information coefficient (IC) against the rules on the same dates, and a row is admissible only with its lineage. The v16 study was stopped before the first pass completed, so no pre-registered finding exists. The 2026-11-14 re-score of the stored rows gives IC minus rules for <code>local_analysts</code> of -0.030 [-0.140, +0.089], descriptive only; 404 of 1,200 analyst outputs in that cell came from the model (docs/evaluation/v16_prereg_status_2026-11-12.md).</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#56-asking-a-small-model-where-it-helps-and-checking-it-first-v016">Asking a small model where it helps, and checking it first (v0.16)</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#57-every-study-cell-is-a-trial-and-what-a-decision-costs-v016">Every study cell is a trial, and what a decision costs (v0.16)</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/learn/ai_learning_path.md#10-honest-ai-evaluation">Honest AI evaluation</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/v16_prereg_status_2026-11-12.md">v16 status</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_rescore_2026-11-14.md">2026-11-14 re-score</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/models/llm_roles.md">model card: LLM roles</a></p></div>
+<h2 id="quant">How quant works here</h2>
+<div class="step"><h3>1. Returns and excess returns</h3><p>Sharpe is computed on returns in excess of the credited 3-month bill, and idle cash earns the cash rate. Worked example (docs/quant/quant.md, invented numbers, not a result): with w = 0.60, a 1% price rise and a 4% cash rate, the bar return is 0.60 x 1% + 0.40 x 4% / 252 = 0.6063%.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md#one-backtest-step-by-step-diagrams-42-and-43-with-a-worked-example">One backtest, step by step</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#35-constant-units-idle-cash-and-the-fair-comparison">Constant units, idle cash and the fair comparison</a></p></div>
+<div class="step"><h3>2. Sharpe and its noise</h3><p>A Sharpe ratio is an estimate with an error bar, and the best of N tries is biased upward. The repo reports bootstrap intervals, the probabilistic Sharpe ratio and the minimum track record; a Sharpe near 1 needs years of data to tell from luck (docs/quant/quant.md section 9).</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#25-is-a-sharpe-ratio-real-selection-and-deflation">Is a Sharpe ratio real? Selection and deflation</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md#9-statistics-is-the-result-real">Statistics: is the result real?</a></p></div>
+<div class="step"><h3>3. Volatility targeting and the fair control</h3><p>Vol targeting holds less when recent volatility is high and more when it is low, with no view on direction. A desk that sizes by volatility inherits its benefit, so the fair benchmark is the vol-targeted holding. Example (LEARN.md section 37, v0.11): holdout Sharpe 0.91 desk, 0.86 buy and hold, 0.99 control; desk minus control -0.08 [-0.46, +0.30].</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#37-the-control-that-is-hard-to-beat">The control that is hard to beat</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md#5-baselines-and-the-fair-control">Baselines and the fair control</a></p></div>
+<div class="step"><h3>4. Drawdown and Calmar</h3><p>Maximum drawdown is the worst fall from a peak; Calmar divides return by it. Example (docs/evaluation/evaluation.md summary): core holdout mean maximum drawdown 13.19% for the desk, 31.50% buy and hold, 18.92% vol-target. Most of the gain over buy and hold is volatility scaling.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/evaluation.md#summary">evaluation summary</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#26-reading-the-results-honestly">Reading the results honestly</a></p></div>
+<div class="step"><h3>5. Backtest hygiene: point in time and execution lag</h3><p>Every input must be what was known on the decision date (filings by acceptance time, macro data by vintage), and a leak canary checks that shocking data after T leaves every output before T byte-identical. Execution lag tests deciding on a close not yet seen: registered trials at lag 0, lag 1 and next open, run 2026-11-13, show no trial beating the control at any timing, all p &gt; 0.16 (LEARN.md section 61).</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#31-point-in-time-is-a-property-of-the-source">Point in time is a property of the source</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#52-purged-cross-validation-and-the-leak-canary">Purged cross-validation and the leak canary</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#61-execution-lag-deciding-on-a-close-you-have-not-seen-yet">Execution lag: deciding on a close you have not seen yet</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17_exec_lag/trials_lag_yahoo.md">exec-lag results</a></p></div>
+<div class="step"><h3>6. Costs</h3><p>Costs are charged inside the backtest, on every baseline through the same engine. Example (docs/quant/quant.md): 2 bp per unit traded on a move from flat to 0.60 costs 0.00012 of equity, turning a 0.606% bar into about 0.594%.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#28-execution-costs-belong-in-the-backtest-not-in-a-footnote">Execution costs belong in the backtest, not in a footnote</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/quant/quant.md#4-the-backtester">The backtester</a></p></div>
+<div class="step"><h3>7. Bootstraps: cross-instrument, cluster, time-block</h3><p>A cross-instrument bootstrap resamples instruments; a cluster bootstrap resamples asset-class groups, because ten technology stocks are not ten independent tests; a time-block bootstrap resamples blocks of days and keeps autocorrelation. Review C8 found the daily returns were not passed into the slices, so the core and extended rows fell back to resampling instruments; since 2026-11-14 the time-block interval is primary for Sharpe on every slice, and drawdown and Calmar stay cross-instrument (docs/evaluation/evaluation.md summary).</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/evaluation.md#summary">evaluation summary</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#33-power-across-instruments-and-the-variance-of-a-judgement">Power across instruments, and the variance of a judgement</a></p></div>
+<div class="step"><h3>8. Multiple testing</h3><p>Benjamini-Hochberg controls the false discovery rate across the rows of a table and across gates. Every variant ever judged is registered in <code>evaluation.TRIALS</code> (26 entries at v0.8), and the deflated Sharpe compares a result with the best expected from that many unskilled trials; the count is still a lower bound (LEARN.md section 25).</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#59-many-gates-are-one-family-benjamini-hochberg-across-them">Many gates are one family: Benjamini-Hochberg across them</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#60-effective-trials-hidden-ones-and-correlated-ones">Effective trials: hidden ones and correlated ones</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#48-one-statistic-every-trial-every-row">One statistic, every trial, every row</a></p></div>
+<div class="step"><h3>9. FX accounting in USD</h3><p>Notionals are in the account currency, USD by default: a USD/JPY order for 50,000 USD is 50,000 USD, and a EUR/JPY order needs the EUR/USD rate or is refused (LEARN.md section 21). Carry is booked from point-in-time rate differentials.</p><p class="links">Read: <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#21-execution-from-a-weight-to-fills">Execution: from a weight to fills</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#8-equity-vs-fx">Equity vs FX</a> · <a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#40-carry-as-a-return-stream">Carry as a return stream</a></p></div>
+<h2 id="cookbook">Cookbook map</h2>
+<p>20 recipe groups, 135 recipes, in the order of <a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md">COOKBOOK.md</a>. Later groups are named by the release that added them.</p>
+<div class="tablewrap"><table class="results"><tr><th>Group</th><th>Recipes</th><th>Purpose</th></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#decisions">Decisions</a></td><td>1-8</td><td style="text-align:left">Get a decision, its audit trail, FX decisions, debate and risk settings.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#backtests">Backtests</a></td><td>9-13</td><td style="text-align:left">Baselines, equity curves, the C++ engine, FX costs and carry.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#quant-core">Quant core</a></td><td>14-16</td><td style="text-align:left">Indicators, risk numbers, which backend runs.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#llms">LLMs</a></td><td>17-19</td><td style="text-align:left">Count calls, plug in a model, use Claude.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#data">Data</a></td><td>20-22</td><td style="text-align:left">Real prices, your own CSV files, custom providers.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#extending">Extending</a></td><td>23-25</td><td style="text-align:left">Custom analysts, persistent memory, C++ baselines.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#real-life-workflows">Real-life workflows</a></td><td>26-38</td><td style="text-align:left">Holdings, watchlists, rule comparisons, stops, multi-asset runs, cost stress, spend caps.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#the-agentic-layer">The agentic layer</a></td><td>39-50</td><td style="text-align:left">Harness, evidence, policy, approvals, plans, tools, retrieval, API, MCP, tracing.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#quant-research">Quant research</a></td><td>51-56</td><td style="text-align:left">Alpha library, execution plans, portfolio construction, Sharpe deflation.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v05-execution-aware-evaluation-cross-sectional-research-operations">v0.5: execution-aware evaluation, cross-sectional research, operations</a></td><td>57-64</td><td style="text-align:left">Execution-aware evaluation, cross-sectional research, operations.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v06-point-in-time-filings-statistical-power-calibration-operations">v0.6: point-in-time filings, statistical power, calibration, operations</a></td><td>65-72</td><td style="text-align:left">Point-in-time filings, statistical power, calibration, operations.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v07-to-v012-testing-the-risk-model-fair-controls-trend-and-the-forward-record">v0.7 to v0.12: testing the risk model, fair controls, trend, and the forward record</a></td><td>73-101</td><td style="text-align:left">Testing the risk model, fair controls, trend, and the forward record.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v014-risk-model-leakage-checks-and-the-paper-oms">v0.14: risk model, leakage checks and the paper OMS</a></td><td>102-105</td><td style="text-align:left">Risk model, leakage checks and the paper oms.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v015-filing-text-research-retrieval-approvals-replay-and-slos">v0.15: filing text, research retrieval, approvals, replay and SLOs</a></td><td>106-112</td><td style="text-align:left">Filing text, research retrieval, approvals, replay and slos.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v0151-the-follow-up-wiring">v0.15.1: the follow-up wiring</a></td><td>113</td><td style="text-align:left">The follow-up wiring.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v016-the-llm-study-on-a-local-model">v0.16: the LLM study on a local model</a></td><td>114-117</td><td style="text-align:left">The llm study on a local model.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v016-batching-a-whole-walk-forward">v0.16: batching a whole walk-forward</a></td><td>118</td><td style="text-align:left">Batching a whole walk-forward.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v016-measuring-what-the-model-adds">v0.16: measuring what the model adds</a></td><td>119</td><td style="text-align:left">Measuring what the model adds.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v017-the-second-reviews-fixes">v0.17: the second review&#x27;s fixes</a></td><td>120-130</td><td style="text-align:left">The second review&#x27;s fixes.</td></tr>
+<tr><td><a href="https://github.com/AshJha0/agentic-trader/blob/main/COOKBOOK.md#v019-long-runs-provider-misses-and-the-learning-path">v0.19: long runs, provider misses and the learning path</a></td><td>131-135</td><td style="text-align:left">Long runs, provider misses and the learning path.</td></tr>
+</table></div>
+<h2 id="learnmap">LEARN map</h2>
+<p><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md">LEARN.md</a> is organised in parts; each part is one theme. Section numbers run through the whole guide.</p>
+<details><summary>Part I — the trading desk (8 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#1-why-a-desk-of-specialist-agents">1. Why a desk of specialist agents?</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#2-structured-communication">2. Structured communication</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#3-the-analyst-team">3. The analyst team</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#4-debate-as-a-decision-mechanism">4. Debate as a decision mechanism</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#5-from-view-to-trade-strategic-weight-and-tilt">5. From view to trade: strategic weight and tilt</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#6-risk-volatility-targeting-var-and-who-has-the-last-word">6. Risk: volatility targeting, VaR, and who has the last word</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#7-where-the-llm-sits-and-where-it-does-not">7. Where the LLM sits, and where it does not</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#8-equity-vs-fx">8. Equity vs FX</a></li>
+</ul></details>
+<details><summary>Part II — the agentic layer (9 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#9-tools-as-the-only-way-to-reach-data">9. Tools as the only way to reach data</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#10-evidence-before-interpretation">10. Evidence before interpretation</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#11-policy-who-may-do-what-explained-by-rule">11. Policy: who may do what, explained by rule</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#12-plans-and-why-a-plan-must-be-validated">12. Plans, and why a plan must be validated</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#13-the-harness-a-state-machine-owns-the-loop">13. The harness: a state machine owns the loop</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#14-the-critic-can-only-lower-confidence">14. The critic can only lower confidence</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#15-audited-reports">15. Audited reports</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#16-retrieval-over-the-desks-own-rules">16. Retrieval over the desk&#x27;s own rules</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#17-mcp-the-api-and-observability">17. MCP, the API and observability</a></li>
+</ul></details>
+<details><summary>Part III — trading it for real (6 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#18-backtesting-without-fooling-yourself">18. Backtesting without fooling yourself</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#19-stops-gaps-and-the-no-trade-band">19. Stops, gaps and the no-trade band</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#20-alpha-research">20. Alpha research</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#21-execution-from-a-weight-to-fills">21. Execution: from a weight to fills</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#22-portfolio-construction">22. Portfolio construction</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#23-memory-edge-cases-and-refusing-to-guess">23. Memory, edge cases and refusing to guess</a></li>
+</ul></details>
+<details><summary>Part IV — knowing whether it works (7 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#24-designing-an-honest-evaluation">24. Designing an honest evaluation</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#25-is-a-sharpe-ratio-real-selection-and-deflation">25. Is a Sharpe ratio real? Selection and deflation</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#26-reading-the-results-honestly">26. Reading the results honestly</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#27-a-holdout-is-spent-the-moment-you-look-at-it">27. A holdout is spent the moment you look at it</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#28-execution-costs-belong-in-the-backtest-not-in-a-footnote">28. Execution costs belong in the backtest, not in a footnote</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#29-cross-sectional-alphas-rank-the-room-not-the-stock">29. Cross-sectional alphas: rank the room, not the stock</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#30-operating-the-desk-budgets-in-dollars-records-that-survive-keys-that-are-real">30. Operating the desk: budgets in dollars, records that survive, keys that are real</a></li>
+</ul></details>
+<details><summary>Part VI — v0.6: real filings, statistical power, and the variance of a judgement (5 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#31-point-in-time-is-a-property-of-the-source">31. Point in time is a property of the source</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#32-rank-the-room-and-put-it-through-the-protocol">32. Rank the room and put it through the protocol</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#33-power-across-instruments-and-the-variance-of-a-judgement">33. Power across instruments, and the variance of a judgement</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#34-is-the-risk-model-telling-the-truth-var-coverage-backtesting">34. Is the risk model telling the truth? VaR coverage backtesting</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#35-constant-units-idle-cash-and-the-fair-comparison">35. Constant units, idle cash and the fair comparison</a></li>
+</ul></details>
+<details><summary>Part VIII — v0.9 and v0.10: looking for an edge, and not finding one (10 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#36-attribution-whose-return-is-it">36. Attribution: whose return is it?</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#37-the-control-that-is-hard-to-beat">37. The control that is hard to beat</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#38-a-wider-base-many-asset-classes-equal-risk">38. A wider base: many asset classes, equal risk</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#39-trend-as-a-return-stream">39. Trend as a return stream</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#40-carry-as-a-return-stream">40. Carry as a return stream</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#41-combining-streams-with-a-risk-budget">41. Combining streams with a risk budget</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#42-core-and-overlay-how-big-should-the-view-be">42. Core and overlay: how big should the view be?</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#43-pre-registration-decide-before-you-look">43. Pre-registration: decide before you look</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#44-the-forward-record-is-the-only-unseen-data">44. The forward record is the only unseen data</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#45-append-only-records-and-honest-revisions">45. Append-only records and honest revisions</a></li>
+</ul></details>
+<details><summary>Part IX — v0.11 and v0.12: a second review, and a longer test (5 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#46-when-did-the-market-know">46. When did the market know?</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#47-confidence-should-follow-the-evidence">47. Confidence should follow the evidence</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#48-one-statistic-every-trial-every-row">48. One statistic, every trial, every row</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#49-a-longer-design-period">49. A longer design period</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#50-a-negative-result-and-one-routine-in-two-languages">50. A negative result, and one routine in two languages</a></li>
+</ul></details>
+<details><summary>Part X — v0.13: the model interface (1 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#51-structured-outputs-and-the-contract-gate">51. Structured outputs and the contract gate</a></li>
+</ul></details>
+<details><summary>Part XI — v0.14: leakage, risk and a failed expectation (2 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#52-purged-cross-validation-and-the-leak-canary">52. Purged cross-validation and the leak canary</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#53-a-pre-registered-expectation-that-failed">53. A pre-registered expectation that failed</a></li>
+</ul></details>
+<details><summary>Part XII — v0.15: text, retrieval and an auditable agent (2 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#54-measuring-retrieval-before-an-analyst-may-use-it">54. Measuring retrieval before an analyst may use it</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#55-red-teaming-the-fence-and-what-the-numbers-do-and-do-not-cover">55. Red-teaming the fence, and what the numbers do and do not cover</a></li>
+</ul></details>
+<details><summary>Part XIII — v0.16: what the model adds (2 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#56-asking-a-small-model-where-it-helps-and-checking-it-first-v016">56. Asking a small model where it helps, and checking it first (v0.16)</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#57-every-study-cell-is-a-trial-and-what-a-decision-costs-v016">57. Every study cell is a trial, and what a decision costs (v0.16)</a></li>
+</ul></details>
+<details><summary>Part XIV — v0.17: a second review, and measuring the measurements (11 sections)</summary><ul>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#58-how-small-an-ic-could-the-test-have-seen-newey-west-t-and-the-mde">58. How small an IC could the test have seen? Newey-West t and the MDE</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#59-many-gates-are-one-family-benjamini-hochberg-across-them">59. Many gates are one family: Benjamini-Hochberg across them</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#60-effective-trials-hidden-ones-and-correlated-ones">60. Effective trials: hidden ones and correlated ones</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#61-execution-lag-deciding-on-a-close-you-have-not-seen-yet">61. Execution lag: deciding on a close you have not seen yet</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#62-did-the-model-remember-a-recall-audit-with-a-null-and-a-placebo">62. Did the model remember? A recall audit with a null and a placebo</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#63-lineage-which-code-prompt-and-model-made-this-row">63. Lineage: which code, prompt and model made this row</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#64-conformal-intervals-when-the-data-are-not-exchangeable">64. Conformal intervals when the data are not exchangeable</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#65-a-red-team-needs-a-control-arm">65. A red team needs a control arm</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#66-long-runs-that-survive-a-kill-and-skips-that-are-counted">66. Long runs that survive a kill, and skips that are counted</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#67-classical-ml-in-this-repo-what-is-fitted-and-when-it-is-on">67. Classical ML in this repo: what is fitted, and when it is on</a></li>
+<li><a href="https://github.com/AshJha0/agentic-trader/blob/main/LEARN.md#68-llm-as-judge-a-judge-must-agree-with-labels-first">68. LLM-as-judge: a judge must agree with labels first</a></li>
+</ul></details>
+<h2 id="diagrams">Diagrams</h2>
+<p>18 of the 45 diagrams in <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md">docs/DIAGRAMS.md</a>, copied verbatim. The rest are in that file.</p>
+<h3>1. Decision pipeline</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    D[("Market data&lt;br/&gt;point-in-time, up to the as-of close")] --&gt; A
+    P[/"current position&lt;br/&gt;(portfolio context)"/] -.-&gt; TR
+    P -.-&gt; PM
+    K[("policy passages&lt;br/&gt;knowledge.search")] -.-&gt; TR
+    K -.-&gt; PM
+    subgraph A["Analyst team (quick tier)"]
+        T[Technical]
+        F["Fundamentals (equity)&lt;br/&gt;or Macro / rates (FX)"]
+        N[News]
+        S[Sentiment]
+        AL["Alpha (optional)"]
+    end
+    A --&gt;|"AnalystReports&lt;br/&gt;(abstain if no data)"| R
+    subgraph R["Research team (deep tier)"]
+        B[Bull researcher] &lt;--&gt;|n rounds| BR[Bear researcher]
+        B --&gt; FA[Facilitator]
+        BR --&gt; FA
+    end
+    FA --&gt;|DebateOutcome| TR["Trader&lt;br/&gt;strategic weight + tilt,&lt;br/&gt;stop, target, horizon"]
+    TR --&gt;|TradeProposal| KR
+    subgraph KR["Risk management team (deep tier)"]
+        AG[Aggressive] &lt;--&gt; NE[Neutral] &lt;--&gt; CO[Conservative]
+    end
+    KR --&gt;|3 RiskViews per round| PM[Portfolio manager]
+    PM --&gt; G{{"Firm limits, then no-trade band&lt;br/&gt;short policy, max position,&lt;br/&gt;VaR95 cap, min trade"}}
+    G --&gt; DEC[/FinalDecision/]
+    DEC --&gt; M[(Decision memory)]
+    M -.-&gt;|"lessons + track record&lt;br/&gt;(resolved outcomes only)"| TR
+</pre></div>
+<p class="caption">The path of one decision from the analysts to the portfolio manager. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#1-decision-pipeline">DIAGRAMS.md section 1</a>.</p>
+<h3>2. Agent pattern: tools, then rules, then LLM</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    S[TradingState] --&gt; G["gather()&lt;br/&gt;tools: C++ indicators,&lt;br/&gt;providers, risk stats"]
+    G --&gt; FA[(facts)]
+    FA --&gt; RU["rules()&lt;br/&gt;transparent rule-based judgement"]
+    RU --&gt; AB{abstained?&lt;br/&gt;no data}
+    AB -- yes --&gt; OUT[result = rule-based&lt;br/&gt;no LLM call]
+    AB -- no --&gt; Q{LLM enabled&lt;br/&gt;and within budget?}
+    Q -- no --&gt; OUT
+    Q -- yes --&gt; L["Claude&lt;br/&gt;facts + untrusted blocks → JSON"]
+    L --&gt; V{"valid JSON, required keys,&lt;br/&gt;finite numbers inside the schema bounds?"}
+    V -- yes --&gt; CL["source = llm, rule_signal kept&lt;br/&gt;(trader and PM weights bounded&lt;br/&gt;to their rules weight ± 0.25)"]
+    V -- "no / error / refusal / timeout" --&gt; OUT
+    CL --&gt; W[write into TradingState]
+    OUT --&gt; W
+</pre></div>
+<p class="caption">Every agent gathers facts with tools, applies rules, then may ask the model. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#2-agent-pattern-tools-then-rules-then-llm">DIAGRAMS.md section 2</a>.</p>
+<h3>6. Untrusted text containment</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    H["third-party text&lt;br/&gt;headlines, social posts"] --&gt; NEU["untrusted_block()&lt;br/&gt;neutralise any open/close tag&lt;br/&gt;inside the text"]
+    NEU --&gt; BLK["&amp;lt;untrusted_data source=...&amp;gt;&lt;br/&gt;text&lt;br/&gt;&amp;lt;/untrusted_data&amp;gt;"]
+    SYS["system prompt:&lt;br/&gt;treat tagged text as data,&lt;br/&gt;never as instructions"] --&gt; LLM
+    FACTS["numeric facts&lt;br/&gt;(JSON)"] --&gt; LLM[Claude]
+    BLK --&gt; LLM
+    LLM --&gt; J["JSON reply"]
+    J --&gt; CLIP["reject the whole reply: inf, nan, strings,&lt;br/&gt;out-of-range values; replace wrong-side stops;&lt;br/&gt;bound a model weight to rules ± 0.25"]
+    CLIP --&gt; LIM["firm limits after the model&lt;br/&gt;(cannot be overridden)"]
+    LIM --&gt; CRIT["critic: model vs rules divergence&lt;br/&gt;lowers confidence, cuts the weight toward&lt;br/&gt;the PM's rules weight or flat, never larger"]
+    CRIT --&gt; LIM2["firm limits re-applied to a weight&lt;br/&gt;the critic changed"]
+    LIM2 --&gt; OK[bounded decision]
+</pre></div>
+<p class="caption">How untrusted text is contained before it reaches a prompt. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#6-untrusted-text-containment">DIAGRAMS.md section 6</a>.</p>
+<h3>7. Agentic layer overview</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+    REQ["request&lt;br/&gt;CLI · HTTP API · Python"] --&gt; HAR
+    subgraph HAR["AgentHarness (control plane)"]
+        PL["Planner&lt;br/&gt;canonical or model-proposed"] --&gt; VAL["Plan validator&lt;br/&gt;strip · pin · repair · append governance"]
+        VAL --&gt; EXE["Executor loop&lt;br/&gt;tool batches in parallel · agent stages"]
+        EXE --&gt; CRI["Critic"] --&gt; VE["Validate evidence"] --&gt; FIN["Finalise: audited report"]
+    end
+    EXE --&gt; TEX["ToolExecutor&lt;br/&gt;policy · coerce · timeout · retry · trace"]
+    TEX --&gt; POL{"PolicyEngine&lt;br/&gt;ALLOW / DENY / REQUIRE_APPROVAL"}
+    POL --&gt;|approval needed| GW["Gateway&lt;br/&gt;auto · queued · deny"]
+    POL --&gt;|allow| SRV
+    subgraph SRV["Tool servers (DeskTools)"]
+        MD[market_data] &amp; QT[quant] &amp; KN["knowledge (RAG)"] &amp; PF[portfolio] &amp; EXC[execution]
+    end
+    SRV --&gt; EV[("EvidenceStore&lt;br/&gt;SHA-256 per call")]
+    EXE --&gt; DESK["TradingGraph stages&lt;br/&gt;analysts → debate → trader → risk"]
+    DESK --&gt;|via RecordingProvider| TEX
+    DESK --&gt; EV
+    EV --&gt; CRI
+    EV --&gt; FIN
+    SRV -.-&gt;|same catalogue| MCP["MCP stdio server"]
+    HAR -.-&gt; API["FastAPI gateway&lt;br/&gt;tasks · reports · approvals · metrics"]
+</pre></div>
+<p class="caption">The control plane around the desk: harness, policy, evidence, critic, audit. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#7-agentic-layer-overview">DIAGRAMS.md section 7</a>.</p>
+<h3>8. Task state machine</h3>
+<div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; CREATED
+    CREATED --&gt; PLANNING
+    PLANNING --&gt; VALIDATING_PLAN
+    VALIDATING_PLAN --&gt; EXECUTING
+    EXECUTING --&gt; AWAITING_APPROVAL: a tool needs a person
+    AWAITING_APPROVAL --&gt; EXECUTING: approved (resume from the same step)
+    EXECUTING --&gt; CRITIQUING
+    CRITIQUING --&gt; VALIDATING_EVIDENCE
+    VALIDATING_EVIDENCE --&gt; FINALISING
+    FINALISING --&gt; COMPLETED
+    COMPLETED --&gt; [*]
+    PLANNING --&gt; FAILED
+    VALIDATING_PLAN --&gt; FAILED
+    EXECUTING --&gt; FAILED
+    CRITIQUING --&gt; FAILED
+    FINALISING --&gt; FAILED
+    AWAITING_APPROVAL --&gt; CANCELLED
+    EXECUTING --&gt; CANCELLED
+    CREATED --&gt; CANCELLED
+    FAILED --&gt; [*]
+    CANCELLED --&gt; [*]
+    note right of VALIDATING_PLAN
+        every tool step is pre-checked
+        against policy; a denial fails
+        the task before anything runs
+    end note
+</pre></div>
+<p class="caption">The states a task moves through; the state machine owns the loop. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#8-task-state-machine">DIAGRAMS.md section 8</a>.</p>
+<h3>10. Tool-call path</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    CALL["executor.call(name, **args)"] --&gt; REG{"tool in registry?"}
+    REG -- no --&gt; FAILU["ToolResult error&lt;br/&gt;+ FAILED evidence"]
+    REG -- yes --&gt; POL["policy.evaluate(request, descriptor, role)"]
+    POL --&gt; OUT{outcome}
+    OUT -- DENY --&gt; FAILD["error: denied by policy (rule)&lt;br/&gt;+ FAILED evidence"]
+    OUT -- "ALLOW / REQUIRE_APPROVAL" --&gt; CO["coerce_arguments(schema)&lt;br/&gt;dates · ints · bounds · no extras&lt;br/&gt;(before any approver sees the request)"]
+    CO -- invalid --&gt; FAILA["error: denied by policy (argument_guard):&lt;br/&gt;bad arguments + FAILED evidence"]
+    CO -- "valid, REQUIRE_APPROVAL" --&gt; GW{gateway.decide}
+    GW -- pending --&gt; WAIT["error: awaiting approval&lt;br/&gt;executor.pending_approval = True"]
+    GW -- rejected --&gt; FAILR["error: approval rejected"]
+    GW -- approved --&gt; APPR["APPROVAL evidence"] --&gt; RUN
+    CO -- "valid, ALLOW" --&gt; RUN["run on its own thread under a deadline&lt;br/&gt;read-only: retry transient errors (max_attempts)&lt;br/&gt;state-changing: one attempt, 'outcome unknown, not retried'&lt;br/&gt;timeout: the worker is abandoned and counted"]
+    RUN -- error --&gt; FAILX["error + FAILED evidence"]
+    RUN -- ok --&gt; EVD["evidence record&lt;br/&gt;type from annotations, args, digest"]
+    EVD --&gt; RES["ToolResult ok&lt;br/&gt;metrics + span"]
+</pre></div>
+<p class="caption">Every data access goes through the catalogue and the policy gate. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#10-tool-call-path">DIAGRAMS.md section 10</a>.</p>
+<h3>11. Policy decision flow</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    R["request: tool, arguments, role"] --&gt; D1{"tool on the deny list?"}
+    D1 -- yes --&gt; DENY1[DENY deny_list]
+    D1 -- no --&gt; D2{"role holds every&lt;br/&gt;required capability?"}
+    D2 -- no --&gt; DENY2[DENY required_capabilities]
+    D2 -- yes --&gt; D4{"arguments pass the guards?&lt;br/&gt;symbol (and every symbols entry, at most 60) valid and in universe ·&lt;br/&gt;dates not in the future · proposed weights finite and within cap&lt;br/&gt;(current_weight: finite, never capped — a fact about the book) ·&lt;br/&gt;lookback bounded · quantity finite and positive · notional ≤ cap"}
+    D4 -- no --&gt; DENY4[DENY argument_guard]
+    D4 -- yes --&gt; D3{"tool read-only?"}
+    D3 -- no --&gt; D3b{"role can propose trades?"}
+    D3b -- no --&gt; DENY3[DENY read_only]
+    D3b -- yes --&gt; REQ1[REQUIRE_APPROVAL read_only]
+    D3 -- yes --&gt; D5{"risk level HIGH?"}
+    D5 -- yes --&gt; REQ2[REQUIRE_APPROVAL risk_level]
+    D5 -- no --&gt; ALLOW[ALLOW default_allow]
+    NR["custom rule set with&lt;br/&gt;no terminal rule"] -.-&gt; DENYN[DENY no_rule: fail closed]
+</pre></div>
+<p class="caption">How a policy rule allows, denies or queues a tool call. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#11-policy-decision-flow">DIAGRAMS.md section 11</a>.</p>
+<h3>13. Plan validation</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    RAW["raw steps&lt;br/&gt;(model JSON or hand-built)"] --&gt; EACH{"for each step"}
+    EACH --&gt; TYPE{type}
+    TYPE -- tool --&gt; KNOWN{"tool in catalogue?"}
+    KNOWN -- no --&gt; DROP1[drop + note]
+    KNOWN -- yes --&gt; ARGS["keep only schema arguments&lt;br/&gt;pin symbol and as_of to the task&lt;br/&gt;drop current_weight when the run's book holds the symbol&lt;br/&gt;symbols: string → list, other shapes drop the step,&lt;br/&gt;clip to the universe and max_symbols_per_call"]
+    ARGS --&gt; RO{"read-only?"}
+    RO -- no --&gt; DROP2["drop + note:&lt;br/&gt;a plan may not schedule state changes"]
+    RO -- yes --&gt; KEEPT[keep tool step]
+    TYPE -- agent --&gt; STAGE{"known stage and&lt;br/&gt;not a duplicate?"}
+    STAGE -- no --&gt; DROP3[drop + note]
+    STAGE -- yes --&gt; KEEPA[keep agent step]
+    TYPE -- "governance / other" --&gt; DROP4["note: managed by the harness"]
+    KEEPT --&gt; ORDER
+    KEEPA --&gt; ORDER["order: tools → analysts → debate → trader → risk&lt;br/&gt;insert missing canonical stages"]
+    ORDER --&gt; CAP["cap at 25 steps"]
+    CAP --&gt; GOV["append critic → validate_evidence → finalise"]
+    GOV --&gt; PLAN[/"Plan (source llm+repaired, notes)"/]
+</pre></div>
+<p class="caption">A model-proposed plan is validated before it runs. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#13-plan-validation">DIAGRAMS.md section 13</a>.</p>
+<h3>16. MCP and API topology</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    subgraph Proc["agentic-trader process"]
+        REG["ToolRegistry&lt;br/&gt;16 descriptors"]
+        DT["DeskTools&lt;br/&gt;provider · quant · knowledge · positions"]
+        REG --- DT
+        HAR["AgentHarness"] --&gt; REG
+        API["FastAPI app&lt;br/&gt;X-API-Key → role"] --&gt; HAR
+    end
+    subgraph MCPProc["MCP server process (stdio)"]
+        MS["MCPServer&lt;br/&gt;market_data__news, quant__technical, ...&lt;br/&gt;read-only / risk / capability annotations&lt;br/&gt;every call through a governed ToolExecutor&lt;br/&gt;(policy · approval gateway · evidence, one role per session)"]
+    end
+    REG -.-&gt;|"build_mcp_server()"| MS
+    CLIENT["any MCP client&lt;br/&gt;IDE · assistant · another agent"] &lt;--&gt;|JSON-RPC over stdio| MS
+    REMOTE["registry_from_stdio()&lt;br/&gt;remote tools as local descriptors, one server session&lt;br/&gt;(every remote tool state-changing, high risk,&lt;br/&gt;whatever the server claims; operator overrides only,&lt;br/&gt;the desk's own catalogue by default)"] &lt;--&gt;|stdio| MS
+    REMOTE --&gt; HAR2["a second harness&lt;br/&gt;policy + evidence unchanged"]
+    OPS["operator / OMS"] --&gt;|"POST /tasks · GET /report · /approvals · /metrics"| API
+</pre></div>
+<p class="caption">The same tools served over MCP and the HTTP API. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#16-mcp-and-api-topology">DIAGRAMS.md section 16</a>.</p>
+<h3>18. Walk-forward backtest timing</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    subgraph t0["bar t (decision)"]
+        C0[close t] --&gt; DEC["propagate(as_of = t,&lt;br/&gt;current_weight = the position actually held:&lt;br/&gt;0 after a stop / take, else the drifted weight)&lt;br/&gt;data &lt;= close t"]
+    end
+    DEC --&gt;|"target weight w_t (clamped to the cap),&lt;br/&gt;or a marked keep (FinalDecision.kept): no trade,&lt;br/&gt;stop / take levels"| H["units bought at close t&lt;br/&gt;held to the next decision"]
+    H --&gt; R["costs on abs(Δw) out of equity first,&lt;br/&gt;then w_t × price return + carry on the notional&lt;br/&gt;+ cash rate on the idle fraction − borrow;&lt;br/&gt;on hold bars the weight drifts: no trade, no cost"]
+    H -.-&gt;|"use_stops"| ST["intraday stop / target&lt;br/&gt;check on each bar (diagram 19)"]
+    R --&gt; N["bar t+k: next decision&lt;br/&gt;(earlier if the target changes)"]
+    ST --&gt; N
+</pre></div>
+<p class="caption">Walk-forward timing: decide on history up to the bar, book the next bar. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#18-walk-forward-backtest-timing">DIAGRAMS.md section 18</a>.</p>
+<h3>23. Evaluation protocol: design, freeze, holdout</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    V02["v0.2 rules&lt;br/&gt;(RULES_V02 reproduces them)"] --&gt; ABL
+    subgraph Design["design period 2016 - 2021 (only data used for choices)"]
+        ABL["v0.3: 16 rule variants&lt;br/&gt;v0.4 / v0.5: + 3 alpha-analyst variants&lt;br/&gt;v0.5.1: 4 FX-carry settings · v0.6: xalpha, EDGAR off&lt;br/&gt;v0.8: track-record cut off"] --&gt; PICK["keep what helps:&lt;br/&gt;strategic weight 1.0 + band 0.10 + FX carry / 2&lt;br/&gt;drop: momentum, filter, abstain, stops, alpha analysts"]
+        PICK --&gt; DSR["selection report:&lt;br/&gt;bootstrap CI · PSR · deflated Sharpe&lt;br/&gt;for the 26 registered trials (evaluation.TRIALS)"]
+    end
+    PICK --&gt; FREEZE["freeze defaults&lt;br/&gt;in config.py"]
+    FREEZE --&gt; HO["holdout 2022 - 2026&lt;br/&gt;run once (core 15)"]
+    FREEZE --&gt; PW["Q1 2024 window"]
+    HO --&gt; REP["report whatever it shows&lt;br/&gt;vs B&amp;H and vol-targeted B&amp;H&lt;br/&gt;(idle cash credited, excess Sharpe, since v0.8)"]
+    PW --&gt; REP
+    REP -. "v0.4 reported the holdout:&lt;br/&gt;it is now seen" .-&gt; FRESH
+    subgraph FRESH["v0.5 declared what 'unseen' meant; v0.8 records that it is spent"]
+        EXT["extended universe (45 names), every period:&lt;br/&gt;judged the v0.5.1 carry rule and&lt;br/&gt;the v0.6 EDGAR / xalpha decisions"]
+        RES["reserve period 2026-07-01 → 2026-09-25:&lt;br/&gt;used for the same judgements"]
+        V08["v0.8: engine corrected, every period&lt;br/&gt;re-measured (results/v08):&lt;br/&gt;no held-out data remains"]
+    end
+    NEXT["next rule change:&lt;br/&gt;choose on core design only;&lt;br/&gt;the next unseen data is the future"] -.-&gt; FRESH
+</pre></div>
+<p class="caption">Design, freeze, then a single holdout run. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#23-evaluation-protocol-design-freeze-holdout">DIAGRAMS.md section 23</a>.</p>
+<h3>31. Attribution: the desk as its control plus a tilt</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    D["desk daily excess return"] --&gt; REG["regress on the control&lt;br/&gt;(same sleeves, same vol target, no views)"]
+    C["B&amp;H vol-target&lt;br/&gt;daily excess return"] --&gt; REG
+    REG --&gt; B["beta: how much of the&lt;br/&gt;control the desk is"]
+    REG --&gt; A["alpha: what the views added&lt;br/&gt;(annualised intercept, with t)"]
+    REG --&gt; RES["residual vol: the risk&lt;br/&gt;the views took"]
+    A --&gt; IR["information ratio&lt;br/&gt;= alpha / residual vol"]
+    RES --&gt; IR
+    D --&gt; T["tilt = desk - control&lt;br/&gt;(same day)"]
+    C --&gt; T
+    T --&gt; TS["tilt Sharpe with a&lt;br/&gt;block-bootstrap interval"]
+</pre></div>
+<p class="caption">The desk read as its control plus a tilt. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#31-attribution-the-desk-as-its-control-plus-a-tilt">DIAGRAMS.md section 31</a>.</p>
+<h3>38. Evaluation periods and what each may be used for</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    DL["design_long&lt;br/&gt;2008-07-01 to 2021-12-31&lt;br/&gt;(ETF and FX runs)"] --&gt; CH["choose"]
+    D["design&lt;br/&gt;2016-01-04 to 2021-12-31"] --&gt; CH
+    HO["holdout&lt;br/&gt;2022-01-03 to 2026-06-30"] --&gt; RP["report only (spent in v0.8)"]
+    RS["reserve&lt;br/&gt;2026-07-01 to 2026-09-25"] --&gt; RP
+    EX["extended universe&lt;br/&gt;45 instruments"] --&gt; RP
+    FW["forward record&lt;br/&gt;from 2026-09-29"] --&gt; TEST["the test"]
+    CH --&gt; TR["every variant registered as a trial"]
+</pre></div>
+<p class="caption">Which evaluation period may be used for what. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#38-evaluation-periods-and-what-each-may-be-used-for">DIAGRAMS.md section 38</a>.</p>
+<h3>40. The LLM study: cells, trials and the rules control (v0.16)</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    REG["evaluation.TRIALS&lt;br/&gt;7 P2 model cells registered&lt;br/&gt;before any run"] --&gt; CELLS
+    subgraph CELLS["study cells (scripts/llm_study.py)"]
+        RC["rules (control)&lt;br/&gt;no model"]
+        LA["local_analysts"]
+        LL["local_all"]
+        LO["local_text, local_pm,&lt;br/&gt;no_debate, debate_1, neutral_risk"]
+    end
+    ST["same state&lt;br/&gt;15 core names x design dates"] --&gt; CELLS
+    CELLS --&gt; GV["governed path per decision:&lt;br/&gt;model output -&gt; schema check -&gt;&lt;br/&gt;rules fallback on refusal or error -&gt;&lt;br/&gt;risk team and PM limits"]
+    GV --&gt; REC["decision records&lt;br/&gt;signal, fallback flag, cost_usd"]
+    REC --&gt; KPI["agentic-trader kpi&lt;br/&gt;hit rate vs control, Brier,&lt;br/&gt;model-delta book, cost per decision"]
+    REC --&gt; DSR["stats.selection_report&lt;br/&gt;n_trials = registered_trial_count()"]
+    KPI --&gt; WMA["what_the_model_adds.md"]
+    DSR --&gt; WMA
+</pre></div>
+<p class="caption">The LLM study: cells, trials and the rules control. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#40-the-llm-study-cells-trials-and-the-rules-control-v016">DIAGRAMS.md section 40</a>.</p>
+<h3>41. One decision: rules, model, contract, limits, critic</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    F["facts from tools"] --&gt; R["rules output (always computed)"]
+    R --&gt; Q{"model configured and&lt;br/&gt;analyst not abstaining?"}
+    Q -- no --&gt; RU["report: source rules"]
+    Q -- yes --&gt; M["model reply"]
+    M --&gt; C{"contract: keys present,&lt;br/&gt;finite numbers, inside bounds?"}
+    C -- no --&gt; RU
+    C -- yes --&gt; LL["report: source llm&lt;br/&gt;rule_signal kept"]
+    RU --&gt; PM["PM: risk views blended 25 / 50 / 25&lt;br/&gt;or a model weight that passes the contract,&lt;br/&gt;bounded to blend ± pm_model_band (0.25)"]
+    LL --&gt; PM
+    PM --&gt; G["guardrails: shorting, short cap, max position,&lt;br/&gt;VaR cap, book VaR, minimum trade"]
+    G --&gt; B["no-trade band"]
+    B --&gt; EE["critic checks; a failed error check&lt;br/&gt;blocks or downgrades (enforce_errors)"]
+    EE --&gt; CR{"critic: any model signal more than 0.6&lt;br/&gt;from its rule_signal?"}
+    CR -- yes --&gt; S["weight = anchor + 0.5 x (weight - anchor)&lt;br/&gt;anchor = rule_weight if a model PM overrode it, else 0&lt;br/&gt;(veto: weight = anchor); never a larger size"]
+    CR -- no --&gt; D["final decision"]
+    S --&gt; G2["guardrails again (PortfolioManager.guardrails)&lt;br/&gt;record: pre_guardrail, guardrail_clipped,&lt;br/&gt;guardrail_notes"]
+    G2 --&gt; D
+</pre></div>
+<p class="caption">One decision: rules, model, contract, limits, critic. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#41-one-decision-rules-model-contract-limits-critic">DIAGRAMS.md section 41</a>.</p>
+<h3>42. One backtest bar: fill, costs and the bar return</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    D["bars, point in time&lt;br/&gt;synthetic / Yahoo / CSV&lt;br/&gt;+ FRED, EDGAR"] --&gt; W["walk forward:&lt;br/&gt;desk decides every&lt;br/&gt;rebalance_every bars"]
+    W --&gt; T["target weight w"]
+    T --&gt; FILL["fill: close of bar t&lt;br/&gt;(or open t+1, or t+lag)"]
+    FILL --&gt; K["k_in: linear cost&lt;br/&gt;+ sqrt impact if on"]
+    K --&gt; G["bar return g:&lt;br/&gt;w x price move + carry&lt;br/&gt;+ cash on 1-|w| - borrow"]
+    G --&gt; X{"stop or take&lt;br/&gt;hit in bar t+1?"}
+    X -- yes --&gt; KO["k_out: exit cost"]
+    X -- no --&gt; E["equity E(t+1)"]
+    KO --&gt; E
+    E --&gt; W
+</pre></div>
+<p class="caption">One backtest bar: fill, costs and the bar return. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#42-one-backtest-bar-fill-costs-and-the-bar-return">DIAGRAMS.md section 42</a>.</p>
+<h3>43. From returns to a decision about adoption</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    R1["desk daily returns"] --&gt; PB["paired block bootstrap&lt;br/&gt;desk minus control"]
+    R2["control: buy and hold&lt;br/&gt;scaled to the same vol"] --&gt; PB
+    REG["evaluation.TRIALS&lt;br/&gt;every variant registered"] --&gt; DSR["deflated Sharpe at the&lt;br/&gt;registered trial count"]
+    R1 --&gt; DSR
+    PB --&gt; Q{"interval excludes zero&lt;br/&gt;and DSR high enough?"}
+    DSR --&gt; Q
+    Q -- no --&gt; NA["not adopted&lt;br/&gt;(every round so far)"]
+    Q -- yes --&gt; AD["candidate; the forward&lt;br/&gt;paper record decides"]
+</pre></div>
+<p class="caption">From returns to a decision about adoption. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#43-from-returns-to-a-decision-about-adoption">DIAGRAMS.md section 43</a>.</p>
+<h3>44. Policy rule order</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    REQ["tool request"] --&gt; R1{"deny list"}
+    R1 -- listed --&gt; DENY["DENY"]
+    R1 -- no --&gt; R2{"capabilities&lt;br/&gt;held by role?"}
+    R2 -- missing --&gt; DENY
+    R2 -- yes --&gt; R3{"argument guards:&lt;br/&gt;universe, dates, caps"}
+    R3 -- violated --&gt; DENY
+    R3 -- ok --&gt; R4{"tool read-only?"}
+    R4 -- "no, role cannot&lt;br/&gt;propose trades" --&gt; DENY
+    R4 -- "no, role can" --&gt; APP
+    R4 -- yes --&gt; R5{"risk level HIGH?"}
+    R5 -- yes --&gt; APP["REQUIRE_APPROVAL"]
+    R5 -- no --&gt; ALLOW["ALLOW (default_allow)"]
+</pre></div>
+<p class="caption">The order in which policy rules are applied. Source: <a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/DIAGRAMS.md#44-policy-rule-order">DIAGRAMS.md section 44</a>.</p>
+<h2 id="results">Current results in one table</h2>
+<div class="tablewrap"><table class="results"><tr><th>Question</th><th>Result</th><th>Source</th></tr>
+<tr><td>Sharpe edge over the vol-target control (all 60, design, time-block)</td><td style="text-align:left">desk - vol-target -0.07 [-0.20, +0.07], p 0.32; no edge</td><td style="text-align:left"><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/evaluation.md#summary">evaluation.md#summary</a></td></tr>
+<tr><td>Drawdown (core holdout, mean max drawdown)</td><td style="text-align:left">desk - vol-target -5.73 points [-8.44, -2.73], p 0.00, BH-significant (cross-instrument interval)</td><td style="text-align:left"><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/evaluation/evaluation.md#summary">evaluation.md#summary</a></td></tr>
+<tr><td>Execution lag (lag 0, lag 1, next open; run 2026-11-13)</td><td style="text-align:left">no registered trial beats the control at any timing; all p &gt; 0.16</td><td style="text-align:left"><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17_exec_lag/trials_lag_yahoo.md">trials_lag_yahoo.md</a></td></tr>
+<tr><td>What the model adds (LLM study re-score, 2026-11-14)</td><td style="text-align:left">local_analysts IC - rules -0.030 [-0.140, +0.089]; descriptive, the study was stopped before a pre-registered test</td><td style="text-align:left"><a href="https://github.com/AshJha0/agentic-trader/blob/main/docs/results/v17/llm_study_rescore_2026-11-14.md">llm_study_rescore_2026-11-14.md</a></td></tr>
+</table></div>
+<p class="caption">Intervals are 95% bootstrap intervals; p is two-sided. Nothing has been adopted on these results.</p>
+  <footer>agentic-trader, for research and education only; not investment advice; it never connects to a broker.
+    <a href="index.html">Back to the home page</a>.</footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+  && document.documentElement.getAttribute("data-theme") !== "light";
+mermaid.initialize({startOnLoad: true, theme: dark ? "dark" : "neutral", securityLevel: "strict"});
+</script>
+</body>
+</html>
