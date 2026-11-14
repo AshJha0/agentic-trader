@@ -163,7 +163,7 @@ def test_evaluation_paired_reports_the_fallback_below_five_groups_and_can_reprod
     assert list(tab.columns) == list(tab_old.columns)
     assert {"scheme", "groups"} <= set(tab.columns)
     # review C8: rows only, no daily returns, so the cross-instrument fallback is labelled as such
-    assert (tab.scheme == "cross-instrument (instruments); no daily returns").all()
+    assert (tab.scheme == "cross-instrument (instruments); fallback: no daily returns held").all()
     assert (tab.groups == 3).all() and (tab_old.groups == 0).all()
 
 

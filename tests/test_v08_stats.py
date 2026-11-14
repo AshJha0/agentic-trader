@@ -149,8 +149,8 @@ def test_evaluation_paired_uses_the_cluster_scheme_with_five_groups_and_it_chang
     assert clustered.ci_high - clustered.ci_low > plain.ci_high - plain.ci_low
     tab = res.paired_table()
     # review C8: rows only (no daily returns), so the labelled cross-instrument fallback
-    assert list(tab.scheme) == ["cross-instrument (clusters); no daily returns"] and list(tab.groups) == [5]
-    assert list(res.paired_table(cluster=False).scheme) == ["cross-instrument (instruments); no daily returns"]
+    assert list(tab.scheme) == ["cross-instrument (clusters); fallback: no daily returns held"] and list(tab.groups) == [5]
+    assert list(res.paired_table(cluster=False).scheme) == ["cross-instrument (instruments); fallback: no daily returns held"]
 
 
 def test_c8_paired_table_uses_the_time_block_primary_when_daily_returns_are_held(tmp_path):
@@ -255,7 +255,7 @@ def test_paired_table_columns_carry_the_scheme(monkeypatch):
                                  "wins", "scheme", "days", "secondary", "secondary ci95 low",
                                  "secondary ci95 high", "secondary p", "groups", "significant"]
     # no daily returns held: the cross-instrument figure is the fallback, and the label says so
-    assert tab.scheme[0] == "cross-instrument (clusters); no daily returns" and tab.groups[0] == 5
+    assert tab.scheme[0] == "cross-instrument (clusters); fallback: no daily returns held" and tab.groups[0] == 5
 
 
 # ---------------------------------- C8 follow-ups (Round 3 part 3, lane c8)
@@ -298,7 +298,7 @@ def test_c8_excess_returns_make_a_cash_only_book_sharpe_zero():
     """A strategy flat on an instrument earns rf: raw daily returns are smooth and positive (the
     v0.8 Carry rows read +17.6 on raw returns, giving -12.69 agent minus Carry), excess returns are 0."""
     from types import SimpleNamespace
-    from agentic_trader.backtest import Report
+    from agentic_trader.backtest import ComparisonReport as Report
     n = 300
     rf = np.linspace(0.01, 0.05, n)                    # annual, per bar
     r = np.r_[0.0, rf[:-1] / 252.0]                    # returns[t+1] earns rf[t] / ppy
