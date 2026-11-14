@@ -82,3 +82,15 @@ no names or dates) should show no such gap.
 - Draft commit: 4e9c734. Signing commit: the commit that adds this block.
 - State at signing: `results/v19_r4/run.jsonl` held 54 of 150 replies, unlabelled and unread;
   no label sheet had been built; no part B row existed.
+
+## Amendment 1 (2026-11-14, before any label or Part A score existed)
+
+- Decision: Part A is withdrawn as a validation. The owner chose not to hand-label the 60
+  replies (session chat, 2026-11-14, about 20:00 UTC: "then C"). No owner label was recorded.
+  A set of AI-generated labels was offered and rejected: it copied a design column
+  (`fenced_injection`) rather than reading the replies, and an AI labeller is not the
+  registered labeller.
+- Consequence: no kappa is computed. The checker's per-criterion rates on the 150 replies are
+  reported as descriptive only, marked **unvalidated**. No claim that the checker agrees with a
+  human is made in any release note, README or LEARN page.
+- Part B is unchanged.
