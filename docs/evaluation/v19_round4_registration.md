@@ -1,7 +1,8 @@
-# Round 4 registration (DRAFT, unsigned)
+# Round 4 registration (signed 2026-11-14)
 
-Status: DRAFT, written 2026-11-14 before any Round 4 row exists. It becomes binding only when
-the owner signs it in its own commit; until then nothing below may be scored. Owner decision
+Status: SIGNED by the owner on 2026-11-14 at 13:41 UTC (see the signing block at the end),
+before any Round 4 label was imported and before any part B row existed. Written as a draft the
+same day (commit 4e9c734). Owner decision
 2026-11-13: Round 4 is a slim new study with two parts, the real-reply checker validation and
 the memorisation pair. The v0.16/v0.17 study chains are closed and are not relaunched.
 
@@ -61,9 +62,23 @@ no names or dates) should show no such gap.
 - **Admissibility**: a cell is admissible when unparseable or fallback replies are at most 10 %
   of decisions, as in the v0.16 rules. An inadmissible cell is reported, not rerun with changes.
 
-## Open items for the owner before signing
+## Fixed at signing (the draft's open items)
 
-1. Accept or change the 0.40 lower-bound threshold in part A and the block length in part B.
-2. Confirm the part B sample size (names x dates x seeds) after a dry run prints the wall-clock
-   estimate; the dry run reads no prices and calls no model.
-3. Sign: one command, its own commit, before any part B row and before importing labels.
+1. Part A threshold: the lower end of the 95 % interval at least 0.40, as drafted. Part B block
+   length: 4 weeks, as drafted.
+2. Part B size: the 15 first-pass names (`DEFAULT_NAMES`), the 20 first-pass design dates
+   (`FIRST_PASS["dates"]`) as the pre-cutoff window and the 70 weekly post-cutoff dates, one
+   seed at temperature 0, two arms: 15 x 90 x 2 = 2,700 decisions. The model is
+   `qwen2.5:7b-instruct`; its Ollama digest is recorded in the run header and a digest change
+   mid-run stops the run (`study_lineage`). A dry run may print the wall-clock estimate but
+   cannot change these numbers.
+3. Nothing in parts A or B is scored from a file that has no signed registration before it in
+   git history.
+
+## Signing block
+
+- Signer: Ashish Jha (owner), who read the draft and gave the instruction to sign in the session
+  chat on 2026-11-14 at about 13:40 UTC. The commit was made by Claude Code on that instruction.
+- Draft commit: 4e9c734. Signing commit: the commit that adds this block.
+- State at signing: `results/v19_r4/run.jsonl` held 54 of 150 replies, unlabelled and unread;
+  no label sheet had been built; no part B row existed.
