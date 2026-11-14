@@ -18,6 +18,7 @@ in the meantime is left alone.
 On startup the harness reloads the terminal records as an *archive*: they are
 served by the API read routes exactly like live runs, but they are not resumable.
 """
+
 from __future__ import annotations
 
 import json
@@ -83,8 +84,18 @@ class TaskStore:
                 "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET "
                 "state=excluded.state, record=excluded.record, updated_at=excluded.updated_at, "
                 "owner=excluded.owner, heartbeat=excluded.heartbeat",
-                (record["task_id"], record["symbol"], record["as_of"], record["role"], record["state"],
-                 json.dumps(record, default=str), _now(), owner, self.clock()))
+                (
+                    record["task_id"],
+                    record["symbol"],
+                    record["as_of"],
+                    record["role"],
+                    record["state"],
+                    json.dumps(record, default=str),
+                    _now(),
+                    owner,
+                    self.clock(),
+                ),
+            )
             self._conn.commit()
 
     def save(self, run, owner: str | None = None) -> None:
@@ -98,24 +109,25 @@ class TaskStore:
         now = self.clock()
         with self._lock:
             if task_ids is None:
-                cur = self._conn.execute(f"UPDATE tasks SET heartbeat=? WHERE owner=? AND {_NOT_TERMINAL}",
-                                         (now, owner, *_TERMINAL))
+                cur = self._conn.execute(
+                    f"UPDATE tasks SET heartbeat=? WHERE owner=? AND {_NOT_TERMINAL}", (now, owner, *_TERMINAL)
+                )
                 n = cur.rowcount
             else:
                 n = 0
                 ids = list(task_ids)
                 for i in range(0, len(ids), 500):
-                    chunk = ids[i:i + 500]
+                    chunk = ids[i : i + 500]
                     marks = ",".join("?" * len(chunk))
                     cur = self._conn.execute(
                         f"UPDATE tasks SET heartbeat=? WHERE owner=? AND task_id IN ({marks}) AND {_NOT_TERMINAL}",
-                        (now, owner, *chunk, *_TERMINAL))
+                        (now, owner, *chunk, *_TERMINAL),
+                    )
                     n += cur.rowcount
             self._conn.commit()
             return n
 
-    def mark_interrupted(self, note: str = "process restarted", owner: str | None = None,
-                         lease_s: float | None = None) -> int:
+    def mark_interrupted(self, note: str = "process restarted", owner: str | None = None, lease_s: float | None = None) -> int:
         """Fail records left in a non-terminal state by a process that is gone.
 
         With neither ``owner`` nor ``lease_s`` every non-terminal record is failed (an
@@ -132,8 +144,9 @@ class TaskStore:
         """
         if lease_s is None:
             if owner is not None:
-                raise ValueError("mark_interrupted(owner=...) needs lease_s: without a lease the sweep would fail "
-                                 "every live record")
+                raise ValueError(
+                    "mark_interrupted(owner=...) needs lease_s: without a lease the sweep would fail every live record"
+                )
             cutoff = None
         else:
             lease = float(lease_s)
@@ -143,13 +156,14 @@ class TaskStore:
         with self._lock:
             if cutoff is None:
                 rows = self._conn.execute(
-                    f"SELECT task_id, record, state, updated_at FROM tasks WHERE {_NOT_TERMINAL}",
-                    _TERMINAL).fetchall()
+                    f"SELECT task_id, record, state, updated_at FROM tasks WHERE {_NOT_TERMINAL}", _TERMINAL
+                ).fetchall()
             else:
                 rows = self._conn.execute(
                     f"SELECT task_id, record, state, updated_at FROM tasks WHERE {_NOT_TERMINAL} AND "
                     "(owner IS NULL OR heartbeat IS NULL OR heartbeat < ?)",
-                    (*_TERMINAL, cutoff)).fetchall()
+                    (*_TERMINAL, cutoff),
+                ).fetchall()
             failed = 0
             for task_id, raw, state, updated_at in rows:
                 rec = json.loads(raw)
@@ -159,7 +173,8 @@ class TaskStore:
                 rec["finished_at"] = _now()
                 cur = self._conn.execute(
                     "UPDATE tasks SET state=?, record=?, updated_at=? WHERE task_id=? AND state=? AND updated_at=?",
-                    (rec["state"], json.dumps(rec, default=str), _now(), task_id, state, updated_at))
+                    (rec["state"], json.dumps(rec, default=str), _now(), task_id, state, updated_at),
+                )
                 failed += cur.rowcount
             self._conn.commit()
         return failed
@@ -184,7 +199,8 @@ class TaskStore:
     def summaries(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT task_id, symbol, as_of, role, state, updated_at FROM tasks ORDER BY updated_at").fetchall()
+                "SELECT task_id, symbol, as_of, role, state, updated_at FROM tasks ORDER BY updated_at"
+            ).fetchall()
         return [dict(zip(("task_id", "symbol", "as_of", "role", "state", "updated_at"), r)) for r in rows]
 
     def ownership(self, task_id: str) -> tuple[str | None, float | None] | None:

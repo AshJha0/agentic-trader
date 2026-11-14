@@ -1,5 +1,6 @@
 """v0.19 open items: provider retries in run_recall / run_calibration / _fwd, and atomic,
 fingerprinted trial files in measure_v08.run_trials. Offline, fake LLMs and fake engine only."""
+
 from __future__ import annotations
 
 import json
@@ -93,13 +94,13 @@ def test_fwd_retries_then_raises_provider_miss(graph):
 @pytest.fixture
 def fake_engine(monkeypatch):
     runs: list[str] = []
-    trial = SimpleNamespace(name="t one", version="v0", overrides={"x": 1}, recorded_mean_sharpe=None,
-                            recorded_portfolio_sharpe=None)
+    trial = SimpleNamespace(
+        name="t one", version="v0", overrides={"x": 1}, recorded_mean_sharpe=None, recorded_portfolio_sharpe=None
+    )
 
     def fake_eval(syms, periods, cfg, every, provider=None, workers=1):
         runs.append("eval")
-        return evaluation.EvaluationResult(pd.DataFrame([{"strategy": m08.AGENT, "period": "design", "Sharpe": 0.5}]),
-                                           {})
+        return evaluation.EvaluationResult(pd.DataFrame([{"strategy": m08.AGENT, "period": "design", "Sharpe": 0.5}]), {})
 
     port = SimpleNamespace(metrics={m08.AGENT: SimpleNamespace(sharpe=0.4)})
     monkeypatch.setattr(evaluation, "TRIALS", [trial])
@@ -116,12 +117,12 @@ def test_trials_atomic_fingerprinted_and_legacy_kept(tmp_path, fake_engine):
     path = next(tmp_path.glob("trial_*.json"))
     meas = json.loads(path.read_text(encoding="utf-8"))["meta"]["measurement"]
     assert meas["fingerprint"] and not list(tmp_path.glob("*.tmp")) and fake_engine.runs == ["eval"]
-    m08.run_trials(tmp_path, provider=None)            # same inputs: reused
+    m08.run_trials(tmp_path, provider=None)  # same inputs: reused
     assert fake_engine.runs == ["eval"]
-    fake_engine.trial.overrides = {"x": 2}             # other inputs: re-measured
+    fake_engine.trial.overrides = {"x": 2}  # other inputs: re-measured
     m08.run_trials(tmp_path, provider=None)
     assert fake_engine.runs == ["eval", "eval"]
-    d = json.loads(path.read_text(encoding="utf-8"))   # legacy file (no fingerprint): kept
+    d = json.loads(path.read_text(encoding="utf-8"))  # legacy file (no fingerprint): kept
     del d["meta"]["measurement"]["fingerprint"]
     path.write_text(json.dumps(d), encoding="utf-8")
     fake_engine.trial.overrides = {"x": 3}

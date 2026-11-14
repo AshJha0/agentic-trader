@@ -105,9 +105,7 @@ CHEAP: dict[str, Callable[[Path], str]] = {
 }
 
 
-def compute(
-    root: Path, *, with_tests: bool, coverage_xml: Path | None = None
-) -> tuple[dict[str, str], list[str]]:
+def compute(root: Path, *, with_tests: bool, coverage_xml: Path | None = None) -> tuple[dict[str, str], list[str]]:
     """Return the computed counts and notes on any family that was skipped."""
     counts = {name: fn(root) for name, fn in CHEAP.items()}
     notes: list[str] = []
@@ -144,7 +142,9 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     parser.add_argument("--check", action="store_true", help="report drift, write nothing")
     parser.add_argument("--with-tests", action="store_true", help="also collect the tests")
     parser.add_argument(
-        "--coverage-xml", type=Path, default=None,
+        "--coverage-xml",
+        type=Path,
+        default=None,
         help="coverage.xml of a full run with --cov-branch (an old or partial file gives false drift)",
     )
     args = parser.parse_args(argv)

@@ -9,6 +9,7 @@ model download, no external service, deterministic results.
 Retrieved passages are returned with their document id, heading and score and
 become DOCUMENT evidence when reached through the ``knowledge.search`` tool.
 """
+
 from __future__ import annotations
 
 import re
@@ -21,8 +22,10 @@ import numpy as np
 
 DOCS_DIR = Path(__file__).with_name("knowledge") / "docs"
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9\-']*")
-_STOP = frozenset("""a an and are as at be by for from has have if in into is it its of on or that the
-    their then there these this to was were will with which when what how why can not no""".split())
+_STOP = frozenset(
+    """a an and are as at be by for from has have if in into is it its of on or that the
+    their then there these this to was were will with which when what how why can not no""".split()
+)
 
 
 def tokenize(text: str) -> list[str]:
@@ -49,8 +52,14 @@ class Passage:
     score: float
 
     def to_dict(self) -> dict:
-        return {"id": self.chunk.id, "document": self.chunk.doc_id, "title": self.chunk.title,
-                "heading": self.chunk.heading, "text": self.chunk.text, "score": round(self.score, 4)}
+        return {
+            "id": self.chunk.id,
+            "document": self.chunk.doc_id,
+            "title": self.chunk.title,
+            "heading": self.chunk.heading,
+            "text": self.chunk.text,
+            "score": round(self.score, 4),
+        }
 
 
 def split_markdown(doc_id: str, text: str) -> list[Chunk]:
@@ -130,8 +139,11 @@ class KnowledgeBase:
 
     def build(self) -> "KnowledgeBase":
         self.embedder.fit(f"{c.title} {c.heading} {c.text}" for c in self.chunks)
-        self._matrix = np.vstack([self.embedder.embed(f"{c.title} {c.heading} {c.text}") for c in self.chunks]) \
-            if self.chunks else np.zeros((0, self.embedder.buckets))
+        self._matrix = (
+            np.vstack([self.embedder.embed(f"{c.title} {c.heading} {c.text}") for c in self.chunks])
+            if self.chunks
+            else np.zeros((0, self.embedder.buckets))
+        )
         return self
 
     @property
@@ -143,7 +155,7 @@ class KnowledgeBase:
             return []
         q = self.embedder.embed(query)
         scores = self._matrix @ q
-        order = np.argsort(-scores)[:max(1, k)]
+        order = np.argsort(-scores)[: max(1, k)]
         return [Passage(self.chunks[i], float(scores[i])) for i in order if scores[i] >= min_score]
 
     def get(self, chunk_id: str) -> Chunk | None:

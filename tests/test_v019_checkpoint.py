@@ -1,4 +1,5 @@
 """Resumable v17_exec_lag: checkpoint resume, header refusal, torn last line, progress."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -34,9 +35,18 @@ def fake(monkeypatch):
             raise Boom
         calls.append((trial.name, lag))
         x = (len(trial.name) * 0.137 + lag * 0.05) % 1
-        return {"trial": trial.name, "version": trial.version, "exec_lag": lag, "sharpe": x,
-                "control_sharpe": 0.4, "delta_vs_control": x - 0.4, "ci_low": -1.0, "ci_high": 1.0,
-                "p_value": 0.5, "days": 100}
+        return {
+            "trial": trial.name,
+            "version": trial.version,
+            "exec_lag": lag,
+            "sharpe": x,
+            "control_sharpe": 0.4,
+            "delta_vs_control": x - 0.4,
+            "ci_low": -1.0,
+            "ci_high": 1.0,
+            "p_value": 0.5,
+            "days": 100,
+        }
 
     monkeypatch.setattr(lag_mod, "run_unit", unit)
     monkeypatch.setattr(lag_mod, "get_provider", lambda cfg: object())
@@ -61,7 +71,7 @@ def test_resume_equals_full_run(tmp_path, fake, capsys):
     calls.clear()
     capsys.readouterr()
     assert lag_mod.main(ARGS + ["--out", str(part)]) == 0
-    assert len(calls) == 2                      # only the unfinished units ran
+    assert len(calls) == 2  # only the unfinished units ran
     assert _finals(part) == _finals(full)
     out = capsys.readouterr().out.splitlines()
     assert [ln.split()[0] for ln in out] == [f"{k}/6" for k in range(1, 7)]
@@ -93,7 +103,7 @@ def test_half_written_last_line_tolerated(tmp_path):
     p.write_bytes(good + b'{"key": "u3", "row": {"v"')
     ck2 = Checkpoint(p, {"a": 1})
     assert len(ck2) == 2 and ck2.done("u2") and not ck2.done("u3")
-    assert p.read_bytes() == good               # torn tail truncated
+    assert p.read_bytes() == good  # torn tail truncated
     ck2.add("u3", {"v": 3})
     assert Checkpoint(p, {"a": 1}).get("u3") == {"v": 3}
     assert all(json.loads(x) for x in p.read_text(encoding="utf-8").splitlines())
@@ -106,14 +116,14 @@ def test_corrupt_middle_line_keeps_later_rows(tmp_path, caplog):
     for k in range(1, 4):
         ck.add(f"u{k}", {"v": k})
     lines = p.read_bytes().split(b"\n")
-    lines.insert(2, b'{"key": "bad", "row"')       # after u1: a torn line in the middle
-    lines.insert(4, b'["not", "an", "object"]')    # a valid JSON value that is not a row
+    lines.insert(2, b'{"key": "bad", "row"')  # after u1: a torn line in the middle
+    lines.insert(4, b'["not", "an", "object"]')  # a valid JSON value that is not a row
     p.write_bytes(b"\n".join(lines))
     with caplog.at_level("WARNING"):
         ck2 = Checkpoint(p, {"a": 1})
     assert ck2.skipped_lines == 2 and "skipped 2 corrupt" in caplog.text
     assert [ck2.get(f"u{k}") for k in range(1, 4)] == [{"v": 1}, {"v": 2}, {"v": 3}]
-    ck3 = Checkpoint(p, {"a": 1})                    # the file was rewritten clean
+    ck3 = Checkpoint(p, {"a": 1})  # the file was rewritten clean
     assert ck3.skipped_lines == 0 and len(ck3) == 3
 
 

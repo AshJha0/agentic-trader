@@ -34,6 +34,7 @@ Only ``window`` is a registered research parameter (``evaluation.TRIALS``); ``ho
 ``risk_aversion`` and ``turnover_penalty`` are fixed in ``config.DEFAULT_CONFIG`` before any
 trial was run and are not tuned.
 """
+
 from __future__ import annotations
 
 import math
@@ -75,8 +76,9 @@ def james_stein_factor(pic: PurgedIC) -> float:
     return max(0.0, 1.0 - (pic.t_crit / pic.t) ** 2)
 
 
-def trailing_ics(signals: pd.DataFrame, close: np.ndarray, horizon: int, window: int,
-                 end: int | None = None, rows: np.ndarray | None = None) -> dict[str, tuple[float, PurgedIC]]:
+def trailing_ics(
+    signals: pd.DataFrame, close: np.ndarray, horizon: int, window: int, end: int | None = None, rows: np.ndarray | None = None
+) -> dict[str, tuple[float, PurgedIC]]:
     """Shrunk IC per signal, estimated on the ``window`` bars before position ``end``.
 
     ``end`` is the as-of position (default: the last bar). Only bars ``i`` with
@@ -88,17 +90,17 @@ def trailing_ics(signals: pd.DataFrame, close: np.ndarray, horizon: int, window:
     """
     n = len(close)
     end = n - 1 if end is None else int(end)
-    last = end - horizon                    # last sample whose label ends at or before ``end``
+    last = end - horizon  # last sample whose label ends at or before ``end``
     lo = max(0, last - window + 1)
     fwd = forward_returns(close, horizon)
     out: dict[str, tuple[float, PurgedIC]] = {}
     if last < lo:
         return out
-    y = fwd[lo:last + 1].copy()
+    y = fwd[lo : last + 1].copy()
     if rows is not None:
-        y[~np.asarray(rows, bool)[lo:last + 1]] = np.nan
+        y[~np.asarray(rows, bool)[lo : last + 1]] = np.nan
     for name in signals.columns:
-        x = signals[name].to_numpy(float)[lo:last + 1]
+        x = signals[name].to_numpy(float)[lo : last + 1]
         pic = ic_purged(x, y, horizon)
         ic = pic.ic * james_stein_factor(pic) if math.isfinite(pic.ic) else 0.0
         out[name] = (float(ic), pic)
@@ -148,8 +150,7 @@ def mean_variance(mu: np.ndarray, cov: np.ndarray, risk_aversion: float) -> np.n
     return np.linalg.solve(np.asarray(cov, float), np.asarray(mu, float)) / risk_aversion
 
 
-def turnover_penalised(w_target: float, w_prev: float, variance: float, risk_aversion: float,
-                       kappa: float) -> float:
+def turnover_penalised(w_target: float, w_prev: float, variance: float, risk_aversion: float, kappa: float) -> float:
     """Exact maximiser of ``mu w - (g/2) v w^2 - kappa |w - w_prev|`` given the unpenalised
     optimum ``w_target = mu / (g v)``: move to ``w_target`` less the margin
     ``kappa / (g v)``, or stay at ``w_prev`` when the target lies inside the margin."""
@@ -174,6 +175,7 @@ class Forecast:
     clear its bar) and ``interval`` the split-conformal half-width when conformal sizing is on
     (``inf`` when the calibration set was too small, which sizes the tilt to zero).
     """
+
     mu: float
     sigma: float
     tilt: float
@@ -181,7 +183,7 @@ class Forecast:
     t_stats: dict[str, float] = field(default_factory=dict)
     interval: float | None = None
     regime: int | None = None
-    neutral: float = 0.0        # the strategic weight the tilt sits on (set by the trader)
+    neutral: float = 0.0  # the strategic weight the tilt sits on (set by the trader)
 
     @property
     def active(self) -> list[str]:
@@ -196,8 +198,13 @@ class Forecast:
         return min(1.0, abs(self.mu) / self.interval)
 
     def facts(self) -> dict[str, Any]:
-        return {"ic_forecast_mu": self.mu, "ic_forecast_sigma": self.sigma, "ic_tilt": self.tilt,
-                "ic_active_signals": self.active, "ic_interval": self.interval}
+        return {
+            "ic_forecast_mu": self.mu,
+            "ic_forecast_sigma": self.sigma,
+            "ic_tilt": self.tilt,
+            "ic_active_signals": self.active,
+            "ic_interval": self.interval,
+        }
 
 
 def _mu_series(z: pd.DataFrame, weights: dict[str, float], sigma: np.ndarray) -> np.ndarray:
@@ -227,8 +234,7 @@ def conformal_halfwidth(residuals: np.ndarray, alpha: float) -> float | None:
     return float(r[k - 1])
 
 
-def calibration_points(fit_end: int, end: int, horizon: int, rows: np.ndarray | None = None,
-                       design: str = "v17") -> np.ndarray:
+def calibration_points(fit_end: int, end: int, horizon: int, rows: np.ndarray | None = None, design: str = "v17") -> np.ndarray:
     """Bars ``t`` whose residual ``r_t - mu_t`` calibrates the conformal interval.
 
     ``t`` runs from ``fit_end + horizon`` (purge after the estimation part) to
@@ -246,14 +252,15 @@ def calibration_points(fit_end: int, end: int, horizon: int, rows: np.ndarray | 
         return t
     if design != "v17":
         raise ValueError(f"unknown conformal design {design!r} (use 'v14' or 'v17')")
-    t = t[::-1][::max(1, horizon)][::-1]
+    t = t[::-1][:: max(1, horizon)][::-1]
     if rows is not None:
         t = t[np.asarray(rows, bool)[t]]
     return t
 
 
-def conformal_interval(close: np.ndarray, mus: np.ndarray, vol: np.ndarray, cal: np.ndarray, horizon: int,
-                       alpha: float, design: str = "v17") -> float | None:
+def conformal_interval(
+    close: np.ndarray, mus: np.ndarray, vol: np.ndarray, cal: np.ndarray, horizon: int, alpha: float, design: str = "v17"
+) -> float | None:
     """The conformal half-width at the last bar from calibration bars ``cal``.
 
     ``v17`` is normalised conformal: residuals are divided by the ``horizon``-bar volatility
@@ -284,6 +291,7 @@ class SignalInputs:
     first bar, cut after bar ``i``, equal the inputs of the series that ends at ``i``. A
     walk-forward builds them once per series and slices (``head``) per as-of bar.
     """
+
     signals: pd.DataFrame
     z: pd.DataFrame
     vol: np.ndarray
@@ -293,17 +301,20 @@ class SignalInputs:
         return SignalInputs(self.signals.iloc[:n], self.z.iloc[:n], self.vol[:n])
 
 
-def signal_inputs(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
-                  carry: np.ndarray | None = None) -> SignalInputs:
+def signal_inputs(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any], carry: np.ndarray | None = None) -> SignalInputs:
     """``SignalInputs`` for every bar of ``df``; ``cfg`` is ``config["combination"]``."""
     sig = signal_panel(df, instrument, carry)
-    return SignalInputs(sig, standardised(sig, int(cfg["window"])),
-                        horizon_vol(df["Close"].to_numpy(float), int(cfg["horizon"])))
+    return SignalInputs(sig, standardised(sig, int(cfg["window"])), horizon_vol(df["Close"].to_numpy(float), int(cfg["horizon"])))
 
 
-def desk_forecast(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
-                  carry: np.ndarray | None = None, regimes: np.ndarray | None = None,
-                  inputs: SignalInputs | None = None) -> Forecast:
+def desk_forecast(
+    df: pd.DataFrame,
+    instrument: Instrument,
+    cfg: dict[str, Any],
+    carry: np.ndarray | None = None,
+    regimes: np.ndarray | None = None,
+    inputs: SignalInputs | None = None,
+) -> Forecast:
     """The IC-combination forecast at the last bar of ``df`` (the as-of bar).
 
     ``cfg`` is ``config["combination"]`` plus, when conformal sizing is on, the keys of
@@ -348,7 +359,7 @@ def desk_forecast(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
     sigma = float(vol[-1])
     if rows is not None:
         r = pd.Series(close).pct_change().to_numpy(float)
-        inr = r[max(1, end - window + 1):end + 1][rows[max(1, end - window + 1):end + 1]]
+        inr = r[max(1, end - window + 1) : end + 1][rows[max(1, end - window + 1) : end + 1]]
         inr = inr[np.isfinite(inr)]
         if inr.size >= 20:
             sigma = float(inr.std(ddof=1) * math.sqrt(horizon))
@@ -356,14 +367,15 @@ def desk_forecast(df: pd.DataFrame, instrument: Instrument, cfg: dict[str, Any],
         return Forecast(0.0, float("nan"), 0.0, weights, t_stats, regime=regime)
     zl = np.nan_to_num(z.iloc[-1].to_numpy(float))
     mu = sigma * float(sum(weights[c] * zl[i] for i, c in enumerate(z.columns)))
-    tilt = float(mean_variance(np.array([mu]), np.array([[sigma ** 2]]), float(cfg["risk_aversion"]))[0])
+    tilt = float(mean_variance(np.array([mu]), np.array([[sigma**2]]), float(cfg["risk_aversion"]))[0])
     interval = None
     if split:
         design = str(conf.get("design", "v17"))
         cal = calibration_points(fit_end, end, horizon, rows, design)
         if cal.size:
-            interval = conformal_interval(close, _mu_series(z, weights, vol), vol, cal, horizon,
-                                          float(conf.get("alpha", 0.2)), design)
-        if interval is None:            # too few calibration points: an unbounded interval sizes to zero
+            interval = conformal_interval(
+                close, _mu_series(z, weights, vol), vol, cal, horizon, float(conf.get("alpha", 0.2)), design
+            )
+        if interval is None:  # too few calibration points: an unbounded interval sizes to zero
             interval = math.inf
     return Forecast(mu, sigma, tilt, weights, t_stats, interval, regime)

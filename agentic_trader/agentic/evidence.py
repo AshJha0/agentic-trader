@@ -4,6 +4,7 @@ The store is append-only. ``resolve`` answers "does this id exist and does its
 digest still match its payload", which is what the validator and the reporter's
 audit need. It is thread-safe so parallel steps can add evidence.
 """
+
 from __future__ import annotations
 
 import threading
@@ -26,8 +27,15 @@ class EvidenceStore:
             self._order.append(ev.id)
         return ev
 
-    def record(self, type_: EvidenceType, source: str, summary: str, payload: Any,
-               correlation_id: str, arguments: dict[str, Any] | None = None) -> Evidence:
+    def record(
+        self,
+        type_: EvidenceType,
+        source: str,
+        summary: str,
+        payload: Any,
+        correlation_id: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> Evidence:
         return self.add(Evidence.build(type_, source, summary, payload, correlation_id, arguments))
 
     def get(self, ev_id: str) -> Evidence | None:
@@ -58,6 +66,15 @@ class EvidenceStore:
         return (self._items[i] for i in list(self._order))
 
     def summary_rows(self) -> list[dict[str, Any]]:
-        return [{"id": e.id, "type": e.type.value, "source": e.source, "summary": e.summary,
-                 "digest": e.digest[:12], "correlation_id": e.correlation_id,
-                 "created_at": e.created_at.isoformat()} for e in self]
+        return [
+            {
+                "id": e.id,
+                "type": e.type.value,
+                "source": e.source,
+                "summary": e.summary,
+                "digest": e.digest[:12],
+                "correlation_id": e.correlation_id,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in self
+        ]

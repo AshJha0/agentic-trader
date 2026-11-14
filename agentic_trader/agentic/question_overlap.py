@@ -18,6 +18,7 @@ so a question may name the company ("is BOLT's margin exposed to lithium?" share
 ``lithium``). Worked example: "How much did ACME net sales grow last year?" against "Net sales
 rose 14 percent ..." shares the bigram ``net_sales`` and is rejected.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -6,6 +6,7 @@ cross-checks the two backends whenever the extension is built. The conventions
 themselves (timing, constant units between decisions, cash leg, stop fills, ruin
 floor, NaN rule) are documented in cpp/include/at/backtest.hpp and indicators.hpp.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -68,7 +69,7 @@ def sma(x, n: int) -> np.ndarray:
     nan = np.isnan(x)
     windows = np.lib.stride_tricks.sliding_window_view(np.where(nan, 0.0, x), n)
     has_nan = np.lib.stride_tricks.sliding_window_view(nan, n).any(axis=1)
-    out[n - 1:] = np.where(has_nan, NaN, windows.sum(axis=1) / n)
+    out[n - 1 :] = np.where(has_nan, NaN, windows.sum(axis=1) / n)
     return out
 
 
@@ -84,7 +85,7 @@ def rolling_std(x, n: int) -> np.ndarray:
     if len(x) >= n:
         # One std per window over a strided view: the same reduction, element order and
         # result bit for bit as calling .std() on each slice, without the Python loop.
-        out[n - 1:] = np.lib.stride_tricks.sliding_window_view(x, n).std(axis=1)  # ddof=0
+        out[n - 1 :] = np.lib.stride_tricks.sliding_window_view(x, n).std(axis=1)  # ddof=0
     return out
 
 
@@ -210,7 +211,7 @@ def _average_ranks(v: np.ndarray) -> np.ndarray:
         j = i
         while j + 1 < len(v) and v[order[j + 1]] == v[order[i]]:
             j += 1
-        ranks[order[i:j + 1]] = (i + j) / 2.0 + 1.0
+        ranks[order[i : j + 1]] = (i + j) / 2.0 + 1.0
         i = j + 1
     return ranks
 
@@ -285,8 +286,7 @@ def kelly_fraction(p: float, b: float) -> float:
     return 0.0 if b <= 0 else p - (1.0 - p) / b
 
 
-def vol_target_weight(signal: float, realized_vol_annual: float, target_vol: float,
-                      max_leverage: float) -> float:
+def vol_target_weight(signal: float, realized_vol_annual: float, target_vol: float, max_leverage: float) -> float:
     if realized_vol_annual is None or np.isnan(realized_vol_annual) or realized_vol_annual <= 0:
         return 0.0
     return float(np.clip(signal * target_vol / realized_vol_annual, -max_leverage, max_leverage))
@@ -324,8 +324,9 @@ def strat_macd(close, fast: int = 12, slow: int = 26, signal: int = 9, allow_sho
     return out
 
 
-def strat_kdj_rsi(high, low, close, kdj_n: int = 9, rsi_n: int = 14, rsi_low: float = 30.0,
-                  rsi_high: float = 70.0, allow_short: bool = False):
+def strat_kdj_rsi(
+    high, low, close, kdj_n: int = 9, rsi_n: int = 14, rsi_low: float = 30.0, rsi_high: float = 70.0, allow_short: bool = False
+):
     _, _, j = kdj(high, low, close, kdj_n)
     r = rsi(close, rsi_n)
     out = np.zeros(len(r))
@@ -341,8 +342,7 @@ def strat_kdj_rsi(high, low, close, kdj_n: int = 9, rsi_n: int = 14, rsi_low: fl
     return out
 
 
-def strat_zmr(close, n: int = 20, entry: float = 1.0, exit: float = 0.0,
-              allow_short: bool = False):
+def strat_zmr(close, n: int = 20, entry: float = 1.0, exit: float = 0.0, allow_short: bool = False):
     z = zscore(close, n)
     out = np.zeros(len(z))
     pos = 0.0
@@ -376,7 +376,7 @@ def strat_tsmom(close, horizons, skip: int = 0, allow_short: bool = True):
     if len(c) > longest:
         for h in hs:
             with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-                r = c[longest - skip:len(c) - skip] / c[longest - h:len(c) - h] - 1.0
+                r = c[longest - skip : len(c) - skip] / c[longest - h : len(c) - h] - 1.0
             out[longest:] += np.where(np.isfinite(r), np.sign(r), 0.0)
         out /= len(hs)
         if not allow_short:
@@ -463,7 +463,7 @@ class BacktestResult:
     stop_exits: int = 0
     impact_paid: float = 0.0  # cumulative market-impact cost as a fraction of equity
     traded: np.ndarray = field(default_factory=lambda: np.zeros(0))  # |dw| executed per bar
-    exits: np.ndarray = field(default_factory=lambda: np.zeros(0))   # 1 where a level filled
+    exits: np.ndarray = field(default_factory=lambda: np.zeros(0))  # 1 where a level filled
     ruined_at: int = -1  # bar at which equity reached 0, or -1
 
 
@@ -485,11 +485,12 @@ def _warn_inferred_trades() -> None:
     warnings.warn(
         "compute_metrics: without `traded`, trades are inferred from changes in `positions`, which "
         "drift every bar under constant units; pass the engine's `traded` array for exact counts",
-        RuntimeWarning, stacklevel=3)
+        RuntimeWarning,
+        stacklevel=3,
+    )
 
 
-def compute_metrics(equity, positions, periods_per_year: float,
-                    risk_free_annual=0.0, traded=None) -> Metrics:
+def compute_metrics(equity, positions, periods_per_year: float, risk_free_annual=0.0, traded=None) -> Metrics:
     """Metrics of an equity curve (see cpp/include/at/backtest.hpp).
 
     ``risk_free_annual`` is a constant or a per-bar series (NaN -> 0; an empty array means
@@ -539,11 +540,12 @@ def compute_metrics(equity, positions, periods_per_year: float,
     with np.errstate(over="ignore"):  # a huge one-bar gain annualises to inf, as in C++ (no exception)
         m.annualized_return = (
             float(np.power(np.float64(1.0 + m.cumulative_return), periods_per_year / n) - 1.0)
-            if m.cumulative_return > -1.0 else -1.0
+            if m.cumulative_return > -1.0
+            else -1.0
         )
     if rf_series is None:
         rf0 = float(risk_free_annual) if np.ndim(risk_free_annual) == 0 else 0.0
-        rf = np.full(n, 0.0 if np.isnan(rf0) else rf0)   # NaN = unknown = 0, as the C++ core reads it
+        rf = np.full(n, 0.0 if np.isnan(rf0) else rf0)  # NaN = unknown = 0, as the C++ core reads it
     else:
         rf = np.where(np.isnan(rf_series[:n]), 0.0, rf_series[:n])
     ex = r[:live] - rf[:live] / periods_per_year
@@ -608,12 +610,25 @@ def _exit_fill(w, stop, take, o, h, l, half_spread=0.0, range_frac=0.0):
     return NaN
 
 
-_EXTRA_RULES = {"carry": "finite_or_nan", "open": "positive", "high": "positive", "low": "positive",
-                "stop": "finite_or_nan", "take": "finite_or_nan", "rebalance": "finite",
-                "impact": "nonneg_or_nan", "cash_rate": "finite_or_nan", "keep": "finite",
-                "quote_fx": "positive"}
-_RULE_TEXT = {"positive": "positive and finite", "finite": "finite",
-              "nonneg_or_nan": "NaN or a finite non-negative number", "finite_or_nan": "NaN or finite"}
+_EXTRA_RULES = {
+    "carry": "finite_or_nan",
+    "open": "positive",
+    "high": "positive",
+    "low": "positive",
+    "stop": "finite_or_nan",
+    "take": "finite_or_nan",
+    "rebalance": "finite",
+    "impact": "nonneg_or_nan",
+    "cash_rate": "finite_or_nan",
+    "keep": "finite",
+    "quote_fx": "positive",
+}
+_RULE_TEXT = {
+    "positive": "positive and finite",
+    "finite": "finite",
+    "nonneg_or_nan": "NaN or a finite non-negative number",
+    "finite_or_nan": "NaN or finite",
+}
 
 
 def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **extras):
@@ -632,8 +647,7 @@ def validate_backtest_inputs(prices, target_weights, config: BacktestConfig, **e
         raise ValueError("periods_per_year must be > 0")
     if not (config.initial_capital > 0) or np.isinf(config.initial_capital):
         raise ValueError("initial_capital must be positive and finite")
-    for name in ("cost_bps", "slippage_bps", "borrow_annual", "funding_spread", "cash_spread",
-                 "stop_half_spread"):
+    for name in ("cost_bps", "slippage_bps", "borrow_annual", "funding_spread", "cash_spread", "stop_half_spread"):
         v = float(getattr(config, name))
         if not np.isfinite(v) or v < 0:
             raise ValueError(f"{name} must be a finite non-negative number, got {v}")
@@ -690,13 +704,38 @@ def run_backtest(prices, target_weights, config: BacktestConfig) -> BacktestResu
     return run_backtest_ex(prices, target_weights, config)
 
 
-def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, open=None,
-                    high=None, low=None, stop=None, take=None, rebalance=None,
-                    impact=None, cash_rate=None, keep=None, quote_fx=None) -> BacktestResult:
-    p, w_in, extras = validate_backtest_inputs(prices, target_weights, config, carry=carry, open=open,
-                                               high=high, low=low, stop=stop, take=take,
-                                               rebalance=rebalance, impact=impact, cash_rate=cash_rate,
-                                               keep=keep, quote_fx=quote_fx)
+def run_backtest_ex(
+    prices,
+    target_weights,
+    config: BacktestConfig,
+    carry=None,
+    open=None,
+    high=None,
+    low=None,
+    stop=None,
+    take=None,
+    rebalance=None,
+    impact=None,
+    cash_rate=None,
+    keep=None,
+    quote_fx=None,
+) -> BacktestResult:
+    p, w_in, extras = validate_backtest_inputs(
+        prices,
+        target_weights,
+        config,
+        carry=carry,
+        open=open,
+        high=high,
+        low=low,
+        stop=stop,
+        take=take,
+        rebalance=rebalance,
+        impact=impact,
+        cash_rate=cash_rate,
+        keep=keep,
+        quote_fx=quote_fx,
+    )
     T = p.size
     has_levels = extras["stop"] is not None or extras["take"] is not None
 
@@ -768,8 +807,16 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         if w != 0.0 and has_levels:
             s = NaN if (stop_a is None or j < 0) else stop_a[j]
             k = NaN if (take_a is None or j < 0) else take_a[j]
-            exit_px = _exit_fill(w, s, k, extras["open"][t + 1], extras["high"][t + 1],
-                                 extras["low"][t + 1], config.stop_half_spread, config.stop_range_frac)
+            exit_px = _exit_fill(
+                w,
+                s,
+                k,
+                extras["open"][t + 1],
+                extras["high"][t + 1],
+                extras["low"][t + 1],
+                config.stop_half_spread,
+                config.stop_range_frac,
+            )
         exited = not np.isnan(exit_px)
         px_end = exit_px if exited else p[t + 1]
 
@@ -827,8 +874,6 @@ def run_backtest_ex(prices, target_weights, config: BacktestConfig, carry=None, 
         equity[t + 1] = nxt
         prev = 0.0 if (exited or ruined or w == 0.0) else w * gross * qr / (1.0 + g)
     positions[T - 1] = prev
-    metrics = compute_metrics(equity, positions, ppy,
-                              config.risk_free_annual if cash_a is None else cash_a, traded)
+    metrics = compute_metrics(equity, positions, ppy, config.risk_free_annual if cash_a is None else cash_a, traded)
     metrics.num_trades = len(trades)
-    return BacktestResult(equity, returns, positions, trades, metrics, exits, impact_paid,
-                          traded, exit_flags, ruined_at)
+    return BacktestResult(equity, returns, positions, trades, metrics, exits, impact_paid, traded, exit_flags, ruined_at)

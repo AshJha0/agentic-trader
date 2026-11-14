@@ -1,5 +1,6 @@
 """v0.15 research RAG (PLAN.md 3.4-3.7, 3.9): point-in-time corpus, hybrid retrieval,
 citations and their audit, the retrieval evaluation gate, the runbook ablation trial."""
+
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -13,7 +14,7 @@ UTC = timezone.utc
 
 
 @dataclass(frozen=True)
-class FilingSection:            # the shared contract, duplicated here as a fixture
+class FilingSection:  # the shared contract, duplicated here as a fixture
     symbol: str
     accession: str
     form: str
@@ -23,15 +24,22 @@ class FilingSection:            # the shared contract, duplicated here as a fixt
 
 
 SECS = [
-    FilingSection("ZZZ", "acc-1", "10-K", "risk_factors", datetime(2024, 2, 1, 21, tzinfo=UTC),
-                  "Copper supply shortages could stop our cable plant.\n\nInterest rate rises raise our funding cost."),
-    FilingSection("ZZZ", "acc-2", "10-Q", "mda", datetime(2024, 5, 1, 21, tzinfo=UTC),
-                  "Cable revenue fell because copper prices jumped."),
-    FilingSection("YYY", "acc-3", "10-K", "legal", datetime(2024, 3, 1, 21, tzinfo=UTC),
-                  "A copper theft lawsuit is pending."),
+    FilingSection(
+        "ZZZ",
+        "acc-1",
+        "10-K",
+        "risk_factors",
+        datetime(2024, 2, 1, 21, tzinfo=UTC),
+        "Copper supply shortages could stop our cable plant.\n\nInterest rate rises raise our funding cost.",
+    ),
+    FilingSection(
+        "ZZZ", "acc-2", "10-Q", "mda", datetime(2024, 5, 1, 21, tzinfo=UTC), "Cable revenue fell because copper prices jumped."
+    ),
+    FilingSection("YYY", "acc-3", "10-K", "legal", datetime(2024, 3, 1, 21, tzinfo=UTC), "A copper theft lawsuit is pending."),
 ]
-STMT = rr.CentralBankStatement("FOMC", datetime(2024, 9, 18, 18, tzinfo=UTC), "fixture",
-                               "The Committee lowered the federal funds rate by half a point.")
+STMT = rr.CentralBankStatement(
+    "FOMC", datetime(2024, 9, 18, 18, tzinfo=UTC), "fixture", "The Committee lowered the federal funds rate by half a point."
+)
 
 
 def corpus(**kw):
@@ -43,8 +51,12 @@ def test_passages_carry_metadata_and_paragraph_ids():
     c = corpus()
     assert len(c) == 5
     p = c.get("acc-1#risk_factors#1")
-    assert p.metadata == {"symbol": "ZZZ", "accession": "acc-1", "visible_date": "2024-02-01T21:00:00+00:00",
-                          "section": "risk_factors"}
+    assert p.metadata == {
+        "symbol": "ZZZ",
+        "accession": "acc-1",
+        "visible_date": "2024-02-01T21:00:00+00:00",
+        "section": "risk_factors",
+    }
     assert c.get("FOMC-2024-09-18#statement#0").source == "central_bank"
 
 
@@ -79,8 +91,19 @@ def test_idf_fitted_on_visible_passages_only():
 
 def test_symbol_filter_and_central_bank_loader(tmp_path):
     f = tmp_path / "cb.json"
-    f.write_text(json.dumps([{"bank": "ECB", "released": "2024-06-06T12:15:00+00:00", "title": "t",
-                              "text": "Deposit rate cut.\n\nInflation easing."}]), encoding="utf-8")
+    f.write_text(
+        json.dumps(
+            [
+                {
+                    "bank": "ECB",
+                    "released": "2024-06-06T12:15:00+00:00",
+                    "title": "t",
+                    "text": "Deposit rate cut.\n\nInflation easing.",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
     sts = rr.load_central_bank_statements(tmp_path)
     assert sts[0].accession == "ECB-2024-06-06" and sts[0].released.tzinfo is not None
     assert len(rr.passages_from_statements(sts)) == 2
@@ -130,8 +153,15 @@ def test_citation_audit_requires_every_quote_to_map_to_a_passage():
     a = rr.audit_citations(bad, hits)
     assert not a.ok and len(a.failures) == 2
     assert not rr.audit_citations([], hits).ok
-    resp = {"content": [{"type": "text", "text": "x",
-                         "citations": [{"type": "char_location", "cited_text": p.text[:10], "document_index": 0}]}]}
+    resp = {
+        "content": [
+            {
+                "type": "text",
+                "text": "x",
+                "citations": [{"type": "char_location", "cited_text": p.text[:10], "document_index": 0}],
+            }
+        ]
+    }
     assert rr.audit_citations(rr.citations_from_response(resp), hits).ok
     resp["content"][0]["citations"][0]["document_index"] = 9
     assert not rr.audit_citations(rr.citations_from_response(resp), hits).ok

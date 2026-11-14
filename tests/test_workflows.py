@@ -1,5 +1,6 @@
 """End-to-end workflows: guards, watchlist scans, portfolios, evaluation, memory
 robustness and the CLI (all offline, synthetic data)."""
+
 import json
 from datetime import date
 
@@ -28,32 +29,31 @@ class EndsEarly(SyntheticProvider):
 
 def test_stale_data_is_refused():
     g = TradingGraph(CFG, provider=EndsEarly(CFG), **QUIET)
-    g.propagate("AAPL", "2024-02-05")                       # 5 days: a long weekend is fine
+    g.propagate("AAPL", "2024-02-05")  # 5 days: a long weekend is fine
     with pytest.raises(ValueError, match="stale"):
         g.propagate("AAPL", "2024-03-01")
 
 
 def test_weekend_as_of_uses_friday_close():
-    st, d = TradingGraph(CFG, **QUIET).propagate("AAPL", "2024-03-03")    # Sunday
+    st, d = TradingGraph(CFG, **QUIET).propagate("AAPL", "2024-03-03")  # Sunday
     assert st.history.index[-1].date() == date(2024, 3, 1) and d.as_of == date(2024, 3, 3)
 
 
 def test_too_little_history():
     with pytest.raises(ValueError, match="not enough history"):
-        TradingGraph(CFG, **QUIET).propagate("AAPL", "2015-01-20")    # synthetic data starts 2015
+        TradingGraph(CFG, **QUIET).propagate("AAPL", "2015-01-20")  # synthetic data starts 2015
 
 
 def test_backtest_argument_errors():
     with pytest.raises(ValueError, match="before start"):
         run_agent_backtest("AAPL", "2024-03-01", "2024-01-01", CFG)
     with pytest.raises(ValueError, match="fewer than 2 bars"):
-        run_agent_backtest("AAPL", "2024-03-02", "2024-03-03", CFG)   # a weekend
+        run_agent_backtest("AAPL", "2024-03-02", "2024-03-03", CFG)  # a weekend
 
 
 # -------------------------------------------------------------------- scan
 def test_scan_continues_past_bad_symbols():
-    df = TradingGraph(CFG, **QUIET).scan(["AAPL", "EURUSD", "EUR/XYZ"], "2024-03-01",
-                                         positions={"aapl": 0.5})
+    df = TradingGraph(CFG, **QUIET).scan(["AAPL", "EURUSD", "EUR/XYZ"], "2024-03-01", positions={"aapl": 0.5})
     assert list(df.symbol) == ["AAPL", "EURUSD", "EUR/XYZ"]
     ok = df[df.action != "ERROR"]
     assert len(ok) == 2 and (ok.error == "").all()
@@ -83,9 +83,9 @@ def test_market_impact_scales_with_account_size_and_is_off_by_default():
     rb = run_agent_backtest("AAPL", "2024-01-02", "2024-02-29", big, rebalance_every=10)
     for name in base.results:
         assert rs.results[name].impact_paid >= 0.0
-        if rb.results[name].metrics.num_trades == 0:      # v0.9: Carry is flat on equities and pays nothing
+        if rb.results[name].metrics.num_trades == 0:  # v0.9: Carry is flat on equities and pays nothing
             continue
-        assert rb.results[name].impact_paid > rs.results[name].impact_paid          # sqrt(capital)
+        assert rb.results[name].impact_paid > rs.results[name].impact_paid  # sqrt(capital)
         assert rb.results[name].metrics.cumulative_return < base.results[name].metrics.cumulative_return
     assert "Impact%" in rb.table().columns and rb.table().loc[AGENT, "Impact%"] > 0
     # FX has no exchange volume: no impact unless a notional ADV is configured.
@@ -127,12 +127,13 @@ def test_evaluation_harness_records_errors_and_round_trips(tmp_path):
 # ------------------------------------------------------------------ memory
 def test_memory_survives_corrupt_lines_and_appends_under_a_lock(tmp_path, monkeypatch):
     from agentic_trader import memory as memory_mod
+
     path = tmp_path / "m.jsonl"
     m = DecisionMemory(path)
     m.record("X", date(2024, 1, 1), "BUY", 0.5, 100.0, "ok")
     with open(path, "a", encoding="utf-8") as f:
-        f.write('{"symbol": "X", "as_of": \n')           # torn write
-        f.write('{"unexpected": 1}\n')                   # wrong schema
+        f.write('{"symbol": "X", "as_of": \n')  # torn write
+        f.write('{"unexpected": 1}\n')  # wrong schema
     m2 = DecisionMemory(path)
     assert len(m2.entries) == 1 and m2.skipped_lines == 2
     locked, real_lock = [], memory_mod._lock_file
@@ -140,6 +141,7 @@ def test_memory_survives_corrupt_lines_and_appends_under_a_lock(tmp_path, monkey
     def counting_lock(fd, timeout=30.0):
         locked.append(fd)
         return real_lock(fd, timeout)
+
     monkeypatch.setattr(memory_mod, "_lock_file", counting_lock)
     m2.record("X", date(2024, 1, 2), "HOLD", 0.0, 101.0, "ok")
     assert locked, "an append must take the cross-process file lock"
@@ -150,7 +152,7 @@ def test_memory_survives_corrupt_lines_and_appends_under_a_lock(tmp_path, monkey
 def test_cli_analyze_json(capsys):
     assert main(["analyze", "AAPL", "--date", "2024-03-01", "--json", "--no-memory"]) == 0
     out = capsys.readouterr().out
-    d = json.loads(out[out.index("{"):])
+    d = json.loads(out[out.index("{") :])
     assert d["symbol"] == "AAPL" and d["action"] in {"BUY", "SELL", "HOLD"}
 
 
@@ -169,15 +171,64 @@ def test_cli_errors_exit_2_without_traceback(capsys):
 
 
 def test_cli_backtest_portfolio_evaluate_info(tmp_path, capsys):
-    assert main(["backtest", "EURUSD", "--start", "2024-01-02", "--end", "2024-02-29",
-                 "--every", "10", "--stops", "on", "--band", "0.2"]) == 0
+    assert (
+        main(
+            [
+                "backtest",
+                "EURUSD",
+                "--start",
+                "2024-01-02",
+                "--end",
+                "2024-02-29",
+                "--every",
+                "10",
+                "--stops",
+                "on",
+                "--band",
+                "0.2",
+            ]
+        )
+        == 0
+    )
     assert "stops on" in capsys.readouterr().out
-    assert main(["backtest", "AAPL", "--start", "2024-01-02", "--end", "2024-02-29",
-                 "--every", "10", "--impact", "1.0", "--capital", "1e9"]) == 0
+    assert (
+        main(
+            [
+                "backtest",
+                "AAPL",
+                "--start",
+                "2024-01-02",
+                "--end",
+                "2024-02-29",
+                "--every",
+                "10",
+                "--impact",
+                "1.0",
+                "--capital",
+                "1e9",
+            ]
+        )
+        == 0
+    )
     assert "Impact%" in capsys.readouterr().out
     assert main(["backtest", "AAPL", "--start", "2024-01-02", "--end", "2024-02-29", "--impact", "-1"]) == 2
-    assert main(["portfolio", "AAPL,EURUSD", "--start", "2024-01-02", "--end", "2024-02-29",
-                 "--every", "10", "--out", str(tmp_path / "p.csv")]) == 0
+    assert (
+        main(
+            [
+                "portfolio",
+                "AAPL,EURUSD",
+                "--start",
+                "2024-01-02",
+                "--end",
+                "2024-02-29",
+                "--every",
+                "10",
+                "--out",
+                str(tmp_path / "p.csv"),
+            ]
+        )
+        == 0
+    )
     assert (tmp_path / "p.csv").exists()
     assert main(["evaluate", "AAPL", "--periods", "q1_2024", "--every", "10"]) == 0
     assert main(["info"]) == 0
@@ -187,4 +238,4 @@ def test_cli_backtest_portfolio_evaluate_info(tmp_path, capsys):
 def test_cli_v02_rules_flag(capsys):
     main(["analyze", "AAPL", "--date", "2024-03-01", "--json", "--no-memory", "--rules", "v02"])
     out = capsys.readouterr().out
-    assert json.loads(out[out.index("{"):])["target_weight"] == 0.5354
+    assert json.loads(out[out.index("{") :])["target_weight"] == 0.5354

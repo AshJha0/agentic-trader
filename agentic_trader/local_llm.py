@@ -30,6 +30,7 @@ The request body is built once per call, so a retry sends the same bytes (seed, 
 the recorded request digest are unchanged). Requests use ``urllib`` from the standard library, so the
 backend adds no dependency.
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -87,8 +88,7 @@ def is_transient(exc: BaseException) -> bool:
     return isinstance(exc, OSError)
 
 
-def backoff_delays(budget_s: float, base_s: float = RETRY_BASE_S,
-                   max_delay_s: float = RETRY_MAX_DELAY_S) -> list[float]:
+def backoff_delays(budget_s: float, base_s: float = RETRY_BASE_S, max_delay_s: float = RETRY_MAX_DELAY_S) -> list[float]:
     """The sleep before each retry: base, 2*base, ... capped at ``max_delay_s``, the sum
     bounded by ``budget_s`` (the last delay is trimmed to fit). Empty when the budget is 0."""
     out: list[float] = []
@@ -99,6 +99,8 @@ def backoff_delays(budget_s: float, base_s: float = RETRY_BASE_S,
         left -= step
         d *= 2
     return out
+
+
 NEUTRAL_CHARS_PER_TOKEN = 4.0
 
 
@@ -107,8 +109,9 @@ def neutral_token_estimate(*texts: str) -> int:
     return int(sum(len(t or "") for t in texts) / NEUTRAL_CHARS_PER_TOKEN)
 
 
-def truncation_flag(prompt_eval_count: int | None, estimate: int | None, done_reason: str | None,
-                    num_ctx: int | None = None) -> bool:
+def truncation_flag(
+    prompt_eval_count: int | None, estimate: int | None, done_reason: str | None, num_ctx: int | None = None
+) -> bool:
     """True when a reply shows signs of a cut prompt or a cut reply (review N4): the server
     stopped on length, evaluated fewer than ``TRUNCATION_RATIO`` of the estimated prompt
     tokens, or evaluated exactly ``num_ctx`` tokens (the window was full)."""
@@ -184,19 +187,19 @@ class LocalLLM:
     def __init__(self, config: dict):
         model = config.get("local_llm_model")
         if not model:
-            raise ValueError("llm_provider 'local' needs local_llm_model (an Ollama model name, "
-                             "e.g. 'qwen2.5:7b-instruct')")
+            raise ValueError("llm_provider 'local' needs local_llm_model (an Ollama model name, e.g. 'qwen2.5:7b-instruct')")
         self.config = config
         self.model = str(model)
         self.url = str(config.get("local_llm_url") or DEFAULT_URL).rstrip("/")
         self.host = llm_host(self.url)
         self.allow_remote = bool(config.get("allow_remote_llm"))
         if not is_loopback_host(self.host) and not self.allow_remote:
-            raise ValueError(f"local_llm_url {self.url!r} is not a loopback address: prompts would leave "
-                             "this machine. Set allow_remote_llm: True to allow it deliberately")
+            raise ValueError(
+                f"local_llm_url {self.url!r} is not a loopback address: prompts would leave "
+                "this machine. Set allow_remote_llm: True to allow it deliberately"
+            )
         if not is_loopback_host(self.host):
-            log.warning("local model at non-loopback host %s (allow_remote_llm is set): prompts leave "
-                        "this machine", self.host)
+            log.warning("local model at non-loopback host %s (allow_remote_llm is set): prompts leave this machine", self.host)
         self.timeout_s = float(config.get("local_llm_timeout_s", 120))
         if not self.timeout_s > 0:
             raise ValueError("local_llm_timeout_s must be > 0")
@@ -210,8 +213,9 @@ class LocalLLM:
             raise ValueError("local_llm_num_ctx must be > 0")
         self.digest = str(config.get("local_llm_digest") or "").strip().lower().removeprefix("sha256:") or None
         if self.digest is not None and (len(self.digest) < 12 or not re.fullmatch(r"[0-9a-f]+", self.digest)):
-            raise ValueError("local_llm_digest must be a hex model digest (at least 12 characters), "
-                             f"got {config.get('local_llm_digest')!r}")
+            raise ValueError(
+                f"local_llm_digest must be a hex model digest (at least 12 characters), got {config.get('local_llm_digest')!r}"
+            )
         self._digest_fn: Callable[[str, str], dict[str, Any] | None] = model_digest
         self._digest_verified = False
         self.retry_budget_s = float(config.get("local_llm_retry_budget_s") or 0.0)
@@ -229,8 +233,7 @@ class LocalLLM:
     def model_for(self, deep: bool) -> str:
         return self.model
 
-    def estimate_cost(self, deep: bool, prompt_chars: int = 0, *, system: str | None = None,
-                      prompt: str | None = None) -> float:
+    def estimate_cost(self, deep: bool, prompt_chars: int = 0, *, system: str | None = None, prompt: str | None = None) -> float:
         """A local call costs nothing; ``BudgetedLLM``'s call cap is the only binding limit."""
         return 0.0
 
@@ -248,12 +251,17 @@ class LocalLLM:
 
     def build_request(self, system: str, prompt: str, schema: dict[str, Any] | None = None) -> dict[str, Any]:
         """The ``/api/chat`` body for one call."""
-        options: dict[str, Any] = {"temperature": float(self.temperature), "num_predict": self.max_tokens,
-                                   "num_ctx": self.num_ctx}
+        options: dict[str, Any] = {
+            "temperature": float(self.temperature),
+            "num_predict": self.max_tokens,
+            "num_ctx": self.num_ctx,
+        }
         if self.seed is not None:
             options["seed"] = int(self.seed)
         body: dict[str, Any] = {
-            "model": self.model, "stream": False, "options": options,
+            "model": self.model,
+            "stream": False,
+            "options": options,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         }
         if schema is not None:
@@ -261,8 +269,12 @@ class LocalLLM:
         return body
 
     def _post(self, body: dict[str, Any]) -> dict[str, Any]:
-        req = urllib.request.Request(self.url + "/api/chat", data=json.dumps(body).encode("utf-8"),
-                                     headers={"Content-Type": "application/json"}, method="POST")
+        req = urllib.request.Request(
+            self.url + "/api/chat",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if not isinstance(data, dict):
@@ -280,8 +292,10 @@ class LocalLLM:
         entry = self._digest_fn(self.url, self.model)
         served = str((entry or {}).get("digest") or "").strip().lower().removeprefix("sha256:")
         if not served:
-            raise ModelDigestMismatch(f"pinned digest {self.digest[:12]} for {self.model!r}, but the server at "
-                                      f"{self.url} does not list the model with a digest")
+            raise ModelDigestMismatch(
+                f"pinned digest {self.digest[:12]} for {self.model!r}, but the server at "
+                f"{self.url} does not list the model with a digest"
+            )
         if not served.startswith(self.digest):
             raise ModelDigestMismatch(f"pinned digest {self.digest[:12]} for {self.model!r}, served {served[:12]}")
         self._digest_verified = True
@@ -289,7 +303,7 @@ class LocalLLM:
     def _run(self, system: str, prompt: str, schema: dict[str, Any] | None) -> str | None:
         self._tls.last = None
         self.verify_digest()
-        body =self.build_request(system, prompt, schema)    # built once: retries resend it
+        body = self.build_request(system, prompt, schema)  # built once: retries resend it
         try:
             data = self._post_with_retry(body)
         except LocalLLMUnavailable:
@@ -304,7 +318,7 @@ class LocalLLM:
             else:
                 self._fail(None, f"cannot reach local model at {self.url}: {e}")
             return None
-        except (ValueError, OSError) as e:     # unreadable body, reset connection
+        except (ValueError, OSError) as e:  # unreadable body, reset connection
             self._fail(None, f"local model reply unusable: {e}")
             return None
         return self.read_response(data, prompt_estimate=neutral_token_estimate(system, prompt))
@@ -321,12 +335,12 @@ class LocalLLM:
                 if attempt == len(delays):
                     raise LocalLLMUnavailable(
                         f"local model at {self.url} unreachable after {attempt + 1} attempts over "
-                        f"{self.retry_budget_s:g} s budget: {e}") from e
+                        f"{self.retry_budget_s:g} s budget: {e}"
+                    ) from e
                 self.usage.count("retries")
-                log.warning("local model call failed (%s); retry %d/%d in %.1f s",
-                            e, attempt + 1, len(delays), delays[attempt])
+                log.warning("local model call failed (%s); retry %d/%d in %.1f s", e, attempt + 1, len(delays), delays[attempt])
                 self._sleep(delays[attempt])
-        raise AssertionError("unreachable")     # pragma: no cover
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def _fail(self, counter: str | None, problem: str) -> None:
         log.warning("%s; using rule-based fallback", problem)
@@ -339,16 +353,25 @@ class LocalLLM:
         """Book usage, record evidence and return the reply text (``None`` on an empty reply or,
         with ``llm_strict_model`` on, a reply served by another model)."""
         served = data.get("model") or self.model
-        self.usage.add(served, SimpleNamespace(input_tokens=data.get("prompt_eval_count") or 0,
-                                               output_tokens=data.get("eval_count") or 0))
+        self.usage.add(
+            served, SimpleNamespace(input_tokens=data.get("prompt_eval_count") or 0, output_tokens=data.get("eval_count") or 0)
+        )
         drift = not served_matches(self.model, served)
         pec, ec = data.get("prompt_eval_count"), data.get("eval_count")
         truncated = truncation_flag(pec, prompt_estimate, data.get("done_reason"), self.num_ctx)
-        self._tls.last = {"model_configured": self.model, "model_served": served,
-                          "stop_reason": data.get("done_reason"), "refusal_category": None,
-                          "fallbacks": [], "model_drift": drift,
-                          "prompt_eval_count": pec, "eval_count": ec, "prompt_tok_est": prompt_estimate,
-                          "num_ctx": self.num_ctx, "truncated": truncated}
+        self._tls.last = {
+            "model_configured": self.model,
+            "model_served": served,
+            "stop_reason": data.get("done_reason"),
+            "refusal_category": None,
+            "fallbacks": [],
+            "model_drift": drift,
+            "prompt_eval_count": pec,
+            "eval_count": ec,
+            "prompt_tok_est": prompt_estimate,
+            "num_ctx": self.num_ctx,
+            "truncated": truncated,
+        }
         self._tls.last.update(llm_host=self.host, remote_llm_allowed=self.allow_remote)
         if truncated:
             self.usage.count("truncated")
@@ -400,7 +423,12 @@ def model_digest(url: str, model: str, timeout_s: float = 5.0) -> dict[str, Any]
     for m in (data.get("models") or []) if isinstance(data, dict) else []:
         if isinstance(m, dict) and served_matches(model, m.get("name") or m.get("model")):
             det: dict[str, Any] = m["details"] if isinstance(m.get("details"), dict) else {}
-            return {"name": m.get("name") or m.get("model"), "digest": m.get("digest"), "size": m.get("size"),
-                    "quantization": det.get("quantization_level"), "family": det.get("family"),
-                    "parameter_size": det.get("parameter_size")}
+            return {
+                "name": m.get("name") or m.get("model"),
+                "digest": m.get("digest"),
+                "size": m.get("size"),
+                "quantization": det.get("quantization_level"),
+                "family": det.get("family"),
+                "parameter_size": det.get("parameter_size"),
+            }
     return None

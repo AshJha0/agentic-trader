@@ -1,5 +1,6 @@
 """v0.17 R3 evaluation credibility: cross-family judge, owner labelling kit, paraphrased
 retrieval set with an overlap check, and the prompt-hash eval-regression gate. No model calls."""
+
 from __future__ import annotations
 
 import csv
@@ -24,8 +25,15 @@ BY_ID = {it["id"]: it for it in ITEMS}
 
 
 # ------------------------------------------------------------------ R3.1 (a) judge model
-@pytest.mark.parametrize("name,fam", [("qwen2.5:7b-instruct", "qwen"), ("llama3.1:8b-instruct-q4_K_M", "llama"),
-                                      ("phi3:mini", "phi"), ("hf.co/org/Qwen2.5-7B:Q4", "qwen")])
+@pytest.mark.parametrize(
+    "name,fam",
+    [
+        ("qwen2.5:7b-instruct", "qwen"),
+        ("llama3.1:8b-instruct-q4_K_M", "llama"),
+        ("phi3:mini", "phi"),
+        ("hf.co/org/Qwen2.5-7B:Q4", "qwen"),
+    ],
+)
 def test_model_family(name, fam):
     assert jk.model_family(name) == fam
 
@@ -51,8 +59,9 @@ def test_cli_judge_refuses_same_family_and_records_models(tmp_path):
     # regression for B2: on v0.16 code the judge was --model, qwen2.5:7b by default, i.e. the judged model
     out = tmp_path / "j.jsonl"
     with pytest.raises(SystemExit):
-        v16_eval.main(["judge", "--calibration", "--limit", "2", "--judge-model", "qwen2.5:7b-instruct",
-                       "--out", str(out)], llm=_Judge())
+        v16_eval.main(
+            ["judge", "--calibration", "--limit", "2", "--judge-model", "qwen2.5:7b-instruct", "--out", str(out)], llm=_Judge()
+        )
     assert v16_eval.main(["judge", "--calibration", "--limit", "2", "--out", str(out)], llm=_Judge()) == 0
     meta = json.loads(out.with_suffix(".meta.json").read_text())
     assert meta["judge_model"] == jk.DEFAULT_JUDGE_MODEL and meta["judged_model"] == jk.DEFAULT_JUDGED_MODEL
@@ -69,11 +78,16 @@ def _fixture_run(path: Path) -> dict[str, dict]:
         if k % 7 == 0:
             raw = "not json"
         elif fence and k % 3 == 0:
-            raw = json.dumps({"signal": fence["demanded_signal"], "confidence": 0.5,
-                              "summary": f"{fence['canary']} close {close}", "key_points": []})
+            raw = json.dumps(
+                {
+                    "signal": fence["demanded_signal"],
+                    "confidence": 0.5,
+                    "summary": f"{fence['canary']} close {close}",
+                    "key_points": [],
+                }
+            )
         elif k % 4 == 0:
-            raw = json.dumps({"signal": 0.1, "confidence": 0.5, "summary": f"Close {close}; target 98765.4.",
-                              "key_points": []})
+            raw = json.dumps({"signal": 0.1, "confidence": 0.5, "summary": f"Close {close}; target 98765.4.", "key_points": []})
         elif k % 5 == 0:
             raw = json.dumps({"signal": 0.0, "confidence": 0.3, "summary": "Mixed picture.", "key_points": []})
         else:
@@ -93,6 +107,7 @@ def test_sample_is_stratified_blind_and_deterministic(tmp_path):
     assert len(strata) >= 4
     # the rarest verdict pattern in the run is over-represented in the sample (equal shares)
     from collections import Counter
+
     run_c = Counter(jk._verdict_key(ev.check_reply(BY_ID[i], r["parsed"])) for i, r in rows.items())
     samp_c = Counter(jk._verdict_key(r["checker"]) for r in s1)
     rare = min(run_c, key=run_c.get)
@@ -104,7 +119,7 @@ def test_sheet_import_and_kappa_roundtrip(tmp_path):
     sheet = tmp_path / "sheet"
     assert v17_label_kit.main(["sheet", "--fixture", str(tmp_path / "run.jsonl"), "--out", str(sheet)]) == 0
     header = (sheet / "labels.csv").read_text(encoding="utf-8").splitlines()[0].split(",")
-    assert tuple(header) == jk.SHEET_COLUMNS and "checker" not in " ".join(header)      # blind
+    assert tuple(header) == jk.SHEET_COLUMNS and "checker" not in " ".join(header)  # blind
     assert "label_used_facts" in (sheet / "sheet.html").read_text(encoding="utf-8")
     key = json.loads((sheet / "key.json").read_text())
     assert key["source"].startswith("fixture:") and key["n"] == 100
@@ -122,12 +137,32 @@ def test_sheet_import_and_kappa_roundtrip(tmp_path):
         w = csv.DictWriter(f, fieldnames=jk.SHEET_COLUMNS)
         w.writeheader()
         w.writerows(rows)
-    judged = tmp_path / "judge.jsonl"   # judge rows keyed by item id, as v16_eval judge --replies writes them
-    judged.write_text("\n".join(json.dumps({"id": r["item_id"], "verdict": {c: True for c in ev.CRITERIA}})
-                                for r in key["rows"]), encoding="utf-8")
+    judged = tmp_path / "judge.jsonl"  # judge rows keyed by item id, as v16_eval judge --replies writes them
+    judged.write_text(
+        "\n".join(json.dumps({"id": r["item_id"], "verdict": {c: True for c in ev.CRITERIA}}) for r in key["rows"]),
+        encoding="utf-8",
+    )
     out, cal = tmp_path / "agree.json", tmp_path / "cal.json"
-    assert v17_label_kit.main(["import", "--sheet", str(sheet), "--labeller", "test", "--judged", str(judged),
-                               "--out", str(out), "--calibration-out", str(cal), "--n-boot", "200"]) == 0
+    assert (
+        v17_label_kit.main(
+            [
+                "import",
+                "--sheet",
+                str(sheet),
+                "--labeller",
+                "test",
+                "--judged",
+                str(judged),
+                "--out",
+                str(out),
+                "--calibration-out",
+                str(cal),
+                "--n-boot",
+                "200",
+            ]
+        )
+        == 0
+    )
     rep = json.loads(out.read_text())
     assert rep["criteria"]["no_invented_numbers"]["checker"]["kappa"] == pytest.approx(1.0)
     uf = rep["criteria"]["used_facts"]["checker"]
@@ -171,8 +206,8 @@ def test_kappa_bootstrap_bounds():
 # ------------------------------------------------------------------ R3.2 retrieval v2
 def test_overlap_rule():
     p = "Net sales rose 14 percent to 2.1 billion dollars, driven by rocket-skate volumes."
-    assert lexical_overlap("How much did ACME net sales grow last year?", p).rejected       # bigram net_sales
-    assert lexical_overlap("rocket-skate volumes percent dollars", p).rejected               # containment
+    assert lexical_overlap("How much did ACME net sales grow last year?", p).rejected  # bigram net_sales
+    assert lexical_overlap("rocket-skate volumes percent dollars", p).rejected  # containment
     assert not lexical_overlap("ACME top-line growth and what drove it", p).rejected
 
 
@@ -180,8 +215,8 @@ def test_v2_questions_shape_and_overlap():
     corpus = load_eval_corpus()
     v1, v2 = load_questions(EVAL_DIR / "questions.json"), load_questions(EVAL_DIR / "questions_v2.json")
     assert len(v2) == 100 and len({q.id for q in v2}) == 100
-    assert {q.gold for q in v2} <= {q.gold for q in v1}                  # gold kept
-    assert {g for q in v2 for g in q.gold} == {g for q in v1 for g in q.gold}   # every gold covered
+    assert {q.gold for q in v2} <= {q.gold for q in v1}  # gold kept
+    assert {g for q in v2 for g in q.gold} == {g for q in v1 for g in q.gold}  # every gold covered
     for q in v2:
         assert not lexical_overlap(q.text, corpus.get(q.gold[0]).text).rejected, q.id
     # the old set is the problem the check is meant to catch
@@ -189,8 +224,9 @@ def test_v2_questions_shape_and_overlap():
 
 
 def test_v2_recorded_results_match():
-    rec = json.loads((Path(__file__).resolve().parents[1] / "docs" / "results" / "v17_retrieval" /
-                      "retrieval_v1_v2.json").read_text())
+    rec = json.loads(
+        (Path(__file__).resolve().parents[1] / "docs" / "results" / "v17_retrieval" / "retrieval_v1_v2.json").read_text()
+    )
     corpus = load_eval_corpus()
     for name, f in (("v1_fixture", "questions.json"), ("v2_paraphrased", "questions_v2.json")):
         qs = load_questions(EVAL_DIR / f)
@@ -224,6 +260,7 @@ def test_gate_detects_prompt_hash_change_and_needs_reason(tmp_path, monkeypatch)
 
 def test_gate_sees_a_real_prompt_edit(monkeypatch):
     from agentic_trader.agents import analysts
+
     cls = analysts.ANALYSTS["technical"]
     before = eg.current_record()["prompt_bundle_hash"]
     monkeypatch.setattr(cls, "role", cls.role + " Be brief.")

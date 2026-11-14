@@ -1,5 +1,6 @@
 """The service surfaces: the HTTP API (FastAPI test client), the MCP stdio server
 (a real subprocess round trip) and the new CLI commands. All offline."""
+
 import json
 import sys
 import time
@@ -24,6 +25,7 @@ mcp = pytest.importorskip("mcp")
 def client():
     from fastapi.testclient import TestClient
     from agentic_trader.agentic.api import create_app
+
     h = AgentHarness(TradingGraph(CFG, **QUIET), gateway=QueuedApprovalGateway())
     return TestClient(create_app(harness=h)), h
 
@@ -44,10 +46,13 @@ def test_api_auth_roles_and_task_lifecycle(client):
     assert c.get("/tools").status_code == 401
     assert c.get("/tools", headers={"X-API-Key": "nope"}).status_code == 401
     assert len(c.get("/tools", headers={"X-API-Key": "dev-viewer-key"}).json()) == 16
-    assert c.post("/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01"},
-                  headers={"X-API-Key": "dev-viewer-key"}).status_code == 403
-    r = c.post("/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01", "current_weight": 0.1},
-               headers={"X-API-Key": "dev-trader-key"})
+    assert (
+        c.post("/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01"}, headers={"X-API-Key": "dev-viewer-key"}).status_code
+        == 403
+    )
+    r = c.post(
+        "/tasks", json={"symbol": "AAPL", "as_of": "2024-03-01", "current_weight": 0.1}, headers={"X-API-Key": "dev-trader-key"}
+    )
     assert r.status_code == 202
     tid = r.json()["task_id"]
     st = _wait(c, tid)
@@ -79,21 +84,21 @@ def test_api_approval_flow(client):
     ex = h._executor(run)
     # v0.8: a ticket carries the plan's units, notional, currency, price and plan reference (finding 71).
     from agentic_trader.agentic.servers import ticket_from_plan
+
     ticket = ticket_from_plan(h.tools.plan("AAPL", date(2024, 3, 1), 0.1))
     res = ex.call("execution.submit_order", **ticket)
     assert not res.ok and "awaiting approval" in res.error
     assert c.get("/approvals", headers={"X-API-Key": "dev-trader-key"}).status_code == 403
     pend = c.get("/approvals", headers={"X-API-Key": "dev-risk-key"}).json()
     assert len(pend) == 1 and pend[0]["tool"] == "execution.submit_order"
-    assert c.post(f"/approvals/{pend[0]['id']}", json={"approve": True},
-                  headers={"X-API-Key": "dev-risk-key"}).status_code == 200
-    assert c.post(f"/approvals/{pend[0]['id']}", json={"approve": True},
-                  headers={"X-API-Key": "dev-risk-key"}).status_code == 409         # already decided
-    assert c.post("/approvals/APPROVAL-nope", json={"approve": False},
-                  headers={"X-API-Key": "dev-risk-key"}).status_code == 404
+    assert c.post(f"/approvals/{pend[0]['id']}", json={"approve": True}, headers={"X-API-Key": "dev-risk-key"}).status_code == 200
+    assert (
+        c.post(f"/approvals/{pend[0]['id']}", json={"approve": True}, headers={"X-API-Key": "dev-risk-key"}).status_code == 409
+    )  # already decided
+    assert c.post("/approvals/APPROVAL-nope", json={"approve": False}, headers={"X-API-Key": "dev-risk-key"}).status_code == 404
     assert ex.call("execution.submit_order", **ticket).ok
     assert h.tools.orders[0]["status"] == "ticketed" and h.tools.orders[0]["notional"] == ticket["notional"]
-    assert pend[0]["arguments"]["notional"] == ticket["notional"]      # the approver saw the size and unit
+    assert pend[0]["arguments"]["notional"] == ticket["notional"]  # the approver saw the size and unit
     assert pend[0]["arguments"]["quantity_unit"] == "shares"
 
 
@@ -109,6 +114,7 @@ def test_api_cancel(client):
 # ------------------------------------------------------------------- MCP
 def test_mcp_stdio_round_trip_and_remote_registry():
     from agentic_trader.agentic.mcp_server import call, discover, registry_from_stdio
+
     tools = discover()
     names = {t["name"] for t in tools}
     assert len(tools) == 16 and "market_data__news" in names and "execution__submit_order" in names
@@ -121,7 +127,7 @@ def test_mcp_stdio_round_trip_and_remote_registry():
     with pytest.raises(RuntimeError):
         call("market_data__news", {"symbol": "EUR/XYZ", "as_of": "2024-03-01", "lookback_days": 7})
 
-    reg = registry_from_stdio(["--role", "trader", "--approval", "auto"])   # Round 1: trading is opt-in
+    reg = registry_from_stdio(["--role", "trader", "--approval", "auto"])  # Round 1: trading is opt-in
     assert len(reg) == 16 and "quant.technical" in reg
     ex = ToolExecutor(reg, PolicyEngine({"max_position": 1.0}), EvidenceStore(), Role.TRADER)
     r = ex.call("quant.technical", symbol="AAPL", as_of="2024-03-01")
@@ -132,6 +138,7 @@ def test_mcp_stdio_round_trip_and_remote_registry():
     # the remote plan's own fields; the server's desk checks plan_id against those fields and
     # against the plan it produced itself (kept by the one live stdio session), not across processes.
     from agentic_trader.agentic.servers import ticket_from_plan
+
     plan = ex.call("execution.plan", symbol="AAPL", as_of="2024-03-01", target_weight=0.1)
     assert plan.ok and plan.payload["quantity_unit"] == "shares"
     order = ex.call("execution.submit_order", **ticket_from_plan(plan.payload))
@@ -164,14 +171,14 @@ def test_cli_task_tools_and_research_commands(tmp_path, capsys):
     assert "denied by policy" in capsys.readouterr().out
     assert main(["task", "AAPL", "--date", "2024-03-01", "--json", "--no-memory"]) == 0
     body = capsys.readouterr().out
-    rec = json.loads(body[body.index("{"):body.rindex("}") + 1])
+    rec = json.loads(body[body.index("{") : body.rindex("}") + 1])
     assert rec["state"] == "COMPLETED" and rec["report"]["warnings"] == []
 
     assert main(["tools"]) == 0
     assert "16 tools on 5 servers" in capsys.readouterr().out
     assert main(["tools", "--json"]) == 0
     cat = capsys.readouterr().out
-    assert json.loads(cat[cat.index("["):])[0]["name"] == "market_data.history"
+    assert json.loads(cat[cat.index("[") :])[0]["name"] == "market_data.history"
 
     assert main(["alpha", "USDJPY", "--start", "2021-01-04", "--end", "2024-03-28", "--out", str(tmp_path / "s.csv")]) == 0
     assert "IC by horizon" in capsys.readouterr().out and (tmp_path / "s.csv").exists()
@@ -184,15 +191,32 @@ def test_cli_task_tools_and_research_commands(tmp_path, capsys):
     assert main(["execute", "AAPL", "--date", "2024-03-01", "--target", "0.3", "--current", "0.3"]) == 0
     assert "nothing to trade" in capsys.readouterr().out
 
-    assert main(["portfolio", "AAPL,EURUSD", "--start", "2024-01-02", "--end", "2024-02-29", "--every", "10",
-                 "--weighting", "inverse_vol"]) == 0
+    assert (
+        main(
+            [
+                "portfolio",
+                "AAPL,EURUSD",
+                "--start",
+                "2024-01-02",
+                "--end",
+                "2024-02-29",
+                "--every",
+                "10",
+                "--weighting",
+                "inverse_vol",
+            ]
+        )
+        == 0
+    )
     assert "latest capital allocation" in capsys.readouterr().out
 
     import numpy as np
     import pandas as pd
+
     path = tmp_path / "r.csv"
-    pd.DataFrame({"r": np.random.default_rng(0).normal(0.0004, 0.01, 600)},
-                 index=pd.bdate_range("2021-01-01", periods=600)).to_csv(path)
+    pd.DataFrame(
+        {"r": np.random.default_rng(0).normal(0.0004, 0.01, 600)}, index=pd.bdate_range("2021-01-01", periods=600)
+    ).to_csv(path)
     assert main(["stats", str(path), "--trials", "16"]) == 0
     assert "deflated_sharpe_prob" in capsys.readouterr().out
     assert main(["stats", str(path), "--column", "nope"]) == 2
@@ -200,6 +224,7 @@ def test_cli_task_tools_and_research_commands(tmp_path, capsys):
 
 def test_cli_mcp_entry_point_is_wired():
     from agentic_trader.cli import build_parser
+
     args = build_parser().parse_args(["mcp", "--data", "synthetic"])
     assert args.func.__name__ == "cmd_mcp"
     args = build_parser().parse_args(["serve", "--port", "9"])

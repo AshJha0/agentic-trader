@@ -15,6 +15,7 @@ signed values, and a model narrative that fails either audit or the output guard
 is not shipped: the template narrative replaces it and the model text is kept in
 ``Report.rejected_narrative`` for the audit trail.
 """
+
 from __future__ import annotations
 
 import math
@@ -39,32 +40,41 @@ class Report:
     task_id: str
     symbol: str
     as_of: str
-    facts: dict[str, float]                 # every figure the narrative may use
+    facts: dict[str, float]  # every figure the narrative may use
     sections: dict[str, Any]
     narrative: str
     warnings: list[str] = field(default_factory=list)
     narrative_source: str = "template"
-    rejected_narrative: str | None = None   # a model narrative that failed an audit (audit trail only)
+    rejected_narrative: str | None = None  # a model narrative that failed an audit (audit trail only)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"task_id": self.task_id, "symbol": self.symbol, "as_of": self.as_of, "facts": self.facts,
-                "sections": self.sections, "narrative": self.narrative, "warnings": self.warnings,
-                "narrative_source": self.narrative_source, "rejected_narrative": self.rejected_narrative}
+        return {
+            "task_id": self.task_id,
+            "symbol": self.symbol,
+            "as_of": self.as_of,
+            "facts": self.facts,
+            "sections": self.sections,
+            "narrative": self.narrative,
+            "warnings": self.warnings,
+            "narrative_source": self.narrative_source,
+            "rejected_narrative": self.rejected_narrative,
+        }
 
     def to_markdown(self) -> str:
         s = self.sections
         out = [f"# {self.symbol} decision — {self.as_of}", "", "## Executive summary", self.narrative, ""]
         out.append("## Decision")
         d = s["decision"]
-        out.append(f"**{d['action']}** target weight {d['target_weight']:+.2f} (confidence "
-                   f"{d['confidence']:.2f}, critic multiplier {d['critic_multiplier']:.2f}); "
-                   f"stop {d['stop_loss']}, target {d['take_profit']}")
+        out.append(
+            f"**{d['action']}** target weight {d['target_weight']:+.2f} (confidence "
+            f"{d['confidence']:.2f}, critic multiplier {d['critic_multiplier']:.2f}); "
+            f"stop {d['stop_loss']}, target {d['take_profit']}"
+        )
         out.extend(f"- adjustment: {a}" for a in d["adjustments"])
         out.append("")
         out.append("## Findings")
         for f in s["findings"]:
-            out.append(f"- **{f['agent']}** ({f['confidence']:.2f}): {f['claim']} "
-                       f"[{', '.join(f['evidence_ids'])}]")
+            out.append(f"- **{f['agent']}** ({f['confidence']:.2f}): {f['claim']} [{', '.join(f['evidence_ids'])}]")
         out.append("")
         out.append("## Critic")
         for c in s["critic"]["checks"]:
@@ -107,7 +117,7 @@ def number_audit(narrative: str, facts: dict[str, float], rel_tol: float = 1e-6)
     for v in facts.values():
         if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
             values.extend(_number_variants(float(v)))
-    text = _ISO_DATE.sub(" ", narrative)   # dates are not figures
+    text = _ISO_DATE.sub(" ", narrative)  # dates are not figures
     text = _EVIDENCE_ID.sub(" ", text)
     unmatched = []
     for m in _NUMBER.finditer(text):
@@ -118,7 +128,7 @@ def number_audit(narrative: str, facts: dict[str, float], rel_tol: float = 1e-6)
         except ValueError:
             continue
         shown = len(raw.split(".")[1]) if "." in raw else 0
-        half_ulp = 0.5 * 10 ** -shown                      # rounding tolerance in the token's units
+        half_ulp = 0.5 * 10**-shown  # rounding tolerance in the token's units
         # (candidate value, tolerance in the candidate's units)
         cands = [(num, half_ulp)]
         if token.endswith("%"):
@@ -127,7 +137,7 @@ def number_audit(narrative: str, facts: dict[str, float], rel_tol: float = 1e-6)
         for c, tol in cands:
             for v in values:
                 if (v < 0) != (c < 0) and v != 0 and c != 0:
-                    continue                        # opposite signs never match, however close
+                    continue  # opposite signs never match, however close
                 if abs(v - c) <= max(abs(v) * rel_tol, tol + 1e-12):
                     ok = True
                     break
@@ -171,8 +181,12 @@ def collect_facts(state: TradingState, critic: CriticReport) -> dict[str, float]
     for v in state.risk_views:
         facts[f"risk_{v.stance}_weight"] = v.recommended_weight
     if d:
-        facts.update(target_weight=d.target_weight, confidence=d.confidence * critic.multiplier,
-                     raw_confidence=d.confidence, critic_multiplier=critic.multiplier)
+        facts.update(
+            target_weight=d.target_weight,
+            confidence=d.confidence * critic.multiplier,
+            raw_confidence=d.confidence,
+            critic_multiplier=critic.multiplier,
+        )
         if d.stop_loss is not None:
             facts["stop_loss"] = d.stop_loss
         if d.take_profit is not None:
@@ -180,22 +194,27 @@ def collect_facts(state: TradingState, critic: CriticReport) -> dict[str, float]
     return facts
 
 
-def template_narrative(state: TradingState, facts: dict[str, float], findings: list[Finding],
-                       critic: CriticReport) -> str:
+def template_narrative(state: TradingState, facts: dict[str, float], findings: list[Finding], critic: CriticReport) -> str:
     d = state.decision
     assert d is not None  # the report is built after the portfolio manager decided
     ins = state.instrument
     votes = [r for r in state.reports.values() if not r.abstained]
     bulls = [r.analyst for r in votes if r.signal > 0.1]
     bears = [r.analyst for r in votes if r.signal < -0.1]
-    parts = [f"{ins.display}: {d.action.value} with a target weight of {d.target_weight:+.2f} "
-             f"(confidence {facts['confidence']:.2f})."]
+    parts = [
+        f"{ins.display}: {d.action.value} with a target weight of {d.target_weight:+.2f} (confidence {facts['confidence']:.2f})."
+    ]
     if state.debate:
-        parts.append(f"The debate verdict was {state.debate.winner} with a score of {state.debate.score:+.2f}; "
-                     f"{len(bulls)} analysts leaned bullish and {len(bears)} bearish.")
+        parts.append(
+            f"The debate verdict was {state.debate.winner} with a score of {state.debate.score:+.2f}; "
+            f"{len(bulls)} analysts leaned bullish and {len(bears)} bearish."
+        )
     if state.proposal:
-        parts.append(f"The trader proposed {state.proposal.target_weight:+.2f}; the risk team's views were "
-                     + ", ".join(f"{v.stance} {v.recommended_weight:+.2f}" for v in state.risk_views[-3:]) + ".")
+        parts.append(
+            f"The trader proposed {state.proposal.target_weight:+.2f}; the risk team's views were "
+            + ", ".join(f"{v.stance} {v.recommended_weight:+.2f}" for v in state.risk_views[-3:])
+            + "."
+        )
     if d.adjustments:
         parts.append("Adjustments: " + "; ".join(d.adjustments) + ".")
     if d.stop_loss is not None and d.take_profit is not None:
@@ -219,14 +238,21 @@ def llm_narrative(llm: LLM, state: TradingState, facts: dict[str, float], findin
         "Write a 4-6 sentence executive summary of this decision for a portfolio manager.\n\n"
         "Structured facts (use these figures and no others; quote them as given):\n"
         + "\n".join(f"- {k}: {v:.4g}" for k, v in shown.items())
-        + "\n\nFindings:\n" + findings_block(findings, confidence=False)
+        + "\n\nFindings:\n"
+        + findings_block(findings, confidence=False)
         + "\n\nDo not invent numbers, dates or evidence ids. Plain prose, no headings."
     )
     return complete_anon(llm, FENCE_NOTE + "You are the reporting analyst of a trading desk.", prompt, state, deep=True)
 
 
-def build_report(task: Task, state: TradingState, findings: list[Finding], critic: CriticReport,
-                 evidence: EvidenceStore, llm: LLM | None = None) -> Report:
+def build_report(
+    task: Task,
+    state: TradingState,
+    findings: list[Finding],
+    critic: CriticReport,
+    evidence: EvidenceStore,
+    llm: LLM | None = None,
+) -> Report:
     if state.decision is None:
         raise ValueError("cannot report without a decision")
     facts = collect_facts(state, critic)
@@ -250,29 +276,45 @@ def build_report(task: Task, state: TradingState, findings: list[Finding], criti
         narrative = template_narrative(state, facts, findings, critic)
     d = state.decision
     sections = {
-        "decision": {"action": d.action.value, "target_weight": d.target_weight,
-                     "confidence": facts["confidence"], "critic_multiplier": critic.multiplier,
-                     "stop_loss": None if d.stop_loss is None else round(d.stop_loss, 6),
-                     "take_profit": None if d.take_profit is None else round(d.take_profit, 6),
-                     "adjustments": list(d.adjustments), "approved": d.approved, "source": d.source},
-        "findings": [{"agent": f.agent, "claim": f.claim, "confidence": round(f.confidence, 3),
-                      "evidence_ids": list(f.evidence_ids), "untrusted": f.untrusted} for f in findings],
+        "decision": {
+            "action": d.action.value,
+            "target_weight": d.target_weight,
+            "confidence": facts["confidence"],
+            "critic_multiplier": critic.multiplier,
+            "stop_loss": None if d.stop_loss is None else round(d.stop_loss, 6),
+            "take_profit": None if d.take_profit is None else round(d.take_profit, 6),
+            "adjustments": list(d.adjustments),
+            "approved": d.approved,
+            "source": d.source,
+        },
+        "findings": [
+            {
+                "agent": f.agent,
+                "claim": f.claim,
+                "confidence": round(f.confidence, 3),
+                "evidence_ids": list(f.evidence_ids),
+                "untrusted": f.untrusted,
+            }
+            for f in findings
+        ],
         "critic": critic.to_dict(),
         "knowledge": list(state.knowledge),
         "evidence": evidence.summary_rows(),
     }
     warnings = list(model_warnings)
-    if source != "llm":     # the template's own audit (a passing model narrative was audited above)
+    if source != "llm":  # the template's own audit (a passing model narrative was audited above)
         warnings += [f"number not traceable to the facts: {t}" for t in number_audit(narrative, facts)]
         warnings += [f"evidence id does not resolve: {i}" for i in evidence_audit(narrative, findings, evidence)]
-    return Report(task.id, state.instrument.symbol, state.as_of.isoformat(), facts, sections, narrative,
-                  warnings, source, rejected)
+    return Report(
+        task.id, state.instrument.symbol, state.as_of.isoformat(), facts, sections, narrative, warnings, source, rejected
+    )
 
 
 def narrative_guard(state: TradingState, text: str) -> list[str]:
     """``output_guard.check_output`` reasons for a model narrative (empty when it passes): a URL,
     a ticker other than this instrument's, instruction-like or poison-like text."""
     from .output_guard import check_output
+
     ins = state.instrument
     allowed = {ins.symbol, getattr(ins, "display", ins.symbol)}
     allowed.update(str(x) for x in (getattr(ins, "base", None), getattr(ins, "quote", None)) if x)

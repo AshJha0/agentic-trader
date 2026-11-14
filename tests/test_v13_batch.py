@@ -1,15 +1,15 @@
 """BatchLLM (plan item 1.5): stage-wise batching across an offline 3-name x 5-date walk-forward."""
+
 from types import SimpleNamespace
 
 import pytest
 
 from agentic_trader import make_config, run_agent_backtest
-from agentic_trader.batch import (AnthropicBatchBackend, BatchLLM, FakeBatchBackend, Outcome,
-                                  custom_id)
+from agentic_trader.batch import AnthropicBatchBackend, BatchLLM, FakeBatchBackend, Outcome, custom_id
 
 CFG = make_config(memory_path=None)
 NAMES = ("AAPL", "MSFT", "EURUSD")
-START, END, EVERY = "2024-01-01", "2024-02-05", 5   # 25 bars -> 5 decisions per name
+START, END, EVERY = "2024-01-01", "2024-02-05", 5  # 25 bars -> 5 decisions per name
 
 
 class StubLLM:
@@ -21,8 +21,10 @@ class StubLLM:
         if "Facilitator" in system:
             return '{"winner": "bull", "score": 0.6, "conviction": 0.7, "summary": "Bull wins."}'
         if "Trader." in system:
-            return ('{"action": "BUY", "target_weight": 0.5, "confidence": 0.7, "stop_loss": null, '
-                    '"take_profit": null, "horizon_days": 5, "rationale": "r"}')
+            return (
+                '{"action": "BUY", "target_weight": 0.5, "confidence": 0.7, "stop_loss": null, '
+                '"take_profit": null, "horizon_days": 5, "rationale": "r"}'
+            )
         if "Risk Analyst" in system:
             return '{"recommended_weight": 0.4, "argument": "fine"}'
         if "Portfolio Manager" in system:
@@ -38,8 +40,7 @@ def respond(params):
 
 
 def walk_forward(llm):
-    return [d for s in NAMES
-            for d in run_agent_backtest(s, START, END, CFG, rebalance_every=EVERY, llm=llm).decisions]
+    return [d for s in NAMES for d in run_agent_backtest(s, START, END, CFG, rebalance_every=EVERY, llm=llm).decisions]
 
 
 def key(decisions):
@@ -51,7 +52,7 @@ def direct():
     return walk_forward(STUB)
 
 
-MAX_PASSES = 60   # the held weight chains the dates: passes ~ pipeline stages x decision dates
+MAX_PASSES = 60  # the held weight chains the dates: passes ~ pipeline stages x decision dates
 
 
 @pytest.fixture(scope="module")
@@ -69,7 +70,7 @@ def test_batched_walk_forward_matches_direct(batched, direct):
     assert 1 < batched.passes < MAX_PASSES
     assert len(batched.backend.batches) == batched.passes - 1
     assert len(batched.final) == 15 and all(d.source == "llm" for d in batched.final)
-    assert key(batched.final) == key(direct)   # also proves shuffled result order is harmless
+    assert key(batched.final) == key(direct)  # also proves shuffled result order is harmless
     assert batched.llm.summary["failed"] == 0
 
 
@@ -97,10 +98,9 @@ def test_expired_then_succeeded_resubmits(tmp_path):
 def test_retries_spent_and_permanent_error_fall_back(tmp_path):
     backend = FakeBatchBackend(lambda p: Outcome("errored", retryable=p["prompt"] == "busy"))
     llm = BatchLLM(None, backend, tmp_path / "s.jsonl", max_resubmits=2)
-    out = llm.run_until_complete(lambda: (llm.complete("s", "busy", deep=False),
-                                          llm.complete("s", "bad", deep=True)))
+    out = llm.run_until_complete(lambda: (llm.complete("s", "busy", deep=False), llm.complete("s", "bad", deep=True)))
     assert out == (None, None)
-    assert [len(b) for b in backend.batches] == [2, 1, 1]   # "bad" final at once, "busy" twice more
+    assert [len(b) for b in backend.batches] == [2, 1, 1]  # "bad" final at once, "busy" twice more
     assert llm.summary["failed"] == 2 and llm.summary["resubmitted"] == 2
 
 
@@ -143,9 +143,12 @@ def test_anthropic_backend_against_fake_client():
     def err(t):
         return SimpleNamespace(error=SimpleNamespace(type=t))
 
-    results = [item("d", "expired"), item("a", "succeeded", message="MSG"),
-               item("b", "errored", error=err("overloaded_error")),
-               item("c", "errored", error=err("invalid_request_error"))]
+    results = [
+        item("d", "expired"),
+        item("a", "succeeded", message="MSG"),
+        item("b", "errored", error=err("overloaded_error")),
+        item("c", "errored", error=err("invalid_request_error")),
+    ]
     batches = FakeBatches(results)
     client = SimpleNamespace(messages=SimpleNamespace(batches=batches))
     sleeps = []

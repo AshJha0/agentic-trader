@@ -12,6 +12,7 @@ holdout is never read. A name passes a test when its p-value is at least ``--lev
 
 Uses the Yahoo provider (network); the test suite never runs this script.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,7 +30,7 @@ from agentic_trader.instruments import Instrument
 from agentic_trader.risk_model import VAR_METHODS, var_forecast
 from agentic_trader.stats import var_backtest
 
-WARMUP_DAYS = 550   # calendar days before the design start: > 250 trading days of window
+WARMUP_DAYS = 550  # calendar days before the design start: > 250 trading days of window
 
 
 def evaluate(level: float) -> dict:
@@ -50,14 +51,25 @@ def evaluate(level: float) -> dict:
             counts[m]["kupiec"] += kup
             counts[m]["independence"] += ind
             counts[m]["both"] += kup and ind
-            rows.append({"symbol": sym, "method": m, "n": bt.n, "breaches": bt.breaches,
-                         "breach_rate": round(bt.breach_rate, 4), "kupiec_p": bt.kupiec_p,
-                         "christoffersen_p": (None if bt.christoffersen_p is None
-                                              else round(float(bt.christoffersen_p), 4))})
-    return {"period": PERIODS["design"], "level": level, "n_symbols": len(symbols),
-            "pass_counts": counts, "rows": rows,
-            "mean_breach_rate": {m: float(np.mean([x["breach_rate"] for x in rows if x["method"] == m]))
-                                 for m in VAR_METHODS}}
+            rows.append(
+                {
+                    "symbol": sym,
+                    "method": m,
+                    "n": bt.n,
+                    "breaches": bt.breaches,
+                    "breach_rate": round(bt.breach_rate, 4),
+                    "kupiec_p": bt.kupiec_p,
+                    "christoffersen_p": (None if bt.christoffersen_p is None else round(float(bt.christoffersen_p), 4)),
+                }
+            )
+    return {
+        "period": PERIODS["design"],
+        "level": level,
+        "n_symbols": len(symbols),
+        "pass_counts": counts,
+        "rows": rows,
+        "mean_breach_rate": {m: float(np.mean([x["breach_rate"] for x in rows if x["method"] == m])) for m in VAR_METHODS},
+    }
 
 
 def main() -> None:
@@ -69,8 +81,10 @@ def main() -> None:
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(res, indent=2), encoding="utf-8")
     for m, c in res["pass_counts"].items():
-        print(f"{m:>10}: Kupiec {c['kupiec']}/{res['n_symbols']}, independence "
-              f"{c['independence']}/{res['n_symbols']}, both {c['both']}/{res['n_symbols']}")
+        print(
+            f"{m:>10}: Kupiec {c['kupiec']}/{res['n_symbols']}, independence "
+            f"{c['independence']}/{res['n_symbols']}, both {c['both']}/{res['n_symbols']}"
+        )
 
 
 if __name__ == "__main__":

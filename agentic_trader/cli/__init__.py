@@ -21,6 +21,7 @@ Agentic services
 Invalid input (unknown symbol, no data, bad dates) exits with status 2 and a
 one-line error instead of a traceback; use -v for details.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,8 +50,9 @@ def main(argv: list[str] | None = None, *, dotenv: bool | None = None) -> int:
     if dotenv and not os.environ.get(NO_DOTENV_ENV):
         load_dotenv()
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO if getattr(args, "verbose", False) else logging.WARNING,
-                        format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO if getattr(args, "verbose", False) else logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
+    )
     try:
         return args.func(args)
     except (ValueError, FileNotFoundError, KeyError, json.JSONDecodeError) as e:

@@ -3,6 +3,7 @@
 Offline and $0: providers are driven through injected fetchers or a fake ``yfinance``
 module, never the network. No thread-timing assertions.
 """
+
 from __future__ import annotations
 
 import builtins
@@ -19,8 +20,15 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from agentic_trader import provenance, validate
-from agentic_trader.agentic.governance import (MemoryTool, MemoryToolError, OutcomeRow, _phi, governance_report,
-                                               render_report, weekly_rollup)
+from agentic_trader.agentic.governance import (
+    MemoryTool,
+    MemoryToolError,
+    OutcomeRow,
+    _phi,
+    governance_report,
+    render_report,
+    weekly_rollup,
+)
 from agentic_trader.agentic.tracing import Metrics, SLOReport
 from agentic_trader.config import make_config
 from agentic_trader.data import fred as fred_mod
@@ -32,7 +40,7 @@ from agentic_trader.memory import DecisionMemory
 from agentic_trader.oms import OMS, KillSwitch, MarketSnapshot, OrderState, reconcile
 
 UTC = timezone.utc
-FRI_1555 = datetime(2026, 11, 6, 20, 55, tzinfo=UTC)     # 15:55 New York, a Friday session
+FRI_1555 = datetime(2026, 11, 6, 20, 55, tzinfo=UTC)  # 15:55 New York, a Friday session
 
 
 # --------------------------------------------------------------------------- validate
@@ -45,8 +53,7 @@ def _bars(idx, close=100.0):
 def test_bar_problems_refuses_unknown_class_and_missing_columns():
     with pytest.raises(ValueError, match="unknown asset class"):
         validate.bar_problems(_bars(pd.bdate_range("2024-01-01", periods=3)), "crypto")
-    assert validate.bar_problems(pd.DataFrame({"Close": [1.0]}), "equity") == [
-        "missing price columns ['Open', 'High', 'Low']"]
+    assert validate.bar_problems(pd.DataFrame({"Close": [1.0]}), "equity") == ["missing price columns ['Open', 'High', 'Low']"]
     with pytest.raises(ValueError, match="unknown asset class"):
         validate.session_close_utc(date(2024, 1, 2), "bond")
 
@@ -55,7 +62,7 @@ def test_bar_problems_reports_each_defect_once_with_its_first_date():
     idx = pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-03", "2024-01-04"])
     df = _bars(idx)
     df.loc[df.index[1], "Close"] = np.nan
-    df.iloc[3, df.columns.get_loc("High")] = 50.0          # High below Low on the 4th
+    df.iloc[3, df.columns.get_loc("High")] = 50.0  # High below Low on the 4th
     reasons = validate.bar_problems(df, "equity")
     assert any(r.startswith("NaN Close on 2024-01-03") for r in reasons)
     assert "High below Low on 2024-01-04" in reasons and "duplicate date 2024-01-03" in reasons
@@ -83,8 +90,8 @@ def test_common_sessions_empty_and_intersection():
 @settings(max_examples=200, deadline=None)
 def test_cap_short_notional_properties(w, cap):
     out = validate.cap_short_notional(w, cap)
-    assert out >= -cap - 1e-15 or w >= 0       # never a short larger than the cap
-    assert out == w if w >= 0 else out >= w     # longs untouched; shorts only shrink
+    assert out >= -cap - 1e-15 or w >= 0  # never a short larger than the cap
+    assert out == w if w >= 0 else out >= w  # longs untouched; shorts only shrink
     assert validate.cap_short_notional(w, None) == w
 
 
@@ -92,7 +99,7 @@ def test_cap_short_notional_properties(w, cap):
 def test_cap_short_notional_refuses_bad_caps(cap):
     with pytest.raises(ValueError, match="finite non-negative"):
         validate.cap_short_notional(-0.2, cap)
-    assert validate.cap_short_notional(0.2, cap) == 0.2   # a long never reads the cap
+    assert validate.cap_short_notional(0.2, cap) == 0.2  # a long never reads the cap
 
 
 def test_ledger_round_trip_and_match(tmp_path):
@@ -116,9 +123,17 @@ def cfg():
     return c
 
 
-@pytest.mark.parametrize("field,value", [("quantity", True), ("quantity", 0), ("quantity", -1),
-                                         ("quantity", float("nan")), ("price", float("inf")),
-                                         ("last_close", "199")])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("quantity", True),
+        ("quantity", 0),
+        ("quantity", -1),
+        ("quantity", float("nan")),
+        ("price", float("inf")),
+        ("last_close", "199"),
+    ],
+)
 def test_oms_submit_refuses_non_numeric_or_non_positive_inputs(cfg, field, value):
     kw = {"quantity": 10, "price": 200.0, "last_close": 199.0}
     kw[field] = value
@@ -140,7 +155,7 @@ def test_oms_execute_zero_capacity_and_fx_flat_clears_value_date(cfg):
     oms = OMS(cfg)
     oms.submit("o1", "AAPL", "buy", 10, 200.0, 199.0, FRI_1555)
     assert oms.execute("o1", MarketSnapshot(200.0, adv=0.0, impact_k=None), FRI_1555) is None
-    assert oms.orders["o1"].state is OrderState.ACKED          # nothing filled, still working
+    assert oms.orders["o1"].state is OrderState.ACKED  # nothing filled, still working
     fx = OMS(cfg, positions={"EURUSD": 1000.0})
     fx.fx_value_dates["EURUSD"] = date(2026, 11, 10)
     fx.submit("f1", "EURUSD", "sell", 1000, 1.10, 1.10, FRI_1555)
@@ -153,8 +168,8 @@ def test_oms_empty_cash_projection_and_kill_switch_file_absent(cfg, tmp_path):
     proj = oms.cash_projection()
     assert proj.empty and list(proj.columns) == ["currency", "settle_date", "amount", "balance"]
     ks = KillSwitch(tmp_path / "nested" / "ks.json")
-    assert ks.engaged() == {}                                  # no file yet: nothing halted
-    ks.release("global")                                       # releasing nothing is harmless
+    assert ks.engaged() == {}  # no file yet: nothing halted
+    ks.release("global")  # releasing nothing is harmless
     ks.engage(" aapl ", "fat finger", at=FRI_1555)
     assert ks.blocking(Instrument.parse("AAPL")).startswith("kill_switch: AAPL halted")
     assert ks.blocking(Instrument.parse("MSFT")) is None
@@ -179,8 +194,12 @@ def _row(as_of, role="trader", weight=0.5, pnl=0.01, failed=()):
 def test_phi_edges_and_report_rendering():
     assert _phi([], []) is None and _phi([True, True], [True, False]) is None
     assert _phi([True, False], [True, False]) == pytest.approx(1.0)
-    rows = [_row("2024-03-04", failed=["c1"]), _row("2024-03-05", pnl=-0.02), _row("2024-03-12", pnl=None),
-            _row("2024-03-12", role="pm", weight=0.0)]
+    rows = [
+        _row("2024-03-04", failed=["c1"]),
+        _row("2024-03-05", pnl=-0.02),
+        _row("2024-03-12", pnl=None),
+        _row("2024-03-12", role="pm", weight=0.0),
+    ]
     rep = governance_report(rows, checks=["never_fired"])
     assert rep["by_check"]["never_fired"]["false_positive_rate"] is None
     weeks = weekly_rollup(rows)
@@ -228,11 +247,31 @@ def test_stage_quantile_and_slo_markdown():
     assert m.stage_quantile("analyst", 0.5) is None
     for v in (1.0, 2.0, 3.0):
         m.observe("stage_latency_ms", v, stage="analyst")
-    assert m.stage_quantile("analyst", 1.0) == 3.0           # capped at the observed max
-    rep = SLOReport([{"stage": "a", "runs": 1, "latency_ms": None, "latency_objective_ms": None,
-                      "failure_rate": 0.0, "failure_objective": None, "breaches": [], "judged": False},
-                     {"stage": "b", "runs": 9, "latency_ms": 5.0, "latency_objective_ms": 1.0,
-                      "failure_rate": 0.5, "failure_objective": 0.1, "breaches": ["slow"], "judged": True}])
+    assert m.stage_quantile("analyst", 1.0) == 3.0  # capped at the observed max
+    rep = SLOReport(
+        [
+            {
+                "stage": "a",
+                "runs": 1,
+                "latency_ms": None,
+                "latency_objective_ms": None,
+                "failure_rate": 0.0,
+                "failure_objective": None,
+                "breaches": [],
+                "judged": False,
+            },
+            {
+                "stage": "b",
+                "runs": 9,
+                "latency_ms": 5.0,
+                "latency_objective_ms": 1.0,
+                "failure_rate": 0.5,
+                "failure_objective": 0.1,
+                "breaches": ["slow"],
+                "judged": True,
+            },
+        ]
+    )
     md = rep.to_markdown()
     assert "too few runs" in md and "BREACH: slow" in md and not rep.ok
     assert rep.to_dict()["ok"] is False and len(rep.breaches) == 1
@@ -250,14 +289,14 @@ def test_version_from_pyproject_edges(tmp_path):
 def test_version_from_pyproject_without_tomllib(tmp_path, monkeypatch):
     """The Python 3.10 fallback parser (no tomllib) reads the same version."""
     f = tmp_path / "p.toml"
-    f.write_text('[project]\nname = "agentic-trader"\nversion = "1.2.3"\n\n[tool.x]\nversion = "0"\n',
-                 encoding="utf-8")
+    f.write_text('[project]\nname = "agentic-trader"\nversion = "1.2.3"\n\n[tool.x]\nversion = "0"\n', encoding="utf-8")
     real = builtins.__import__
 
     def no_tomllib(name, *a, **k):
         if name == "tomllib":
             raise ModuleNotFoundError(name)
         return real(name, *a, **k)
+
     monkeypatch.setattr(builtins, "__import__", no_tomllib)
     assert provenance._version_from_pyproject(f) == "1.2.3"
     f.write_text('[project]\nname = "other"\nversion = "1.2.3"\n', encoding="utf-8")
@@ -267,6 +306,7 @@ def test_version_from_pyproject_without_tomllib(tmp_path, monkeypatch):
 def test_git_info_without_git_and_missing_dist(monkeypatch):
     def boom(*a, **k):
         raise FileNotFoundError("git")
+
     monkeypatch.setattr(subprocess, "run", boom)
     assert provenance.git_info() == (None, None)
     assert provenance._dist_version("surely-not-an-installed-dist-xyz") is None
@@ -289,7 +329,7 @@ def test_fred_prepare_refusals():
     with pytest.raises(ValueError, match="not dated"):
         c._prepare(pd.DataFrame({"v": [1.0]}, index=["not a date"]), SPEC)
     s = c._prepare(pd.DataFrame({"v": [1.0]}, index=["2024-01-01"]), SPEC)
-    assert s.index[0] == pd.Timestamp("2024-01-02")          # dated by publication (lag 1)
+    assert s.index[0] == pd.Timestamp("2024-01-02")  # dated by publication (lag 1)
     with pytest.raises(ValueError, match="vintage_step_days"):
         FredClient(vintage_step_days=0)
 
@@ -302,6 +342,7 @@ def test_fred_stale_cache_served_when_redownload_fails(tmp_path, monkeypatch):
         if len(calls) > 1:
             raise OSError("offline")
         return _table([1.0, 2.0, 3.0])
+
     c = FredClient(cache_dir=tmp_path, fetch=fetch, cache_max_age_days=1.0)
     assert c.value_asof(SPEC, date(2024, 1, 4)) == 3.0
     later = fred_mod.time.time() + 3 * 86400
@@ -335,8 +376,8 @@ def test_fred_vintage_failure_and_staleness():
     assert c.value_asof(spec, date(2024, 1, 2)) is None
     assert c.series_asof(spec, pd.DatetimeIndex(["2024-01-02"])).isna().all()
     ok = FredClient(fetch=lambda url: _table([1.0]))
-    assert ok.value_asof(SPEC, date(2023, 12, 1)) is None        # before the first publication
-    assert ok.value_asof(SPEC, date(2024, 3, 1)) is None         # older than max_age_days
+    assert ok.value_asof(SPEC, date(2023, 12, 1)) is None  # before the first publication
+    assert ok.value_asof(SPEC, date(2024, 3, 1)) is None  # older than max_age_days
 
 
 # --------------------------------------------------------------------------- Yahoo parsing
@@ -364,13 +405,15 @@ def yahoo(monkeypatch):
     def make(**kw):
         monkeypatch.setitem(sys.modules, "yfinance", _FakeYF(**kw))
         return YahooProvider(make_config(data_provider="yahoo", edgar=False))
+
     return make
 
 
 def _actions_frame(multi=False, tz=False):
     idx = pd.date_range("2026-09-14", periods=8, freq="B", tz="America/New_York" if tz else None)
-    df = pd.DataFrame({"Close": [400.0, 404, 408, 100, 101, 102, 103, 999], "Stock Splits": [0, 0, 0, 4.0, 0, 0, 0, 0]},
-                      index=idx)
+    df = pd.DataFrame(
+        {"Close": [400.0, 404, 408, 100, 101, 102, 103, 999], "Stock Splits": [0, 0, 0, 4.0, 0, 0, 0, 0]}, index=idx
+    )
     if multi:
         df.columns = pd.MultiIndex.from_product([df.columns, ["AAPL"]])
     return df
@@ -381,8 +424,8 @@ def test_yahoo_corporate_actions_parse_splits_and_as_traded_close(yahoo, multi, 
     p = yahoo(frame=_actions_frame(multi, tz))
     ins = Instrument.parse("AAPL")
     assert p.splits(ins) == {date(2026, 9, 17): 4.0}
-    assert p.as_traded_close(ins, date(2026, 9, 16)) == pytest.approx(408.0 * 4.0)   # pre-split shares
-    assert p.as_traded_close(ins, date(2026, 9, 22)) == 103.0           # today's partial bar is dropped
+    assert p.as_traded_close(ins, date(2026, 9, 16)) == pytest.approx(408.0 * 4.0)  # pre-split shares
+    assert p.as_traded_close(ins, date(2026, 9, 22)) == 103.0  # today's partial bar is dropped
     assert p.as_traded_close(ins, date(2026, 9, 1)) is None
     got = p.as_traded_closes(ins, pd.DatetimeIndex(["2026-09-14", "2026-09-13"]))
     assert got[0] == 400.0 and math.isnan(got[1])
@@ -400,17 +443,25 @@ def test_yahoo_corporate_action_outage_degrades_to_none(yahoo):
 
 def test_yahoo_news_parsing_shapes_and_window(yahoo):
     ts = datetime(2026, 9, 21, 12, tzinfo=UTC).timestamp()
-    news = [{"content": {"title": "Wrapped", "pubDate": "2026-09-22T10:00:00Z",
-                         "provider": {"displayName": "Wire"}, "summary": None}},
-            {"title": "Flat", "providerPublishTime": ts, "publisher": "Pub", "provider": "not a dict"},
-            {"content": {"title": "", "pubDate": "2026-09-22"}},             # no title: skipped
-            {"content": {"title": "No date"}},                                 # no timestamp: skipped
-            {"content": {"title": "Old", "pubDate": "2026-08-01"}}]            # outside the window
+    news = [
+        {
+            "content": {
+                "title": "Wrapped",
+                "pubDate": "2026-09-22T10:00:00Z",
+                "provider": {"displayName": "Wire"},
+                "summary": None,
+            }
+        },
+        {"title": "Flat", "providerPublishTime": ts, "publisher": "Pub", "provider": "not a dict"},
+        {"content": {"title": "", "pubDate": "2026-09-22"}},  # no title: skipped
+        {"content": {"title": "No date"}},  # no timestamp: skipped
+        {"content": {"title": "Old", "pubDate": "2026-08-01"}},
+    ]  # outside the window
     p = yahoo(news=news)
     out = p.news(Instrument.parse("AAPL"), TODAY, lookback_days=7)
     assert [(n.headline if hasattr(n, "headline") else n.title) for n in out] == ["Wrapped", "Flat"]
     assert out[0].source == "Wire" and out[0].summary == "" and out[1].source == "Pub"
-    assert p.news(Instrument.parse("AAPL"), TODAY - timedelta(days=60), 7) == []   # beyond Yahoo's horizon
+    assert p.news(Instrument.parse("AAPL"), TODAY - timedelta(days=60), 7) == []  # beyond Yahoo's horizon
 
 
 def test_yahoo_news_and_fundamentals_failures_are_empty(yahoo):
@@ -426,18 +477,19 @@ def test_yahoo_fundamentals_snapshot_units(yahoo):
     p = yahoo(info={"marketCap": 0, "freeCashflow": 5e9})
     f = p.fundamentals(Instrument.parse("AAPL"), TODAY)
     assert f["fcf_yield"] is None and f["debt_to_equity"] is None
-    assert p.fundamentals(Instrument.parse("AAPL"), TODAY - timedelta(days=30)) == {}   # stale snapshot
+    assert p.fundamentals(Instrument.parse("AAPL"), TODAY - timedelta(days=30)) == {}  # stale snapshot
     assert p.fundamentals(Instrument.parse("EURUSD"), TODAY) == {}
 
 
 # --------------------------------------------------------------------------- Almgren-Chriss
-@pytest.mark.parametrize("kappa", [8.98846567431158e+307, 1.7e308, 1e300])
+@pytest.mark.parametrize("kappa", [8.98846567431158e307, 1.7e308, 1e300])
 @pytest.mark.parametrize("n", [1, 3])
 def test_almgren_chriss_huge_kappa_is_finite(kappa, n):
     """Regression (found by test_fuzz): for kappa > DBL_MAX / 2, ``-2 * kappa`` overflowed to
     -inf and ``-inf * 0`` at the last slice gave NaN. Huge kappa means sell everything now."""
     from agentic_trader import quant
     from agentic_trader.quant import pycore
+
     for impl in (pycore.almgren_chriss, quant.almgren_chriss):
         out = impl(1000.0, n, kappa)
         assert np.all(np.isfinite(out)) and out[0] == pytest.approx(1000.0) and out.sum() == pytest.approx(1000.0)

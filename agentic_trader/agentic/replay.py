@@ -36,6 +36,7 @@ pandas, numpy or Python change their pickle output. Format-1 recordings (pickle 
 be re-keyed, because a digest cannot be inverted; ``load_recording`` refuses them with a
 message to record the run again.
 """
+
 from __future__ import annotations
 
 import copy
@@ -56,7 +57,7 @@ import pandas as pd
 from ..data.base import MarketDataProvider
 from ..memory import series_basis
 
-FORMAT_VERSION = 2   # 2: canonical JSON request keys (v0.17); 1: pickle keys
+FORMAT_VERSION = 2  # 2: canonical JSON request keys (v0.17); 1: pickle keys
 DEFAULT_DIR = "results/replay"
 ALLOWLIST_ENV = "AGENTIC_TRADER_REPLAY_ALLOWLIST"
 
@@ -69,6 +70,7 @@ def replay_allowlist_path() -> Path:
     """Where recording digests are listed: ``$AGENTIC_TRADER_REPLAY_ALLOWLIST`` when set, else
     ``~/.agentic_trader/replay_allowlist.txt`` (outside any recording directory)."""
     import os
+
     env = os.environ.get(ALLOWLIST_ENV)
     return Path(env) if env else Path.home() / ".agentic_trader" / "replay_allowlist.txt"
 
@@ -80,8 +82,7 @@ def _digest(data: bytes) -> str:
 def _allowed_digests(path: Path) -> set[str]:
     if not path.is_file():
         return set()
-    return {ln.split()[0] for ln in path.read_text(encoding="utf-8").splitlines()
-            if ln.strip() and not ln.startswith("#")}
+    return {ln.split()[0] for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip() and not ln.startswith("#")}
 
 
 def allow_recording(path: str | Path, allowlist: str | Path | None = None) -> str:
@@ -131,8 +132,7 @@ def canonical(obj: Any) -> Any:
     if isinstance(obj, np.ndarray):
         return {"$nd": [canonical(v) for v in obj.tolist()]}
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {"$dc": type(obj).__name__,
-                "v": {f.name: canonical(getattr(obj, f.name)) for f in dataclasses.fields(obj)}}
+        return {"$dc": type(obj).__name__, "v": {f.name: canonical(getattr(obj, f.name)) for f in dataclasses.fields(obj)}}
     if isinstance(obj, dict):
         items = sorted(((json.dumps(canonical(k), sort_keys=True), canonical(v)) for k, v in obj.items()))
         return {"$map": [[k, v] for k, v in items]}
@@ -156,8 +156,7 @@ class Tape:
     order; a replay serves them in that order and then repeats the last one (identical
     requests of a deterministic source give identical answers)."""
 
-    def __init__(self, entries: dict[str, list[tuple[str, Any]]] | None = None,
-                 labels: dict[str, str] | None = None) -> None:
+    def __init__(self, entries: dict[str, list[tuple[str, Any]]] | None = None, labels: dict[str, str] | None = None) -> None:
         self.entries: dict[str, list[tuple[str, Any]]] = entries or {}
         self.labels: dict[str, str] = labels or {}
         self.misses: list[str] = []
@@ -213,8 +212,9 @@ class RecordingMarketData(MarketDataProvider):
         return RecordingMarketData(self.inner.reconfigured(config), self.tape)
 
     def _rec(self, method: str, *args: Any) -> Any:
-        return self.tape.call(_key("data", method, args), f"market data {method}{_short(args)}",
-                              lambda: getattr(self.inner, method)(*args))
+        return self.tape.call(
+            _key("data", method, args), f"market data {method}{_short(args)}", lambda: getattr(self.inner, method)(*args)
+        )
 
     def history(self, instrument, start, end):
         return self._rec("history", instrument, start, end)
@@ -249,8 +249,9 @@ class ReplayMarketData(MarketDataProvider):
         self.price_basis = attrs.get("price_basis", "close")
 
     def reconfigured(self, config: dict) -> "MarketDataProvider":
-        return ReplayMarketData(self.tape, config, {"name": self.name, "real_world": self.real_world,
-                                                   "price_basis": self.price_basis})
+        return ReplayMarketData(
+            self.tape, config, {"name": self.name, "real_world": self.real_world, "price_basis": self.price_basis}
+        )
 
     def _serve(self, method: str, *args: Any) -> Any:
         return self.tape.serve(_key("data", method, args), f"market data {method}{_short(args)}")
@@ -278,8 +279,9 @@ class ReplayMarketData(MarketDataProvider):
 
 
 def _llm_key(method: str, system: str, prompt: str, deep: bool, schema: Any = None) -> str:
-    return _key("llm", method, system, prompt, bool(deep),
-                None if schema is None else json.dumps(schema, sort_keys=True, default=str))
+    return _key(
+        "llm", method, system, prompt, bool(deep), None if schema is None else json.dumps(schema, sort_keys=True, default=str)
+    )
 
 
 class RecordingLLM:
@@ -292,15 +294,22 @@ class RecordingLLM:
         self.has_json = hasattr(inner, "complete_json")
 
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None:
-        return self.tape.call(_llm_key("complete", system, prompt, deep), f"model complete (deep={deep})",
-                              lambda: self.inner.complete(system, prompt, deep=deep))
+        return self.tape.call(
+            _llm_key("complete", system, prompt, deep),
+            f"model complete (deep={deep})",
+            lambda: self.inner.complete(system, prompt, deep=deep),
+        )
 
     def __getattr__(self, name: str) -> Any:
         if name == "complete_json" and self.has_json:
+
             def complete_json(system: str, prompt: str, *, deep: bool, schema: dict[str, Any]) -> str | None:
-                return self.tape.call(_llm_key("complete_json", system, prompt, deep, schema),
-                                      f"model complete_json (deep={deep})",
-                                      lambda: self.inner.complete_json(system, prompt, deep=deep, schema=schema))
+                return self.tape.call(
+                    _llm_key("complete_json", system, prompt, deep, schema),
+                    f"model complete_json (deep={deep})",
+                    lambda: self.inner.complete_json(system, prompt, deep=deep, schema=schema),
+                )
+
             return complete_json
         if name in ("inner", "tape", "has_json"):
             raise AttributeError(name)
@@ -325,9 +334,12 @@ class ReplayLLM:
 
     def __getattr__(self, name: str) -> Any:
         if name == "complete_json" and self.has_json:
+
             def complete_json(system: str, prompt: str, *, deep: bool, schema: dict[str, Any]) -> str | None:
-                return self.tape.serve(_llm_key("complete_json", system, prompt, deep, schema),
-                                       f"model complete_json (deep={deep})")
+                return self.tape.serve(
+                    _llm_key("complete_json", system, prompt, deep, schema), f"model complete_json (deep={deep})"
+                )
+
             return complete_json
         raise AttributeError(name)
 
@@ -388,12 +400,15 @@ def load_recording(path: str | Path, *, allowlist: str | Path | None = None, tru
             raise ReplayUntrusted(
                 f"{path}: SHA-256 {_digest(data)[:16]}... is not on the replay allowlist {al}; unpickling "
                 "runs code from the file, so only recordings saved here (or added with "
-                "allow_recording after checking them) are loaded")
+                "allow_recording after checking them) are loaded"
+            )
     body = pickle.loads(data)  # noqa: S301 - digest-allowlisted own recordings only
     if body.get("version") == 1:
-        raise ValueError(f"{path}: replay format 1 keys requests by a pickle digest, which v0.17 replaced "
-                         "with canonical JSON keys (format 2); a digest cannot be re-keyed, so record the "
-                         "run again with `task --record`")
+        raise ValueError(
+            f"{path}: replay format 1 keys requests by a pickle digest, which v0.17 replaced "
+            "with canonical JSON keys (format 2); a digest cannot be re-keyed, so record the "
+            "run again with `task --record`"
+        )
     if body.get("version") != FORMAT_VERSION:
         raise ValueError(f"{path}: replay format {body.get('version')!r}, expected {FORMAT_VERSION}")
     body["data_tape"] = Tape(*body["data_tape"])
@@ -411,12 +426,14 @@ class Recorder:
     """Builds a graph whose provider and model are recorded, and turns a finished run into
     a ``Recording``. The decision memory is switched off (``memory_path=None``)."""
 
-    def __init__(self, config: dict, provider: MarketDataProvider | None = None, llm: Any = None,
-                 on_event: Callable | None = None) -> None:
+    def __init__(
+        self, config: dict, provider: MarketDataProvider | None = None, llm: Any = None, on_event: Callable | None = None
+    ) -> None:
         from ..config import make_config
         from ..data import get_provider
         from ..graph import TradingGraph
         from ..llm import get_llm
+
         cfg = make_config(config)
         cfg["memory_path"] = None
         self.config = cfg
@@ -430,22 +447,41 @@ class Recorder:
         t = run.task
         return Recording(
             task_id=run.id,
-            task={"symbol": t.symbol, "as_of": t.as_of, "role": t.role.value, "current_weight": t.current_weight,
-                  "question": t.question, "id": t.id},
+            task={
+                "symbol": t.symbol,
+                "as_of": t.as_of,
+                "role": t.role.value,
+                "current_weight": t.current_weight,
+                "question": t.question,
+                "id": t.id,
+            },
             positions=None if positions is None else dict(positions),
             config=copy.deepcopy(self.config),
-            provider_attrs={"name": self.provider.name, "real_world": self.provider.real_world,
-                            "price_basis": self.provider.price_basis},
-            data_tape=self.provider.tape, llm_tape=self.llm.tape if self.llm else None,
-            llm_has_json=bool(self.llm and self.llm.has_json), state=run.state.value,
-            decision=decision_fingerprint(run.decision), evidence_rows=run.evidence.summary_rows())
+            provider_attrs={
+                "name": self.provider.name,
+                "real_world": self.provider.real_world,
+                "price_basis": self.provider.price_basis,
+            },
+            data_tape=self.provider.tape,
+            llm_tape=self.llm.tape if self.llm else None,
+            llm_has_json=bool(self.llm and self.llm.has_json),
+            state=run.state.value,
+            decision=decision_fingerprint(run.decision),
+            evidence_rows=run.evidence.summary_rows(),
+        )
 
 
-def record_task(config: dict, task: Any, positions: dict[str, float] | None = None,
-                provider: MarketDataProvider | None = None, llm: Any = None,
-                harness_kwargs: dict[str, Any] | None = None) -> tuple[Any, Recording]:
+def record_task(
+    config: dict,
+    task: Any,
+    positions: dict[str, float] | None = None,
+    provider: MarketDataProvider | None = None,
+    llm: Any = None,
+    harness_kwargs: dict[str, Any] | None = None,
+) -> tuple[Any, Recording]:
     """Run ``task`` on a recording graph; returns ``(run, recording)``."""
     from .harness import AgentHarness
+
     rec = Recorder(config, provider, llm, on_event=lambda *_: None)
     harness = AgentHarness(rec.graph, positions=positions, **(harness_kwargs or {}))
     try:
@@ -481,9 +517,10 @@ def replay(rec: Recording, *, check: bool = True) -> ReplayResult:
     from ..graph import TradingGraph
     from .domain import Role, Task
     from .harness import AgentHarness
+
     cfg = copy.deepcopy(rec.config)
     cfg["memory_path"] = None
-    cfg["llm_provider"] = "offline"          # never build a live backend; the model is the tape
+    cfg["llm_provider"] = "offline"  # never build a live backend; the model is the tape
     data = Tape(rec.data_tape.entries, rec.data_tape.labels)
     provider = ReplayMarketData(data, cfg, rec.provider_attrs)
     llm = None
@@ -499,8 +536,9 @@ def replay(rec: Recording, *, check: bool = True) -> ReplayResult:
         harness.close()
     misses = data.misses + (llm.tape.misses if llm is not None else [])
     if misses:
-        raise ReplayMissingPayload(f"replay of {rec.task_id} asked for {len(misses)} unrecorded payload(s): "
-                                   + "; ".join(sorted(set(misses))[:5]))
+        raise ReplayMissingPayload(
+            f"replay of {rec.task_id} asked for {len(misses)} unrecorded payload(s): " + "; ".join(sorted(set(misses))[:5])
+        )
     res = ReplayResult(run, rec.decision, decision_fingerprint(run.decision), rec.state, run.state.value)
     if check and not res.matches:
         raise ReplayMismatch(f"replay of {rec.task_id} diverged: {res.diff()}")

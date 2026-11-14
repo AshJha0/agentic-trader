@@ -31,6 +31,7 @@ The harness owns the control plane; agents never control the loop. It:
 * with a store, records which instance owns each live run and heartbeats it, so
   the interrupted-run sweep only fails runs whose lease has expired.
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,12 +53,32 @@ from ..graph import TradingGraph
 from ..instruments import Instrument
 from ..state import TradingState
 from .critic import Critic, CriticReport, apply_weight_rule, decision_untrusted
-from .domain import (EvidenceType, Finding, Plan, PlanStep, PolicyOutcome, StepType, Task, TaskState,
-                     TERMINAL_STATES, TRANSITIONS, ToolRequest, new_id, utc_now)
+from .domain import (
+    EvidenceType,
+    Finding,
+    Plan,
+    PlanStep,
+    PolicyOutcome,
+    StepType,
+    Task,
+    TaskState,
+    TERMINAL_STATES,
+    TRANSITIONS,
+    ToolRequest,
+    new_id,
+    utc_now,
+)
 from .evidence import EvidenceStore
 from .planner import ANALYST_PREFIX, make_plan, max_plan_lookback_bars, plan_cost_bars, plan_to_dict
-from .policy import (AppendOnlyApprovalLog, ApprovalGateway, AutoApprovalGateway, DenyApprovalGateway,
-                     PolicyEngine, QueuedApprovalGateway, SignedApprovalGateway)
+from .policy import (
+    AppendOnlyApprovalLog,
+    ApprovalGateway,
+    AutoApprovalGateway,
+    DenyApprovalGateway,
+    PolicyEngine,
+    QueuedApprovalGateway,
+    SignedApprovalGateway,
+)
 from .rag import KnowledgeBase
 from .reporter import Report, build_report
 from .servers import DeskTools, RecordingProvider, build_registry
@@ -84,7 +105,7 @@ class TaskRun:
     report: Report | None = None
     evidence: EvidenceStore = field(default_factory=EvidenceStore)
     tracer: Tracer = field(default_factory=Tracer)
-    history: list[tuple[str, str]] = field(default_factory=list)   # (state, iso time + note)
+    history: list[tuple[str, str]] = field(default_factory=list)  # (state, iso time + note)
     completed_steps: set[str] = field(default_factory=set)
     step_results: dict[str, Any] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
@@ -93,7 +114,7 @@ class TaskRun:
     started_at: datetime = field(default_factory=utc_now)
     finished_at: datetime | None = None
     correlation_id: str = field(default_factory=lambda: new_id("CID"))
-    positions: dict[str, float] = field(default_factory=dict)     # this run's book, read by its tools
+    positions: dict[str, float] = field(default_factory=dict)  # this run's book, read by its tools
     _executor: ToolExecutor | None = field(default=None, repr=False)
     _provider: RecordingProvider | None = field(default=None, repr=False)
     _driving: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -116,18 +137,35 @@ class TaskRun:
         return self.trading_state.decision if self.trading_state else None
 
     def to_dict(self, include_report: bool = True) -> dict[str, Any]:
-        d = {"task_id": self.id, "symbol": self.task.symbol, "as_of": self.task.as_of.isoformat(),
-             "role": self.task.role.value, "state": self.state.value, "history": self.history,
-             "errors": self.errors, "pending_step": self.pending_step,
-             "plan": plan_to_dict(self.plan) if self.plan else None,
-             "completed_steps": sorted(self.completed_steps),
-             "decision": self.decision.to_dict() if self.decision else None,
-             "findings": [{"agent": f.agent, "claim": f.claim, "confidence": round(f.confidence, 3),
-                           "evidence_ids": list(f.evidence_ids), "untrusted": f.untrusted} for f in self.findings],
-             "critic": self.critic.to_dict() if self.critic else None,
-             "evidence_count": len(self.evidence), "trace": self.tracer.summary(),
-             "positions": dict(self.positions), "started_at": self.started_at.isoformat(),
-             "finished_at": self.finished_at.isoformat() if self.finished_at else None}
+        d = {
+            "task_id": self.id,
+            "symbol": self.task.symbol,
+            "as_of": self.task.as_of.isoformat(),
+            "role": self.task.role.value,
+            "state": self.state.value,
+            "history": self.history,
+            "errors": self.errors,
+            "pending_step": self.pending_step,
+            "plan": plan_to_dict(self.plan) if self.plan else None,
+            "completed_steps": sorted(self.completed_steps),
+            "decision": self.decision.to_dict() if self.decision else None,
+            "findings": [
+                {
+                    "agent": f.agent,
+                    "claim": f.claim,
+                    "confidence": round(f.confidence, 3),
+                    "evidence_ids": list(f.evidence_ids),
+                    "untrusted": f.untrusted,
+                }
+                for f in self.findings
+            ],
+            "critic": self.critic.to_dict() if self.critic else None,
+            "evidence_count": len(self.evidence),
+            "trace": self.tracer.summary(),
+            "positions": dict(self.positions),
+            "started_at": self.started_at.isoformat(),
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+        }
         if include_report and self.report:
             d["report"] = self.report.to_dict()
         return d
@@ -145,8 +183,7 @@ def approval_mode(approval: Any) -> str:
     return kind
 
 
-def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
-                               price_fn: Any = None) -> SignedApprovalGateway:
+def signed_gateway_from_config(block: dict[str, Any], environ: Any = None, price_fn: Any = None) -> SignedApprovalGateway:
     """A ``SignedApprovalGateway`` from the ``approval`` block. ``approvers`` maps an approver
     id to the NAME of the environment variable holding its HMAC secret (legacy mode): secrets
     never sit in the configuration, and a missing or empty variable is an error, not a silent
@@ -158,8 +195,10 @@ def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
     approvers = block.get("approvers") or {}
     public = block.get("public_keys") or {}
     if not isinstance(approvers, dict) or not isinstance(public, dict) or not (approvers or public):
-        raise ValueError("signed approval needs approvers: {approver_id: SECRET_ENV_VAR_NAME} "
-                         "and/or public_keys: {approver_id: ED25519_PUBLIC_KEY_HEX}")
+        raise ValueError(
+            "signed approval needs approvers: {approver_id: SECRET_ENV_VAR_NAME} "
+            "and/or public_keys: {approver_id: ED25519_PUBLIC_KEY_HEX}"
+        )
     keys = {}
     for who, var in approvers.items():
         if not isinstance(var, str) or not var.replace("_", "").isalnum():
@@ -182,11 +221,16 @@ def signed_gateway_from_config(block: dict[str, Any], environ: Any = None,
         quorum[str(tool)] = int(n)
     log_path = block.get("log_path")
     ttl = block.get("ttl_s")
-    return SignedApprovalGateway(keys, quorum, default_quorum=int(block.get("quorum", 1)),
-                                 ttl_s=None if ttl is None else float(ttl), price_fn=price_fn,
-                                 price_tolerance=float(block.get("price_tolerance", 0.01)),
-                                 store=AppendOnlyApprovalLog(log_path) if log_path else None,
-                                 public_keys=pubs)
+    return SignedApprovalGateway(
+        keys,
+        quorum,
+        default_quorum=int(block.get("quorum", 1)),
+        ttl_s=None if ttl is None else float(ttl),
+        price_fn=price_fn,
+        price_tolerance=float(block.get("price_tolerance", 0.01)),
+        store=AppendOnlyApprovalLog(log_path) if log_path else None,
+        public_keys=pubs,
+    )
 
 
 def last_close_price_fn(provider: Any) -> Any:
@@ -210,6 +254,7 @@ def last_close_price_fn(provider: Any) -> Any:
         except Exception:  # noqa: BLE001 - no price is reported as None, which the gateway rejects
             return None
         return px if px is not None and math.isfinite(px) and px > 0 else None
+
     return price
 
 
@@ -217,11 +262,12 @@ def _gateway(approval: Any, environ: Any = None, provider: Any = None) -> Approv
     kind = approval_mode(approval)
     if kind == "signed":
         if not isinstance(approval, dict):
-            raise ValueError('signed approval needs an "approval" block in the configuration '
-                             '(approvers, quorum, ...); the bare string "signed" carries no approvers')
+            raise ValueError(
+                'signed approval needs an "approval" block in the configuration '
+                '(approvers, quorum, ...); the bare string "signed" carries no approvers'
+            )
         reprice = approval.get("reprice", True) and provider is not None
-        return signed_gateway_from_config(approval, environ,
-                                          price_fn=last_close_price_fn(provider) if reprice else None)
+        return signed_gateway_from_config(approval, environ, price_fn=last_close_price_fn(provider) if reprice else None)
     return {"auto": AutoApprovalGateway, "queued": QueuedApprovalGateway, "deny": DenyApprovalGateway}[kind]()
 
 
@@ -230,29 +276,40 @@ def default_instance_id() -> str:
 
 
 class AgentHarness:
-    def __init__(self, graph: TradingGraph, policy: PolicyEngine | None = None,
-                 gateway: ApprovalGateway | None = None, knowledge: KnowledgeBase | None = None,
-                 positions: dict[str, float] | None = None, capital: float | None = None,
-                 store: TaskStore | None = None, sweep_interrupted: bool | None = None):
+    def __init__(
+        self,
+        graph: TradingGraph,
+        policy: PolicyEngine | None = None,
+        gateway: ApprovalGateway | None = None,
+        knowledge: KnowledgeBase | None = None,
+        positions: dict[str, float] | None = None,
+        capital: float | None = None,
+        store: TaskStore | None = None,
+        sweep_interrupted: bool | None = None,
+    ):
         self.graph = graph
         self.config = graph.config
         acfg = self.config.get("agentic", {})
         self.tools = DeskTools(graph.provider, self.config, knowledge, positions, capital, memory=graph.memory)
         self.registry: ToolRegistry = build_registry(self.tools)
-        self.policy = policy or PolicyEngine({
-            "symbol_universe": acfg.get("symbol_universe"), "deny_tools": acfg.get("deny_tools", ()),
-            "max_position": self.config["risk"]["max_position"],
-            "max_order_notional": self.tools.order_cap,
-            "max_symbols_per_call": acfg.get("max_symbols_per_call", 60)})
+        self.policy = policy or PolicyEngine(
+            {
+                "symbol_universe": acfg.get("symbol_universe"),
+                "deny_tools": acfg.get("deny_tools", ()),
+                "max_position": self.config["risk"]["max_position"],
+                "max_order_notional": self.tools.order_cap,
+                "max_symbols_per_call": acfg.get("max_symbols_per_call", 60),
+            }
+        )
         self.gateway = gateway or _gateway(acfg.get("approval", "auto"), provider=graph.provider)
         self.critic = Critic(self.config, graph.llm)
-        self.metrics = Metrics()          # one exposition for the process; every run's tracer feeds it
+        self.metrics = Metrics()  # one exposition for the process; every run's tracer feeds it
         self.runs: dict[str, TaskRun] = {}
         self.max_retained = max(1, int(acfg.get("max_retained_runs", 256)))
         self._lock = threading.Lock()
         self.owner: str = str(acfg.get("instance_id") or default_instance_id())
         self.lease_s = float(acfg.get("lease_s", 90.0))
-        if not (self.lease_s >= 1.0):   # a shorter lease would let the periodic sweep fail this instance's own runs
+        if not (self.lease_s >= 1.0):  # a shorter lease would let the periodic sweep fail this instance's own runs
             raise ValueError(f"agentic.lease_s must be at least 1 second, got {acfg.get('lease_s')!r}")
         # Persistence: records of every run this process makes, plus a bounded cache of
         # terminal records (a previous process's, or a sibling's once finished). A record
@@ -260,7 +317,7 @@ class AgentHarness:
         if store is None and acfg.get("task_db"):
             store = TaskStore(acfg["task_db"])
         self.store = store
-        self.persist_failures = 0          # consecutive store.save failures (E-6)
+        self.persist_failures = 0  # consecutive store.save failures (E-6)
         self._persist_lock = threading.Lock()
         self.max_persist_failures = max(1, int(acfg.get("max_persist_failures", 3)))
         self.archive: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -273,16 +330,14 @@ class AgentHarness:
                 # is alive keeps heartbeating its runs, whatever instance id it is configured with.
                 interrupted = store.mark_interrupted(lease_s=self.lease_s)
                 if interrupted:
-                    log.warning("%d task(s) were in flight when the previous process stopped; marked FAILED",
-                                interrupted)
+                    log.warning("%d task(s) were in flight when the previous process stopped; marked FAILED", interrupted)
             for rec in store.load_all():
                 if rec.get("state") in _TERMINAL_VALUES:
                     self._archive_put(rec["task_id"], rec)
             # agentic.heartbeat_thread False: no background thread; the owner (a test with an
             # injected store clock, or an external scheduler) calls heartbeat_once() itself.
             if acfg.get("heartbeat_thread", True):
-                self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="harness-heartbeat",
-                                                          daemon=True)
+                self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="harness-heartbeat", daemon=True)
                 self._heartbeat_thread.start()
 
     # -------------------------------------------------------------- records
@@ -314,8 +369,10 @@ class AgentHarness:
         """Every record in the store (all processes), or the in-memory archive without one."""
         if self.store is not None:
             return self.store.summaries()
-        return [{"task_id": r["task_id"], "symbol": r["symbol"], "as_of": r["as_of"], "role": r["role"],
-                 "state": r["state"]} for r in list(self.archive.values())]
+        return [
+            {"task_id": r["task_id"], "symbol": r["symbol"], "as_of": r["as_of"], "role": r["role"], "state": r["state"]}
+            for r in list(self.archive.values())
+        ]
 
     def _persist(self, run: TaskRun) -> None:
         """Save the run's record. A failure does not crash the run, but it is not ignored
@@ -344,12 +401,16 @@ class AgentHarness:
 
     def _persistence_guard(self, name: str, fn: Any) -> Any:
         """``fn`` refused while persistence is degraded (state-changing tools only)."""
+
         @wraps(fn)
         def guarded(*args: Any, **kwargs: Any) -> Any:
             if self.persistence_degraded:
-                raise PermissionError(f"{name} refused: the task store failed {self.persist_failures} times in a "
-                                      "row, so this call would leave no durable audit record")
+                raise PermissionError(
+                    f"{name} refused: the task store failed {self.persist_failures} times in a "
+                    "row, so this call would leave no durable audit record"
+                )
             return fn(*args, **kwargs)
+
         return guarded
 
     def heartbeat_once(self) -> int:
@@ -407,7 +468,7 @@ class AgentHarness:
                 raise ValueError("current_weight must be a finite number")
             try:
                 book[Instrument.parse(task.symbol).symbol] = w
-            except ValueError:   # an unparseable task symbol fails the run at planning, as it always did
+            except ValueError:  # an unparseable task symbol fails the run at planning, as it always did
                 pass
         return book
 
@@ -500,7 +561,7 @@ class AgentHarness:
             if run.state is TaskState.FINALISING:
                 self._finalise(run)
         except Exception as e:  # any bug ends in FAILED with the reason, never a half-run
-            if isinstance(e, (ValueError, KeyError)):   # expected refusals: bad input, policy denial
+            if isinstance(e, (ValueError, KeyError)):  # expected refusals: bad input, policy denial
                 log.warning("task %s failed: %s", run.id, e)
             else:
                 log.exception("task %s failed", run.id)
@@ -549,15 +610,17 @@ class AgentHarness:
         ins = Instrument.parse(run.task.symbol)
         analysts = self.graph.analyst_names(ins)
         with run.tracer.span("plan"):
-            run.plan = make_plan(run.task, ins, analysts, self.config, self.registry, self.graph.llm,
-                                 book=run.positions)
+            run.plan = make_plan(run.task, ins, analysts, self.config, self.registry, self.graph.llm, book=run.positions)
         self._transition(run, TaskState.VALIDATING_PLAN, run.plan.source)
         # Pre-check every tool step against policy, and the plan's data budget as a whole,
         # so an impossible plan fails before it runs.
         for s in run.plan.steps:
             if s.type is StepType.TOOL:
-                d = self.policy.evaluate(ToolRequest(s.name, s.arguments, run.correlation_id, "planner"),
-                                         self.registry.get(s.name).descriptor, run.task.role)
+                d = self.policy.evaluate(
+                    ToolRequest(s.name, s.arguments, run.correlation_id, "planner"),
+                    self.registry.get(s.name).descriptor,
+                    run.task.role,
+                )
                 if d.outcome is PolicyOutcome.DENY:
                     raise ValueError(f"plan step {s.name} denied by policy ({d.rule}): {d.reason}")
         cost, cap = plan_cost_bars(run.plan.steps, self.config), max_plan_lookback_bars(self.config)
@@ -579,9 +642,16 @@ class AgentHarness:
                 if not desc.annotations.read_only:
                     entry = registry.get(desc.name)
                     entry.fn = self._persistence_guard(desc.name, entry.fn)
-            run._executor = ToolExecutor(registry, self.policy, run.evidence, run.task.role, self.gateway,
-                                         run.tracer, ExecutorConfig(float(acfg.get("tool_timeout_s", 30.0))),
-                                         run.id)
+            run._executor = ToolExecutor(
+                registry,
+                self.policy,
+                run.evidence,
+                run.task.role,
+                self.gateway,
+                run.tracer,
+                ExecutorConfig(float(acfg.get("tool_timeout_s", 30.0))),
+                run.id,
+            )
             run._provider = RecordingProvider(run._executor, self.graph.provider, run.correlation_id)
         return run._executor
 
@@ -591,8 +661,9 @@ class AgentHarness:
         if run.trading_state is None:
             with run.tracer.span("prepare"):
                 held = run.positions.get(Instrument.parse(run.task.symbol).symbol, run.task.current_weight)
-                run.trading_state = self.graph.prepare(run.task.symbol, run.task.as_of, current_weight=held,
-                                                       provider=run._provider)
+                run.trading_state = self.graph.prepare(
+                    run.task.symbol, run.task.as_of, current_weight=held, provider=run._provider
+                )
         assert run.plan is not None  # planning precedes execution
         steps = [s for s in run.plan.steps if s.type in (StepType.TOOL, StepType.AGENT)]
         i = 0
@@ -653,64 +724,141 @@ class AgentHarness:
         assert st is not None  # set by _execute before any step runs
         before = len(ev)
         if step.name.startswith(ANALYST_PREFIX):
-            name = step.name[len(ANALYST_PREFIX):]
+            name = step.name[len(ANALYST_PREFIX) :]
             r = self.graph.run_analyst(st, name, provider=run._provider)
             ev.record(EvidenceType.CALCULATION, f"analyst.{name}", f"{name} facts", r.facts, run.correlation_id)
-            ev.record(EvidenceType.DECISION, f"analyst.{name}", r.summary,
-                      {"signal": r.signal, "confidence": r.confidence, "abstained": r.abstained,
-                       "source": r.source, "key_points": r.key_points}, run.correlation_id)
+            ev.record(
+                EvidenceType.DECISION,
+                f"analyst.{name}",
+                r.summary,
+                {
+                    "signal": r.signal,
+                    "confidence": r.confidence,
+                    "abstained": r.abstained,
+                    "source": r.source,
+                    "key_points": r.key_points,
+                },
+                run.correlation_id,
+            )
             r.evidence_ids = tuple(ev.ids_since(before))
             if not r.abstained:
-                run.findings.append(Finding.make(name, r.summary, r.confidence, r.evidence_ids,
-                                                 {"signal": r.signal}, ("analyst", r.source), untrusted=r.untrusted))
+                run.findings.append(
+                    Finding.make(
+                        name,
+                        r.summary,
+                        r.confidence,
+                        r.evidence_ids,
+                        {"signal": r.signal},
+                        ("analyst", r.source),
+                        untrusted=r.untrusted,
+                    )
+                )
         elif step.name == "debate":
             # v0.15 text analysts (config["text_analysts"], default none) join before the debate,
             # as in TradingGraph.propagate, with their reports evidenced like any analyst's.
             for r in self.graph.run_text_analysts(st):
                 tb = len(ev)
-                ev.record(EvidenceType.DECISION, f"analyst.{r.analyst}", r.summary,
-                          {"signal": r.signal, "confidence": r.confidence, "abstained": r.abstained,
-                           "source": r.source, "key_points": r.key_points}, run.correlation_id)
+                ev.record(
+                    EvidenceType.DECISION,
+                    f"analyst.{r.analyst}",
+                    r.summary,
+                    {
+                        "signal": r.signal,
+                        "confidence": r.confidence,
+                        "abstained": r.abstained,
+                        "source": r.source,
+                        "key_points": r.key_points,
+                    },
+                    run.correlation_id,
+                )
                 r.evidence_ids = tuple(ev.ids_since(tb))
                 if not r.abstained:
-                    run.findings.append(Finding.make(r.analyst, r.summary, r.confidence, r.evidence_ids,
-                                                     {"signal": r.signal}, ("analyst", r.source),
-                                                     untrusted=r.untrusted))
+                    run.findings.append(
+                        Finding.make(
+                            r.analyst,
+                            r.summary,
+                            r.confidence,
+                            r.evidence_ids,
+                            {"signal": r.signal},
+                            ("analyst", r.source),
+                            untrusted=r.untrusted,
+                        )
+                    )
             d = self.graph.run_debate(st)
-            dec = ev.record(EvidenceType.DECISION, "facilitator", d.summary,
-                            {"winner": d.winner, "score": d.score, "conviction": d.conviction,
-                             "turns": [t.__dict__ for t in d.turns]}, run.correlation_id)
+            dec = ev.record(
+                EvidenceType.DECISION,
+                "facilitator",
+                d.summary,
+                {"winner": d.winner, "score": d.score, "conviction": d.conviction, "turns": [t.__dict__ for t in d.turns]},
+                run.correlation_id,
+            )
             cited = tuple(dict.fromkeys(i for r in st.reports.values() for i in r.evidence_ids)) + (dec.id,)
             d.evidence_ids = cited
-            run.findings.append(Finding.make("facilitator", d.summary, d.conviction, cited,
-                                             {"score": d.score}, ("debate", d.source), untrusted=d.untrusted))
+            run.findings.append(
+                Finding.make(
+                    "facilitator", d.summary, d.conviction, cited, {"score": d.score}, ("debate", d.source), untrusted=d.untrusted
+                )
+            )
         elif step.name == "trader":
             p = self.graph.run_trader(st)
-            dec = ev.record(EvidenceType.DECISION, "trader", p.rationale,
-                            {"action": p.action.value, "target_weight": p.target_weight,
-                             "stop_loss": p.stop_loss, "take_profit": p.take_profit,
-                             "horizon_days": p.horizon_days}, run.correlation_id)
+            dec = ev.record(
+                EvidenceType.DECISION,
+                "trader",
+                p.rationale,
+                {
+                    "action": p.action.value,
+                    "target_weight": p.target_weight,
+                    "stop_loss": p.stop_loss,
+                    "take_profit": p.take_profit,
+                    "horizon_days": p.horizon_days,
+                },
+                run.correlation_id,
+            )
             p.evidence_ids = (st.debate.evidence_ids if st.debate else ()) + (dec.id,)
-            run.findings.append(Finding.make("trader", p.rationale, p.confidence, p.evidence_ids,
-                                             {"target_weight": p.target_weight}, ("proposal", p.source),
-                                             untrusted=p.untrusted))
+            run.findings.append(
+                Finding.make(
+                    "trader",
+                    p.rationale,
+                    p.confidence,
+                    p.evidence_ids,
+                    {"target_weight": p.target_weight},
+                    ("proposal", p.source),
+                    untrusted=p.untrusted,
+                )
+            )
         elif step.name == "risk":
             facts = risk_facts(st, self.config)
-            fev = ev.record(EvidenceType.CALCULATION, "quant.risk", "risk facts for the proposal", facts,
-                            run.correlation_id)
+            fev = ev.record(EvidenceType.CALCULATION, "quant.risk", "risk facts for the proposal", facts, run.correlation_id)
             fd = self.graph.run_risk(st)
             for v in st.risk_views:
-                vev = ev.record(EvidenceType.DECISION, f"risk.{v.stance}", v.argument,
-                                {"weight": v.recommended_weight, "round": v.round}, run.correlation_id)
+                vev = ev.record(
+                    EvidenceType.DECISION,
+                    f"risk.{v.stance}",
+                    v.argument,
+                    {"weight": v.recommended_weight, "round": v.round},
+                    run.correlation_id,
+                )
                 v.evidence_ids = (fev.id, vev.id)
-            dev = ev.record(EvidenceType.DECISION, "portfolio_manager", fd.rationale, fd.to_dict(),
-                            run.correlation_id)
-            fd.evidence_ids = tuple(dict.fromkeys(
-                (st.proposal.evidence_ids if st.proposal else ()) + (fev.id,)
-                + tuple(i for v in st.risk_views for i in v.evidence_ids) + (dev.id,)))
-            run.findings.append(Finding.make("portfolio_manager", fd.rationale, fd.confidence, fd.evidence_ids,
-                                             {"target_weight": fd.target_weight}, ("decision", fd.source),
-                                             untrusted=decision_untrusted(st)))
+            dev = ev.record(EvidenceType.DECISION, "portfolio_manager", fd.rationale, fd.to_dict(), run.correlation_id)
+            fd.evidence_ids = tuple(
+                dict.fromkeys(
+                    (st.proposal.evidence_ids if st.proposal else ())
+                    + (fev.id,)
+                    + tuple(i for v in st.risk_views for i in v.evidence_ids)
+                    + (dev.id,)
+                )
+            )
+            run.findings.append(
+                Finding.make(
+                    "portfolio_manager",
+                    fd.rationale,
+                    fd.confidence,
+                    fd.evidence_ids,
+                    {"target_weight": fd.target_weight},
+                    ("decision", fd.source),
+                    untrusted=decision_untrusted(st),
+                )
+            )
             run.step_results["risk_facts"] = facts
         else:
             raise ValueError(f"unknown agent stage {step.name}")
@@ -718,21 +866,22 @@ class AgentHarness:
     def _critique(self, run: TaskRun) -> None:
         assert run.trading_state is not None  # set by _execute
         with run.tracer.span("critic"):
-            critic = self.critic.review(run.trading_state, run.findings, run.evidence,
-                                        run.step_results.get("risk_facts"))
+            critic = self.critic.review(run.trading_state, run.findings, run.evidence, run.step_results.get("risk_facts"))
             run.critic = critic
             # v0.17 R2.1: a flagged divergence acts on the weight that sizing reads, not only
             # on confidence; the action is recorded as evidence beside the decision.
-            act = apply_weight_rule(run.trading_state, critic, self.config,
-                                    run.step_results.get("risk_facts"))
+            act = apply_weight_rule(run.trading_state, critic, self.config, run.step_results.get("risk_facts"))
             if act is not None:
-                wev = run.evidence.record(EvidenceType.DECISION, "critic.weight_rule",
-                                          f"critic {act['rule']}: weight {act['from']:+.2f} -> {act['to']:+.2f}",
-                                          dict(act), run.correlation_id)
+                wev = run.evidence.record(
+                    EvidenceType.DECISION,
+                    "critic.weight_rule",
+                    f"critic {act['rule']}: weight {act['from']:+.2f} -> {act['to']:+.2f}",
+                    dict(act),
+                    run.correlation_id,
+                )
                 act["evidence_id"] = wev.id
         run.completed_steps.add("STEP-critic")
-        self._transition(run, TaskState.VALIDATING_EVIDENCE,
-                         "critic passed" if critic.passed else "critic flagged errors")
+        self._transition(run, TaskState.VALIDATING_EVIDENCE, "critic passed" if critic.passed else "critic flagged errors")
 
     def _validate(self, run: TaskRun) -> None:
         with run.tracer.span("validate_evidence"):
@@ -766,8 +915,15 @@ class AgentHarness:
             return self.gateway.pending(task_id)
         return []
 
-    def decide_approval(self, approval_id: str, approve: bool, decided_by: str = "human",
-                        note: str = "", resume: bool = True, signature: str | None = None) -> TaskRun:
+    def decide_approval(
+        self,
+        approval_id: str,
+        approve: bool,
+        decided_by: str = "human",
+        note: str = "",
+        resume: bool = True,
+        signature: str | None = None,
+    ) -> TaskRun:
         """Record a decision and, by default, resume the run on the calling thread when it
         is parked and nobody else drives it; the API passes ``resume=False`` and hands the
         continuation to its task pool instead (see ``continuation_due``). A decision for a
@@ -775,17 +931,20 @@ class AgentHarness:
         asks the gateway at the step."""
         if not isinstance(self.gateway, QueuedApprovalGateway):
             raise ValueError("approvals are not queued in this harness")
-        a = self.gateway.get(approval_id)           # KeyError when unknown (or withdrawn with its run)
+        a = self.gateway.get(approval_id)  # KeyError when unknown (or withdrawn with its run)
         run = self.runs.get(a.task_id)
         if run is None or run.done:
             rec = self.record(a.task_id) if run is None else None
             state = run.state.value if run is not None else (rec["state"] if rec else "evicted")
             raise ValueError(f"task {a.task_id} is {state}; approval {approval_id} can no longer be decided")
         a = self.gateway.resolve(approval_id, approve, decided_by, note, signature=signature)
-        run.evidence.record(EvidenceType.APPROVAL, decided_by,
-                            f"{'approved' if approve else 'rejected'} {a.request.tool}",
-                            {"approval": a.id, "note": note, **({"signature": signature} if signature else {})},
-                            run.correlation_id)
+        run.evidence.record(
+            EvidenceType.APPROVAL,
+            decided_by,
+            f"{'approved' if approve else 'rejected'} {a.request.tool}",
+            {"approval": a.id, "note": note, **({"signature": signature} if signature else {})},
+            run.correlation_id,
+        )
         if resume and self.continuation_due(run):
             return self.resume(run)
         return run

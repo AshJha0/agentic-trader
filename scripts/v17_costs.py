@@ -9,6 +9,7 @@ Output goes to docs/results/v17_costs/ (markdown + json). ``validate`` is what t
 ships; the two ``--provider yahoo`` runs need network and are queued for the maintainer
 (see docs/review/v017_notes/L8_quant_rest.md). Nothing after the design end is requested.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,10 +44,17 @@ def validate(seeds: int = 5, days: int = 1500) -> pd.DataFrame:
                 cs.append(1e4 * est["corwin_schultz"])
                 csf.append(1e4 * est["corwin_schultz_floored"])
                 ar.append(1e4 * est["abdi_ranaldo"])
-            rows.append({"true_spread_bp": spread_bp, "daily_vol_pct": 100 * vol,
-                         "cs_mean_bp": float(np.mean(cs)), "cs_sd_bp": float(np.std(cs, ddof=1)),
-                         "cs_floored_mean_bp": float(np.mean(csf)),
-                         "ar_mean_bp": float(np.mean(ar)), "ar_sd_bp": float(np.std(ar, ddof=1))})
+            rows.append(
+                {
+                    "true_spread_bp": spread_bp,
+                    "daily_vol_pct": 100 * vol,
+                    "cs_mean_bp": float(np.mean(cs)),
+                    "cs_sd_bp": float(np.std(cs, ddof=1)),
+                    "cs_floored_mean_bp": float(np.mean(csf)),
+                    "ar_mean_bp": float(np.mean(ar)),
+                    "ar_sd_bp": float(np.std(ar, ddof=1)),
+                }
+            )
     return pd.DataFrame(rows).set_index(["true_spread_bp", "daily_vol_pct"])
 
 
@@ -54,6 +62,7 @@ def _design_frames(provider_name: str) -> dict[str, pd.DataFrame]:
     from agentic_trader.data import get_provider
     from agentic_trader.evaluation import CORE_UNIVERSE, PERIODS
     from agentic_trader.instruments import Instrument
+
     start, end = (date.fromisoformat(x) for x in PERIODS["design"])
     provider = get_provider({**DEFAULT_CONFIG, "data_provider": provider_name})
     frames = {}
@@ -66,13 +75,23 @@ def _design_frames(provider_name: str) -> dict[str, pd.DataFrame]:
 def horizon(provider_name: str) -> pd.DataFrame:
     from agentic_trader.alpha import EQUITY_ALPHAS, compute_alphas
     from agentic_trader.instruments import Instrument
+
     rows = []
     for sym, df in _design_frames(provider_name).items():
         sig = compute_alphas(df, Instrument.parse(sym, "equity"), EQUITY_ALPHAS)
         for name in EQUITY_ALPHAS:
             ch = rebalance_from_decay(sig[name].to_numpy(float), df["Close"].to_numpy(float))
-            rows.append({"symbol": sym, "alpha": name, "IC0": ch.ic0, "t(IC0)": ch.t0,
-                         "half_life": ch.half_life, "rebalance_every": ch.rebalance_every, "reason": ch.reason})
+            rows.append(
+                {
+                    "symbol": sym,
+                    "alpha": name,
+                    "IC0": ch.ic0,
+                    "t(IC0)": ch.t0,
+                    "half_life": ch.half_life,
+                    "rebalance_every": ch.rebalance_every,
+                    "reason": ch.reason,
+                }
+            )
     return pd.DataFrame(rows).set_index(["alpha", "symbol"])
 
 
@@ -82,19 +101,28 @@ def main() -> None:
     ap.add_argument("--provider", default="yahoo")
     a = ap.parse_args()
     if a.what == "validate":
-        _write("estimator_validation", validate(),
-               "### Spread estimators on simulated OHLC with a known spread (5 seeds x 1500 days, 100 trades a day)\n\n"
-               "Evidence class: simulation. Produced by `python scripts/v17_costs.py validate`.")
+        _write(
+            "estimator_validation",
+            validate(),
+            "### Spread estimators on simulated OHLC with a known spread (5 seeds x 1500 days, 100 trades a day)\n\n"
+            "Evidence class: simulation. Produced by `python scripts/v17_costs.py validate`.",
+        )
     elif a.what == "calibrate":
         t = calibrate_impact(_design_frames(a.provider))
-        _write(f"impact_calibration_{a.provider}", t,
-               f"### Spread-consistent impact coefficient Y, design period, provider {a.provider}\n\n"
-               "Y = half spread / (daily vol * sqrt(0.01)). Evidence class: model-implied from public OHLC.")
+        _write(
+            f"impact_calibration_{a.provider}",
+            t,
+            f"### Spread-consistent impact coefficient Y, design period, provider {a.provider}\n\n"
+            "Y = half spread / (daily vol * sqrt(0.01)). Evidence class: model-implied from public OHLC.",
+        )
     else:
         t = horizon(a.provider)
-        _write(f"horizon_{a.provider}", t,
-               f"### Rebalance interval from lagged-IC half-life, design period, provider {a.provider}\n\n"
-               "Default stays 5 bars; this table is an option, rules only. Evidence class: measured, design period.")
+        _write(
+            f"horizon_{a.provider}",
+            t,
+            f"### Rebalance interval from lagged-IC half-life, design period, provider {a.provider}\n\n"
+            "Default stays 5 bars; this table is an option, rules only. Evidence class: measured, design period.",
+        )
     print(json.dumps({"wrote": str(OUT), "what": a.what}))
 
 

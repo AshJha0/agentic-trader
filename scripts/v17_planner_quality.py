@@ -6,6 +6,7 @@
 Reads the recorded local-model plans for the 200 survival tasks, rebuilds the canonical plan
 for each task and writes ``summary.json``, ``per_plan.csv`` and ``table.md``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,6 +32,7 @@ def compute(fixtures: Path, budget: int = 200_000) -> tuple[list[dict], dict]:
     from agentic_trader.agentic.servers import DeskTools, build_registry
     from agentic_trader.data import SyntheticProvider
     from v15_governance import tasks
+
     cfg = make_config()
     cfg.setdefault("agentic", {})["max_plan_lookback_bars"] = budget
     registry = build_registry(DeskTools(SyntheticProvider(cfg), cfg))
@@ -51,28 +53,35 @@ def compute(fixtures: Path, budget: int = 200_000) -> tuple[list[dict], dict]:
         val = validate_plan(raw, task, inst, analysts, registry, config=cfg) if raw is not None else None
         q = plan_quality(raw, canon.steps, val)
         rows.append({"task_id": task.id, **q})
-    summ = {"model": model, "fixtures": fixtures.relative_to(ROOT).as_posix() if fixtures.is_relative_to(ROOT)
-            else str(fixtures), **summarise(rows)}
+    summ = {
+        "model": model,
+        "fixtures": fixtures.relative_to(ROOT).as_posix() if fixtures.is_relative_to(ROOT) else str(fixtures),
+        **summarise(rows),
+    }
     return rows, summ
 
 
 def render(s: dict) -> str:
     f = lambda x: "n/a" if x != x else f"{x:.3f}"  # noqa: E731 - nan check
-    return "\n".join([
-        f"# Planner quality vs canonical plan ({s['model']}, recorded plans, {s['plans']} tasks)",
-        "",
-        "| metric | value |", "|---|---|",
-        f"| usable plans | {s['usable']} / {s['plans']} |",
-        f"| step-set precision (usable) | {f(s['precision_mean'])} |",
-        f"| step-set recall (usable) | {f(s['recall_mean'])} |",
-        f"| step-set F1 (usable) | {f(s['f1_mean'])} |",
-        f"| step-set F1 (all plans, unusable = 0) | {f(s['f1_mean_all_plans'])} |",
-        f"| pairwise order agreement (usable) | {f(s['order_agreement_mean'])} |",
-        f"| plans needing zero repair | {f(s['zero_repair_share'])} |",
-        f"| plans equal to canonical (names, order) | {f(s['exact_canonical_share'])} |",
-        "",
-        "Evidence class: measured offline on recorded replies "
-        f"({s['fixtures']}); governance steps excluded on both sides.", ""])
+    return "\n".join(
+        [
+            f"# Planner quality vs canonical plan ({s['model']}, recorded plans, {s['plans']} tasks)",
+            "",
+            "| metric | value |",
+            "|---|---|",
+            f"| usable plans | {s['usable']} / {s['plans']} |",
+            f"| step-set precision (usable) | {f(s['precision_mean'])} |",
+            f"| step-set recall (usable) | {f(s['recall_mean'])} |",
+            f"| step-set F1 (usable) | {f(s['f1_mean'])} |",
+            f"| step-set F1 (all plans, unusable = 0) | {f(s['f1_mean_all_plans'])} |",
+            f"| pairwise order agreement (usable) | {f(s['order_agreement_mean'])} |",
+            f"| plans needing zero repair | {f(s['zero_repair_share'])} |",
+            f"| plans equal to canonical (names, order) | {f(s['exact_canonical_share'])} |",
+            "",
+            f"Evidence class: measured offline on recorded replies ({s['fixtures']}); governance steps excluded on both sides.",
+            "",
+        ]
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

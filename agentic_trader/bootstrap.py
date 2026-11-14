@@ -19,6 +19,7 @@ case in ``tests/test_v17_ai_rest.py``.
 Worked example: replicates N(0.5, 0.2^2) for an observed 0.5 give |t - 0| / 0.2 = 2.5
 standard errors, so p is close to 2 * (1 - Phi(2.5)) = 0.0124.
 """
+
 from __future__ import annotations
 
 import numpy as np

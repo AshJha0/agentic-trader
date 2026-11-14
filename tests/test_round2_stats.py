@@ -1,6 +1,7 @@
 """Round 2 (review 2026-11-12, lane C): worked numeric examples for C1, C2, C3, C8, C10, C11, C12.
 
 Each test pins a number the pre-round-2 code got wrong or could not produce."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -56,7 +57,7 @@ def test_c1_differential_detects_a_real_edge_against_measured_trials():
     n, sd = 1500, 0.01
     control = rng.normal(0.0005, sd, n)
     trial_returns = np.column_stack([control + rng.normal(0, 0.002, n) for _ in range(10)])
-    chosen = control + rng.normal(0.0006, 0.002, n)          # differential Sharpe about 4.8 annual
+    chosen = control + rng.normal(0.0006, 0.002, n)  # differential Sharpe about 4.8 annual
     e = stats.deflated_sharpe_differential(chosen, control, 10, trial_returns=trial_returns)
     assert e["benchmark_variance_source"].startswith("variance of the trials' differential")
     assert e["sharpe_annual"] > 3.0 and e["deflated_sharpe_prob"] > 0.99
@@ -83,18 +84,18 @@ def _load_script():
 def test_c2_selection_stat_script_on_synthetic_inputs(tmp_path):
     chosen, control, trials = _common_mean_world(n=800)
     idx = pd.bdate_range("2016-01-04", periods=801)
-    frame = pd.DataFrame({"AgenticTrader": np.r_[0.0, chosen], "B&H vol-target": np.r_[0.0, control],
-                          "rf": 0.0}, index=idx)
+    frame = pd.DataFrame({"AgenticTrader": np.r_[0.0, chosen], "B&H vol-target": np.r_[0.0, control], "rf": 0.0}, index=idx)
     frame.to_csv(tmp_path / "portfolio_design.csv")
-    (tmp_path / "trials.json").write_text(json.dumps(
-        {"trials": [{"name": f"t{i}", "portfolio_sharpe": float(s)} for i, s in enumerate(trials)]}))
+    (tmp_path / "trials.json").write_text(
+        json.dumps({"trials": [{"name": f"t{i}", "portfolio_sharpe": float(s)} for i, s in enumerate(trials)]})
+    )
     mod = _load_script()
     out = mod.compute(tmp_path)
     assert out["n_registry"] == len(evaluation.TRIALS)
     assert out["n_pre_registry"] == evaluation.PRE_REGISTRY_TRIALS_ESTIMATE
     d = out["differential"]["registry"]
     assert d["trials"] == len(evaluation.TRIALS) and 0.0 <= d["deflated_sharpe_prob"] < 0.5
-    assert out["absolute"]["control_at_registry"]["deflated_sharpe_prob"] > 0.9   # C1 on the control
+    assert out["absolute"]["control_at_registry"]["deflated_sharpe_prob"] > 0.9  # C1 on the control
     text = mod.render(out)
     assert "Selection statistic" in text and "not computable" in text
     assert mod.main(["--results", str(tmp_path / "missing")]) == 2
@@ -116,7 +117,7 @@ def test_c3_sessions_needed_at_80_percent_power():
 def _shared_path(seed: int = 9, t: int = 400, k: int = 20):
     rng = np.random.default_rng(seed)
     base = rng.normal(0.0004, 0.01, (t, k))
-    common = rng.normal(0.0, 0.004, t)[:, None]               # one regime moves every difference
+    common = rng.normal(0.0, 0.004, t)[:, None]  # one regime moves every difference
     a = base + 0.3 * common + rng.normal(0.0, 0.0005, (t, k))
     return a, base
 
@@ -127,7 +128,7 @@ def test_c8_time_block_interval_is_wider_than_cross_instrument():
     w_time = r.ci_high - r.ci_low
     w_inst = r.secondary.ci_high - r.secondary.ci_low
     assert r.scheme == "time-block" and r.n_instruments == 20
-    assert w_time > 3 * w_inst                                  # cross-instrument is path-conditional
+    assert w_time > 3 * w_inst  # cross-instrument is path-conditional
     assert "conditional on the realised time path" in r.secondary.conditioning
     assert r.mean_diff == pytest.approx(r.secondary.mean_diff)
 
@@ -147,9 +148,17 @@ def test_c8_table_uses_primary_p_for_bh():
 # ------------------------------------------------------------------ C10 decision frequency
 def _weekly_records():
     rng = np.random.default_rng(1)
-    d0 = date(2024, 1, 1)                                         # Mondays
-    return [kpi.KPIRecord((d0 + timedelta(weeks=i)).isoformat(), "A", float(rng.choice([-1, 1])),
-                          float(rng.choice([-1, 1])), float(rng.normal(0.002, 0.02))) for i in range(52)]
+    d0 = date(2024, 1, 1)  # Mondays
+    return [
+        kpi.KPIRecord(
+            (d0 + timedelta(weeks=i)).isoformat(),
+            "A",
+            float(rng.choice([-1, 1])),
+            float(rng.choice([-1, 1])),
+            float(rng.normal(0.002, 0.02)),
+        )
+        for i in range(52)
+    ]
 
 
 def test_c10_weekly_records_annualise_at_decision_frequency():
@@ -183,7 +192,7 @@ def test_c11_summarise_reports_power_and_keeps_pass_rule():
     plc = recall_audit.build_items(names, ["2020-01-06", "2020-02-03"], seed=1, arm="placebo")
     res = recall_audit.summarise(real, [None] * len(real), plc, [None] * len(plc), n_perm=200)
     d = res.as_dict()
-    assert d["recall_flagged"] is False                         # the rule itself is unchanged
+    assert d["recall_flagged"] is False  # the rule itself is unchanged
     assert d["power"]["n_real"] == 30 and d["power"]["power"] < 0.5
     assert any("power to flag" in r for r in d["reasons"])
     # C11 gate (2026-11-13): no answer parses, so MRR is 0, far below chance, and even 30 items
@@ -215,7 +224,7 @@ def test_c11_equivalence_test_numbers():
 
 # ------------------------------------------------------------------ C12 one p convention
 def test_c12_paired_bootstrap_p_is_null_centred():
-    d = np.r_[np.full(9, 0.02), -0.15, np.full(5, 0.05)]       # skewed differences
+    d = np.r_[np.full(9, 0.02), -0.15, np.full(5, 0.05)]  # skewed differences
     pb = stats.paired_bootstrap(d, np.zeros_like(d), n_boot=4000, seed=0)
     rng = np.random.default_rng(0)
     means = d[rng.integers(0, d.size, size=(4000, d.size))].mean(axis=1)

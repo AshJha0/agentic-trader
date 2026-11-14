@@ -1,5 +1,6 @@
 """v0.19 coverage: execution-realism edges (stop slippage, participation cap, impact
 calibration). Deterministic and offline."""
+
 from __future__ import annotations
 
 import math
@@ -15,8 +16,8 @@ from agentic_trader import execution_realism as er
 def test_stop_fill_cases():
     assert er.stop_fill_with_slippage(1.0, 95, 94, 100, 90, 0.001) == pytest.approx(94 * 0.999)  # long gap
     assert er.stop_fill_with_slippage(1.0, 95, 99, 100, 90, 0.0, 0.5) == pytest.approx(92.5)
-    assert math.isnan(er.stop_fill_with_slippage(1.0, 95, 99, 100, 96))                     # not hit
-    assert er.stop_fill_with_slippage(-1.0, 105, 106, 110, 100) == pytest.approx(106)       # short gap
+    assert math.isnan(er.stop_fill_with_slippage(1.0, 95, 99, 100, 96))  # not hit
+    assert er.stop_fill_with_slippage(-1.0, 105, 106, 110, 100) == pytest.approx(106)  # short gap
     assert er.stop_fill_with_slippage(-1.0, 105, 101, 110, 100, 0.0, 1.0) == pytest.approx(110)
     assert math.isnan(er.stop_fill_with_slippage(-1.0, 105, 101, 104, 100))
     assert math.isnan(er.stop_fill_with_slippage(0.0, 95, 94, 100, 90))
@@ -27,8 +28,13 @@ def test_stop_fill_cases():
 
 
 @settings(max_examples=100, deadline=None)
-@given(side=st.sampled_from([1.0, -1.0]), o=st.floats(90, 110), stop=st.floats(90, 110),
-       spread=st.floats(0, 0.01), frac=st.floats(0, 1))
+@given(
+    side=st.sampled_from([1.0, -1.0]),
+    o=st.floats(90, 110),
+    stop=st.floats(90, 110),
+    spread=st.floats(0, 0.01),
+    frac=st.floats(0, 1),
+)
 def test_stop_fill_stays_inside_the_bar_and_slippage_is_a_cost(side, o, stop, spread, frac):
     h, low = max(o, 110.0), min(o, 90.0)
     px = er.stop_fill_with_slippage(side, stop, o, h, low, spread, frac)

@@ -9,6 +9,7 @@ Each test has a worked numeric example that fails on the code before the fix:
 * D8  the participation cap sizes a sleeve with the capital it is given.
 * D2/D3/D6/D7 and the C7 exec-lag table: see the paper sections below.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -27,16 +28,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _cfg(**kw) -> quant.BacktestConfig:
-    base = dict(initial_capital=100_000.0, cost_bps=10.0, slippage_bps=0.0, periods_per_year=252.0,
-                max_leverage=1.0, allow_short=True)
+    base = dict(
+        initial_capital=100_000.0, cost_bps=10.0, slippage_bps=0.0, periods_per_year=252.0, max_leverage=1.0, allow_short=True
+    )
     base.update(kw)
     return quant.BacktestConfig(**base)
 
 
 def _both(prices, weights, cfg, **extras):
     """(numpy result, facade result); the facade is the C++ engine when it is built."""
-    return (pycore.run_backtest_ex(prices, weights, cfg, **extras),
-            quant.run_backtest(prices, weights, cfg, **extras))
+    return (pycore.run_backtest_ex(prices, weights, cfg, **extras), quant.run_backtest(prices, weights, cfg, **extras))
 
 
 # ------------------------------------------------------------------ D4: keep is a flag
@@ -50,8 +51,8 @@ def _keep_path(lag: int, flag: bool):
     w[0:] = 0.5
     reb[0] = 1.0
     for i in (5, 10, 15):
-        ex = dict(rebalance=reb[:i + 1], keep=keep[:i + 1] if flag else None)
-        held = float(quant.run_backtest(prices[:i + 1], w[:i + 1], cfg, **ex).positions[i])
+        ex = dict(rebalance=reb[: i + 1], keep=keep[: i + 1] if flag else None)
+        held = float(quant.run_backtest(prices[: i + 1], w[: i + 1], cfg, **ex).positions[i])
         w[i:] = held
         reb[i] = 1.0
         keep[i:] = 1.0
@@ -65,7 +66,7 @@ def test_d4_keep_at_lag1_is_no_trade():
         assert [(t.index, round(t.to_weight, 6)) for t in r.trades] == [(1, 0.5)]
         # worked number: entry cost 0.5 x 10 bps, then constant units, so
         # E_T = E0 (1 - 0.0005) (1 + 0.5 (1.01^19 - 1))
-        expect = 100_000.0 * (1 - 0.0005) * (1 + 0.5 * (1.01 ** 19 - 1))
+        expect = 100_000.0 * (1 - 0.0005) * (1 + 0.5 * (1.01**19 - 1))
         assert r.equity[-1] == pytest.approx(expect, rel=1e-12)
 
 
@@ -104,7 +105,7 @@ def test_d5_usd_base_pair_books_r_over_1_plus_r():
         for r in _both(p, np.full(3, w), cfg):
             assert r.returns[1] == pytest.approx(want, abs=1e-15)
         old = quant.run_backtest(p, np.full(3, w), _cfg(cost_bps=0.0))
-        assert old.returns[1] == pytest.approx(0.10 * w, abs=1e-15)   # the pre-fix number
+        assert old.returns[1] == pytest.approx(0.10 * w, abs=1e-15)  # the pre-fix number
 
 
 def test_d5_usd_base_keeps_a_constant_dollar_notional():
@@ -181,13 +182,16 @@ class _FxProvider:
 def test_d5_quote_fx_series_for_crosses():
     from agentic_trader.backtest import quote_fx_series
     from agentic_trader.instruments import Instrument
+
     idx = pd.to_datetime(["2026-01-05", "2026-01-06", "2026-01-07"])
-    prov = _FxProvider({
-        "GBPUSD": pd.DataFrame({"Close": [1.25, 1.30]}, index=idx[[0, 2]]),   # no bar on the 6th
-        "USDJPY": pd.DataFrame({"Close": [100.0, 102.0, 104.0]}, index=idx),
-    })
+    prov = _FxProvider(
+        {
+            "GBPUSD": pd.DataFrame({"Close": [1.25, 1.30]}, index=idx[[0, 2]]),  # no bar on the 6th
+            "USDJPY": pd.DataFrame({"Close": [100.0, 102.0, 104.0]}, index=idx),
+        }
+    )
     q = quote_fx_series(Instrument.parse("EURGBP"), prov, idx, date(2026, 1, 1), date(2026, 1, 7))
-    assert q.tolist() == [1.25, 1.25, 1.30]                                 # carried forward
+    assert q.tolist() == [1.25, 1.25, 1.30]  # carried forward
     q = quote_fx_series(Instrument.parse("EURJPY"), prov, idx, date(2026, 1, 1), date(2026, 1, 7))
     assert np.allclose(q, [1 / 100, 1 / 102, 1 / 104])
     for s in ("EURUSD", "USDJPY", "AAPL"):
@@ -205,6 +209,7 @@ def test_d5_config_switch():
     class P:
         def macro(self, ins, start):
             return {"rate_diff": 0.0}
+
     cfg = make_config()
     assert fx_account_currency(cfg) is True
     prices = np.array([150.0, 151.0])
@@ -221,9 +226,9 @@ def test_d8_participation_cap_uses_the_sleeve_capital():
     the sleeve was capped at 0.01 a bar as if it held the whole account."""
     from agentic_trader.backtest import participation_capper
     from agentic_trader.instruments import Instrument
+
     n = 30
-    full = pd.DataFrame({"Close": np.full(n, 100.0), "Volume": np.full(n, 1000.0)},
-                        index=pd.bdate_range("2026-01-01", periods=n))
+    full = pd.DataFrame({"Close": np.full(n, 100.0), "Volume": np.full(n, 1000.0)}, index=pd.bdate_range("2026-01-01", periods=n))
     mask = np.arange(n) >= 20
     cfg = {"costs": {"backtest_participation_cap": 0.10}}
     target = np.full(10, 0.10)
@@ -237,6 +242,7 @@ def test_d8_participation_cap_uses_the_sleeve_capital():
 # ------------------------------------------------------------------ paper pipeline
 def _load(name: str):
     import importlib.util
+
     spec = importlib.util.spec_from_file_location(f"r2_{name}", ROOT / "scripts" / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -250,6 +256,7 @@ def _paper_current():
     import tempfile
 
     from agentic_trader.config import make_config
+
     mod = _load("paper_trade_v09")
     copy = Path(tempfile.mkdtemp()) / "paper_freeze.json"
     shutil.copy(mod.FREEZE_FILE, copy)
@@ -267,6 +274,7 @@ def _lagging(symbol: str, last_ok: str):
         def history(self, instrument, start, end):
             h = super().history(instrument, start, end)
             return h[h.index <= pd.Timestamp(last_ok)] if instrument.symbol == symbol else h
+
     return Lagging
 
 
@@ -309,17 +317,22 @@ def test_d3_freeze_covers_the_whole_package_and_the_lock(tmp_path):
 
     def fp(patterns):
         return ops.engine_fingerprint(tmp_path, patterns, {}, [], "books")
+
     before_narrow, before_wide = fp(narrow), fp(wide)
-    for path, text in ((tmp_path / "agentic_trader" / "regime.py", "y = 2\n"), (pkg / "yahoo.py", "z = 2\n"),
-                       (tmp_path / "requirements-lock.txt", "numpy==2.1\n")):
+    for path, text in (
+        (tmp_path / "agentic_trader" / "regime.py", "y = 2\n"),
+        (pkg / "yahoo.py", "z = 2\n"),
+        (tmp_path / "requirements-lock.txt", "numpy==2.1\n"),
+    ):
         path.write_text(text, encoding="utf-8")
-        assert fp(narrow) == before_narrow          # the old freeze did not see this edit
-        assert fp(wide) != before_wide              # the round-2 freeze does
+        assert fp(narrow) == before_narrow  # the old freeze did not see this edit
+        assert fp(wide) != before_wide  # the round-2 freeze does
         before_wide = fp(wide)
 
 
 def test_d3_refreeze_writes_the_widened_file_list(tmp_path):
     from agentic_trader.config import make_config
+
     mod = _load("paper_trade_v09")
     frozen = tmp_path / "freeze.json"
     frozen.write_text(mod.FREEZE_FILE.read_text(encoding="utf-8"), encoding="utf-8")
@@ -338,24 +351,24 @@ def test_d6_ledger_hash_chain_and_append_only_check():
     h0 = hashlib.sha256(ops.CHAIN_SEED + b"date,a,rf").hexdigest()
     h1 = hashlib.sha256(h0.encode() + b"\n2026-11-10,0.01,0.04").hexdigest()
     assert heads[:2] == [h0, h1] and len(heads) == 4
-    assert ops.ledger_chain(old.replace("\n", "\r\n")) == heads[:3]          # CRLF checkout hashes alike
+    assert ops.ledger_chain(old.replace("\n", "\r\n")) == heads[:3]  # CRLF checkout hashes alike
     runs_old = json.dumps({"as_of": "2026-11-11", "ledger_rows": 2, "ledger_chain": heads[2]}) + "\n"
     runs_new = runs_old + json.dumps({"as_of": "2026-11-12", "ledger_rows": 3, "ledger_chain": heads[3]}) + "\n"
     good = {"ledger.csv": new, "runs.jsonl": runs_new}
     base = {"ledger.csv": old, "runs.jsonl": runs_old}
     assert chk.run_checks(base, good) == []
-    assert chk.run_checks(base, base) == []                                   # nothing appended: fine
-    rewritten = new.replace("-0.02", "-0.03")                                 # a recorded row rewritten
+    assert chk.run_checks(base, base) == []  # nothing appended: fine
+    rewritten = new.replace("-0.02", "-0.03")  # a recorded row rewritten
     errs = chk.run_checks(base, {"ledger.csv": rewritten, "runs.jsonl": runs_new})
     assert any("line 3 differs" in e for e in errs) and any("chain head" in e for e in errs)
-    errs = chk.run_checks({"ledger.csv": new}, {"ledger.csv": old})            # a stale artifact
+    errs = chk.run_checks({"ledger.csv": new}, {"ledger.csv": old})  # a stale artifact
     assert errs == ["ledger.csv: 4 committed line(s), only 3 now (the record shrank)"]
     assert chk.run_checks({"revisions.csv": "x\n"}, {}) == ["revisions.csv: committed file is missing from the publish"]
 
 
 def test_d6_mask_touches_only_the_newest_runs_line(tmp_path):
     mask = _load("paper_mask_paths")
-    old = '{"provenance": {"executable": "C:/old/python.exe"}}'      # published earlier, left verbatim
+    old = '{"provenance": {"executable": "C:/old/python.exe"}}'  # published earlier, left verbatim
     new = '{"provenance": {"executable": "/opt/hostedtoolcache/python"}}'
     p = tmp_path / "runs.jsonl"
     p.write_text(old + "\n" + new + "\n", encoding="utf-8")
@@ -385,17 +398,17 @@ def test_d7_freshness_reads_the_ledger_not_the_requested_as_of(tmp_path):
     runs, ledger = tmp_path / "runs.jsonl", tmp_path / "ledger.csv"
     runs.write_text(json.dumps({"as_of": "2026-11-09", "appended": 0}) + "\n", encoding="utf-8")
     ledger.write_text("date,a,rf\n2026-11-03,0.0,0.04\n2026-11-04,0.01,0.04\n", encoding="utf-8")
-    assert ops.freshness(runs, date(2026, 11, 10))[0]                         # the old reading: ok
+    assert ops.freshness(runs, date(2026, 11, 10))[0]  # the old reading: ok
     ok, msg = ops.freshness(runs, date(2026, 11, 10), ledger=ledger)
     assert not ok and msg.startswith("STALE") and "2026-11-04" in msg and "4 business day" in msg
-    assert ops.main(["freshness", "--runs", str(runs), "--today", "2026-11-10"]) == 1   # ledger beside runs
+    assert ops.main(["freshness", "--runs", str(runs), "--today", "2026-11-10"]) == 1  # ledger beside runs
     assert ops.last_ledger_session(ledger) == date(2026, 11, 4)
 
 
 def test_f6_raw_bars_are_not_uploaded():
     wf = (ROOT / ".github" / "workflows" / "paper.yml").read_text(encoding="utf-8")
     assert "name: paper-bars" not in wf and "PAPER_BARS_ARTIFACT" not in wf
-    assert "!results/paper/bars/" in wf                       # and excluded from the record artifact
+    assert "!results/paper/bars/" in wf  # and excluded from the record artifact
     assert "paper_ledger_check.py --base HEAD" in wf
     lic = (ROOT / "DATA_LICENSING.md").read_text(encoding="utf-8")
     assert "private `paper-bars` Actions artifact" not in lic and "removed in round 2" in lic
@@ -422,8 +435,11 @@ def test_c7_exec_lag_variants_and_table():
 
     class T:
         name = "rules v0.8"
-    rows = [{"trial": "rules v0.8", "exec_lag": v, "sharpe": s, "delta_vs_control": d, "p_value": p}
-            for v, s, d, p in ((0, 0.81, 0.10, 0.04), (1, 0.62, -0.05, 0.40), ("next_open", 0.66, -0.02, 0.70))]
+
+    rows = [
+        {"trial": "rules v0.8", "exec_lag": v, "sharpe": s, "delta_vs_control": d, "p_value": p}
+        for v, s, d, p in ((0, 0.81, 0.10, 0.04), (1, 0.62, -0.05, 0.40), ("next_open", 0.66, -0.02, 0.70))
+    ]
     lines = ex.table_lines(rows, "yahoo", "design", [0, 1, "next_open"], [T()])
     assert lines[-1] == "| rules v0.8 | 0.810 | +0.100 | 0.040 | 0.620 | -0.050 | 0.400 | 0.660 | -0.020 | 0.700 |"
     assert "SR next open" in lines[4] and "same-close fill" in lines[2]
@@ -437,6 +453,7 @@ def test_c7_defaults_are_unchanged_for_published_studies():
     class P:
         def macro(self, ins, start):
             return {}
+
     bt = backtest_config_for(Instrument.parse("AAPL"), make_config(), np.array([1.0, 2.0]), P(), date(2026, 1, 2))
     assert bt.exec_lag == 0 and bt.fill_next_open is False
 
@@ -450,7 +467,7 @@ def test_a_stale_compiled_core_is_detected() -> None:
     from agentic_trader import quant
     from agentic_trader.quant import pycore
 
-    class Old:                                          # a config object without the new fields
+    class Old:  # a config object without the new fields
         initial_capital = 0.0
 
     assert "quote_inverse" in quant.stale_fields(SimpleNamespace(BacktestConfig=Old))
@@ -466,6 +483,7 @@ def test_a_version_bump_does_not_trip_the_paper_freeze(tmp_path) -> None:
     left out; a changed dependency still changes the hash."""
     import importlib.util
     from pathlib import Path as _P
+
     spec = importlib.util.spec_from_file_location("paper_ops_ver", _P(__file__).resolve().parents[1] / "scripts" / "paper_ops.py")
     po = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(po)
@@ -473,17 +491,20 @@ def test_a_version_bump_does_not_trip_the_paper_freeze(tmp_path) -> None:
     def fp(text: str) -> str:
         (tmp_path / "pyproject.toml").write_text(text, encoding="utf-8")
         return po.engine_fingerprint(tmp_path, ["pyproject.toml"], {}, [], ())
+
     def toml(version: str, numpy: str) -> str:
         lines = ["[project]", 'name = "x"', f'version = "{version}"', f'dependencies = ["numpy>={numpy}"]', ""]
         return chr(10).join(lines)
+
     # CI finding: the hash sorted Path objects, which is case-insensitive on Windows only, so
     # Linux and macOS computed a different hash from the one recorded on Windows. Files are now
     # ordered by their POSIX relative path as plain strings: uppercase before lowercase everywhere.
     import hashlib
+
     for name in ("CMakeLists.txt", "apple.py"):
         (tmp_path / name).write_text(name, encoding="utf-8")
     want = hashlib.sha256()
-    for name in ("CMakeLists.txt", "apple.py"):                 # 'C' (67) sorts before 'a' (97)
+    for name in ("CMakeLists.txt", "apple.py"):  # 'C' (67) sorts before 'a' (97)
         want.update(name.encode() + b"\n")
         want.update(name.encode())
     want.update(b"{}")

@@ -1,8 +1,9 @@
 """Run the agent firm on a currency pair for one date.
 
-    python examples/run_fx.py                     # offline, synthetic data
-    python examples/run_fx.py --live              # Claude + Yahoo Finance + FRED rates
+python examples/run_fx.py                     # offline, synthetic data
+python examples/run_fx.py --live              # Claude + Yahoo Finance + FRED rates
 """
+
 import sys
 
 from agentic_trader import TradingGraph, make_config

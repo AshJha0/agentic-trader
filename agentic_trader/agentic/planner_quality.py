@@ -17,6 +17,7 @@ same task, before any repair:
 Governance steps (critic, validate, finalise) are excluded on both sides: the model is never
 asked for them and the validator always appends them. Pure functions, no model.
 """
+
 from __future__ import annotations
 
 from typing import Any, Iterable
@@ -29,7 +30,7 @@ def _keys(steps: Iterable[Any]) -> list[tuple[str, str]]:
     for s in steps:
         if isinstance(s, dict):
             t, n = str(s.get("type", "")).lower(), str(s.get("name", "")).strip()
-        else:                                           # PlanStep
+        else:  # PlanStep
             t, n = s.type.value, s.name
         if t in {"tool", "agent"} and n not in _GOV:
             out.append((t, n))
@@ -50,14 +51,22 @@ def order_agreement(a: list[tuple[str, str]], b: list[tuple[str, str]]) -> float
     return conc / pairs if pairs else None
 
 
-def plan_quality(raw_steps: list[Any] | None, canonical_steps: Iterable[Any],
-                 validated: Any | None = None) -> dict[str, Any]:
+def plan_quality(raw_steps: list[Any] | None, canonical_steps: Iterable[Any], validated: Any | None = None) -> dict[str, Any]:
     """Quality of one raw model plan against the canonical plan. ``validated`` is the
     ``Plan`` returned by ``validate_plan`` for ``raw_steps`` (for the zero-repair flag)."""
     canon = _keys(canonical_steps)
     if raw_steps is None:
-        return {"usable": False, "precision": 0.0, "recall": 0.0, "f1": 0.0, "order": None,
-                "zero_repair": False, "exact_canonical": False, "n_proposed": 0, "n_canonical": len(canon)}
+        return {
+            "usable": False,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "order": None,
+            "zero_repair": False,
+            "exact_canonical": False,
+            "n_proposed": 0,
+            "n_canonical": len(canon),
+        }
     prop = _keys(raw_steps)
     ps, cs = set(prop), set(canon)
     inter = len(ps & cs)
@@ -67,9 +76,17 @@ def plan_quality(raw_steps: list[Any] | None, canonical_steps: Iterable[Any],
     zero = False
     if validated is not None:
         zero = _keys(validated.steps) == prop and not tuple(getattr(validated, "notes", ()) or ())
-    return {"usable": True, "precision": precision, "recall": recall, "f1": f1,
-            "order": order_agreement(prop, canon), "zero_repair": zero,
-            "exact_canonical": prop == canon, "n_proposed": len(prop), "n_canonical": len(canon)}
+    return {
+        "usable": True,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "order": order_agreement(prop, canon),
+        "zero_repair": zero,
+        "exact_canonical": prop == canon,
+        "n_proposed": len(prop),
+        "n_canonical": len(canon),
+    }
 
 
 def summarise(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -80,11 +97,15 @@ def summarise(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     def mean(xs: list[float]) -> float:
         return sum(xs) / len(xs) if xs else float("nan")
-    return {"plans": n, "usable": len(use),
-            "precision_mean": mean([r["precision"] for r in use]),
-            "recall_mean": mean([r["recall"] for r in use]),
-            "f1_mean": mean([r["f1"] for r in use]),
-            "f1_mean_all_plans": mean([r["f1"] for r in rows]),
-            "order_agreement_mean": mean(ords),
-            "zero_repair_share": sum(r["zero_repair"] for r in rows) / n if n else float("nan"),
-            "exact_canonical_share": sum(r["exact_canonical"] for r in rows) / n if n else float("nan")}
+
+    return {
+        "plans": n,
+        "usable": len(use),
+        "precision_mean": mean([r["precision"] for r in use]),
+        "recall_mean": mean([r["recall"] for r in use]),
+        "f1_mean": mean([r["f1"] for r in use]),
+        "f1_mean_all_plans": mean([r["f1"] for r in rows]),
+        "order_agreement_mean": mean(ords),
+        "zero_repair_share": sum(r["zero_repair"] for r in rows) / n if n else float("nan"),
+        "exact_canonical_share": sum(r["exact_canonical"] for r in rows) / n if n else float("nan"),
+    }

@@ -1,5 +1,6 @@
 """v0.8 protocol machinery: portfolio-level Sharpe intervals over time and the rebalance-phase
 sweep (review finding 65), and the trials registry behind the deflated Sharpe (finding 87)."""
+
 import numpy as np
 import pytest
 
@@ -22,7 +23,7 @@ def test_paired_sharpe_block_bootstrap_identical_series_is_zero_with_p_one():
 def test_paired_sharpe_block_bootstrap_detects_a_real_difference_and_is_deterministic():
     rng = np.random.default_rng(1)
     a = rng.normal(0.0008, 0.01, 1200)
-    b = a - 0.0006                                   # same days, same noise, lower mean
+    b = a - 0.0006  # same days, same noise, lower mean
     d1 = paired_sharpe_block_bootstrap(a, b, 252.0, n_boot=2000, seed=3)
     d2 = paired_sharpe_block_bootstrap(a, b, 252.0, n_boot=2000, seed=3)
     assert d1 == d2
@@ -40,7 +41,7 @@ def test_paired_sharpe_block_bootstrap_uses_excess_returns_and_drops_bad_days():
     raw = paired_sharpe_block_bootstrap(a, b, 252.0, n_boot=500)
     assert scalar.n == per_day.n == 598
     assert scalar == per_day
-    assert scalar.diff != raw.diff                   # the risk-free rate does not cancel in a Sharpe difference
+    assert scalar.diff != raw.diff  # the risk-free rate does not cancel in a Sharpe difference
     with pytest.raises(ValueError):
         paired_sharpe_block_bootstrap(a, b[:-1], 252.0)
     tiny = paired_sharpe_block_bootstrap([0.1, 0.2], [0.1, 0.3], 252.0)
@@ -53,7 +54,7 @@ def test_rebalance_offset_shifts_the_decision_bars_and_is_validated():
     assert base.decisions[0].as_of == base.dates[0].date()
     expected = [base.dates[i].date() for i in range(3, len(base.dates) - 1, 10)]
     assert [d.as_of for d in shifted.decisions] == expected
-    assert np.all(shifted.results[AGENT].positions[:3] == 0.0)   # flat until the first decision
+    assert np.all(shifted.results[AGENT].positions[:3] == 0.0)  # flat until the first decision
     for bad in (-1, 10, 11):
         with pytest.raises(ValueError):
             run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", CFG, rebalance_every=10, rebalance_offset=bad)
@@ -76,9 +77,9 @@ def test_portfolio_report_sharpe_difference_and_offset_pass_through():
 def test_trials_registry_is_complete_and_every_reproducible_trial_builds_a_config():
     names = [t.name for t in TRIALS]
     assert len(names) == len(set(names)) and len(TRIALS) >= 25
-    assert sum(t.version == "v0.3" for t in TRIALS) == 16      # the ablation the v0.3 rules were chosen from
+    assert sum(t.version == "v0.3" for t in TRIALS) == 16  # the ablation the v0.3 rules were chosen from
     assert {t.version for t in TRIALS} >= {"v0.3", "v0.4", "v0.5", "v0.5.1", "v0.6", "v0.8"}
-    assert any(t.overrides is None for t in TRIALS)             # historical trials not reproducible from config
+    assert any(t.overrides is None for t in TRIALS)  # historical trials not reproducible from config
     for t in reproducible_trials():
         cfg = make_config(t.overrides)
         assert isinstance(cfg["rules"]["fx_carry_neutral"], bool)
@@ -103,13 +104,13 @@ def test_portfolio_report_sharpe_difference_pairs_a_varying_rf_like_the_metrics(
     rep = run_portfolio_backtest(syms, "2024-01-02", "2024-03-28", CFG, rebalance_every=10, provider=_RampRF(CFG))
     assert isinstance(rep.rf, np.ndarray) and np.std(rep.rf) > 0.005
     d = rep.sharpe_difference(AGENT, "Buy&Hold")
-    assert d.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)          # was off by one bar of rf
+    assert d.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)  # was off by one bar of rf
     assert d.sharpe_b == pytest.approx(rep.metrics["Buy&Hold"].sharpe, abs=1e-9)
     a, b = (rep.returns[s].to_numpy(dtype=float)[1:] for s in (AGENT, "Buy&Hold"))
     ppy = max(r.instrument.periods_per_year for r in rep.sleeves.values())
-    shifted = paired_sharpe_block_bootstrap(a, b, ppy, rf=rep.rf[1:], n_boot=50)       # the pre-fix pairing
+    shifted = paired_sharpe_block_bootstrap(a, b, ppy, rf=rep.rf[1:], n_boot=50)  # the pre-fix pairing
     aligned = paired_sharpe_block_bootstrap(a, b, ppy, rf=rep.rf[:-1], n_boot=50)
-    assert abs(shifted.sharpe_a - rep.metrics[AGENT].sharpe) > 1e-6                    # the test can see the shift
+    assert abs(shifted.sharpe_a - rep.metrics[AGENT].sharpe) > 1e-6  # the test can see the shift
     assert aligned.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)
 
 
@@ -130,13 +131,14 @@ def test_portfolio_report_sharpe_difference_of_a_flat_agent_is_zero_like_the_tab
 
     monkeypatch.setattr(TradingGraph, "propagate", flat)
     syms = ["AAPL", "MSFT", "EURUSD"]
-    rep = run_portfolio_backtest(syms, "2024-01-02", "2024-03-28", CFG, rebalance_every=10,
-                                 provider=_RampRF(CFG) if provider else None)
+    rep = run_portfolio_backtest(
+        syms, "2024-01-02", "2024-03-28", CFG, rebalance_every=10, provider=_RampRF(CFG) if provider else None
+    )
     assert rep.metrics[AGENT].avg_exposure == 0.0 and rep.metrics[AGENT].num_trades == 0
     d = rep.sharpe_difference(AGENT, "Buy&Hold")
-    assert d.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)               # was -3.5e16 vs 0.0
+    assert d.sharpe_a == pytest.approx(rep.metrics[AGENT].sharpe, abs=1e-9)  # was -3.5e16 vs 0.0
     assert d.sharpe_b == pytest.approx(rep.metrics["Buy&Hold"].sharpe, abs=1e-9) and abs(d.ci_low) < 1e3
-    if provider is None:                                                                  # constant rf: exactly flat
+    if provider is None:  # constant rf: exactly flat
         assert rep.metrics[AGENT].sharpe == 0.0 and d.sharpe_a == 0.0 and d.diff == -d.sharpe_b
 
 
@@ -160,6 +162,5 @@ def test_measurement_driver_reconfigures_the_shared_provider_for_provider_level_
     runs = [o for *_, o in mod.EVALS.values()] + [o for *_, o in mod.PORTFOLIOS.values()]
     runs += [t.overrides for t in TRIALS if t.overrides is not None]
     touched = [o for o in runs if "cash_leg" in o or "edgar" in o]
-    assert len(touched) >= 5                                     # EDGAR off, cash leg off x3, the EDGAR-off trial
+    assert len(touched) >= 5  # EDGAR off, cash leg off x3, the EDGAR-off trial
     assert all(mod.provider_for(make_config(CFG, **o), o, shared) is not shared for o in touched)
-

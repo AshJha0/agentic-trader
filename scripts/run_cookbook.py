@@ -5,6 +5,7 @@
 ``--offline`` skips recipes that need the network (Yahoo, FRED, EDGAR, an LLM key),
 which is what CI runs. Exit status is the number of failures.
 """
+
 import argparse
 import os
 import re
@@ -30,6 +31,7 @@ def main() -> int:
         # temp dir where the file is not visible, so load it here (values are never printed).
         sys.path.insert(0, str(ROOT))
         from agentic_trader.cli import load_dotenv
+
         load_dotenv(str(ROOT / ".env"))
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": str(ROOT)}
     fails = ran = skipped = 0
@@ -43,8 +45,16 @@ def main() -> int:
                 print(f"SKIP {title} (network)")
                 continue
             with tempfile.TemporaryDirectory() as tmp:
-                p = subprocess.run([sys.executable, "-c", block], cwd=tmp, capture_output=True, text=True,
-                                   timeout=args.timeout, encoding="utf-8", errors="replace", env=env)
+                p = subprocess.run(
+                    [sys.executable, "-c", block],
+                    cwd=tmp,
+                    capture_output=True,
+                    text=True,
+                    timeout=args.timeout,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=env,
+                )
             ran += 1
             ok = p.returncode == 0
             fails += not ok

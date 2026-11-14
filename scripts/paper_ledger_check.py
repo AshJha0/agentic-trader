@@ -19,6 +19,7 @@ commit that added 2026-11-12 is downloaded over it. The new ledger.csv then lack
 
 Standard library only (the publish job installs nothing). Exit 0 when every check passes.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,13 +69,14 @@ def check_chain(ledger: str | None, runs: str | None) -> list[str]:
     for k, line in enumerate(_lines(runs), 1):
         rec = json.loads(line)
         if "ledger_chain" not in rec:
-            continue   # lines written before round 2 carry no chain
+            continue  # lines written before round 2 carry no chain
         n = int(rec.get("ledger_rows", -1))
         if not 0 <= n < len(heads):
             errors.append(f"runs.jsonl line {k}: ledger_rows {n} but the ledger has {len(heads) - 1} row(s)")
         elif heads[n] != rec["ledger_chain"]:
-            errors.append(f"runs.jsonl line {k}: chain head after {n} row(s) does not match the ledger "
-                          f"(a recorded row was rewritten)")
+            errors.append(
+                f"runs.jsonl line {k}: chain head after {n} row(s) does not match the ledger (a recorded row was rewritten)"
+            )
     return errors
 
 

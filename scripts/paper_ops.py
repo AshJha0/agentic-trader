@@ -39,6 +39,7 @@ handled.
   was main before) and, when the push loses a race with another commit, rebases and retries
   with exponential backoff (``--attempts`` pushes in all).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,8 +62,15 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "results" / "paper" / "runs.jsonl"
 # the files the daily publish commits (the same set the laptop's paper_daily.cmd adds)
-PUBLISHED = ("ledger.csv", "ledger_recomputed.csv", "revisions.csv", "runs.jsonl", "summary.md", "exposure.csv",
-             "ledger_vintage.csv")
+PUBLISHED = (
+    "ledger.csv",
+    "ledger_recomputed.csv",
+    "revisions.csv",
+    "runs.jsonl",
+    "summary.md",
+    "exposure.csv",
+    "ledger_vintage.csv",
+)
 # raw session bars (results/paper/bars/) are NOT published: Yahoo data may not be redistributed
 # (DATA_LICENSING.md). They stay git-ignored where the session ran (not uploaded as an Actions
 # artifact since round 2), and only their SHA-256 is published in runs.jsonl.
@@ -75,7 +83,7 @@ class VintageRecorder:
     def __init__(self, provider):
         self._provider = provider
         self.frames: dict[tuple[str, str, str], pd.DataFrame] = {}
-        self.instruments: dict[str, object] = {}   # str(instrument) -> instrument, for the bar store
+        self.instruments: dict[str, object] = {}  # str(instrument) -> instrument, for the bar store
 
     def history(self, instrument, start: date, end: date) -> pd.DataFrame:
         frame = self._provider.history(instrument, start, end)
@@ -123,8 +131,7 @@ def engine_patterns(listed: list[str]) -> list[str]:
     return sorted(set(listed) | set(REQUIRED_ENGINE_FILES))
 
 
-def engine_fingerprint(root: Path, patterns: list[str], config: dict, config_keys: list[str],
-                       books: object) -> str:
+def engine_fingerprint(root: Path, patterns: list[str], config: dict, config_keys: list[str], books: object) -> str:
     """SHA-256 over the engine that computes the frozen record: the bytes of every file the
     ``patterns`` (globs relative to ``root``) match, in sorted path order with CRLF taken as
     LF (a Windows checkout hashes like a Linux one) and the ``version = `` line of
@@ -134,8 +141,7 @@ def engine_fingerprint(root: Path, patterns: list[str], config: dict, config_key
     # Ordered by the POSIX form of the relative path, compared as plain strings. Sorting the Path
     # objects themselves is case-insensitive on Windows and case-sensitive elsewhere, which put
     # CMakeLists.txt in a different place and gave each platform its own hash.
-    files = sorted({p for pat in patterns for p in root.glob(pat) if p.is_file()},
-                   key=lambda p: p.relative_to(root).as_posix())
+    files = sorted({p for pat in patterns for p in root.glob(pat) if p.is_file()}, key=lambda p: p.relative_to(root).as_posix())
     for p in files:
         h.update(p.relative_to(root).as_posix().encode() + b"\n")
         data = p.read_bytes().replace(b"\r\n", b"\n")
@@ -161,6 +167,7 @@ def _gzip_csv(frame: pd.DataFrame) -> bytes:
 
 def _long(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     import pandas as pd
+
     parts = []
     for name in sorted(frames):
         f = frames[name].copy()
@@ -196,11 +203,12 @@ def store_session_bars(provider, out: Path, as_of: date) -> dict:
         for name, f in widest.items():
             try:
                 a = fetch(insts[name])
-            except Exception as e:   # an action outage must not lose the price vintage
+            except Exception as e:  # an action outage must not lose the price vintage
                 print(f"corporate actions unavailable for {name}: {e}", file=sys.stderr)
                 continue
             if a is not None and len(a):
                 import pandas as pd
+
                 lo, hi = pd.Timestamp(f.index.min()), pd.Timestamp(as_of)
                 actions[name] = a.loc[(a.index >= lo) & (a.index <= hi)]
     day = out / as_of.isoformat()
@@ -224,6 +232,7 @@ def store_session_bars(provider, out: Path, as_of: date) -> dict:
 def read_session_bars(path: Path) -> dict[str, pd.DataFrame]:
     """Inverse of the writer: symbol -> frame indexed by date, columns as stored."""
     import pandas as pd
+
     long = pd.read_csv(path, index_col=0, parse_dates=True)
     return {str(sym): g.drop(columns="symbol") for sym, g in long.groupby("symbol", sort=True)}
 
@@ -231,10 +240,13 @@ def read_session_bars(path: Path) -> dict[str, pd.DataFrame]:
 LEDGER_BRANCH = "paper-ledger"
 
 
-def push_with_retry(attempts: int = 5, backoff: float = 5.0,
-                    run: Callable[[list[str]], int] | None = None,
-                    sleep: Callable[[float], None] = time.sleep,
-                    branch: str = LEDGER_BRANCH) -> bool:
+def push_with_retry(
+    attempts: int = 5,
+    backoff: float = 5.0,
+    run: Callable[[list[str]], int] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    branch: str = LEDGER_BRANCH,
+) -> bool:
     """``git push origin HEAD:<branch>``; when it fails (usually a lost race with another
     commit to that branch), wait ``backoff x 2^k`` seconds, ``git pull --rebase`` and push again, ``attempts``
     pushes in all. A rebase conflict aborts and returns False at once: a real conflict on the
@@ -245,7 +257,7 @@ def push_with_retry(attempts: int = 5, backoff: float = 5.0,
             return True
         if k == attempts - 1:
             break
-        sleep(backoff * 2 ** k)
+        sleep(backoff * 2**k)
         if runner(["git", "pull", "-q", "--rebase", "origin", branch]) != 0:
             runner(["git", "rebase", "--abort"])
             return False
@@ -295,6 +307,7 @@ def last_recorded_session(runs: Path) -> date | None:
 def _calendar():
     """``agentic_trader/nyse_calendar.py`` loaded by path: stdlib only, no package import."""
     import importlib.util
+
     spec = importlib.util.spec_from_file_location("_nyse_calendar", ROOT / "agentic_trader" / "nyse_calendar.py")
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -308,8 +321,9 @@ def business_days_stale(last: date, today: date) -> int:
     return int(_calendar().sessions_after(last, today))
 
 
-def freshness(runs: Path, today: date, max_business_days: int = MAX_STALE_BUSINESS_DAYS,
-              ledger: Path | None = None) -> tuple[bool, str]:
+def freshness(
+    runs: Path, today: date, max_business_days: int = MAX_STALE_BUSINESS_DAYS, ledger: Path | None = None
+) -> tuple[bool, str]:
     """Is the record current? Round 2 (review D7): judged on the last row of ``ledger``, the
     session actually recorded, not on the ``as_of`` a run asked for: a run that appended nothing
     (Yahoo stalled) still writes a runs.jsonl line with a fresh ``as_of``, which kept the old
@@ -324,8 +338,9 @@ def freshness(runs: Path, today: date, max_business_days: int = MAX_STALE_BUSINE
             return True, f"{runs.name}: no recorded session yet, nothing to check"
     stale = business_days_stale(last, today)
     verdict = "ok" if stale <= max_business_days else "STALE"
-    return stale <= max_business_days, (f"{verdict}: {what} {last}, {stale} business day(s) "
-                                        f"before {today} (limit {max_business_days})")
+    return stale <= max_business_days, (
+        f"{verdict}: {what} {last}, {stale} business day(s) before {today} (limit {max_business_days})"
+    )
 
 
 def commit_if_changed(repo: Path, paths: list[str], message: str) -> bool:
@@ -346,9 +361,12 @@ def main(argv=None) -> int:
     f.add_argument("--runs", default=str(RUNS))
     f.add_argument("--today", default=None, help="reference date (default: today, UTC)")
     f.add_argument("--max-business-days", type=int, default=MAX_STALE_BUSINESS_DAYS)
-    f.add_argument("--ledger", default=None,
-                   help="judge freshness on this ledger's last row (default: ledger.csv beside --runs; "
-                        "when there is none, the runs.jsonl as_of is used)")
+    f.add_argument(
+        "--ledger",
+        default=None,
+        help="judge freshness on this ledger's last row (default: ledger.csv beside --runs; "
+        "when there is none, the runs.jsonl as_of is used)",
+    )
     c = sub.add_parser("commit", help="commit the published paper files if they changed")
     c.add_argument("--message", default="paper: daily record [skip ci]")
     p = sub.add_parser("push", help="push HEAD to the record branch; on a lost race rebase and retry with backoff")

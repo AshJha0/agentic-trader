@@ -30,6 +30,7 @@ Three separate guards, each against a different way the future reaches a backtes
    feature value with the date it became public (``visible_from``) and refuses any read
    that would return a value not yet public at the reading date.
 """
+
 from __future__ import annotations
 
 import functools
@@ -62,14 +63,14 @@ class Fold:
     ``horizon`` positions, whose labels run into the next fold: scoring only ``scored``
     keeps any two folds from sharing a return.
     """
+
     index: int
     train: np.ndarray
     test: np.ndarray
     scored: np.ndarray
 
 
-def purged_walk_forward(n_samples: int, horizon: int, n_folds: int = 5,
-                        embargo: int | None = None) -> list[Fold]:
+def purged_walk_forward(n_samples: int, horizon: int, n_folds: int = 5, embargo: int | None = None) -> list[Fold]:
     """Purged, embargoed, expanding-window walk-forward folds.
 
     Sample ``i`` carries a label over bars ``i+1 .. i+horizon``. For test block
@@ -89,14 +90,14 @@ def purged_walk_forward(n_samples: int, horizon: int, n_folds: int = 5,
     if n_samples < n_folds * (horizon + 1):
         raise ValueError(f"{n_samples} samples cannot hold {n_folds} folds longer than horizon {horizon}")
     edges = np.linspace(0, n_samples, n_folds + 1).astype(int)
-    keep = np.ones(n_samples, bool)          # positions not embargoed by an earlier block
+    keep = np.ones(n_samples, bool)  # positions not embargoed by an earlier block
     folds = []
     for j in range(n_folds):
         a, b = int(edges[j]), int(edges[j + 1])
         train = np.flatnonzero(keep[: max(0, a - horizon)])
         test = np.arange(a, b)
         folds.append(Fold(j, train, test, test[: max(0, test.size - horizon)]))
-        keep[b: b + emb] = False
+        keep[b : b + emb] = False
     return folds
 
 
@@ -194,13 +195,14 @@ class PurgedIC:
     With five folds that is 4 degrees of freedom, where the two-sided 5% bar is 2.776, not
     the normal 1.96 or a round 2: ``t_crit`` carries that bar and ``significant`` applies it.
     """
+
     ic: float
     t: float
     n: int
     folds: tuple[float, ...]
-    t_nw: float = float("nan")      # Newey-West HAC t on every scored pair / date (v0.17)
-    nw_lag: int = 0                 # Bartlett lag behind t_nw
-    mde_ic: float = float("nan")    # min detectable |IC|, 5% two-sided, 80% power (HAC se)
+    t_nw: float = float("nan")  # Newey-West HAC t on every scored pair / date (v0.17)
+    nw_lag: int = 0  # Bartlett lag behind t_nw
+    mde_ic: float = float("nan")  # min detectable |IC|, 5% two-sided, 80% power (HAC se)
     method: str = "blocked folds, fixed signal (no fit, purge inactive)"
 
     @property
@@ -222,11 +224,18 @@ class PurgedIC:
     def as_gate(self) -> dict[str, float | int]:
         """The ``{"IC", "t(IC)", "n", "t_crit"}`` shape ``alpha.significant_alpha_signal``
         reads."""
-        return {"IC": self.ic, "t(IC)": self.t, "n": self.n, "t_crit": self.t_crit,
-                "t_NW": self.t_nw, "MDE_IC": self.mde_ic, "df": self.k - 1 if self.k >= 3 else 0}
+        return {
+            "IC": self.ic,
+            "t(IC)": self.t,
+            "n": self.n,
+            "t_crit": self.t_crit,
+            "t_NW": self.t_nw,
+            "MDE_IC": self.mde_ic,
+            "df": self.k - 1 if self.k >= 3 else 0,
+        }
 
 
-FoldIC = PurgedIC   # v0.17 name: for a fixed signal nothing is purged
+FoldIC = PurgedIC  # v0.17 name: for a fixed signal nothing is purged
 
 
 def gate_threshold(entry: dict, fallback: float = 2.0) -> float:
@@ -256,8 +265,11 @@ def passes_gate(entry: Any, min_n: int = 30, fallback_tstat: float = 2.0) -> boo
 def _summarise(fold_ics: list[float], n: int, nw: Any = None) -> PurgedIC:
     extra: dict[str, Any] = {}
     if nw is not None:
-        extra = {"t_nw": nw.t, "nw_lag": nw.lag,
-                 "mde_ic": min_detectable_ic(nw.n, se=nw.se) if math.isfinite(nw.se) else float("nan")}
+        extra = {
+            "t_nw": nw.t,
+            "nw_lag": nw.lag,
+            "mde_ic": min_detectable_ic(nw.n, se=nw.se) if math.isfinite(nw.se) else float("nan"),
+        }
     v = np.array([x for x in fold_ics if math.isfinite(x)])
     if v.size == 0:
         return PurgedIC(float("nan"), float("nan"), n, tuple(fold_ics), **extra)
@@ -269,8 +281,9 @@ def _summarise(fold_ics: list[float], n: int, nw: Any = None) -> PurgedIC:
     return PurgedIC(mean, t, n, tuple(fold_ics), **extra)
 
 
-def ic_blocked_folds(signal: Any, fwd_returns: Any, horizon: int, n_folds: int = 5,
-                     embargo: int | None = None, min_pairs: int = 10) -> PurgedIC:
+def ic_blocked_folds(
+    signal: Any, fwd_returns: Any, horizon: int, n_folds: int = 5, embargo: int | None = None, min_pairs: int = 10
+) -> PurgedIC:
     """Spearman IC of one fixed signal series against its ``horizon``-bar forward returns,
     estimated fold by fold on the test blocks of ``purged_walk_forward`` (blocked folds: the
     training side is unused, so this is not purged CV). ``t_nw`` is the HAC t of the rank IC
@@ -304,8 +317,9 @@ def ic_blocked_folds(signal: Any, fwd_returns: Any, horizon: int, n_folds: int =
     return _summarise(ics, n, rank_ic_newey_west(s[mask], f[mask], horizon))
 
 
-def ic_blocked_folds_series(daily_ic: pd.Series, horizon: int, n_folds: int = 5,
-                            embargo: int | None = None, min_dates: int = 5) -> PurgedIC:
+def ic_blocked_folds_series(
+    daily_ic: pd.Series, horizon: int, n_folds: int = 5, embargo: int | None = None, min_dates: int = 5
+) -> PurgedIC:
     """The cross-sectional counterpart of ``ic_blocked_folds`` (``t_nw``: HAC t of the
     scored daily ICs): ``daily_ic`` is a per-date IC
     (``xalpha.cross_sectional_ic``) whose date ``i`` scores the ``horizon``-bar return from
@@ -340,9 +354,9 @@ ic_purged_series = ic_blocked_folds_series
 # while the per-entry nominal gate stays the blocked-fold t against its own t_crit.
 GATE_FAMILIES: dict[str, str] = {
     "time_series": "alphas x names x horizons of one alpha-report run (alpha.alpha_report over "
-                   "the universe; 9 alphas x 15 names x 3 horizons = 405 tests on the core set)",
+    "the universe; 9 alphas x 15 names x 3 horizons = 405 tests on the core set)",
     "cross_sectional": "alphas of one xalpha_report (one universe, one horizon); the gate that "
-                       "builds the significance_gated row (xalpha.significance_gated_scores)",
+    "builds the significance_gated row (xalpha.significance_gated_scores)",
 }
 
 
@@ -363,8 +377,7 @@ def gate_p_value(entry: dict, use: str = "nw") -> float:
     raise ValueError("use must be 'fold' or 'nw'")
 
 
-def gate_family_bh(entries: dict[Any, dict], q: float = 0.05, use: str = "nw",
-                   min_n: int = 30) -> dict[Any, dict[str, Any]]:
+def gate_family_bh(entries: dict[Any, dict], q: float = 0.05, use: str = "nw", min_n: int = 30) -> dict[Any, dict[str, Any]]:
     """Benjamini-Hochberg over a whole gate family.
 
     ``entries`` maps a key such as ``(alpha, symbol, horizon)`` to an ``as_gate`` dict. Each
@@ -380,8 +393,7 @@ def gate_family_bh(entries: dict[Any, dict], q: float = 0.05, use: str = "nw",
     out = {}
     for i, k in enumerate(keys):
         nominal = passes_gate(entries[k], min_n=min_n)
-        out[k] = {"p": float(p[i]), "nominal": nominal, "bh": bool(bh[i]),
-                  "passes": bool(nominal and bh[i])}
+        out[k] = {"p": float(p[i]), "nominal": nominal, "bh": bool(bh[i]), "passes": bool(nominal and bh[i])}
     return out
 
 
@@ -392,18 +404,26 @@ def format_gate_family(entries: dict[Any, dict], q: float = 0.05, use: str = "nw
 
     def f(x: Any, d: int = 3) -> str:
         return "n/a" if x is None or x != x else f"{float(x):.{d}f}"
-    lines = ["| test | IC | t (blocked folds) | t (Newey-West) | min detectable IC | p | nominal | family (BH) |",
-             "|---|---:|---:|---:|---:|---:|---|---|"]
+
+    lines = [
+        "| test | IC | t (blocked folds) | t (Newey-West) | min detectable IC | p | nominal | family (BH) |",
+        "|---|---:|---:|---:|---:|---:|---|---|",
+    ]
     for k, e in entries.items():
         r = res[k]
         name = " / ".join(map(str, k)) if isinstance(k, tuple) else str(k)
-        lines.append(f"| {name} | {f(e.get('IC'), 4)} | {f(e.get('t(IC)'), 2)} | {f(e.get('t_NW'), 2)} | "
-                     f"{f(e.get('MDE_IC'), 4)} | {f(r['p'], 4)} | {'yes' if r['nominal'] else 'no'} | "
-                     f"{'yes' if r['passes'] else 'no'} |")
+        lines.append(
+            f"| {name} | {f(e.get('IC'), 4)} | {f(e.get('t(IC)'), 2)} | {f(e.get('t_NW'), 2)} | "
+            f"{f(e.get('MDE_IC'), 4)} | {f(r['p'], 4)} | {'yes' if r['nominal'] else 'no'} | "
+            f"{'yes' if r['passes'] else 'no'} |"
+        )
     m = sum(1 for r in res.values() if r["p"] == r["p"])
     basis = "blocked-fold" if use == "fold" else "Newey-West"
-    lines += ["", f"Family: {len(entries)} tests ({m} with a defined p), BH at q = {q} on the {basis} p; "
-                  f"{sum(r['passes'] for r in res.values())} pass."]
+    lines += [
+        "",
+        f"Family: {len(entries)} tests ({m} with a defined p), BH at q = {q} on the {basis} p; "
+        f"{sum(r['passes'] for r in res.values())} pass.",
+    ]
     return "\n".join(lines)
 
 
@@ -441,20 +461,16 @@ class ShockedProvider(MarketDataProvider):
         df.loc[after, cols] = df.loc[after, cols] * self.factor
         return df
 
-    def _with_shock_item(self, items: list[NewsItem], instrument: Instrument, as_of: date,
-                         lookback_days: int) -> list[NewsItem]:
+    def _with_shock_item(self, items: list[NewsItem], instrument: Instrument, as_of: date, lookback_days: int) -> list[NewsItem]:
         if self._hit(instrument) and as_of - timedelta(days=lookback_days) <= self.shock_date <= as_of:
-            return [*items, NewsItem(self.shock_date, f"{instrument.display} shares soar on takeover bid",
-                                     source="CanaryWire")]
+            return [*items, NewsItem(self.shock_date, f"{instrument.display} shares soar on takeover bid", source="CanaryWire")]
         return items
 
     def news(self, instrument: Instrument, as_of: date, lookback_days: int) -> list[NewsItem]:
-        return self._with_shock_item(self.base.news(instrument, as_of, lookback_days), instrument, as_of,
-                                     lookback_days)
+        return self._with_shock_item(self.base.news(instrument, as_of, lookback_days), instrument, as_of, lookback_days)
 
     def social(self, instrument: Instrument, as_of: date, lookback_days: int) -> list[NewsItem]:
-        return self._with_shock_item(self.base.social(instrument, as_of, lookback_days), instrument, as_of,
-                                     lookback_days)
+        return self._with_shock_item(self.base.social(instrument, as_of, lookback_days), instrument, as_of, lookback_days)
 
     def fundamentals(self, instrument: Instrument, as_of: date) -> dict[str, Any]:
         return self.base.fundamentals(instrument, as_of)
@@ -496,7 +512,7 @@ def _canonical(obj: Any) -> Any:
     if isinstance(obj, (date, pd.Timestamp)):
         return obj.isoformat()
     if isinstance(obj, (np.floating, float)):
-        return repr(float(obj))           # repr keeps every bit; NaN compares equal as text
+        return repr(float(obj))  # repr keeps every bit; NaN compares equal as text
     if isinstance(obj, np.integer):
         return int(obj)
     return obj
@@ -506,8 +522,9 @@ def _dump(obj: Any) -> bytes:
     return json.dumps(_canonical(obj), sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
-def desk_outputs(graph: Any, symbol: str, as_of: date, provider: MarketDataProvider,
-                 alpha_lookback_days: int = 900) -> dict[str, bytes]:
+def desk_outputs(
+    graph: Any, symbol: str, as_of: date, provider: MarketDataProvider, alpha_lookback_days: int = 900
+) -> dict[str, bytes]:
     """Serialised outputs of one offline desk run for ``symbol`` at ``as_of``: each analyst
     report, the debate, the proposal, the risk views, the decision, the markdown report, the
     v0.14 IC forecast and regime label when their switches are on, the
@@ -516,6 +533,7 @@ def desk_outputs(graph: Any, symbol: str, as_of: date, provider: MarketDataProvi
     store), so two runs differ only through the data."""
     from .alpha import compute_alphas
     from .memory import DecisionMemory
+
     graph.provider, graph.memory = provider, DecisionMemory(None)
     recorder = graph.llm if isinstance(graph.llm, PromptRecorder) else None
     if recorder is not None:
@@ -527,9 +545,15 @@ def desk_outputs(graph: Any, symbol: str, as_of: date, provider: MarketDataProvi
     graph.run_trader(state)
     graph.run_risk(state)
     out = {f"report:{k}": _dump(v) for k, v in state.reports.items()}
-    out.update({"debate": _dump(state.debate), "proposal": _dump(state.proposal),
-                "risk_views": _dump(state.risk_views), "decision": _dump(state.decision),
-                "markdown": state.to_markdown().encode("utf-8")})
+    out.update(
+        {
+            "debate": _dump(state.debate),
+            "proposal": _dump(state.proposal),
+            "risk_views": _dump(state.risk_views),
+            "decision": _dump(state.decision),
+            "markdown": state.to_markdown().encode("utf-8"),
+        }
+    )
     if state.forecast is not None:
         out["forecast"] = _dump(state.forecast)
     if state.regime:
@@ -549,6 +573,7 @@ class CanaryResult:
     """What the canary saw. ``leaks`` maps an as-of date before the shock to the output
     keys that differed (the failure); ``reacted`` lists the post-shock dates on which at
     least one output changed, the evidence that the shock reached the desk at all."""
+
     symbol: str
     shock_date: date
     leaks: dict[date, list[str]] = field(default_factory=dict)
@@ -559,9 +584,16 @@ class CanaryResult:
         return not self.leaks
 
 
-def future_leak_canary(config: dict, provider: MarketDataProvider, symbol: str, shock_date: date,
-                       before: list[date], after: list[date], factor: float = 3.0,
-                       record_prompts: bool = True) -> CanaryResult:
+def future_leak_canary(
+    config: dict,
+    provider: MarketDataProvider,
+    symbol: str,
+    shock_date: date,
+    before: list[date],
+    after: list[date],
+    factor: float = 3.0,
+    record_prompts: bool = True,
+) -> CanaryResult:
     """Run the offline desk on ``provider`` and on a ``ShockedProvider`` copy for every date
     in ``before`` (each must precede ``shock_date``) and ``after``, and compare outputs.
 
@@ -571,12 +603,12 @@ def future_leak_canary(config: dict, provider: MarketDataProvider, symbol: str, 
     are compared along with the outputs in a single pass.
     """
     from .graph import TradingGraph
+
     if any(d >= shock_date for d in before):
         raise ValueError("every 'before' date must precede the shock date")
     shocked = ShockedProvider(provider, symbol, shock_date, factor)
     llm = PromptRecorder() if record_prompts else None
-    graph = TradingGraph({**config, "llm_provider": "offline"}, provider=provider, llm=llm,
-                         on_event=lambda stage, msg: None)
+    graph = TradingGraph({**config, "llm_provider": "offline"}, provider=provider, llm=llm, on_event=lambda stage, msg: None)
     res = CanaryResult(symbol, shock_date)
     for d in [*before, *after]:
         clean = desk_outputs(graph, symbol, d, provider, int(graph.config.get("alpha_lookback_days", 900)))
@@ -605,6 +637,7 @@ class FeatureRecord:
     date, not the period end); ``source`` names the feed and ``source_accession`` the
     document (an EDGAR accession number), so a revision is a new record, never an edit.
     """
+
     feature: str
     entity: str
     as_of: date
@@ -615,8 +648,9 @@ class FeatureRecord:
 
     def __post_init__(self) -> None:
         if self.visible_from < self.as_of:
-            raise ValueError(f"{self.feature}/{self.entity}: visible_from {self.visible_from} precedes "
-                             f"the date it describes ({self.as_of})")
+            raise ValueError(
+                f"{self.feature}/{self.entity}: visible_from {self.visible_from} precedes the date it describes ({self.as_of})"
+            )
 
     def to_json(self) -> str:
         d = asdict(self)
@@ -633,8 +667,10 @@ class FeatureRecord:
 def check_read(record: FeatureRecord, as_of: date) -> FeatureRecord:
     """Return ``record`` if it was public at ``as_of``; raise ``LookaheadError`` if not."""
     if record.visible_from > as_of:
-        raise LookaheadError(f"{record.feature}/{record.entity} ({record.source_accession}) is visible from "
-                             f"{record.visible_from}, after the read date {as_of}")
+        raise LookaheadError(
+            f"{record.feature}/{record.entity} ({record.source_accession}) is visible from "
+            f"{record.visible_from}, after the read date {as_of}"
+        )
     return record
 
 
@@ -688,8 +724,7 @@ class PointInTimeStore:
         """The value of ``feature`` for ``entity`` a reader at ``as_of`` would have had: among
         records public by ``as_of``, the one describing the latest date, and of those the
         most recently published (a restatement supersedes the original once public)."""
-        known = [r for r in self._records
-                 if r.feature == feature and r.entity == entity and r.visible_from <= as_of]
+        known = [r for r in self._records if r.feature == feature and r.entity == entity and r.visible_from <= as_of]
         if not known:
             return None
         return check_read(max(known, key=lambda r: (r.as_of, r.visible_from)), as_of)

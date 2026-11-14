@@ -21,6 +21,7 @@ instrument; ``alpha_report`` measures each one the way a research desk would:
 All signals are computed with the C++ core (or its numpy twin) and are
 point-in-time by construction: every value at bar t uses bars <= t only.
 """
+
 from __future__ import annotations
 
 import math
@@ -50,9 +51,14 @@ class AlphaInputs:
 
     @classmethod
     def from_frame(cls, df: pd.DataFrame, instrument: Instrument, carry: np.ndarray | None = None) -> "AlphaInputs":
-        return cls(df["Close"].to_numpy(float), df["High"].to_numpy(float), df["Low"].to_numpy(float),
-                   df["Volume"].to_numpy(float) if "Volume" in df else np.zeros(len(df)),
-                   instrument.periods_per_year, carry)
+        return cls(
+            df["Close"].to_numpy(float),
+            df["High"].to_numpy(float),
+            df["Low"].to_numpy(float),
+            df["Volume"].to_numpy(float) if "Volume" in df else np.zeros(len(df)),
+            instrument.periods_per_year,
+            carry,
+        )
 
 
 def _tanh(x: np.ndarray) -> np.ndarray:
@@ -63,7 +69,7 @@ def _tanh(x: np.ndarray) -> np.ndarray:
 def _ret(c: np.ndarray, n: int, skip: int = 0) -> np.ndarray:
     out = np.full(len(c), np.nan)
     if len(c) > n:
-        out[n:] = c[n - skip: len(c) - skip] / c[: len(c) - n] - 1.0 if skip else c[n:] / c[:-n] - 1.0
+        out[n:] = c[n - skip : len(c) - skip] / c[: len(c) - n] - 1.0 if skip else c[n:] / c[:-n] - 1.0
     return out
 
 
@@ -133,17 +139,23 @@ def carry(x: AlphaInputs) -> np.ndarray:
 
 
 ALPHAS: dict[str, Signal] = {
-    "tsmom_12_1": tsmom_12_1, "mom_20_vol": mom_20_vol, "reversal_5": reversal_5,
-    "high_52w": high_52w, "donchian_20": donchian_20, "macd_norm": macd_norm,
-    "rsi_contrarian": rsi_contrarian, "low_vol": low_vol, "carry": carry,
+    "tsmom_12_1": tsmom_12_1,
+    "mom_20_vol": mom_20_vol,
+    "reversal_5": reversal_5,
+    "high_52w": high_52w,
+    "donchian_20": donchian_20,
+    "macd_norm": macd_norm,
+    "rsi_contrarian": rsi_contrarian,
+    "low_vol": low_vol,
+    "carry": carry,
 }
-EQUITY_ALPHAS = ["tsmom_12_1", "mom_20_vol", "reversal_5", "high_52w", "donchian_20",
-                 "macd_norm", "rsi_contrarian", "low_vol"]
+EQUITY_ALPHAS = ["tsmom_12_1", "mom_20_vol", "reversal_5", "high_52w", "donchian_20", "macd_norm", "rsi_contrarian", "low_vol"]
 FX_ALPHAS = EQUITY_ALPHAS + ["carry"]
 
 
-def compute_alphas(df: pd.DataFrame, instrument: Instrument, names: list[str] | None = None,
-                   carry_series: np.ndarray | None = None) -> pd.DataFrame:
+def compute_alphas(
+    df: pd.DataFrame, instrument: Instrument, names: list[str] | None = None, carry_series: np.ndarray | None = None
+) -> pd.DataFrame:
     """One column per alpha, aligned with ``df.index``; values in [-1, 1] or NaN."""
     names = names or (FX_ALPHAS if instrument.is_fx else EQUITY_ALPHAS)
     unknown = [n for n in names if n not in ALPHAS]
@@ -234,10 +246,10 @@ def information_coefficient(signal, fwd, horizon: int = 1, method: str = "n_eff"
 class AlphaReport:
     instrument: Instrument
     horizon: int
-    table: pd.DataFrame            # one row per alpha, plus "combined", "significance_gated" and
+    table: pd.DataFrame  # one row per alpha, plus "combined", "significance_gated" and
     #                                "significance_gated_wf" (walk-forward, v0.17 N6)
-    decay: pd.DataFrame            # IC by horizon, one row per alpha
-    correlations: pd.DataFrame     # alpha x alpha correlation of signals
+    decay: pd.DataFrame  # IC by horizon, one row per alpha
+    correlations: pd.DataFrame  # alpha x alpha correlation of signals
     signals: pd.DataFrame = field(repr=False)
 
     def best(self, k: int = 3) -> list[str]:
@@ -248,8 +260,9 @@ class AlphaReport:
 COMBINATION_ROWS = ("combined", "significance_gated", "significance_gated_wf")
 
 
-def walk_forward_gated_series(sig: pd.DataFrame, close, horizon: int, window: int = 504,
-                              step: int | None = None, min_bars: int = 126) -> pd.Series:
+def walk_forward_gated_series(
+    sig: pd.DataFrame, close, horizon: int, window: int = 504, step: int | None = None, min_bars: int = 126
+) -> pd.Series:
     """The significance-gated combination with the gate re-decided from prior data only
     (v0.17, review N6).
 
@@ -270,6 +283,7 @@ def walk_forward_gated_series(sig: pd.DataFrame, close, horizon: int, window: in
     Worked example. ``horizon = 10``, ``window = 504``: on bar 600 the gate uses bars 86..590
     and the weights hold for bars 600..609."""
     from .combine import trailing_ics
+
     close = np.asarray(close, float)
     n = len(close)
     step = max(1, int(step or horizon))
@@ -282,17 +296,16 @@ def walk_forward_gated_series(sig: pd.DataFrame, close, horizon: int, window: in
         w = np.array([est[c][0] if (c in est and est[c][1].significant) else 0.0 for c in cols])
         if not np.any(w != 0.0):
             continue
-        blk = vals[t:t + step]
+        blk = vals[t : t + step]
         valid = np.isfinite(blk)
         num = (np.where(valid, blk, 0.0) * w).sum(axis=1)
         den = (valid * np.abs(w)).sum(axis=1)
         with np.errstate(invalid="ignore", divide="ignore"):
-            out[t:t + step] = np.clip(np.where(den > 0, num / np.where(den > 0, den, 1.0), np.nan), -1.0, 1.0)
+            out[t : t + step] = np.clip(np.where(den > 0, num / np.where(den > 0, den, 1.0), np.nan), -1.0, 1.0)
     return pd.Series(out, index=sig.index)
 
 
-def significance_gated_series(sig: pd.DataFrame, ic: dict[str, dict], min_tstat: float = 2.0,
-                              min_n: int = 30) -> pd.Series:
+def significance_gated_series(sig: pd.DataFrame, ic: dict[str, dict], min_tstat: float = 2.0, min_n: int = 30) -> pd.Series:
     """The full time series of what ``significant_alpha_signal`` would return at every bar,
     given a *fixed* (full-sample) significance gate: IC-magnitude-weighted mean of the alphas
     whose measured IC clears ``min_tstat``/``min_n`` in ``ic``, using the same "skip a missing
@@ -308,8 +321,9 @@ def significance_gated_series(sig: pd.DataFrame, ic: dict[str, dict], min_tstat:
     ``run_agent_backtest``/``evaluate`` measure; this series is for reading how the *rule*, not
     the point-in-time procedure, would have behaved.
     """
-    weights = {name: v["IC"] for name, v in (ic or {}).items()
-              if name not in COMBINATION_ROWS and passes_gate(v, min_n, min_tstat)}
+    weights = {
+        name: v["IC"] for name, v in (ic or {}).items() if name not in COMBINATION_ROWS and passes_gate(v, min_n, min_tstat)
+    }
     if not weights:
         return pd.Series(np.nan, index=sig.index)
     cols = [c for c in weights if c in sig.columns]
@@ -369,14 +383,29 @@ def _alpha_diagnostics(s: np.ndarray, fwd: np.ndarray, horizon: int = 1) -> dict
     ac = float("nan")
     if valid.size > 10 and valid[:-1].std() > 0 and valid[1:].std() > 0:
         ac = float(np.corrcoef(valid[:-1], valid[1:])[0, 1])
-    return {"IC": ic, "t(IC)": t, "t_crit": pic.t_crit, "n": n, "hit%": 100 * hit, "up%": 100 * up,
-            "tercile spread%": 100 * spread, "autocorr": ac, "coverage%": 100 * np.isfinite(s).mean()}
+    return {
+        "IC": ic,
+        "t(IC)": t,
+        "t_crit": pic.t_crit,
+        "n": n,
+        "hit%": 100 * hit,
+        "up%": 100 * up,
+        "tercile spread%": 100 * spread,
+        "autocorr": ac,
+        "coverage%": 100 * np.isfinite(s).mean(),
+    }
 
 
-def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
-                 names: list[str] | None = None, carry_series: np.ndarray | None = None,
-                 decay_horizons: tuple[int, ...] = (1, 5, 10, 21, 42),
-                 weights: dict[str, float] | None = None, walk_forward: bool = False) -> AlphaReport:
+def alpha_report(
+    df: pd.DataFrame,
+    instrument: Instrument,
+    horizon: int = 10,
+    names: list[str] | None = None,
+    carry_series: np.ndarray | None = None,
+    decay_horizons: tuple[int, ...] = (1, 5, 10, 21, 42),
+    weights: dict[str, float] | None = None,
+    walk_forward: bool = False,
+) -> AlphaReport:
     """Measure every alpha on ``df``. ``walk_forward=True`` (v0.17 N6) adds the
     ``significance_gated_wf`` row (``walk_forward_gated_series``); it is off by default so the
     desk's ``quant.alpha`` tool keeps its cost and payload. With it on, every row also
@@ -403,7 +432,8 @@ def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
     # look-ahead), so its row is an out-of-sample measurement rather than a flagged diagnostic.
     if walk_forward:
         sig["significance_gated_wf"] = walk_forward_gated_series(
-            sig.drop(columns=["combined", "significance_gated"]), close, horizon)
+            sig.drop(columns=["combined", "significance_gated"]), close, horizon
+        )
         s = sig["significance_gated_wf"].to_numpy()
         rows["significance_gated_wf"] = _alpha_diagnostics(s, fwd, horizon)
         decay["significance_gated_wf"] = {h: ic_purged(s, forward_returns(close, h), h).ic for h in decay_horizons}
@@ -415,8 +445,9 @@ def alpha_report(df: pd.DataFrame, instrument: Instrument, horizon: int = 10,
     return AlphaReport(instrument, horizon, table, pd.DataFrame(decay).T.round(4), corr, sig)
 
 
-def alpha_snapshot(df: pd.DataFrame, instrument: Instrument, carry_series: np.ndarray | None = None,
-                   weights: dict[str, float] | None = None) -> dict[str, float | None]:
+def alpha_snapshot(
+    df: pd.DataFrame, instrument: Instrument, carry_series: np.ndarray | None = None, weights: dict[str, float] | None = None
+) -> dict[str, float | None]:
     """Latest value of every alpha plus the combined signal (for the alpha analyst)."""
     sig = compute_alphas(df, instrument, None, carry_series)
     last = sig.iloc[-1]
@@ -426,9 +457,9 @@ def alpha_snapshot(df: pd.DataFrame, instrument: Instrument, carry_series: np.nd
     return out
 
 
-def significant_alpha_signal(latest: dict[str, float | None], ic: dict[str, dict],
-                             min_tstat: float = 2.0, min_n: int = 30
-                             ) -> tuple[float | None, list[str]]:
+def significant_alpha_signal(
+    latest: dict[str, float | None], ic: dict[str, dict], min_tstat: float = 2.0, min_n: int = 30
+) -> tuple[float | None, list[str]]:
     """Recombine an alpha snapshot using only alphas whose measured IC is significant.
 
     ``latest`` is a name -> value snapshot (as returned by ``alpha_snapshot``); ``ic`` is a
@@ -476,20 +507,88 @@ def significant_alpha_signal(latest: dict[str, float | None], ic: dict[str, dict
 # decay as the price alphas (``text_alpha_decay``).
 # Word classes in the Loughran-McDonald spirit, kept small and in the open: the "negative"
 # vocabulary of a filing differs from everyday sentiment, so the headline lexicon is not reused.
-FILING_NEGATIVE = frozenset({
-    "adverse", "adversely", "impairment", "impairments", "litigation", "decline", "declined",
-    "declines", "loss", "losses", "weak", "weakness", "deteriorate", "deteriorated", "deterioration",
-    "default", "defaults", "restructuring", "restatement", "uncertain", "uncertainty", "uncertainties",
-    "volatility", "disruption", "disruptions", "unfavorable", "shortfall", "delay", "delays",
-    "decrease", "decreased", "decreases", "challenging", "difficult", "downturn", "termination",
-    "penalties", "investigation", "breach", "failure", "fail", "slowdown", "recession",
-})
-FILING_POSITIVE = frozenset({
-    "improve", "improved", "improvement", "improvements", "increase", "increased", "increases",
-    "growth", "strong", "stronger", "record", "favorable", "gain", "gains", "achieve", "achieved",
-    "exceed", "exceeded", "robust", "expand", "expanded", "expansion", "profitable", "profitability",
-    "efficiency", "momentum", "opportunity", "opportunities", "success", "successful", "benefit",
-})
+FILING_NEGATIVE = frozenset(
+    {
+        "adverse",
+        "adversely",
+        "impairment",
+        "impairments",
+        "litigation",
+        "decline",
+        "declined",
+        "declines",
+        "loss",
+        "losses",
+        "weak",
+        "weakness",
+        "deteriorate",
+        "deteriorated",
+        "deterioration",
+        "default",
+        "defaults",
+        "restructuring",
+        "restatement",
+        "uncertain",
+        "uncertainty",
+        "uncertainties",
+        "volatility",
+        "disruption",
+        "disruptions",
+        "unfavorable",
+        "shortfall",
+        "delay",
+        "delays",
+        "decrease",
+        "decreased",
+        "decreases",
+        "challenging",
+        "difficult",
+        "downturn",
+        "termination",
+        "penalties",
+        "investigation",
+        "breach",
+        "failure",
+        "fail",
+        "slowdown",
+        "recession",
+    }
+)
+FILING_POSITIVE = frozenset(
+    {
+        "improve",
+        "improved",
+        "improvement",
+        "improvements",
+        "increase",
+        "increased",
+        "increases",
+        "growth",
+        "strong",
+        "stronger",
+        "record",
+        "favorable",
+        "gain",
+        "gains",
+        "achieve",
+        "achieved",
+        "exceed",
+        "exceeded",
+        "robust",
+        "expand",
+        "expanded",
+        "expansion",
+        "profitable",
+        "profitability",
+        "efficiency",
+        "momentum",
+        "opportunity",
+        "opportunities",
+        "success",
+        "successful",
+        "benefit",
+    }
+)
 _TEXT_WORD = re.compile(r"[a-z][a-z\-']*")
 
 
@@ -510,7 +609,7 @@ class ToneChange:
     prev_accession: str
     form: str
     section: str
-    visible_date: datetime   # UTC acceptance time of ``accession``
+    visible_date: datetime  # UTC acceptance time of ``accession``
     tone: float
     change: float
 
@@ -525,8 +624,9 @@ def filing_tone_changes(sections: Iterable[Any]) -> list[ToneChange]:
         key = (s.symbol, s.form.split("/")[0], s.section)
         tone = filing_tone(s.text)
         if key in last and last[key][0] != s.accession:
-            out.append(ToneChange(s.symbol, s.accession, last[key][0], key[1], s.section, s.visible_date,
-                                  tone, tone - last[key][1]))
+            out.append(
+                ToneChange(s.symbol, s.accession, last[key][0], key[1], s.section, s.visible_date, tone, tone - last[key][1])
+            )
         last[key] = (s.accession, tone)
     return out
 
@@ -542,8 +642,7 @@ def _session_of(accepted_utc: datetime) -> pd.Timestamp:
     return day
 
 
-def tone_change_signal(index: pd.DatetimeIndex, changes: list[ToneChange], hold_bars: int = 63,
-                       scale: float = 0.5) -> np.ndarray:
+def tone_change_signal(index: pd.DatetimeIndex, changes: list[ToneChange], hold_bars: int = 63, scale: float = 0.5) -> np.ndarray:
     """A daily signal in [-1, 1] on ``index`` (session dates): each filing's mean section tone
     change as ``tanh(change / scale)``, from the first session whose close follows its
     acceptance, for ``hold_bars`` bars; 0 between filings, NaN before the first one."""
@@ -553,14 +652,16 @@ def tone_change_signal(index: pd.DatetimeIndex, changes: list[ToneChange], hold_
     by_accn: dict[str, list[ToneChange]] = {}
     for c in changes:
         by_accn.setdefault(c.accession, []).append(c)
-    starts = sorted((int(idx.searchsorted(_session_of(cs[0].visible_date))), float(np.mean([c.change for c in cs])))
-                    for cs in by_accn.values())
+    starts = sorted(
+        (int(idx.searchsorted(_session_of(cs[0].visible_date))), float(np.mean([c.change for c in cs])))
+        for cs in by_accn.values()
+    )
     starts = [(i, ch) for i, ch in starts if i < len(idx)]
     if not starts:
         return sig
-    sig[starts[0][0]:] = 0.0
+    sig[starts[0][0] :] = 0.0
     for i, ch in starts:
-        sig[i:i + hold_bars] = math.tanh(ch / scale)
+        sig[i : i + hold_bars] = math.tanh(ch / scale)
     return sig
 
 
@@ -568,16 +669,19 @@ def tone_change_records(changes: list[ToneChange], source: str = "edgar") -> lis
     """Feature-table rows (``leakage.FeatureRecord``) for ``PointInTimeStore``: one per filing
     section, visible from the acceptance session, keyed by accession."""
     from .leakage import FeatureRecord
+
     out = []
     for c in changes:
         d = _session_of(c.visible_date).date()
-        out.append(FeatureRecord(f"filing_tone_change:{c.form}:{c.section}", c.symbol, d, d,
-                                 round(float(c.change), 6), source, c.accession))
+        out.append(
+            FeatureRecord(
+                f"filing_tone_change:{c.form}:{c.section}", c.symbol, d, d, round(float(c.change), 6), source, c.accession
+            )
+        )
     return out
 
 
-def text_alpha_decay(signal: Any, close: Any, horizons: tuple[int, ...] = (1, 5, 10, 21, 63)
-                     ) -> dict[int, dict[str, float]]:
+def text_alpha_decay(signal: Any, close: Any, horizons: tuple[int, ...] = (1, 5, 10, 21, 63)) -> dict[int, dict[str, float]]:
     """IC decay of a text signal: purged IC and t at each horizon, measured as the price
     alphas are (``leakage.ic_purged`` on forward returns)."""
     s = np.asarray(signal, float)

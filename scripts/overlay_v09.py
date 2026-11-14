@@ -20,6 +20,7 @@ Writes ``results/v09/overlay.{md,json}``.
 
     .venv\\Scripts\\python.exe scripts/overlay_v09.py [--in results/v08] [--out results/v09]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -67,10 +68,15 @@ def run_period(frame: pd.DataFrame) -> dict:
         r = blend(desk, ctl, lam)
         x = excess(r, rf)
         s = sharpe_stats(x, PPY)
-        rows[str(lam)] = {"lam": lam, "sharpe": s.sharpe_annual, "vol_pct": float(x.std(ddof=1) * np.sqrt(PPY) * 100),
-                          "cumulative_return_pct": float((np.prod(1.0 + r) - 1.0) * 100), "mdd_pct": mdd_pct(r),
-                          "vs_control": asdict(paired_sharpe_block_bootstrap(x, ctl_x, PPY, block=10, n_boot=5000)),
-                          "vs_desk": asdict(paired_sharpe_block_bootstrap(x, desk_x, PPY, block=10, n_boot=5000))}
+        rows[str(lam)] = {
+            "lam": lam,
+            "sharpe": s.sharpe_annual,
+            "vol_pct": float(x.std(ddof=1) * np.sqrt(PPY) * 100),
+            "cumulative_return_pct": float((np.prod(1.0 + r) - 1.0) * 100),
+            "mdd_pct": mdd_pct(r),
+            "vs_control": asdict(paired_sharpe_block_bootstrap(x, ctl_x, PPY, block=10, n_boot=5000)),
+            "vs_desk": asdict(paired_sharpe_block_bootstrap(x, desk_x, PPY, block=10, n_boot=5000)),
+        }
     return {"n": int(ctl_x.size), "rows": rows}
 
 
@@ -79,18 +85,27 @@ def fmt(d: dict) -> str:
 
 
 def render(res: dict) -> str:
-    out = [res.get("title", "# Change 1: the vol-targeted book as the core, the desk's tilt at size lam (15 core sleeves, equal capital)") + "\n",
-           "r(lam) = control + lam * (desk - control); lam 0 is `B&H vol-target`, lam 1 the desk. Excess-return Sharpe, "
-           "260 periods/year, paired block bootstrap over days. Chosen on the design period only.\n"]
+    out = [
+        res.get(
+            "title", "# Change 1: the vol-targeted book as the core, the desk's tilt at size lam (15 core sleeves, equal capital)"
+        )
+        + "\n",
+        "r(lam) = control + lam * (desk - control); lam 0 is `B&H vol-target`, lam 1 the desk. Excess-return Sharpe, "
+        "260 periods/year, paired block bootstrap over days. Chosen on the design period only.\n",
+    ]
     for period in res["periods"]:
         p = res["periods"][period]
         label = PERIOD_LABELS.get(period, res.get("label", "a run given with --files"))
-        out += [f"## {period}: {label}, n = {p['n']} days\n",
-                "| lam | Sharpe | vol %/yr | cumulative return % | MDD % | Sharpe - control [95% CI] p | Sharpe - desk [95% CI] p |",
-                "|--:|--:|--:|--:|--:|:--|:--|"]
+        out += [
+            f"## {period}: {label}, n = {p['n']} days\n",
+            "| lam | Sharpe | vol %/yr | cumulative return % | MDD % | Sharpe - control [95% CI] p | Sharpe - desk [95% CI] p |",
+            "|--:|--:|--:|--:|--:|:--|:--|",
+        ]
         for r in p["rows"].values():
-            out.append(f"| {r['lam']:.2f} | {r['sharpe']:.2f} | {r['vol_pct']:.2f} | {r['cumulative_return_pct']:.2f} | "
-                       f"{r['mdd_pct']:.2f} | {fmt(r['vs_control'])} | {fmt(r['vs_desk'])} |")
+            out.append(
+                f"| {r['lam']:.2f} | {r['sharpe']:.2f} | {r['vol_pct']:.2f} | {r['cumulative_return_pct']:.2f} | "
+                f"{r['mdd_pct']:.2f} | {fmt(r['vs_control'])} | {fmt(r['vs_desk'])} |"
+            )
         out.append("")
     return "\n".join(out) + "\n"
 
@@ -106,8 +121,11 @@ def main(argv=None) -> int:
     inp, out = Path(a.inp), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     res = {"grid": GRID, "ppy": PPY, "source": str(inp), "periods": {}, "provenance": provenance()}
-    files = ({"design": inp / "portfolio_design.csv", "holdout": inp / "portfolio_holdout.csv"} if a.files is None
-             else {k: Path(v) for k, v in (item.split("=", 1) for item in a.files.split(","))})
+    files = (
+        {"design": inp / "portfolio_design.csv", "holdout": inp / "portfolio_holdout.csv"}
+        if a.files is None
+        else {k: Path(v) for k, v in (item.split("=", 1) for item in a.files.split(","))}
+    )
     if a.title:
         res["title"] = "# " + a.title
     if a.label:

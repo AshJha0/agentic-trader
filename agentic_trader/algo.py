@@ -20,6 +20,7 @@ as-of day, so the order is *sized* at that close and *executed* on the next
 session (``plan_execution`` sizes; the callers build the bars from the following
 daily bar and pass them to ``simulate_execution``).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -82,15 +83,21 @@ def synthetic_intraday_bars(day: pd.Series, n: int, kind: str = "equity", seed: 
     if hi > lo:
         inner = path[1:-1]
         if inner.size:
-            up = np.where(inner > max(o, c), (inner - max(o, c)) / max(hi - max(o, c), 1e-12) * (h - max(o, c)) + max(o, c), inner)
+            up = np.where(
+                inner > max(o, c), (inner - max(o, c)) / max(hi - max(o, c), 1e-12) * (h - max(o, c)) + max(o, c), inner
+            )
             down = np.where(inner < min(o, c), min(o, c) - (min(o, c) - inner) / max(min(o, c) - lo, 1e-12) * (min(o, c) - l), up)
             path = np.concatenate([[o], down, [c]])
     vol = float(day.get("Volume", 0.0)) * volume_profile(kind, n)
-    bars = pd.DataFrame({
-        "Open": path[:-1], "Close": path[1:],
-        "High": np.maximum(path[:-1], path[1:]), "Low": np.minimum(path[:-1], path[1:]),
-        "Volume": vol,
-    })
+    bars = pd.DataFrame(
+        {
+            "Open": path[:-1],
+            "Close": path[1:],
+            "High": np.maximum(path[:-1], path[1:]),
+            "Low": np.minimum(path[:-1], path[1:]),
+            "Volume": vol,
+        }
+    )
     bars["VWAP"] = (bars["Open"] + bars["Close"] + bars["High"] + bars["Low"]) / 4.0
     return bars
 
@@ -127,8 +134,7 @@ def pov_schedule(total: float, volumes: np.ndarray, participation: float, cap: f
     return out
 
 
-def almgren_chriss_schedule(total: float, n: int, sigma_session: float, eta: float,
-                            risk_aversion: float) -> np.ndarray:
+def almgren_chriss_schedule(total: float, n: int, sigma_session: float, eta: float, risk_aversion: float) -> np.ndarray:
     """Slice quantities with kappa = sqrt(risk_aversion * sigma^2 / eta).
 
     ``sigma_session`` is the price volatility over the session, ``eta`` the
@@ -139,7 +145,7 @@ def almgren_chriss_schedule(total: float, n: int, sigma_session: float, eta: flo
     """
     if eta <= 0 or sigma_session < 0 or risk_aversion < 0:
         raise ValueError("eta must be positive; sigma and risk aversion non-negative")
-    kappa = math.sqrt(risk_aversion * sigma_session ** 2 / eta)
+    kappa = math.sqrt(risk_aversion * sigma_session**2 / eta)
     return quant.almgren_chriss(total, n, kappa)
 
 
@@ -188,7 +194,7 @@ def algo_cost_ratio(algo: str, n: int, kind: str, kappa: float = 3.0) -> float:
         q = vwap_schedule(1.0, profile)
     else:
         q = quant.almgren_chriss(1.0, n, kappa)
-    return float(np.sum(q ** 1.5 / np.sqrt(profile)))
+    return float(np.sum(q**1.5 / np.sqrt(profile)))
 
 
 # ------------------------------------------------------------- simulator
@@ -204,16 +210,16 @@ class Fill:
 class ExecutionReport:
     side: Side
     algo: str
-    requested: float       # the parent order, not the schedule's sum
+    requested: float  # the parent order, not the schedule's sum
     executed: float
-    arrival: float         # first bar's open
-    close: float           # session close: the mark for whatever was left unfilled
+    arrival: float  # first bar's open
+    close: float  # session close: the mark for whatever was left unfilled
     avg_price: float
     session_vwap: float
-    is_bps: float          # implementation shortfall on the requested quantity vs arrival (positive = cost):
-                           # the executed leg plus the opportunity cost of the unfilled remainder (Perold)
+    is_bps: float  # implementation shortfall on the requested quantity vs arrival (positive = cost):
+    # the executed leg plus the opportunity cost of the unfilled remainder (Perold)
     opportunity_cost_bps: float  # the unfilled remainder marked at the close vs arrival, per requested notional
-    vs_vwap_bps: float     # slippage of the fills vs session VWAP (positive = worse than VWAP)
+    vs_vwap_bps: float  # slippage of the fills vs session VWAP (positive = worse than VWAP)
     spread_cost_bps: float
     impact_cost_bps: float
     max_participation: float
@@ -234,10 +240,17 @@ class ExecutionReport:
         return d
 
 
-def simulate_execution(schedule: np.ndarray, bars: pd.DataFrame, side: Side, algo: str = "custom",
-                       spread_bps: float = 2.0, impact_coeff: float = 1.0,
-                       daily_vol: float = 0.02, adv: float | None = None,
-                       requested: float | None = None) -> ExecutionReport:
+def simulate_execution(
+    schedule: np.ndarray,
+    bars: pd.DataFrame,
+    side: Side,
+    algo: str = "custom",
+    spread_bps: float = 2.0,
+    impact_coeff: float = 1.0,
+    daily_vol: float = 0.02,
+    adv: float | None = None,
+    requested: float | None = None,
+) -> ExecutionReport:
     """Fill a schedule against intraday bars.
 
     Each slice fills at the bar's VWAP, plus half the spread against the trader, plus
@@ -276,7 +289,7 @@ def simulate_execution(schedule: np.ndarray, bars: pd.DataFrame, side: Side, alg
         if has_volume:
             if vol <= 0:
                 continue
-            qty = min(qty, vol)   # cannot trade more than the bar's volume
+            qty = min(qty, vol)  # cannot trade more than the bar's volume
             slice_volume, part = vol, qty / vol
         else:
             slice_volume, part = (adv / n if adv and adv > 0 else 0.0), float("nan")
@@ -285,13 +298,28 @@ def simulate_execution(schedule: np.ndarray, bars: pd.DataFrame, side: Side, alg
         fills.append(Fill(i, qty, px, part))
         spread_cost += qty * vwap * spread_bps / 2e4
         impact_cost += qty * vwap * impact
-        ref_notional += qty * vwap    # costs are quoted against the unperturbed (VWAP) notional
+        ref_notional += qty * vwap  # costs are quoted against the unperturbed (VWAP) notional
     executed = float(sum(f.quantity for f in fills))
     unfilled_share = (requested - executed) / requested if requested > 0 else 0.0
     opportunity_bps = float(sign * (close / arrival - 1.0) * unfilled_share * 1e4)
     if executed <= 0:
-        return ExecutionReport(side, algo, requested, 0.0, arrival, close, float("nan"), float("nan"),
-                               opportunity_bps, opportunity_bps, float("nan"), 0.0, 0.0, float("nan"), [])
+        return ExecutionReport(
+            side,
+            algo,
+            requested,
+            0.0,
+            arrival,
+            close,
+            float("nan"),
+            float("nan"),
+            opportunity_bps,
+            opportunity_bps,
+            float("nan"),
+            0.0,
+            0.0,
+            float("nan"),
+            [],
+        )
     avg = float(sum(f.quantity * f.price for f in fills) / executed)
     if has_volume:
         session_vwap = float((bars["VWAP"] * bars["Volume"]).sum() / vols.sum())
@@ -300,23 +328,42 @@ def simulate_execution(schedule: np.ndarray, bars: pd.DataFrame, side: Side, alg
     parts = [float(f.participation) for f in fills if math.isfinite(f.participation)]
     executed_bps = float(sign * (avg / arrival - 1.0) * (1.0 - unfilled_share) * 1e4)
     return ExecutionReport(
-        side, algo, requested, executed, arrival, close, avg, session_vwap,
+        side,
+        algo,
+        requested,
+        executed,
+        arrival,
+        close,
+        avg,
+        session_vwap,
         is_bps=executed_bps + opportunity_bps,
         opportunity_cost_bps=opportunity_bps,
         vs_vwap_bps=float(sign * (avg / session_vwap - 1.0) * 1e4),
         spread_cost_bps=float(spread_cost / ref_notional * 1e4),
         impact_cost_bps=float(impact_cost / ref_notional * 1e4),
-        max_participation=max(parts) if parts else float("nan"), fills=fills)
+        max_participation=max(parts) if parts else float("nan"),
+        fills=fills,
+    )
 
 
 # ------------------------------------------------------- decision -> plan
-def plan_reference(symbol: str, side: str, quantity: float, quantity_unit: str, notional: float,
-                   notional_currency: str, price: float) -> str:
+def plan_reference(
+    symbol: str, side: str, quantity: float, quantity_unit: str, notional: float, notional_currency: str, price: float
+) -> str:
     """The plan id: a checksum over the ticket fields a plan fixes. ``submit_order`` recomputes
     it, so a ticket whose numbers were not produced together by ``plan_execution`` (or were
     edited afterwards) does not match its own reference."""
-    key = json.dumps([Instrument.parse(symbol).symbol, str(side), repr(float(quantity)), str(quantity_unit),
-                      repr(float(notional)), str(notional_currency).upper(), repr(float(price))])
+    key = json.dumps(
+        [
+            Instrument.parse(symbol).symbol,
+            str(side),
+            repr(float(quantity)),
+            str(quantity_unit),
+            repr(float(notional)),
+            str(notional_currency).upper(),
+            repr(float(price)),
+        ]
+    )
     return "PLAN-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
@@ -340,16 +387,16 @@ def trade_intent(current_weight: float, target_weight: float, tol: float = 1e-9)
 class ExecutionPlan:
     instrument: Instrument
     side: Side
-    quantity: float          # whole shares (equity) or whole lots of the base currency (FX): rounded at plan time
-    quantity_unit: str       # "shares" or the base currency code
-    notional: float          # of the rounded quantity, in notional_currency
-    notional_currency: str   # the account currency
-    price: float             # reference price the order was sized at (the as-of close)
+    quantity: float  # whole shares (equity) or whole lots of the base currency (FX): rounded at plan time
+    quantity_unit: str  # "shares" or the base currency code
+    notional: float  # of the rounded quantity, in notional_currency
+    notional_currency: str  # the account currency
+    price: float  # reference price the order was sized at (the as-of close)
     algo: Algo
     slices: int
     reason: str
     current_weight: float
-    target_weight: float     # the effective target, after any long-only truncation
+    target_weight: float  # the effective target, after any long-only truncation
     intent: str
     adv: float | None = None
     participation_of_adv: float | None = None
@@ -358,8 +405,15 @@ class ExecutionPlan:
 
     @property
     def id(self) -> str:
-        return plan_reference(self.instrument.symbol, self.side, self.quantity, self.quantity_unit,
-                              self.notional, self.notional_currency, self.price)
+        return plan_reference(
+            self.instrument.symbol,
+            self.side,
+            self.quantity,
+            self.quantity_unit,
+            self.notional,
+            self.notional_currency,
+            self.price,
+        )
 
     def schedule(self, bars: pd.DataFrame, participation: float = 0.10, kappa: float | None = None) -> np.ndarray:
         """Slice quantities per bar. ``kappa`` (Almgren-Chriss urgency, dimensionless: 0 = TWAP,
@@ -369,20 +423,34 @@ class ExecutionPlan:
         if self.algo == "twap":
             return twap_schedule(self.quantity, n)
         if self.algo == "vwap":
-            return vwap_schedule(self.quantity, bars["Volume"].to_numpy(float) if bars["Volume"].sum() > 0
-                                 else volume_profile("fx", n))
+            return vwap_schedule(
+                self.quantity, bars["Volume"].to_numpy(float) if bars["Volume"].sum() > 0 else volume_profile("fx", n)
+            )
         if self.algo == "pov":
             return pov_schedule(self.quantity, bars["Volume"].to_numpy(float), participation)
         return quant.almgren_chriss(self.quantity, n, self.ac_kappa if kappa is None else float(kappa))
 
     def to_dict(self) -> dict:
-        return {"plan_id": self.id, "symbol": self.instrument.symbol, "side": self.side, "intent": self.intent,
-                "quantity": self.quantity, "quantity_unit": self.quantity_unit, "notional": self.notional,
-                "notional_currency": self.notional_currency, "price": self.price, "algo": self.algo,
-                "slices": self.slices, "reason": self.reason, "current_weight": self.current_weight,
-                "target_weight": self.target_weight, "adv": self.adv,
-                "participation_of_adv": self.participation_of_adv, "ac_kappa": self.ac_kappa,
-                "lot_size": self.lot_size}
+        return {
+            "plan_id": self.id,
+            "symbol": self.instrument.symbol,
+            "side": self.side,
+            "intent": self.intent,
+            "quantity": self.quantity,
+            "quantity_unit": self.quantity_unit,
+            "notional": self.notional,
+            "notional_currency": self.notional_currency,
+            "price": self.price,
+            "algo": self.algo,
+            "slices": self.slices,
+            "reason": self.reason,
+            "current_weight": self.current_weight,
+            "target_weight": self.target_weight,
+            "adv": self.adv,
+            "participation_of_adv": self.participation_of_adv,
+            "ac_kappa": self.ac_kappa,
+            "lot_size": self.lot_size,
+        }
 
 
 def base_to_account_rate(provider, base: str, account: str, as_of: date) -> float:
@@ -404,17 +472,31 @@ def base_to_account_rate(provider, base: str, account: str, as_of: date) -> floa
         if len(df) and float(df["Close"].iloc[-1]) > 0:
             px = float(df["Close"].iloc[-1])
             return 1.0 / px if invert else px
-    raise ValueError(f"no {base}{account} or {account}{base} rate available as of {as_of}"
-                     + (f" ({last_error})" if last_error else "") + "; cannot convert the "
-                     f"{account} notional into {base}")
+    raise ValueError(
+        f"no {base}{account} or {account}{base} rate available as of {as_of}"
+        + (f" ({last_error})" if last_error else "")
+        + "; cannot convert the "
+        f"{account} notional into {base}"
+    )
 
 
-def plan_execution(decision: FinalDecision, instrument: Instrument, current_weight: float,
-                   capital: float, last_price: float, adv: float | None = None,
-                   algo: Algo | None = None, slices: int | None = None,
-                   max_adv_participation: float = 0.10, *, account_currency: str = "USD",
-                   base_to_account: float | None = None, allow_short: bool | None = None,
-                   lot_size: float | None = None, ac_kappa: float = 3.0) -> ExecutionPlan | None:
+def plan_execution(
+    decision: FinalDecision,
+    instrument: Instrument,
+    current_weight: float,
+    capital: float,
+    last_price: float,
+    adv: float | None = None,
+    algo: Algo | None = None,
+    slices: int | None = None,
+    max_adv_participation: float = 0.10,
+    *,
+    account_currency: str = "USD",
+    base_to_account: float | None = None,
+    allow_short: bool | None = None,
+    lot_size: float | None = None,
+    ac_kappa: float = 3.0,
+) -> ExecutionPlan | None:
     """Turn a weight change into a parent order. ``None`` when nothing needs trading: the
     target equals the current position, a truncated short leaves a flat book flat, or the
     change rounds down to zero lots. ``ValueError`` is reserved for invalid inputs.
@@ -462,8 +544,10 @@ def plan_execution(decision: FinalDecision, instrument: Instrument, current_weig
         elif base_to_account is not None and base_to_account > 0:
             unit_price = float(base_to_account)
         else:
-            raise ValueError(f"{instrument.display}: sizing a {account} notional in {unit} needs the {unit}{account} "
-                             f"rate (base_to_account); none was given")
+            raise ValueError(
+                f"{instrument.display}: sizing a {account} notional in {unit} needs the {unit}{account} "
+                f"rate (base_to_account); none was given"
+            )
         lot = float(lot_size) if lot_size else 1.0
     else:
         unit, unit_price, lot = "shares", last_price, 1.0
@@ -472,8 +556,7 @@ def plan_execution(decision: FinalDecision, instrument: Instrument, current_weig
     raw = abs(delta) * capital / unit_price
     qty = math.floor(raw / lot + 1e-9) * lot
     if qty <= 0:
-        log.info("%s: a change of %.4g %s is below one lot of %g; nothing to trade", instrument.display, raw,
-                 unit, lot)
+        log.info("%s: a change of %.4g %s is below one lot of %g; nothing to trade", instrument.display, raw, unit, lot)
         return None
     notional = qty * unit_price
     side: Side = "buy" if delta > 0 else "sell"
@@ -489,6 +572,22 @@ def plan_execution(decision: FinalDecision, instrument: Instrument, current_weig
         else:
             algo = "vwap"
     n = slices or (288 if instrument.is_fx else 78)  # 5-minute slices: 24h FX, 6.5h equity session
-    return ExecutionPlan(instrument, side, float(qty), unit, float(notional), account, float(last_price), algo, n,
-                         reason, float(current_weight), effective, trade_intent(current_weight, effective),
-                         adv, part, float(ac_kappa), lot)
+    return ExecutionPlan(
+        instrument,
+        side,
+        float(qty),
+        unit,
+        float(notional),
+        account,
+        float(last_price),
+        algo,
+        n,
+        reason,
+        float(current_weight),
+        effective,
+        trade_intent(current_weight, effective),
+        adv,
+        part,
+        float(ac_kappa),
+        lot,
+    )

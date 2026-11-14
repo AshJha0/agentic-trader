@@ -11,6 +11,7 @@
 * ``export_otel`` sends a tracer's spans to a local OpenTelemetry collector (optional
   ``[otel]`` extra, imported only when called).
 """
+
 from __future__ import annotations
 
 import json
@@ -113,10 +114,19 @@ class Metrics:
                     breaches.append(f"p{round(slo.latency_quantile * 100)} latency {lat:g} ms > {slo.latency_ms:g} ms")
                 if slo.max_failure_rate is not None and rate > slo.max_failure_rate:
                     breaches.append(f"failure rate {rate:.3f} > {slo.max_failure_rate:.3f}")
-            rows.append({"stage": stage, "runs": n, "latency_ms": lat, "quantile": slo.latency_quantile,
-                         "latency_objective_ms": slo.latency_ms, "failure_rate": round(rate, 6),
-                         "failure_objective": slo.max_failure_rate, "judged": n >= slo.min_samples,
-                         "breaches": breaches})
+            rows.append(
+                {
+                    "stage": stage,
+                    "runs": n,
+                    "latency_ms": lat,
+                    "quantile": slo.latency_quantile,
+                    "latency_objective_ms": slo.latency_ms,
+                    "failure_rate": round(rate, 6),
+                    "failure_objective": slo.max_failure_rate,
+                    "judged": n >= slo.min_samples,
+                    "breaches": breaches,
+                }
+            )
         return SLOReport(rows)
 
     def render(self) -> str:
@@ -144,6 +154,7 @@ class SLO:
     ``latency_ms`` and its failure rate at or under ``max_failure_rate`` (``None`` = not
     checked), judged once the stage has ``min_samples`` runs. The quantile is read from the
     histogram buckets, so it is conservative (a bucket's upper bound)."""
+
     latency_ms: float | None = 10000.0
     max_failure_rate: float | None = 0.05
     latency_quantile: float = 0.95
@@ -185,16 +196,20 @@ class SLOReport:
         return {"ok": self.ok, "stages": self.rows}
 
     def to_markdown(self) -> str:
-        lines = ["| stage | runs | latency (ms) | objective | failure rate | objective | status |",
-                 "|---|---|---|---|---|---|---|"]
+        lines = [
+            "| stage | runs | latency (ms) | objective | failure rate | objective | status |",
+            "|---|---|---|---|---|---|---|",
+        ]
         for r in self.rows:
             if r["breaches"]:
                 status = "BREACH: " + "; ".join(r["breaches"])
             else:
                 status = "ok" if r["judged"] else "too few runs"
-            lines.append(f"| {r['stage']} | {r['runs']} | {_opt(r['latency_ms'])} | "
-                         f"{_opt(r['latency_objective_ms'])} | {r['failure_rate']:.3f} | "
-                         f"{_opt(r['failure_objective'])} | {status} |")
+            lines.append(
+                f"| {r['stage']} | {r['runs']} | {_opt(r['latency_ms'])} | "
+                f"{_opt(r['latency_objective_ms'])} | {r['failure_rate']:.3f} | "
+                f"{_opt(r['failure_objective'])} | {status} |"
+            )
         return "\n".join(lines)
 
 
@@ -206,7 +221,7 @@ def _num(v: float) -> str:
     """A sample value, exactly: integral values as integers (a counter of 1,234,567 is not
     ``1.23457e+06``), anything else with repr's round-trip precision."""
     f = float(v)
-    if f.is_integer() and abs(f) < 2 ** 53:
+    if f.is_integer() and abs(f) < 2**53:
         return str(int(f))
     return repr(f)
 
@@ -245,9 +260,15 @@ class Span:
         return None if self.ended_at is None else (self.ended_at - self.started_at) * 1000
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "name": self.name, "parent_id": self.parent_id,
-                "duration_ms": None if self.duration_ms is None else round(self.duration_ms, 2),
-                "status": self.status, "error": self.error, "attributes": self.attributes}
+        return {
+            "id": self.id,
+            "name": self.name,
+            "parent_id": self.parent_id,
+            "duration_ms": None if self.duration_ms is None else round(self.duration_ms, 2),
+            "status": self.status,
+            "error": self.error,
+            "attributes": self.attributes,
+        }
 
 
 class Tracer:
@@ -290,12 +311,16 @@ class Tracer:
         for s in spans:
             if s["duration_ms"] is not None:
                 by_name.setdefault(s["name"].split(":")[0], []).append(s["duration_ms"])
-        return {"spans": len(spans), "errors": sum(s["status"] == "error" for s in spans),
-                "ms_by_kind": {k: round(sum(v), 1) for k, v in by_name.items()}}
+        return {
+            "spans": len(spans),
+            "errors": sum(s["status"] == "error" for s in spans),
+            "ms_by_kind": {k: round(sum(v), 1) for k, v in by_name.items()},
+        }
 
 
 def configure_json_logging(level: int = logging.INFO) -> None:
     """Route ``agentic_trader.*`` loggers to JSON lines on stderr."""
+
     class JsonFormatter(logging.Formatter):
         def format(self, record: logging.LogRecord) -> str:
             msg = record.getMessage()
@@ -303,8 +328,10 @@ def configure_json_logging(level: int = logging.INFO) -> None:
                 body = json.loads(msg) if msg.startswith("{") else {"message": msg}
             except json.JSONDecodeError:
                 body = {"message": msg}
-            return json.dumps({"ts": utc_now().isoformat(), "level": record.levelname,
-                               "logger": record.name, **body}, default=str)
+            return json.dumps(
+                {"ts": utc_now().isoformat(), "level": record.levelname, "logger": record.name, **body}, default=str
+            )
+
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger("agentic_trader")
@@ -313,8 +340,13 @@ def configure_json_logging(level: int = logging.INFO) -> None:
     root.propagate = False
 
 
-def export_otel(tracer: "Tracer", endpoint: str = "http://localhost:4318/v1/traces", *,
-                service_name: str = "agentic-trader", exporter: Any = None) -> int:
+def export_otel(
+    tracer: "Tracer",
+    endpoint: str = "http://localhost:4318/v1/traces",
+    *,
+    service_name: str = "agentic-trader",
+    exporter: Any = None,
+) -> int:
     """Send a tracer's finished spans to an OpenTelemetry collector over OTLP/HTTP (a local
     one by default). Needs the optional ``[otel]`` extra, imported only here; ``exporter``
     replaces the OTLP exporter (tests pass an in-memory one). Returns the spans exported."""
@@ -324,7 +356,9 @@ def export_otel(tracer: "Tracer", endpoint: str = "http://localhost:4318/v1/trac
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
         from opentelemetry.trace import Status, StatusCode, set_span_in_context
     except ImportError as e:  # pragma: no cover - only without the extra
-        raise ImportError("OpenTelemetry export needs the optional extra: pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http ([otel] extra)") from e
+        raise ImportError(
+            "OpenTelemetry export needs the optional extra: pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http ([otel] extra)"
+        ) from e
     if exporter is None:
         try:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -337,14 +371,17 @@ def export_otel(tracer: "Tracer", endpoint: str = "http://localhost:4318/v1/trac
     with tracer._lock:
         ended = [(s, s.ended_at) for s in tracer.spans if s.ended_at is not None]
     spans = [s for s, _ in ended]
-    offset_ns = time.time_ns() - int(time.perf_counter() * 1e9)   # perf_counter -> wall clock
+    offset_ns = time.time_ns() - int(time.perf_counter() * 1e9)  # perf_counter -> wall clock
     made: dict[str, Any] = {}
     for s in sorted(spans, key=lambda x: x.started_at):
         parent = made.get(s.parent_id) if s.parent_id is not None else None
         ctx = set_span_in_context(parent) if parent is not None else None
-        o = otel.start_span(s.name, context=ctx, start_time=offset_ns + int(s.started_at * 1e9),
-                            attributes={k: v if isinstance(v, (str, bool, int, float)) else str(v)
-                                        for k, v in s.attributes.items()})
+        o = otel.start_span(
+            s.name,
+            context=ctx,
+            start_time=offset_ns + int(s.started_at * 1e9),
+            attributes={k: v if isinstance(v, (str, bool, int, float)) else str(v) for k, v in s.attributes.items()},
+        )
         if s.status == "error":
             o.set_status(Status(StatusCode.ERROR, s.error or ""))
         made[s.id] = o

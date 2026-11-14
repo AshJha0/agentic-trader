@@ -26,6 +26,7 @@ No ``from __future__ import annotations`` here: FastAPI resolves the request
 models by their runtime annotations, and these models are built inside the app
 factory (so the optional dependency is imported lazily).
 """
+
 import json
 import logging
 import os
@@ -45,9 +46,14 @@ log = logging.getLogger(__name__)
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
-def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | None" = None,
-               config: "dict | None" = None, api_keys: "dict[str, str] | None" = None,
-               workers: "int | None" = None, queue_limit: "int | None" = None):
+def create_app(
+    harness: "AgentHarness | None" = None,
+    graph: "TradingGraph | None" = None,
+    config: "dict | None" = None,
+    api_keys: "dict[str, str] | None" = None,
+    workers: "int | None" = None,
+    queue_limit: "int | None" = None,
+):
     """The FastAPI app.
 
     Tasks run on a bounded thread pool (``workers``, default ``config["agentic"]["workers"]``)
@@ -63,12 +69,12 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
         from fastapi.responses import PlainTextResponse
         from pydantic import BaseModel, Field
     except ImportError as e:  # pragma: no cover
-        raise ImportError("the API needs `pip install \"agentic-trader[api]\"`") from e
+        raise ImportError('the API needs `pip install "agentic-trader[api]"`') from e
 
     if harness is None:
         validate_app_config(config or {}, workers, queue_limit)
         graph = graph or TradingGraph(config)
-        harness = AgentHarness(graph)   # the gateway follows config["agentic"]["approval"]: auto | queued | deny
+        harness = AgentHarness(graph)  # the gateway follows config["agentic"]["approval"]: auto | queued | deny
     acfg = harness.config.get("agentic", {})
     n_workers = int(workers if workers is not None else acfg.get("workers", 4))
     limit = int(queue_limit if queue_limit is not None else acfg.get("queue_limit", 64))
@@ -76,10 +82,11 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
         raise ValueError("workers must be >= 1 and queue_limit >= 0")
     keys = {k: Role(v) for k, v in (api_keys or acfg.get("api_keys", {})).items()}
     from .tool_search import DeferredToolCatalog
+
     catalog = DeferredToolCatalog(harness.registry)
     pool = ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="task")
     futures: dict[str, Future] = {}
-    futures_lock = threading.Lock()   # request handlers run on FastAPI's own thread pool
+    futures_lock = threading.Lock()  # request handlers run on FastAPI's own thread pool
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -92,8 +99,13 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
         pool.shutdown(wait=False, cancel_futures=True)
 
     from ..provenance import package_version
-    app = FastAPI(title="agentic-trader", version=package_version(), lifespan=lifespan,
-                  description="Policy-gated, evidence-backed trading decisions for equities and FX.")
+
+    app = FastAPI(
+        title="agentic-trader",
+        version=package_version(),
+        lifespan=lifespan,
+        description="Policy-gated, evidence-backed trading decisions for equities and FX.",
+    )
     app.state.harness = harness
     app.state.pool = pool
 
@@ -108,6 +120,7 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
             exc = fut.exception()
             if exc is not None:
                 log.error("task %s: continuation raised %s: %s", task_id, type(exc).__name__, exc)
+
         return cb
 
     def schedule(task_id: str, run) -> None:
@@ -121,15 +134,17 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
         as_of: date
         current_weight: float | None = None
         question: str = ""
-        positions: dict[str, float] | None = Field(default=None, examples=[{"AAPL": 0.4, "MSFT": 0.1}],
-                                                   description="weights to declare on this run's book (the desk's "
-                                                               "positions overlaid; other runs never see them)")
+        positions: dict[str, float] | None = Field(
+            default=None,
+            examples=[{"AAPL": 0.4, "MSFT": 0.1}],
+            description="weights to declare on this run's book (the desk's positions overlaid; other runs never see them)",
+        )
 
     class ApprovalIn(BaseModel):
         approve: bool
         note: str = ""
-        approver: Optional[str] = None     # signed gateway: the approver id (default: the role)
-        signature: Optional[str] = None    # signed gateway: sign_approval(...) hex digest
+        approver: Optional[str] = None  # signed gateway: the approver id (default: the role)
+        signature: Optional[str] = None  # signed gateway: sign_approval(...) hex digest
 
     def role_of(x_api_key: str | None = Header(default=None)) -> Role:
         if x_api_key is None or x_api_key not in keys:
@@ -157,11 +172,22 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
     def health() -> dict[str, Any]:
         busy = in_flight()
         archived = len(harness.store) if harness.store is not None else len(harness.archive)
-        return {"status": "ok", "tasks": len(harness.runs) + archived, "live": len(harness.runs),
-                "archived": archived, "persistent": harness.store is not None,
-                "tools": len(harness.registry), "workers": n_workers, "queue_limit": limit,
-                "in_flight": busy, "running": min(busy, n_workers), "queued": max(0, busy - n_workers),
-                "worker_pid": os.getpid(), "approval": harness.gateway.name, "instance": harness.owner}
+        return {
+            "status": "ok",
+            "tasks": len(harness.runs) + archived,
+            "live": len(harness.runs),
+            "archived": archived,
+            "persistent": harness.store is not None,
+            "tools": len(harness.registry),
+            "workers": n_workers,
+            "queue_limit": limit,
+            "in_flight": busy,
+            "running": min(busy, n_workers),
+            "queued": max(0, busy - n_workers),
+            "worker_pid": os.getpid(),
+            "approval": harness.gateway.name,
+            "instance": harness.owner,
+        }
 
     @app.get("/metrics", response_class=PlainTextResponse)
     def metrics() -> str:
@@ -186,8 +212,7 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
                 futures.pop(tid, None)
             busy = sum(1 for f in futures.values() if not f.done())
             if busy >= limit:
-                raise HTTPException(503, f"{limit} tasks already in flight; retry later",
-                                    headers={"Retry-After": "5"})
+                raise HTTPException(503, f"{limit} tasks already in flight; retry later", headers={"Retry-After": "5"})
             task = Task(body.symbol, body.as_of, role, body.current_weight, body.question)
             try:
                 run = harness.submit(task, body.positions)
@@ -198,12 +223,29 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
 
     @app.get("/tasks")
     def list_tasks(role: Role = Depends(role_of)) -> list[dict[str, Any]]:
-        live = [{"task_id": r.id, "symbol": r.task.symbol, "as_of": r.task.as_of.isoformat(),
-                 "role": r.task.role.value, "state": r.state.value, "live": True}
-                for r in list(harness.runs.values())]
-        archived = [{"task_id": r["task_id"], "symbol": r["symbol"], "as_of": r["as_of"], "role": r["role"],
-                     "state": r["state"], "live": False}
-                    for r in harness.archived_summaries() if r["task_id"] not in harness.runs]
+        live = [
+            {
+                "task_id": r.id,
+                "symbol": r.task.symbol,
+                "as_of": r.task.as_of.isoformat(),
+                "role": r.task.role.value,
+                "state": r.state.value,
+                "live": True,
+            }
+            for r in list(harness.runs.values())
+        ]
+        archived = [
+            {
+                "task_id": r["task_id"],
+                "symbol": r["symbol"],
+                "as_of": r["as_of"],
+                "role": r["role"],
+                "state": r["state"],
+                "live": False,
+            }
+            for r in harness.archived_summaries()
+            if r["task_id"] not in harness.runs
+        ]
         return archived + live
 
     @app.get("/tasks/{task_id}")
@@ -222,6 +264,7 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
             raise HTTPException(409, f"task is {rec['state']}; no report yet")
         if format == "markdown":
             from .reporter import Report
+
             return PlainTextResponse(Report(**rep).to_markdown())
         return rep
 
@@ -239,33 +282,41 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
         require(role, Capability.RUN_ANALYTICS)
         if task_id not in harness.runs:
             if harness.record(task_id) is not None:
-                raise HTTPException(409, "task belongs to another worker process or a previous run; "
-                                         "nothing to cancel here")
+                raise HTTPException(409, "task belongs to another worker process or a previous run; nothing to cancel here")
             raise HTTPException(404, f"unknown task {task_id}")
         with futures_lock:
             fut = futures.get(task_id)
             if fut is not None:
-                fut.cancel()   # still queued: it never starts
+                fut.cancel()  # still queued: it never starts
         run = harness.cancel(task_id)
         if run.state.value == "CREATED" and (fut is None or fut.cancelled()):
-            run = harness.resume(run)   # applies the cancellation without doing any work
+            run = harness.resume(run)  # applies the cancellation without doing any work
         return {"task_id": task_id, "state": run.state.value}
 
     @app.get("/approvals")
     def approvals(role: Role = Depends(role_of)) -> list[dict[str, Any]]:
         require(role, Capability.APPROVE_TRADES)
         if not isinstance(harness.gateway, QueuedApprovalGateway):
-            raise HTTPException(409, f"approvals are not queued on this service (approval mode "
-                                     f"{harness.gateway.name})")
-        return [{"id": a.id, "task_id": a.task_id, "tool": a.request.tool, "arguments": a.request.arguments,
-                 "reason": a.reason, "created_at": a.created_at.isoformat()} for a in harness.pending_approvals()]
+            raise HTTPException(409, f"approvals are not queued on this service (approval mode {harness.gateway.name})")
+        return [
+            {
+                "id": a.id,
+                "task_id": a.task_id,
+                "tool": a.request.tool,
+                "arguments": a.request.arguments,
+                "reason": a.reason,
+                "created_at": a.created_at.isoformat(),
+            }
+            for a in harness.pending_approvals()
+        ]
 
     @app.post("/approvals/{approval_id}")
     def decide(approval_id: str, body: ApprovalIn, role: Role = Depends(role_of)) -> dict[str, Any]:
         require(role, Capability.APPROVE_TRADES)
         try:
-            run = harness.decide_approval(approval_id, body.approve, body.approver or role.value, body.note,
-                                         resume=False, signature=body.signature)
+            run = harness.decide_approval(
+                approval_id, body.approve, body.approver or role.value, body.note, resume=False, signature=body.signature
+            )
         except KeyError:
             raise HTTPException(404, f"unknown approval {approval_id} (approvals live on the process that queued them)") from None
         except ValueError as e:
@@ -278,8 +329,13 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
             if harness.continuation_due(run):
                 schedule(run.id, run)
                 resumed = True
-        return {"approval_id": approval_id, "approved": body.approve, "task_id": run.id,
-                "state": run.state.value, "resumed": resumed}
+        return {
+            "approval_id": approval_id,
+            "approved": body.approve,
+            "task_id": run.id,
+            "state": run.state.value,
+            "resumed": resumed,
+        }
 
     return app
 
@@ -287,12 +343,14 @@ def create_app(harness: "AgentHarness | None" = None, graph: "TradingGraph | Non
 def uses_dev_keys(api_keys: dict[str, str]) -> bool:
     """True when any configured API key is one of the shipped development keys."""
     from ..config import DEFAULT_CONFIG
+
     shipped = set(DEFAULT_CONFIG["agentic"]["api_keys"])
     return any(k in shipped or k.startswith("dev-") for k in api_keys)
 
 
-def serve_options(host: str, config: dict, ssl_certfile: str | None = None, ssl_keyfile: str | None = None,
-                  allow_dev_keys: bool = False) -> dict[str, Any]:
+def serve_options(
+    host: str, config: dict, ssl_certfile: str | None = None, ssl_keyfile: str | None = None, allow_dev_keys: bool = False
+) -> dict[str, Any]:
     """Validate the deployment posture and return uvicorn keyword arguments.
 
     * TLS needs both a certificate and a key (``ssl_certfile`` / ``ssl_keyfile``).
@@ -311,14 +369,19 @@ def serve_options(host: str, config: dict, ssl_certfile: str | None = None, ssl_
     loopback = host in LOOPBACK_HOSTS
     keys = config.get("agentic", {}).get("api_keys", {})
     if uses_dev_keys(keys) and not allow_dev_keys:
-        raise ValueError(f"refusing to bind {host} with the shipped development API keys; set "
-                         "config['agentic']['api_keys'] to real keys (or pass allow_dev_keys=True / "
-                         "--allow-dev-keys for a throwaway test)")
+        raise ValueError(
+            f"refusing to bind {host} with the shipped development API keys; set "
+            "config['agentic']['api_keys'] to real keys (or pass allow_dev_keys=True / "
+            "--allow-dev-keys for a throwaway test)"
+        )
     if uses_dev_keys(keys):
         log.warning("serving with the shipped development API keys (allow_dev_keys is set)")
     if not loopback and ssl_certfile is None:
-        log.warning("serving plain HTTP on %s: API keys travel in clear text. Put a TLS terminator "
-                    "in front of it or pass ssl_certfile / ssl_keyfile", host)
+        log.warning(
+            "serving plain HTTP on %s: API keys travel in clear text. Put a TLS terminator "
+            "in front of it or pass ssl_certfile / ssl_keyfile",
+            host,
+        )
     opts: dict[str, Any] = {}
     if ssl_certfile is not None:
         opts.update(ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
@@ -351,6 +414,7 @@ def split_secrets(config: Any) -> "tuple[Any, dict[str, Any]]":
                     out[k] = walk(v, p)
             return out
         return node
+
     return walk(config, ""), secrets
 
 
@@ -398,8 +462,10 @@ def multiprocess_options(processes: int, config: dict) -> dict[str, Any]:
     if processes == 1:
         return {}
     if not config.get("agentic", {}).get("task_db"):
-        raise ValueError("more than one process needs a shared task store: set agentic.task_db "
-                         "(serve --task-db FILE) so every process can serve every task's record")
+        raise ValueError(
+            "more than one process needs a shared task store: set agentic.task_db "
+            "(serve --task-db FILE) so every process can serve every task's record"
+        )
     validate_app_config(config)
     return {"workers": processes}
 
@@ -410,6 +476,7 @@ def app_factory():
     the worker processes, never written to disk)."""
     from ..config import make_config
     from pathlib import Path
+
     path = os.environ.get(CONFIG_ENV)
     raw = json.loads(Path(path).read_text(encoding="utf-8")) if path else None
     if raw is not None and os.environ.get(SECRETS_ENV):
@@ -418,14 +485,21 @@ def app_factory():
     return create_app(config=cfg)
 
 
-def serve(host: str = "127.0.0.1", port: int = 8000, config: dict | None = None,
-          ssl_certfile: str | None = None, ssl_keyfile: str | None = None,
-          allow_dev_keys: bool = False, processes: int = 1) -> None:
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    config: dict | None = None,
+    ssl_certfile: str | None = None,
+    ssl_keyfile: str | None = None,
+    allow_dev_keys: bool = False,
+    processes: int = 1,
+) -> None:
     try:
         import uvicorn
     except ImportError as e:  # pragma: no cover
-        raise ImportError("serving needs `pip install \"agentic-trader[api]\"`") from e
+        raise ImportError('serving needs `pip install "agentic-trader[api]"`') from e
     from ..config import make_config
+
     cfg = make_config(config)
     opts = serve_options(host, cfg, ssl_certfile, ssl_keyfile, allow_dev_keys)
     opts.update(multiprocess_options(processes, cfg))
@@ -437,6 +511,7 @@ def serve(host: str = "127.0.0.1", port: int = 8000, config: dict | None = None,
     # exposed on the command line or in the environment itself). The interrupted-run
     # sweep is done here, once, so a worker starting later cannot fail its siblings' runs.
     from .store import TaskStore
+
     swept = TaskStore(cfg["agentic"]["task_db"]).mark_interrupted(lease_s=float(cfg["agentic"].get("lease_s", 90.0)))
     if swept:
         log.warning("%d task(s) were in flight when the previous service stopped; marked FAILED", swept)
@@ -444,7 +519,7 @@ def serve(host: str = "127.0.0.1", port: int = 8000, config: dict | None = None,
     redacted, secrets = split_secrets(cfg)
     fd, path = tempfile.mkstemp(prefix="agentic-trader-", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(redacted, f, default=str)   # no API key or other secret reaches the disk
+        json.dump(redacted, f, default=str)  # no API key or other secret reaches the disk
     os.environ[CONFIG_ENV] = path
     os.environ[SECRETS_ENV] = json.dumps(secrets, default=str)
     try:

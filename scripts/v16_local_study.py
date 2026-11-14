@@ -52,6 +52,7 @@ on the fact with state fixed effects). Analyst replies use ``complete_json`` wit
 two calibration outputs (same states, e.g. two model builds) -- mean |diff|, sign agreement,
 correlation -- and refuses when the state keys differ.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -81,20 +82,23 @@ from agentic_trader import study_lineage as lineage  # noqa: E402
 from agentic_trader.local_llm import LocalLLM, reachable  # noqa: E402
 from agentic_trader.study_robust import PROVIDER_TRIES, ProviderMiss, retry_provider, skip_row  # noqa: E402
 
-NAMES: list[str] = CORE_UNIVERSE["equity"] + CORE_UNIVERSE["fx"]        # 15 names
+NAMES: list[str] = CORE_UNIVERSE["equity"] + CORE_UNIVERSE["fx"]  # 15 names
 DESIGN_START, DESIGN_END = date(2016, 1, 1), date(2021, 12, 31)
 DESIGN_MONTHS = 72
 RECALL_DATES, RECALL_N = 14, 200
 CAL_STATES, CAL_DATES, CAL_SEED = 20, 40, 2026
 JSON_SUFFIX = "\n\nRespond with a single JSON object only (no prose outside it)."
-RECALL_SYSTEM = ("You are helping audit a data-anonymisation scheme. Answer the question at the end "
-                 "with your single best guess, in the exact format asked.")
+RECALL_SYSTEM = (
+    "You are helping audit a data-anonymisation scheme. Answer the question at the end "
+    "with your single best guess, in the exact format asked."
+)
 
 
 # ------------------------------------------------------------------ states and prompts
 def design_dates(n: int) -> list[date]:
     import numpy as np
     import pandas as pd
+
     days = pd.bdate_range(DESIGN_START, DESIGN_END)
     return [days[i].date() for i in np.linspace(0, len(days) - 1, n).round().astype(int)]
 
@@ -105,7 +109,7 @@ class FrozenState:
     def __init__(self, graph: TradingGraph, symbol: str, as_of: date, placebo_seed: int | None = None):
         self.symbol, self.as_of = symbol, as_of
         self.state = graph.prepare(symbol, as_of)
-        if placebo_seed is not None:       # N1 placebo arm: drift/vol-matched synthetic bars
+        if placebo_seed is not None:  # N1 placebo arm: drift/vol-matched synthetic bars
             self.state.history = ra.placebo_ohlc(self.state.history, placebo_seed)
         self.state.anon = Anonymizer(self.state.instrument, self.state.as_of, self.state.last_price)
         self.analyst = TechnicalAnalyst(None, graph.config)
@@ -149,22 +153,31 @@ def wilson(k: int, n: int, z: float = 1.959964) -> tuple[float, float]:
 
 def binom_sf(k: int, n: int, p: float) -> float:
     """P(X >= k) for X ~ Bin(n, p), exact."""
-    return float(min(1.0, sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k, n + 1))))
+    return float(min(1.0, sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))))
 
 
 def rate_row(k: int, n: int, p0: float) -> dict[str, Any]:
     lo, hi = wilson(k, n)
-    return {"hits": k, "n": n, "rate": k / n if n else None, "ci95": [lo, hi], "chance": p0,
-            "p_one_sided": binom_sf(k, n, p0) if n else None, "above_chance": bool(n and lo > p0)}
+    return {
+        "hits": k,
+        "n": n,
+        "rate": k / n if n else None,
+        "ci95": [lo, hi],
+        "chance": p0,
+        "p_one_sided": binom_sf(k, n, p0) if n else None,
+        "above_chance": bool(n and lo > p0),
+    }
 
 
 # ------------------------------------------------------------------ recall parsing
 def recall_question(names: list[str]) -> str:
-    return ("\n\nAUDIT QUESTION (not a trading task). The data above is anonymised. It comes from one "
-            f"of these instruments: {', '.join(names)}; and the decision day (D0) lies between "
-            f"{DESIGN_START:%Y-%m} and {DESIGN_END:%Y-%m}. Which instrument is it and in which "
-            "calendar month is D0? Give your best guess even if unsure. Reply with exactly two lines:\n"
-            "TICKER: <one ticker from the list>\nMONTH: <YYYY-MM>")
+    return (
+        "\n\nAUDIT QUESTION (not a trading task). The data above is anonymised. It comes from one "
+        f"of these instruments: {', '.join(names)}; and the decision day (D0) lies between "
+        f"{DESIGN_START:%Y-%m} and {DESIGN_END:%Y-%m}. Which instrument is it and in which "
+        "calendar month is D0? Give your best guess even if unsure. Reply with exactly two lines:\n"
+        "TICKER: <one ticker from the list>\nMONTH: <YYYY-MM>"
+    )
 
 
 _T = re.compile(r"TICKER\s*[:=]\s*\**\s*([A-Za-z/=.]+)", re.I)
@@ -196,8 +209,7 @@ def score(guess: dict[str, Any] | None, symbol: str, as_of: date) -> dict[str, A
     if guess is None:
         return {"ticker_hit": False, "month_hit": False, "month_near": False, "month_err": None}
     err = month_index(guess["month"]) - (as_of.year * 12 + as_of.month - 1)
-    return {"ticker_hit": guess["ticker"] == symbol, "month_hit": err == 0, "month_near": abs(err) <= 1,
-            "month_err": err}
+    return {"ticker_hit": guess["ticker"] == symbol, "month_hit": err == 0, "month_near": abs(err) <= 1, "month_err": err}
 
 
 def parse_analyst(text: str | None) -> dict[str, Any] | None:
@@ -238,10 +250,15 @@ def _write(path: Path, obj: dict) -> None:
 
 def _meta(llm: Any, t0: float, **extra: Any) -> dict[str, Any]:
     usage = llm.usage.summary() if hasattr(llm, "usage") else None
-    return {"model": getattr(llm, "model", type(llm).__name__), "backend": "ollama (local, $0)",
-            "run_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "runtime_s": round(time.time() - t0, 1), "usage": usage,
-            "note": "small local open-weight model: a floor, not a measurement of Claude.", **extra}
+    return {
+        "model": getattr(llm, "model", type(llm).__name__),
+        "backend": "ollama (local, $0)",
+        "run_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "runtime_s": round(time.time() - t0, 1),
+        "usage": usage,
+        "note": "small local open-weight model: a floor, not a measurement of Claude.",
+        **extra,
+    }
 
 
 # ------------------------------------------------------------------ 2.4 recall
@@ -250,9 +267,17 @@ def recall_items(limit: int = 0) -> list[tuple[str, date]]:
     return items[:limit] if limit else items
 
 
-def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, ablate: bool = True,
-               log: Callable[[str], None] = print, provider_tries: int = PROVIDER_TRIES,
-               sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+def run_recall(
+    llm: Any,
+    graph: TradingGraph,
+    out: Path,
+    *,
+    limit: int = 0,
+    ablate: bool = True,
+    log: Callable[[str], None] = print,
+    provider_tries: int = PROVIDER_TRIES,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
     """A provider miss on one item is retried ``provider_tries`` times, then recorded as a
     skipped row (retried on the next resume) and reported in the result's ``skipped`` block."""
     t0, ck = time.time(), Checkpoint(out)
@@ -263,8 +288,9 @@ def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, abla
     def fs(sym: str, d: date) -> FrozenState:
         k = f"{sym}@{d.isoformat()}"
         if k not in frozen:
-            frozen[k] = retry_provider(lambda sym=sym, d=d: FrozenState(graph, sym, d), label=k,
-                                       tries=provider_tries, sleep=sleep)
+            frozen[k] = retry_provider(
+                lambda sym=sym, d=d: FrozenState(graph, sym, d), label=k, tries=provider_tries, sleep=sleep
+            )
         return frozen[k]
 
     def done(rid: str) -> bool:
@@ -284,8 +310,17 @@ def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, abla
                 ck.add(skip_row(rid, e.reason, e.tries, kind="base", symbol=sym, as_of=d.isoformat()))
                 log(f"skip {rid}: {e.reason}")
                 continue
-            ck.add({"id": rid, "kind": "base", "symbol": sym, "as_of": d.isoformat(),
-                    "bar_date": st.bar_date.isoformat(), "keys": st.prompt_keys(), **ask(st, None)})
+            ck.add(
+                {
+                    "id": rid,
+                    "kind": "base",
+                    "symbol": sym,
+                    "as_of": d.isoformat(),
+                    "bar_date": st.bar_date.isoformat(),
+                    "keys": st.prompt_keys(),
+                    **ask(st, None),
+                }
+            )
             log(f"recall {i}/{len(items)} {time.time() - t0:.0f}s")
     ids = [f"{s}@{d.isoformat()}" for s, d in items]
     skipped = [ck.rows[r] for r in ids if not done(r)]
@@ -299,16 +334,22 @@ def run_recall(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, abla
                 st = fs(r["symbol"], date.fromisoformat(r["as_of"]))
                 ck.add({"id": aid, "kind": "ablation", "base_id": r["id"], "dropped": k, **ask(st, k)})
                 log(f"ablation {j}/{len(todo)} {time.time() - t0:.0f}s")
-    res = summarise_recall(base, [r for r in ck.rows.values() if r.get("kind") == "ablation"],
-                           meta=_meta(llm, t0, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub"))
+    res = summarise_recall(
+        base,
+        [r for r in ck.rows.values() if r.get("kind") == "ablation"],
+        meta=_meta(llm, t0, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub"),
+    )
     res["skipped"] = _skips(skipped, len(items))
     return res
 
 
 def _skips(skipped: list[dict], units: int) -> dict[str, Any]:
     """The ``skipped`` block of a result: count, units, and each skipped id with its reason."""
-    return {"n": len(skipped), "units": units,
-            "rows": [{"id": r["id"], "kind": r.get("kind"), "reason": r.get("skip_reason")} for r in skipped]}
+    return {
+        "n": len(skipped),
+        "units": units,
+        "rows": [{"id": r["id"], "kind": r.get("kind"), "reason": r.get("skip_reason")} for r in skipped],
+    }
 
 
 def summarise_recall(base: list[dict], abl: list[dict], meta: dict | None = None) -> dict[str, Any]:
@@ -319,30 +360,36 @@ def summarise_recall(base: list[dict], abl: list[dict], meta: dict | None = None
         b = by_base.get(a["base_id"])
         if b is None:
             continue
-        row = leaks.setdefault(a["dropped"], {"ticker_lost": 0, "ticker_tested": 0, "month_lost": 0,
-                                              "month_tested": 0})
+        row = leaks.setdefault(a["dropped"], {"ticker_lost": 0, "ticker_tested": 0, "month_lost": 0, "month_tested": 0})
         if b["ticker_hit"]:
             row["ticker_tested"] += 1
             row["ticker_lost"] += int(not a["ticker_hit"])
         if b["month_hit"]:
             row["month_tested"] += 1
             row["month_lost"] += int(not a["month_hit"])
-    leaking = sorted((k for k, v in leaks.items() if v["ticker_lost"] or v["month_lost"]),
-                     key=lambda k: -(leaks[k]["ticker_lost"] + leaks[k]["month_lost"]))
+    leaking = sorted(
+        (k for k, v in leaks.items() if v["ticker_lost"] or v["month_lost"]),
+        key=lambda k: -(leaks[k]["ticker_lost"] + leaks[k]["month_lost"]),
+    )
     by_name: dict[str, int] = {}
     for r in base:
         by_name[r["symbol"]] = by_name.get(r["symbol"], 0) + int(r["ticker_hit"])
     return {
         "study": "2.4 anonymisation recall audit",
-        "chance_model": ("closed set told to the model: ticker uniform over 15 candidates (1/15); month "
-                         "uniform over 72 design months (1/72; +-1 month 3/72, edges ignored)"),
-        "n": n, "unparsed": sum(not r["parsed"] for r in base),
+        "chance_model": (
+            "closed set told to the model: ticker uniform over 15 candidates (1/15); month "
+            "uniform over 72 design months (1/72; +-1 month 3/72, edges ignored)"
+        ),
+        "n": n,
+        "unparsed": sum(not r["parsed"] for r in base),
         "ticker": rate_row(sum(r["ticker_hit"] for r in base), n, 1 / len(NAMES)),
         "month": rate_row(sum(r["month_hit"] for r in base), n, 1 / DESIGN_MONTHS),
         "month_within_1": rate_row(sum(r["month_near"] for r in base), n, 3 / DESIGN_MONTHS),
         "ticker_hits_by_name": by_name,
         "ablation": {"calls": len(abl), "per_key": leaks, "leaking_keys": leaking},
-        "rows": base, "ablation_rows": abl, "meta": meta or {},
+        "rows": base,
+        "ablation_rows": abl,
+        "meta": meta or {},
     }
 
 
@@ -372,11 +419,21 @@ def _set(llm: Any, temperature: float, seed: int) -> None:
         llm.seed = seed
 
 
-def run_calibration(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0, repeats: int = 5,
-                    temperature: float = 0.7, seed: int = CAL_SEED, anchor_key: str = "rsi14",
-                    anchor_values: tuple[float, ...] = (20.0, 40.0, 60.0, 80.0),
-                    log: Callable[[str], None] = print, provider_tries: int = PROVIDER_TRIES,
-                    sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+def run_calibration(
+    llm: Any,
+    graph: TradingGraph,
+    out: Path,
+    *,
+    limit: int = 0,
+    repeats: int = 5,
+    temperature: float = 0.7,
+    seed: int = CAL_SEED,
+    anchor_key: str = "rsi14",
+    anchor_values: tuple[float, ...] = (20.0, 40.0, 60.0, 80.0),
+    log: Callable[[str], None] = print,
+    provider_tries: int = PROVIDER_TRIES,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
     """A provider miss on one state is retried ``provider_tries`` times, then the state is
     recorded as one skipped row (retried on the next resume), left out of the summary and
     reported in the result's ``skipped`` block."""
@@ -384,7 +441,7 @@ def run_calibration(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0,
         raise ValueError("anchor_key must be a scale-free fact (price keys are rebased)")
     t0, ck = time.time(), Checkpoint(out)
     states = calibration_states(limit, seed)
-    plan: list[tuple[str, str, float, int, dict | None]] = []   # (suffix, kind, temp, seed, override)
+    plan: list[tuple[str, str, float, int, dict | None]] = []  # (suffix, kind, temp, seed, override)
     plan.append(("base", "base", 0.0, seed, None))
     plan += [(f"rep{i}", "repeat", temperature, seed + i, None) for i in range(1, repeats + 1)]
     plan += [(f"anchor={v:g}", "anchor", 0.0, seed, {anchor_key: v}) for v in anchor_values]
@@ -400,31 +457,48 @@ def run_calibration(llm: Any, graph: TradingGraph, out: Path, *, limit: int = 0,
                 continue
             if st is None:
                 try:
-                    st = retry_provider(lambda sym=sym, d=d: FrozenState(graph, sym, d), label=key,
-                                        tries=provider_tries, sleep=sleep)
+                    st = retry_provider(
+                        lambda sym=sym, d=d: FrozenState(graph, sym, d), label=key, tries=provider_tries, sleep=sleep
+                    )
                 except ProviderMiss as e:
                     ck.add(skip_row(skip_id, e.reason, e.tries, kind="skipped", state=key))
                     log(f"skip {key}: {e.reason}")
                     break
-                if ck.rows.get(skip_id, {}).get("skipped"):   # recovered on resume
+                if ck.rows.get(skip_id, {}).get("skipped"):  # recovered on resume
                     ck.add({**ck.rows[skip_id], "skipped": False, "recovered": True})
             _set(llm, temp, sd)
-            reply = llm.complete_json(st.system, st.prompt(override=override) + JSON_SUFFIX, deep=False,
-                                      schema=contracts.ANALYST)
+            reply = llm.complete_json(st.system, st.prompt(override=override) + JSON_SUFFIX, deep=False, schema=contracts.ANALYST)
             p = parse_analyst(reply)
-            ck.add({"id": rid, "state": st.key, "kind": kind, "temperature": temp, "seed": sd,
+            ck.add(
+                {
+                    "id": rid,
+                    "state": st.key,
+                    "kind": kind,
+                    "temperature": temp,
+                    "seed": sd,
                     "anchor_value": (override or {}).get(anchor_key),
                     "orig_anchor_value": st.facts.get(anchor_key),
-                    "raw": reply, "parsed": p is not None, **(p or {"signal": None, "confidence": None})})
+                    "raw": reply,
+                    "parsed": p is not None,
+                    **(p or {"signal": None, "confidence": None}),
+                }
+            )
             log(f"calibration {done}/{total} {time.time() - t0:.0f}s")
     all_keys = [f"{s}@{d.isoformat()}" for s, d in states]
     skipped = [ck.rows[f"skip:{k}"] for k in all_keys if ck.rows.get(f"skip:{k}", {}).get("skipped")]
     keys = [k for k in all_keys if not ck.rows.get(f"skip:{k}", {}).get("skipped")]
     kept = set(keys)
     rows = [r for r in ck.rows.values() if r.get("state") in kept and r.get("kind") != "skipped"]
-    res = summarise_calibration(rows, keys, anchor_key=anchor_key, repeats=repeats, temperature=temperature,
-                                meta=_meta(llm, t0, seed=seed, prompt_source="TechnicalAnalyst prompt, "
-                                           "Anonymizer + scrub, complete_json(contracts.ANALYST)"))
+    res = summarise_calibration(
+        rows,
+        keys,
+        anchor_key=anchor_key,
+        repeats=repeats,
+        temperature=temperature,
+        meta=_meta(
+            llm, t0, seed=seed, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub, complete_json(contracts.ANALYST)"
+        ),
+    )
     res["skipped"] = _skips(skipped, len(all_keys))
     return res
 
@@ -459,8 +533,9 @@ def anchoring_slope(points: list[tuple[str, float, float]]) -> dict[str, Any]:
     return {"slope": b, "se": se, "n": len(xs), "states": len([g for g in groups.values() if len(g) >= 2])}
 
 
-def summarise_calibration(rows: list[dict], keys: list[str], *, anchor_key: str, repeats: int,
-                          temperature: float, meta: dict | None = None) -> dict[str, Any]:
+def summarise_calibration(
+    rows: list[dict], keys: list[str], *, anchor_key: str, repeats: int, temperature: float, meta: dict | None = None
+) -> dict[str, Any]:
     per_state, pts, base = [], [], {}
     for k in keys:
         rs = [r for r in rows if r["state"] == k]
@@ -472,20 +547,35 @@ def summarise_calibration(rows: list[dict], keys: list[str], *, anchor_key: str,
                 pts.append((k, float(b["orig_anchor_value"]), b["signal"]))
         pts += [(k, float(r["anchor_value"]), r["signal"]) for r in rs if r["kind"] == "anchor" and r["parsed"]]
         signs = {(s > 0) - (s < 0) for s in reps}
-        per_state.append({"state": k, "repeat_signals": reps, "std": _std(reps),
-                          "range": (max(reps) - min(reps)) if reps else None, "sign_flip": len(signs) > 1})
+        per_state.append(
+            {
+                "state": k,
+                "repeat_signals": reps,
+                "std": _std(reps),
+                "range": (max(reps) - min(reps)) if reps else None,
+                "sign_flip": len(signs) > 1,
+            }
+        )
     stds = sorted(s["std"] for s in per_state if s["std"] is not None)
     return {
         "study": "2.6 calibration (dispersion, anchoring, drift baseline)",
-        "states": keys, "n_states": len(keys), "unparsed": sum(not r["parsed"] for r in rows), "calls": len(rows),
-        "dispersion": {"repeats": repeats, "temperature": temperature,
-                       "mean_std": sum(stds) / len(stds) if stds else None,
-                       "median_std": stds[len(stds) // 2] if stds else None,
-                       "max_std": stds[-1] if stds else None,
-                       "sign_flip_states": sum(s["sign_flip"] for s in per_state), "per_state": per_state},
+        "states": keys,
+        "n_states": len(keys),
+        "unparsed": sum(not r["parsed"] for r in rows),
+        "calls": len(rows),
+        "dispersion": {
+            "repeats": repeats,
+            "temperature": temperature,
+            "mean_std": sum(stds) / len(stds) if stds else None,
+            "median_std": stds[len(stds) // 2] if stds else None,
+            "max_std": stds[-1] if stds else None,
+            "sign_flip_states": sum(s["sign_flip"] for s in per_state),
+            "per_state": per_state,
+        },
         "anchoring": {"key": anchor_key, **anchoring_slope(pts)},
-        "baseline": base,          # temperature 0, fixed seed: the input to `drift`
-        "rows": rows, "meta": meta or {},
+        "baseline": base,  # temperature 0, fixed seed: the input to `drift`
+        "rows": rows,
+        "meta": meta or {},
     }
 
 
@@ -496,8 +586,12 @@ def drift(a: dict, b: dict) -> dict[str, Any]:
     common = [k for k in a["states"] if k in a["baseline"] and k in b["baseline"]]
     xa, xb = [a["baseline"][k] for k in common], [b["baseline"][k] for k in common]
     n = len(common)
-    out: dict[str, Any] = {"study": "2.6 drift between two runs", "n": n,
-                           "model_a": a.get("meta", {}).get("model"), "model_b": b.get("meta", {}).get("model")}
+    out: dict[str, Any] = {
+        "study": "2.6 drift between two runs",
+        "n": n,
+        "model_a": a.get("meta", {}).get("model"),
+        "model_b": b.get("meta", {}).get("model"),
+    }
     if n == 0:
         return {**out, "mean_abs_diff": None, "sign_agreement": None, "corr": None}
     diffs = [abs(p - q) for p, q in zip(xa, xb)]
@@ -505,25 +599,39 @@ def drift(a: dict, b: dict) -> dict[str, Any]:
     ma, mb = sum(xa) / n, sum(xb) / n
     va, vb = sum((x - ma) ** 2 for x in xa), sum((x - mb) ** 2 for x in xb)
     corr = sum((p - ma) * (q - mb) for p, q in zip(xa, xb)) / math.sqrt(va * vb) if va > 0 and vb > 0 else None
-    return {**out, "mean_abs_diff": sum(diffs) / n, "max_abs_diff": max(diffs),
-            "sign_agreement": sum(sgn(p) == sgn(q) for p, q in zip(xa, xb)) / n, "corr": corr,
-            "per_state": {k: [p, q] for k, p, q in zip(common, xa, xb)}}
+    return {
+        **out,
+        "mean_abs_diff": sum(diffs) / n,
+        "max_abs_diff": max(diffs),
+        "sign_agreement": sum(sgn(p) == sgn(q) for p, q in zip(xa, xb)) / n,
+        "corr": corr,
+        "per_state": {k: [p, q] for k, p, q in zip(common, xa, xb)},
+    }
 
 
 # ------------------------------------------------------------------ v0.17 recall audit v2 (N1)
 RECALL2_SEED, RECALL2_DATES, PLACEBO_N, SHIFT_BARS, LEAK_HORIZON = 20261109, 14, 60, 63, 5
 
 
-def _fwd(graph: TradingGraph, st: FrozenState, offset: int, horizon: int, *, tries: int = PROVIDER_TRIES,
-         sleep: Callable[[float], None] = time.sleep) -> float | None:
+def _fwd(
+    graph: TradingGraph,
+    st: FrozenState,
+    offset: int,
+    horizon: int,
+    *,
+    tries: int = PROVIDER_TRIES,
+    sleep: Callable[[float], None] = time.sleep,
+) -> float | None:
     """Forward close-to-close return over ``horizon`` bars starting ``offset`` bars after the
     decision bar (scoring only, never shown to the model). Provider misses are retried; after
     ``tries`` misses ``ProviderMiss`` propagates and the caller records a skipped row."""
     import pandas as pd
     from datetime import timedelta
+
     end = st.bar_date + timedelta(days=int(2 * (offset + horizon)) + 15)
-    h = retry_provider(lambda: graph.provider.history(st.state.instrument, st.bar_date, end),
-                       label=f"fwd {st.key}", tries=tries, sleep=sleep)
+    h = retry_provider(
+        lambda: graph.provider.history(st.state.instrument, st.bar_date, end), label=f"fwd {st.key}", tries=tries, sleep=sleep
+    )
     c = h["Close"].astype(float)
     c = c[c.index >= pd.Timestamp(st.bar_date)]
     if len(c) <= offset + horizon:
@@ -531,10 +639,20 @@ def _fwd(graph: TradingGraph, st: FrozenState, offset: int, horizon: int, *, tri
     return float(c.iloc[offset + horizon] / c.iloc[offset] - 1.0)
 
 
-def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, Any], limit: int = 0,
-                placebo_n: int = PLACEBO_N, leak: bool = True, seed: int = RECALL2_SEED,
-                log: Callable[[str], None] = print, provider_tries: int = PROVIDER_TRIES,
-                sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+def run_recall2(
+    llm: Any,
+    graph: TradingGraph,
+    out: Path,
+    *,
+    header: dict[str, Any],
+    limit: int = 0,
+    placebo_n: int = PLACEBO_N,
+    leak: bool = True,
+    seed: int = RECALL2_SEED,
+    log: Callable[[str], None] = print,
+    provider_tries: int = PROVIDER_TRIES,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
     """N1 audit: real arm (all names x RECALL2_DATES dates, interleaved, shuffled candidates),
     placebo arm (``placebo_n`` drift/vol-matched synthetic series), and the behavioural leak test
     (analyst signal on each real state vs the real and the SHIFT_BARS-shifted forward return).
@@ -548,7 +666,7 @@ def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, A
     plc = ra.build_items(NAMES, dates, seed=seed, arm="placebo", limit=min(placebo_n, limit or placebo_n))
     window = (f"{DESIGN_START:%Y-%m}", f"{DESIGN_END:%Y-%m}")
 
-    total = len(real) + len(plc) + (len(real) if leak else 0)   # every unit, for the k/N log
+    total = len(real) + len(plc) + (len(real) if leak else 0)  # every unit, for the k/N log
     k = 0
 
     def done(rid: str) -> bool:
@@ -556,12 +674,14 @@ def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, A
 
     def frozen(it: ra.AuditItem, rid: str, kind: str, placebo_seed: int | None) -> FrozenState | None:
         try:
-            return retry_provider(lambda: FrozenState(graph, it.truth, date.fromisoformat(it.as_of),
-                                                      placebo_seed=placebo_seed),
-                                  label=rid, tries=provider_tries, sleep=sleep)
+            return retry_provider(
+                lambda: FrozenState(graph, it.truth, date.fromisoformat(it.as_of), placebo_seed=placebo_seed),
+                label=rid,
+                tries=provider_tries,
+                sleep=sleep,
+            )
         except ProviderMiss as e:
-            ck.add(lineage.stamp(skip_row(rid, e.reason, e.tries, kind=kind, symbol=it.truth,
-                                          as_of=it.as_of), header))
+            ck.add(lineage.stamp(skip_row(rid, e.reason, e.tries, kind=kind, symbol=it.truth, as_of=it.as_of), header))
             log(f"skip {rid}: {e.reason}")
             return None
 
@@ -574,11 +694,26 @@ def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, A
         prompt = st.prompt() + ra.question(it, window)
         reply = llm.complete(RECALL_SYSTEM, prompt, deep=False)
         g = ra.parse_ranked(reply, it.candidates)
-        ck.add(lineage.stamp({"id": it.id, "kind": it.arm, "idx": it.idx, "symbol": it.truth, "as_of": it.as_of,
-                              "candidates": list(it.candidates), "candidate_seed": it.candidate_seed,
-                              "placebo_seed": it.placebo_seed, "raw": reply, "guess": g, "parsed": g is not None,
-                              "rr": ra.reciprocal_rank((g or {}).get("ranked"), it.truth),
-                              "prompt_sha256": lineage.prompt_sha256(RECALL_SYSTEM, prompt)}, header))
+        ck.add(
+            lineage.stamp(
+                {
+                    "id": it.id,
+                    "kind": it.arm,
+                    "idx": it.idx,
+                    "symbol": it.truth,
+                    "as_of": it.as_of,
+                    "candidates": list(it.candidates),
+                    "candidate_seed": it.candidate_seed,
+                    "placebo_seed": it.placebo_seed,
+                    "raw": reply,
+                    "guess": g,
+                    "parsed": g is not None,
+                    "rr": ra.reciprocal_rank((g or {}).get("ranked"), it.truth),
+                    "prompt_sha256": lineage.prompt_sha256(RECALL_SYSTEM, prompt),
+                },
+                header,
+            )
+        )
 
     for it in real + plc:
         k += 1
@@ -593,58 +728,101 @@ def run_recall2(llm: Any, graph: TradingGraph, out: Path, *, header: dict[str, A
                 st = frozen(it, lid, "leak", None)
                 fwd: tuple[float | None, float | None] | None = None
                 if st is not None:
-                    try:   # forward returns first: a miss here skips the unit before the model call
-                        fwd = (_fwd(graph, st, 0, LEAK_HORIZON, tries=provider_tries, sleep=sleep),
-                               _fwd(graph, st, SHIFT_BARS, LEAK_HORIZON, tries=provider_tries, sleep=sleep))
+                    try:  # forward returns first: a miss here skips the unit before the model call
+                        fwd = (
+                            _fwd(graph, st, 0, LEAK_HORIZON, tries=provider_tries, sleep=sleep),
+                            _fwd(graph, st, SHIFT_BARS, LEAK_HORIZON, tries=provider_tries, sleep=sleep),
+                        )
                     except ProviderMiss as e:
-                        ck.add(lineage.stamp(skip_row(lid, e.reason, e.tries, kind="leak", symbol=it.truth,
-                                                      as_of=it.as_of), header))
+                        ck.add(
+                            lineage.stamp(skip_row(lid, e.reason, e.tries, kind="leak", symbol=it.truth, as_of=it.as_of), header)
+                        )
                         log(f"skip {lid}: {e.reason}")
                 if st is not None and fwd is not None:
-                    reply = llm.complete_json(st.system, st.prompt() + JSON_SUFFIX, deep=False,
-                                              schema=contracts.ANALYST)
+                    reply = llm.complete_json(st.system, st.prompt() + JSON_SUFFIX, deep=False, schema=contracts.ANALYST)
                     p = parse_analyst(reply)
-                    ck.add(lineage.stamp({"id": lid, "kind": "leak", "symbol": it.truth, "as_of": it.as_of,
-                                          "raw": reply, "parsed": p is not None, "signal": (p or {}).get("signal"),
-                                          "fwd_real": fwd[0], "fwd_shift": fwd[1],
-                                          "horizon_days": LEAK_HORIZON, "shift_bars": SHIFT_BARS}, header))
+                    ck.add(
+                        lineage.stamp(
+                            {
+                                "id": lid,
+                                "kind": "leak",
+                                "symbol": it.truth,
+                                "as_of": it.as_of,
+                                "raw": reply,
+                                "parsed": p is not None,
+                                "signal": (p or {}).get("signal"),
+                                "fwd_real": fwd[0],
+                                "fwd_shift": fwd[1],
+                                "horizon_days": LEAK_HORIZON,
+                                "shift_bars": SHIFT_BARS,
+                            },
+                            header,
+                        )
+                    )
                 log(f"leak {k}/{total} {time.time() - t0:.0f}s")
             if done(lid):
                 leak_rows.append(ck.rows[lid])
     # Skipped items (provider miss after retries) leave the analysis but are reported: the
     # pre-registered summary carries their count, ids and reasons (never a silent drop).
-    skipped = [ck.rows[r] for r in [i.id for i in real + plc] + [f"leak:{i.truth}@{i.as_of}" for i in (real if leak else [])]
-               if r in ck.rows and ck.rows[r].get("skipped")]
+    skipped = [
+        ck.rows[r]
+        for r in [i.id for i in real + plc] + [f"leak:{i.truth}@{i.as_of}" for i in (real if leak else [])]
+        if r in ck.rows and ck.rows[r].get("skipped")
+    ]
     real = [i for i in real if done(i.id)]
     plc = [i for i in plc if done(i.id)]
     real_ans = [ck.rows[i.id]["guess"] for i in real]
     plc_ans = [ck.rows[i.id]["guess"] for i in plc]
     res = ra.summarise(real, real_ans, plc, plc_ans, leak_rows)
-    skips = {"n": len(skipped), "units": total, "by_kind": {kd: sum(r.get("kind") == kd for r in skipped)
-                                                             for kd in ("real", "placebo", "leak")},
-             "rows": [{"id": r["id"], "kind": r.get("kind"), "reason": r.get("skip_reason")} for r in skipped]}
-    return {"study": "N1 recall audit v2", **res.as_dict(), "skipped": skips, "seed": seed,
-            "header_id": header.get("header_id"),
-            "rows": [ck.rows[i.id] for i in real + plc], "ablation_rows": [], "leak_rows": leak_rows,
-            "meta": _meta(llm, t0, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub; recall_audit v2")}
+    skips = {
+        "n": len(skipped),
+        "units": total,
+        "by_kind": {kd: sum(r.get("kind") == kd for r in skipped) for kd in ("real", "placebo", "leak")},
+        "rows": [{"id": r["id"], "kind": r.get("kind"), "reason": r.get("skip_reason")} for r in skipped],
+    }
+    return {
+        "study": "N1 recall audit v2",
+        **res.as_dict(),
+        "skipped": skips,
+        "seed": seed,
+        "header_id": header.get("header_id"),
+        "rows": [ck.rows[i.id] for i in real + plc],
+        "ablation_rows": [],
+        "leak_rows": leak_rows,
+        "meta": _meta(llm, t0, prompt_source="TechnicalAnalyst prompt, Anonymizer + scrub; recall_audit v2"),
+    }
 
 
 def _header(a: argparse.Namespace, llm: Any, graph: TradingGraph, extra: dict[str, Any]) -> dict[str, Any]:
-    opts = {"num_ctx": getattr(llm, "num_ctx", None), "num_predict": getattr(llm, "max_tokens", None),
-            "temperature": getattr(llm, "temperature", 0.0), "seed": getattr(llm, "seed", None)}
-    return lineage.build_header(model=getattr(llm, "model", None), url=getattr(llm, "url", None), options=opts,
-                                config=graph.config, extra={"cmd": a.cmd, **extra})
+    opts = {
+        "num_ctx": getattr(llm, "num_ctx", None),
+        "num_predict": getattr(llm, "max_tokens", None),
+        "temperature": getattr(llm, "temperature", 0.0),
+        "seed": getattr(llm, "seed", None),
+    }
+    return lineage.build_header(
+        model=getattr(llm, "model", None),
+        url=getattr(llm, "url", None),
+        options=opts,
+        config=graph.config,
+        extra={"cmd": a.cmd, **extra},
+    )
 
 
 # ------------------------------------------------------------------ CLI
-RETRY_BUDGET_S = 600.0     # v0.19: ride out an Ollama hang of up to ~10 min, then stop loudly
+RETRY_BUDGET_S = 600.0  # v0.19: ride out an Ollama hang of up to ~10 min, then stop loudly
 
 
 def _llm(a: argparse.Namespace) -> LocalLLM:
-    cfg = {"llm_provider": "local", "local_llm_model": a.model, "local_llm_timeout_s": a.timeout,
-           "local_llm_seed": CAL_SEED, "max_tokens": a.max_tokens,
-           "local_llm_num_ctx": getattr(a, "num_ctx", None),
-           "local_llm_retry_budget_s": getattr(a, "retry_budget", RETRY_BUDGET_S)}
+    cfg = {
+        "llm_provider": "local",
+        "local_llm_model": a.model,
+        "local_llm_timeout_s": a.timeout,
+        "local_llm_seed": CAL_SEED,
+        "max_tokens": a.max_tokens,
+        "local_llm_num_ctx": getattr(a, "num_ctx", None),
+        "local_llm_retry_budget_s": getattr(a, "retry_budget", RETRY_BUDGET_S),
+    }
     llm = SampledLocalLLM(cfg)
     if not reachable(llm.url):
         raise SystemExit(f"no Ollama server at {llm.url}")
@@ -674,14 +852,21 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
         s.add_argument("--out", required=True)
         s.add_argument("--data", default="yahoo", help="price provider for the real states (yahoo | csv | synthetic)")
         s.add_argument("--timeout", type=float, default=300)
-        s.add_argument("--retry-budget", type=float, default=RETRY_BUDGET_S,
-                       help="seconds of backoff retries on a hung/unreachable Ollama (0 = no retry)")
+        s.add_argument(
+            "--retry-budget",
+            type=float,
+            default=RETRY_BUDGET_S,
+            help="seconds of backoff retries on a hung/unreachable Ollama (0 = no retry)",
+        )
         s.add_argument("--max-tokens", type=int, default=512)
         s.add_argument("--limit", type=int, default=0)
         s.add_argument("--smoke", action="store_true", help="3 items; exit 1 if any reply fails to parse")
         s.add_argument("--num-ctx", type=int, default=8192, help="Ollama context window (N4)")
-        s.add_argument("--allow-version-change", action="store_true",
-                       help="resume despite a changed git SHA / prompt hash / server / digest (recorded)")
+        s.add_argument(
+            "--allow-version-change",
+            action="store_true",
+            help="resume despite a changed git SHA / prompt hash / server / digest (recorded)",
+        )
         if name == "recall2":
             s.add_argument("--placebo", type=int, default=PLACEBO_N)
             s.add_argument("--no-leak", action="store_true")
@@ -727,8 +912,11 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
             # (three decisions, its own file) is the one exception.
             if not a.smoke:
                 if limit:
-                    print("refusing design --limit: it keeps the earliest dates only, a different population "
-                          "from the registered cell; the futility rule is the only early stop", file=sys.stderr)
+                    print(
+                        "refusing design --limit: it keeps the earliest dates only, a different population "
+                        "from the registered cell; the futility rule is the only early stop",
+                        file=sys.stderr,
+                    )
                     return 2
                 try:
                     gate = design.prereg_gate(ROOT) | design.holdout_access(cell)
@@ -736,8 +924,7 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
                     print(f"refusing design {cell.name}: {e}", file=sys.stderr)
                     return 2
                 (out.with_suffix(".gate.json")).write_text(json.dumps(gate, indent=1), encoding="utf-8")
-            drows = design.run_cell(cell, NAMES, graph, llm, out, header=hdr, limit=limit,
-                                futility_check=not a.no_futility)
+            drows = design.run_cell(cell, NAMES, graph, llm, out, header=hdr, limit=limit, futility_check=not a.no_futility)
             rep = design.report(cell, drows, NAMES)
             _write(out.with_suffix(".report.json"), rep)
             print(json.dumps({k: v for k, v in rep.items() if k != "planned"}, indent=1, default=str)[:4000])
@@ -748,20 +935,33 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
                     return 1
                 print(f"smoke ok: {len(drows)} decisions")
             return 0
-        res = run_recall2(llm, graph, out, header=hdr, limit=limit, placebo_n=1 if a.smoke else a.placebo,
-                          leak=not (a.no_leak or a.smoke))
+        res = run_recall2(
+            llm, graph, out, header=hdr, limit=limit, placebo_n=1 if a.smoke else a.placebo, leak=not (a.no_leak or a.smoke)
+        )
         rows = res["rows"]
     elif a.cmd == "recall":
         res = run_recall(llm, graph, out, limit=limit, ablate=not (a.no_ablation or a.smoke))
         rows = res["rows"] + res["ablation_rows"]
     else:
         vals = tuple(float(x) for x in a.anchor_values.split(",") if x.strip())
-        res = run_calibration(llm, graph, out, limit=limit, repeats=a.repeats, temperature=a.temperature,
-                              seed=a.seed, anchor_key=a.anchor_key, anchor_values=vals)
+        res = run_calibration(
+            llm,
+            graph,
+            out,
+            limit=limit,
+            repeats=a.repeats,
+            temperature=a.temperature,
+            seed=a.seed,
+            anchor_key=a.anchor_key,
+            anchor_values=vals,
+        )
         rows = res["rows"]
     _write(out, res)
-    print(json.dumps({k: v for k, v in res.items() if k not in ("rows", "ablation_rows", "per_state")},
-                     indent=1, default=str)[:4000])
+    print(
+        json.dumps({k: v for k, v in res.items() if k not in ("rows", "ablation_rows", "per_state")}, indent=1, default=str)[
+            :4000
+        ]
+    )
     return _smoke_exit(rows) if a.smoke else 0
 
 

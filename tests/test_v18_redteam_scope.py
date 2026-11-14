@@ -1,6 +1,7 @@
 """v0.18 lane E: scoped red-team design (--per-category), interleaved order, Wilson report.
 
 No model is called: ``run_unit`` is replaced by a fake that records which units ran."""
+
 import json
 import math
 from collections import Counter
@@ -16,20 +17,19 @@ AN = ("news", "sentiment")
 
 def _fake_corpus():
     cats = {"a": 7, "b": 3, "c": 5}
-    return [{"id": f"{c}{i:02d}", "category": c, "carrier": "x", "payload": "y"}
-            for c, n in cats.items() for i in range(n)]
+    return [{"id": f"{c}{i:02d}", "category": c, "carrier": "x", "payload": "y"} for c, n in cats.items() for i in range(n)]
 
 
 def test_per_category_is_deterministic_and_seeded():
     corpus = _fake_corpus()
     a = rt2.select_per_category(corpus, 2, 2026)
-    b = rt2.select_per_category(list(reversed(corpus)), 2, 2026)   # input order does not matter
+    b = rt2.select_per_category(list(reversed(corpus)), 2, 2026)  # input order does not matter
     assert [s["id"] for s in a] == [s["id"] for s in b]
     assert Counter(s["category"] for s in a) == {"a": 2, "b": 2, "c": 2}
     others = {tuple(s["id"] for s in rt2.select_per_category(corpus, 2, seed)) for seed in range(20)}
     assert len(others) > 1
     assert rt2.select_per_category(corpus, None) == corpus
-    assert len(rt2.select_per_category(corpus, 5)) == 5 + 3 + 5      # short category gives all
+    assert len(rt2.select_per_category(corpus, 5)) == 5 + 3 + 5  # short category gives all
 
 
 def test_real_corpus_design_sizes():
@@ -49,8 +49,8 @@ def test_balance_and_interleaving():
     per_cell = {}
     for u in units:
         per_cell.setdefault((u.symbol, u.analyst), set()).add(u.snippet["id"])
-    assert len({frozenset(v) for v in per_cell.values()}) == 1      # every cell, same snippets
-    for k in (7, 23, 55):                                            # any prefix is near balanced
+    assert len({frozenset(v) for v in per_cell.values()}) == 1  # every cell, same snippets
+    for k in (7, 23, 55):  # any prefix is near balanced
         c = Counter((u.symbol, u.analyst) for u in units[:k])
         assert max(c.values()) - min(c.values(), default=0) <= 1 and len(c) == min(k, 10)
 
@@ -58,9 +58,14 @@ def test_balance_and_interleaving():
 def test_keys_unchanged_by_reordering():
     corpus = load_corpus()[:4]
     units = rt2.plan_units(corpus, STATES, rt2.ANALYSTS, rt2.MODES)
-    old = [f"{m}|{s}|{d}|{a}|{sn['id']}" for m in rt2.MODES for s, d in STATES for a in rt2.ANALYSTS
-           if not ((m == "free" and a in rt2.TEXT_ONLY_JSON) or (s == "EURUSD" and a == "fundamentals_text"))
-           for sn in corpus]
+    old = [
+        f"{m}|{s}|{d}|{a}|{sn['id']}"
+        for m in rt2.MODES
+        for s, d in STATES
+        for a in rt2.ANALYSTS
+        if not ((m == "free" and a in rt2.TEXT_ONLY_JSON) or (s == "EURUSD" and a == "fundamentals_text"))
+        for sn in corpus
+    ]
     assert sorted(u.key for u in units) == sorted(old) and len(units) == len(old)
 
 
@@ -70,9 +75,17 @@ def fake_run_unit(monkeypatch):
 
     def fake(u, config, provider, model, threshold=0.5, end_to_end=True):
         ran.append(u.key)
-        return {"key": u.key, "mode": u.mode, "analyst": u.analyst, "category": u.snippet["category"],
-                "target": 1, "directed_complied": True, "weight_dir_matched": False,
-                "critic_acted_attack": True}
+        return {
+            "key": u.key,
+            "mode": u.mode,
+            "analyst": u.analyst,
+            "category": u.snippet["category"],
+            "target": 1,
+            "directed_complied": True,
+            "weight_dir_matched": False,
+            "critic_acted_attack": True,
+        }
+
     monkeypatch.setattr(rt2, "run_unit", fake)
     return ran
 
@@ -86,7 +99,7 @@ def test_resume_and_design_guard(tmp_path, fake_run_unit):
     summ = rt2.run(units[:5], {}, None, None, out, log=lambda _m: None, design=design)
     assert len(fake_run_unit) == 5 and summ["design"]["selected_ids"] == design["selected_ids"]
     rt2.run(units, {}, None, None, out, log=lambda _m: None, design=design)
-    assert len(fake_run_unit) == len(units)                          # resumed: only the rest ran
+    assert len(fake_run_unit) == len(units)  # resumed: only the rest ran
     rt2.run(units, {}, None, None, out, log=lambda _m: None, design=design)
     assert len(fake_run_unit) == len(units)
     with pytest.raises(ValueError, match="different --out"):
@@ -94,7 +107,7 @@ def test_resume_and_design_guard(tmp_path, fake_run_unit):
     with pytest.raises(ValueError, match="different --out"):
         rt2.run(units, {}, None, None, out, log=lambda _m: None, design=design, end_to_end=False)
     full = tmp_path / "full.jsonl"
-    full.write_text('{"key": "x"}\n', encoding="utf-8")                 # legacy rows, no header
+    full.write_text('{"key": "x"}\n', encoding="utf-8")  # legacy rows, no header
     with pytest.raises(ValueError, match="without a design header"):
         rt2.run(units, {}, None, None, full, log=lambda _m: None, design=design)
     assert json.loads(out.with_suffix(".design.json").read_text())["per_category"] == 2
@@ -115,8 +128,8 @@ def test_report_conditional_catch_rate():
         if matched is not None:
             row.update(weight_dir_matched=matched, critic_acted_attack=not matched)
         return row
-    rows = [r("a", True, False), r("a", True, True), r("a", False, False), r("b", True, False),
-            r("b", False, False, target=0)]
+
+    rows = [r("a", True, False), r("a", True, True), r("a", False, False), r("b", True, False), r("b", False, False, target=0)]
     rep = rt2.compliance_report(rows)
     assert rep["total"]["compliance"]["k"] == 3 and rep["total"]["compliance"]["n"] == 4
     g = rep["total"]["governance_catch_given_complied"]

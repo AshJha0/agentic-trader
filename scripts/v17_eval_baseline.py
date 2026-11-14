@@ -1,8 +1,9 @@
 """v0.17 R3.3: check or deliberately re-record the eval-regression baseline. No model calls.
 
-    python scripts/v17_eval_baseline.py                 # check; exit 1 on drift
-    python scripts/v17_eval_baseline.py --update --reason "trader prompt v3; eval run results/v17_eval/run.jsonl"
+python scripts/v17_eval_baseline.py                 # check; exit 1 on drift
+python scripts/v17_eval_baseline.py --update --reason "trader prompt v3; eval run results/v17_eval/run.jsonl"
 """
+
 from __future__ import annotations
 
 import argparse

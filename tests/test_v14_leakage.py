@@ -1,4 +1,5 @@
 """v0.14 item 5.8: purged walk-forward CV, the future-leak canary, the point-in-time store."""
+
 from __future__ import annotations
 
 import math
@@ -11,8 +12,17 @@ import pytest
 from agentic_trader.config import make_config
 from agentic_trader.data.synthetic import SyntheticProvider
 from agentic_trader.instruments import Instrument
-from agentic_trader.leakage import (FeatureRecord, LookaheadError, PointInTimeStore, ShockedProvider, check_read,
-                                    future_leak_canary, ic_purged, ic_purged_series, purged_walk_forward)
+from agentic_trader.leakage import (
+    FeatureRecord,
+    LookaheadError,
+    PointInTimeStore,
+    ShockedProvider,
+    check_read,
+    future_leak_canary,
+    ic_purged,
+    ic_purged_series,
+    purged_walk_forward,
+)
 
 # ------------------------------------------------------------------ splitter
 
@@ -26,7 +36,7 @@ def test_walk_forward_folds_are_purged_and_embargoed(n, h, k, emb):
     assert folds[0].train.size == 0
     for j, f in enumerate(folds):
         a = int(f.test[0])
-        assert f.train.size == 0 or f.train.max() + h < a        # no training label reaches the test block
+        assert f.train.size == 0 or f.train.max() + h < a  # no training label reaches the test block
         for prev in folds[:j]:
             b = int(prev.test[-1]) + 1
             assert not np.isin(f.train, np.arange(b, b + e)).any()  # embargo after each earlier block
@@ -59,7 +69,7 @@ def test_ic_purged_perfect_and_null_signals():
     fwd = _fwd(close, 10)
     perfect = ic_purged(fwd, fwd, 10)
     assert perfect.ic == pytest.approx(1.0) and len(perfect.folds) == 5
-    assert perfect.n == 5 * (200 - 10)                          # each fold loses its last h labels
+    assert perfect.n == 5 * (200 - 10)  # each fold loses its last h labels
     noise = [ic_purged(rng.normal(size=1000), fwd, 10).t for _ in range(200)]
     # fold-dispersion t has 4 degrees of freedom: |t| >= 2.78 about 5% of the time under the null
     assert np.mean(np.abs(noise) >= 2.78) < 0.12
@@ -106,26 +116,32 @@ def test_shocked_provider_changes_only_data_on_or_after_the_shock():
     pd.testing.assert_frame_equal(base.history(msft, t, date(2023, 7, 1)), shocked.history(msft, t, date(2023, 7, 1)))
 
 
-@pytest.mark.parametrize("symbol,shock,cross_section", [
-    ("AAPL", date(2023, 6, 1), True),
-    ("AAPL", date(2024, 2, 12), False),
-    ("EURUSD", date(2023, 9, 4), True),
-    ("EURUSD", date(2024, 3, 18), False),
-])
+@pytest.mark.parametrize(
+    "symbol,shock,cross_section",
+    [
+        ("AAPL", date(2023, 6, 1), True),
+        ("AAPL", date(2024, 2, 12), False),
+        ("EURUSD", date(2023, 9, 4), True),
+        ("EURUSD", date(2024, 3, 18), False),
+    ],
+)
 def test_future_leak_canary_finds_no_leak(symbol, shock, cross_section):
     """Full offline desk (analysts incl. alpha, debate, trader, risk, PM, prompts) plus the
     alpha library: identical on two dates before the shock, changed on it. The cross-sectional
     analyst (the slowest, a universe per date) runs in one case per asset class."""
     from datetime import timedelta
-    analysts = (["technical", "fundamentals", "news", "sentiment", "alpha"] if symbol == "AAPL"
-                else ["technical", "macro", "news", "sentiment", "alpha"])
+
+    analysts = (
+        ["technical", "fundamentals", "news", "sentiment", "alpha"]
+        if symbol == "AAPL"
+        else ["technical", "macro", "news", "sentiment", "alpha"]
+    )
     if cross_section:
         analysts.append("xalpha")
     before, after = [shock - timedelta(days=15), shock - timedelta(days=1)], [shock]
-    res = future_leak_canary({**CONFIG, "analysts": analysts}, SyntheticProvider(make_config({})), symbol, shock,
-                             before, after)
+    res = future_leak_canary({**CONFIG, "analysts": analysts}, SyntheticProvider(make_config({})), symbol, shock, before, after)
     assert res.clean, f"look-ahead: {res.leaks}"
-    assert res.reacted == after          # the shock did reach the desk
+    assert res.reacted == after  # the shock did reach the desk
 
 
 def test_canary_catches_an_analyst_that_reads_ahead(monkeypatch):
@@ -147,8 +163,15 @@ def test_canary_catches_an_analyst_that_reads_ahead(monkeypatch):
 
     monkeypatch.setitem(analysts.ANALYSTS, "peeking", Peeking)
     shock = date(2023, 6, 1)
-    res = future_leak_canary({**CONFIG, "analysts": ["technical", "peeking"]}, SyntheticProvider(make_config({})), "AAPL",
-                             shock, [date(2023, 5, 29)], [], record_prompts=False)
+    res = future_leak_canary(
+        {**CONFIG, "analysts": ["technical", "peeking"]},
+        SyntheticProvider(make_config({})),
+        "AAPL",
+        shock,
+        [date(2023, 5, 29)],
+        [],
+        record_prompts=False,
+    )
     assert not res.clean and "report:peeking" in res.leaks[date(2023, 5, 29)]
 
 
@@ -171,9 +194,9 @@ def test_point_in_time_store_refuses_lookahead(tmp_path):
     restated = _rec(1.1, date(2024, 3, 31), date(2024, 8, 1), "0002")
     store.append(q1)
     store.append(restated)
-    store.append(q1)                                       # exact duplicate: no-op
+    store.append(q1)  # exact duplicate: no-op
     assert len(store) == 2
-    assert store.latest("eps", "AAPL", date(2024, 4, 30)) is None   # quarter over, not yet filed
+    assert store.latest("eps", "AAPL", date(2024, 4, 30)) is None  # quarter over, not yet filed
     assert store.latest("eps", "AAPL", date(2024, 6, 1)) == q1
     assert store.latest("eps", "AAPL", date(2024, 9, 1)) == restated
     with pytest.raises(LookaheadError):
@@ -182,9 +205,9 @@ def test_point_in_time_store_refuses_lookahead(tmp_path):
         check_read(q1, date(2024, 5, 1))
     assert store.read(q1, date(2024, 5, 2)) == q1
     with pytest.raises(ValueError):
-        store.append(_rec(9.9, date(2024, 3, 31), date(2024, 5, 2)))     # same accession, new value
+        store.append(_rec(9.9, date(2024, 3, 31), date(2024, 5, 2)))  # same accession, new value
     with pytest.raises(ValueError):
-        _rec(1.0, date(2024, 3, 31), date(2024, 3, 1))                  # public before it happened
+        _rec(1.0, date(2024, 3, 31), date(2024, 3, 1))  # public before it happened
     reloaded = PointInTimeStore(path)
     assert list(reloaded) == [q1, restated]
     assert len(path.read_text(encoding="utf-8").splitlines()) == 2

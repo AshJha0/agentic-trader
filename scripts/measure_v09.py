@@ -21,6 +21,7 @@ Runs (all risk parity across sleeves, 120-day covariance window, unless named ot
 ``--period holdout`` (2022-01-03 -> 2026-06-30) is the pre-registered one-off report of
 docs/evaluation/v09_preregistration.md; write it to its own directory (``--out results/v09/holdout``).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,9 +69,12 @@ STREAMS = (AGENT, "Buy&Hold", "B&H vol-target", "TSMOM(12-1)", "TSMOM(L/S)", "Ca
 
 
 def base_config() -> dict:
-    return make_config(data_provider="yahoo", memory_path=None,
-                       edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
-                       fred_cache_dir=str(ROOT / "build" / "fred_cache"))
+    return make_config(
+        data_provider="yahoo",
+        memory_path=None,
+        edgar_cache_dir=str(ROOT / "build" / "edgar_cache"),
+        fred_cache_dir=str(ROOT / "build" / "fred_cache"),
+    )
 
 
 def log(msg: str) -> None:
@@ -100,24 +104,58 @@ def run(name: str, out: Path, provider, period: str) -> None:
     start, end = EXTRA_PERIODS.get(period) or PERIODS[period]
     log(f"{name}: {len(syms)} sleeves, {weighting}, budgets {budgets}, {start} -> {end} ...")
     t0 = time.time()
-    rep = run_portfolio_backtest(syms, start, end, base_config(), rebalance_every=EVERY, provider=provider,
-                                 weighting=weighting, cov_window=COV_WINDOW, class_budgets=budgets)
+    rep = run_portfolio_backtest(
+        syms,
+        start,
+        end,
+        base_config(),
+        rebalance_every=EVERY,
+        provider=provider,
+        weighting=weighting,
+        cov_window=COV_WINDOW,
+        class_budgets=budgets,
+    )
     frame = rep.returns.copy()
     frame["rf"] = rep.rf if isinstance(rep.rf, np.ndarray) else float(rep.rf if rep.rf is not None else 0.0)
     frame.to_csv(out / f"{name}.csv")
     if rep.allocations is not None:
         rep.allocations.to_csv(out / f"{name}_allocations.csv")
     diffs = {s: rep.sharpe_difference(s, "B&H vol-target") for s in STREAMS if s in rep.metrics and s != "B&H vol-target"}
-    sleeves = {s: {k: {"sharpe": r.results[k].metrics.sharpe, "cumulative_return": r.results[k].metrics.cumulative_return,
-                       "max_drawdown": r.results[k].metrics.max_drawdown, "num_trades": r.results[k].metrics.num_trades}
-                   for k in r.results} for s, r in rep.sleeves.items()}
-    json.dump(_jsonable({"name": name, "period": period, "start": start, "end": end, "symbols": syms,
-                         "weighting": weighting, "class_budgets": budgets, "cov_window": COV_WINDOW,
-                         "rebalance_every": EVERY, "seconds": round(time.time() - t0, 1),
-                         "table": rep.table().to_dict(orient="index"),
-                         "metrics": {k: m for k, m in rep.metrics.items()},
-                         "sharpe_vs_vol_target": diffs, "sleeves": sleeves, "provenance": provenance()}),
-              open(path, "w", encoding="utf-8"), indent=1)
+    sleeves = {
+        s: {
+            k: {
+                "sharpe": r.results[k].metrics.sharpe,
+                "cumulative_return": r.results[k].metrics.cumulative_return,
+                "max_drawdown": r.results[k].metrics.max_drawdown,
+                "num_trades": r.results[k].metrics.num_trades,
+            }
+            for k in r.results
+        }
+        for s, r in rep.sleeves.items()
+    }
+    json.dump(
+        _jsonable(
+            {
+                "name": name,
+                "period": period,
+                "start": start,
+                "end": end,
+                "symbols": syms,
+                "weighting": weighting,
+                "class_budgets": budgets,
+                "cov_window": COV_WINDOW,
+                "rebalance_every": EVERY,
+                "seconds": round(time.time() - t0, 1),
+                "table": rep.table().to_dict(orient="index"),
+                "metrics": {k: m for k, m in rep.metrics.items()},
+                "sharpe_vs_vol_target": diffs,
+                "sleeves": sleeves,
+                "provenance": provenance(),
+            }
+        ),
+        open(path, "w", encoding="utf-8"),
+        indent=1,
+    )
     log(f"{name}: done in {time.time() - t0:.0f}s")
 
 
@@ -137,9 +175,16 @@ def main(argv=None) -> int:
     for name in RUNS:
         if only is None or name in only:
             run(name, out, provider, a.period)
-    json.dump({"finished": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.time() - t0),
-               "files": sorted(p.name for p in out.iterdir()), "provenance": provenance()},
-              open(out / "manifest.json", "w", encoding="utf-8"), indent=1)
+    json.dump(
+        {
+            "finished": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "seconds": round(time.time() - t0),
+            "files": sorted(p.name for p in out.iterdir()),
+            "provenance": provenance(),
+        },
+        open(out / "manifest.json", "w", encoding="utf-8"),
+        indent=1,
+    )
     log(f"all done in {time.time() - t0:.0f}s")
     return 0
 

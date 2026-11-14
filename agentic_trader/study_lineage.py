@@ -26,6 +26,7 @@ under the same tag. The served name still matches (``local_llm.served_matches``)
 Evidence class: design and unit tests against fake HTTP servers; no model has been run
 through this module.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -34,8 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-IDENTITY_FIELDS = ("git_sha", "git_dirty", "prompt_bundle_hash", "ollama_version", "model",
-                   "model_digest", "options")
+IDENTITY_FIELDS = ("git_sha", "git_dirty", "prompt_bundle_hash", "ollama_version", "model", "model_digest", "options")
 
 
 class LineageMismatch(RuntimeError):
@@ -44,9 +44,11 @@ class LineageMismatch(RuntimeError):
     def __init__(self, fields: list[str], old: dict[str, Any], new: dict[str, Any]):
         self.fields = fields
         detail = "; ".join(f"{f}: {old.get(f)!r} -> {new.get(f)!r}" for f in fields)
-        super().__init__(f"refusing to resume: run identity changed ({detail}). "
-                         "Start a new output file, or pass --allow-version-change to record the "
-                         "change and continue.")
+        super().__init__(
+            f"refusing to resume: run identity changed ({detail}). "
+            "Start a new output file, or pass --allow-version-change to record the "
+            "change and continue."
+        )
 
 
 def sha256_text(text: str) -> str:
@@ -63,32 +65,46 @@ def header_id(header: dict[str, Any]) -> str:
     return sha256_text(json.dumps(ident, sort_keys=True, default=str))[:16]
 
 
-def build_header(*, model: str | None, url: str | None, options: dict[str, Any] | None,
-                 config: dict | None = None, prompt_hash: str | None = None,
-                 git: Callable[[], tuple[str | None, bool | None]] | None = None,
-                 version_fn: Callable[[str], str | None] | None = None,
-                 digest_fn: Callable[[str, str], dict[str, Any] | None] | None = None,
-                 extra: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_header(
+    *,
+    model: str | None,
+    url: str | None,
+    options: dict[str, Any] | None,
+    config: dict | None = None,
+    prompt_hash: str | None = None,
+    git: Callable[[], tuple[str | None, bool | None]] | None = None,
+    version_fn: Callable[[str], str | None] | None = None,
+    digest_fn: Callable[[str, str], dict[str, Any] | None] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Collect the run identity. Callables are injectable so tests use fakes; the defaults read
     git, ``prompts.prompt_bundle_hash(config)`` and the Ollama ``/api/version`` and ``/api/tags``
     endpoints. A rules-only run passes ``model=None`` and gets no server fields."""
     from .provenance import git_info
+
     sha, dirty = (git or git_info)()
     if prompt_hash is None and config is not None:
         from .prompts import prompt_bundle_hash
+
         prompt_hash = prompt_bundle_hash(config)
     version = digest = None
     entry: dict[str, Any] | None = None
     if model and url:
         from .local_llm import model_digest, server_version
+
         version = (version_fn or server_version)(url)
         entry = (digest_fn or model_digest)(url, model)
         digest = (entry or {}).get("digest")
     h: dict[str, Any] = {
-        "git_sha": sha, "git_dirty": dirty, "prompt_bundle_hash": prompt_hash,
-        "ollama_version": version, "model": model, "model_digest": digest,
+        "git_sha": sha,
+        "git_dirty": dirty,
+        "prompt_bundle_hash": prompt_hash,
+        "ollama_version": version,
+        "model": model,
+        "model_digest": digest,
         "options": dict(sorted((options or {}).items())),
-        "model_entry": entry, "server_url": url,
+        "model_entry": entry,
+        "server_url": url,
         "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         **(extra or {}),
     }
@@ -116,8 +132,9 @@ def diff_fields(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     return [f for f in IDENTITY_FIELDS if old.get(f) != new.get(f)]
 
 
-def check_resume(rows_path: Path, header: dict[str, Any], *, allow_version_change: bool = False,
-                 rows_exist: bool | None = None) -> dict[str, Any]:
+def check_resume(
+    rows_path: Path, header: dict[str, Any], *, allow_version_change: bool = False, rows_exist: bool | None = None
+) -> dict[str, Any]:
     """Write or verify the run header before any row is written; return the header in force.
 
     No stored header and no rows: the header is written (fresh run). No stored header but rows
@@ -165,24 +182,31 @@ def call_lineage(system: str, prompt: str, evidence: dict[str, Any] | None) -> d
     """Per-call fields (N4, N5): prompt hash and the server's token counts and truncation flag
     (``LocalLLM.last_call``; ``None`` for backends that do not report them)."""
     ev = evidence or {}
-    return {"prompt_sha256": prompt_sha256(system, prompt), "prompt_eval_count": ev.get("prompt_eval_count"),
-            "eval_count": ev.get("eval_count"), "truncated": ev.get("truncated")}
+    return {
+        "prompt_sha256": prompt_sha256(system, prompt),
+        "prompt_eval_count": ev.get("prompt_eval_count"),
+        "eval_count": ev.get("eval_count"),
+        "truncated": ev.get("truncated"),
+    }
 
 
-def swapped_digest(header: dict[str, Any], url: str | None,
-                   digest_fn: Callable[[str, str], dict[str, Any] | None] | None = None) -> str | None:
+def swapped_digest(
+    header: dict[str, Any], url: str | None, digest_fn: Callable[[str, str], dict[str, Any] | None] | None = None
+) -> str | None:
     """Mid-run model-swap check: the digest now served for ``header['model']`` when it differs
     from the header's, else ``None``. A study calls this every N rows and stops on a swap."""
     model = header.get("model")
     if not model or not url:
         return None
     from .local_llm import model_digest
+
     entry = (digest_fn or model_digest)(url, model)
     now = (entry or {}).get("digest")
     return now if now != header.get("model_digest") else None
 
 
 # ---- N6: data vintage and per-row market fields ----------------------------------------------
+
 
 def vintage_hash(close: Any) -> str:
     """sha256 (16 hex) of a close series as fetched (index dates and values to 10 significant
@@ -200,21 +224,40 @@ LEGACY_ROW_POLICY = (
     "the entry close and the forward close from that single vintage (ignoring the stored "
     "close), and takes the horizon from the stored trader reply for model cells or recomputes "
     "it with the rules for rule cells. Such rows are labelled 'legacy (single re-fetched "
-    "vintage)' in every table.")
+    "vintage)' in every table."
+)
 
 
 def market_lineage(history: Any, proposal: Any | None) -> dict[str, Any]:
     """The N6 row fields: horizon in bars, entry bar date, as-of close and the data vintage."""
     close = history["Close"]
-    return {"horizon_days": int(getattr(proposal, "horizon_days", 0) or 0) or None,
-            "entry_bar_date": str(close.index[-1].date()) if hasattr(close.index[-1], "date") else str(close.index[-1]),
-            "asof_close": float(close.iloc[-1]), "vintage_hash": vintage_hash(close)}
+    return {
+        "horizon_days": int(getattr(proposal, "horizon_days", 0) or 0) or None,
+        "entry_bar_date": str(close.index[-1].date()) if hasattr(close.index[-1], "date") else str(close.index[-1]),
+        "asof_close": float(close.iloc[-1]),
+        "vintage_hash": vintage_hash(close),
+    }
 
 
 def row_vintage_status(row: dict[str, Any]) -> str:
     return "current" if row.get("vintage_hash") else "legacy"
 
 
-__all__ = ["IDENTITY_FIELDS", "LineageMismatch", "build_header", "call_lineage", "check_resume", "header_id",
-           "header_path", "read_headers", "stamp", "swapped_digest", "prompt_sha256", "sha256_text",
-           "vintage_hash", "market_lineage", "row_vintage_status", "LEGACY_ROW_POLICY"]
+__all__ = [
+    "IDENTITY_FIELDS",
+    "LineageMismatch",
+    "build_header",
+    "call_lineage",
+    "check_resume",
+    "header_id",
+    "header_path",
+    "read_headers",
+    "stamp",
+    "swapped_digest",
+    "prompt_sha256",
+    "sha256_text",
+    "vintage_hash",
+    "market_lineage",
+    "row_vintage_status",
+    "LEGACY_ROW_POLICY",
+]

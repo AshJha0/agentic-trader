@@ -39,6 +39,7 @@ AAPL-first prefix and flagged it.
 Evidence class: design plus unit tests with fake models (tests/test_v017_recall_audit.py). No
 model has been run through v2; the v0.16 result (recall.rows.jsonl) is void as a recall measure.
 """
+
 from __future__ import annotations
 
 import math
@@ -56,10 +57,11 @@ TOP_K = 3
 @dataclass(frozen=True)
 class AuditItem:
     """One question: which name (``truth``) and date, the arm, and the candidate order shown."""
+
     idx: int
     truth: str
     as_of: str
-    arm: str                      # "real" or "placebo"
+    arm: str  # "real" or "placebo"
     candidates: tuple[str, ...]
     candidate_seed: int
     placebo_seed: int | None = None
@@ -69,8 +71,7 @@ class AuditItem:
         return f"{self.arm}:{self.truth}@{self.as_of}"
 
 
-def build_items(names: Sequence[str], dates: Sequence[str], *, seed: int, arm: str = "real",
-                limit: int = 0) -> list[AuditItem]:
+def build_items(names: Sequence[str], dates: Sequence[str], *, seed: int, arm: str = "real", limit: int = 0) -> list[AuditItem]:
     """Interleaved items with a per-item candidate shuffle.
 
     Order: date-major (every name at date 1, then date 2, ...), then shuffled with
@@ -88,20 +89,21 @@ def build_items(names: Sequence[str], dates: Sequence[str], *, seed: int, arm: s
         cs = seed * 1_000_003 + i + (500_000 if arm == "placebo" else 0)
         cand = list(names)
         random.Random(cs).shuffle(cand)
-        out.append(AuditItem(i, n, str(d), arm, tuple(cand), cs,
-                             placebo_seed=(cs + 7) if arm == "placebo" else None))
+        out.append(AuditItem(i, n, str(d), arm, tuple(cand), cs, placebo_seed=(cs + 7) if arm == "placebo" else None))
     return out
 
 
 def question(item: AuditItem, window: tuple[str, str]) -> str:
     """The audit question appended to the anonymised prompt (candidates in the item's order)."""
     opts = "\n".join(f"  {k + 1}. {c}" for k, c in enumerate(item.candidates))
-    return ("\n\nAUDIT QUESTION (not a trading task). The data above is anonymised. It comes from "
-            f"exactly one of these instruments (the order of the list is random):\n{opts}\n"
-            f"The decision day (D0) lies between {window[0]} and {window[1]}. Rank your three best "
-            "guesses for the instrument, most likely first, and give your best guess for the "
-            "calendar month of D0, even if unsure. Reply with exactly four lines:\n"
-            "RANK1: <ticker>\nRANK2: <ticker>\nRANK3: <ticker>\nMONTH: <YYYY-MM>")
+    return (
+        "\n\nAUDIT QUESTION (not a trading task). The data above is anonymised. It comes from "
+        f"exactly one of these instruments (the order of the list is random):\n{opts}\n"
+        f"The decision day (D0) lies between {window[0]} and {window[1]}. Rank your three best "
+        "guesses for the instrument, most likely first, and give your best guess for the "
+        "calendar month of D0, even if unsure. Reply with exactly four lines:\n"
+        "RANK1: <ticker>\nRANK2: <ticker>\nRANK3: <ticker>\nMONTH: <YYYY-MM>"
+    )
 
 
 _RANK = re.compile(r"RANK\s*([123])\s*[:=]\s*\**\s*([A-Za-z/=.]+)", re.I)
@@ -151,8 +153,9 @@ def mrr(answers: Sequence[Sequence[str] | None], truths: Sequence[str]) -> float
     return float(np.mean([reciprocal_rank(a, t) for a, t in zip(answers, truths)])) if truths else float("nan")
 
 
-def permutation_test(answers: Sequence[Sequence[str] | None], truths: Sequence[str], *,
-                     n_perm: int = 2000, seed: int = 0) -> dict[str, Any]:
+def permutation_test(
+    answers: Sequence[Sequence[str] | None], truths: Sequence[str], *, n_perm: int = 2000, seed: int = 0
+) -> dict[str, Any]:
     """MRR against the label-permutation null (keeps the model's answer distribution)."""
     obs = mrr(answers, truths)
     rng = np.random.default_rng(seed)
@@ -161,12 +164,17 @@ def permutation_test(answers: Sequence[Sequence[str] | None], truths: Sequence[s
     for b in range(n_perm):
         null[b] = mrr(answers, list(rng.permutation(t)))
     p = float((1 + np.sum(null >= obs - 1e-12)) / (1 + n_perm))
-    return {"mrr": obs, "null_mean": float(null.mean()), "null_q95": float(np.quantile(null, 0.95)),
-            "p_perm": p, "n": len(truths), "n_perm": n_perm}
+    return {
+        "mrr": obs,
+        "null_mean": float(null.mean()),
+        "null_q95": float(np.quantile(null, 0.95)),
+        "p_perm": p,
+        "n": len(truths),
+        "n_perm": n_perm,
+    }
 
 
-def two_sample_mrr(real_rr: Sequence[float], placebo_rr: Sequence[float], *, n_perm: int = 2000,
-                   seed: int = 1) -> dict[str, Any]:
+def two_sample_mrr(real_rr: Sequence[float], placebo_rr: Sequence[float], *, n_perm: int = 2000, seed: int = 1) -> dict[str, Any]:
     """One-sided permutation test that real MRR exceeds placebo MRR (pooled relabelling)."""
     a, b = np.asarray(real_rr, float), np.asarray(placebo_rr, float)
     if len(a) == 0 or len(b) == 0:
@@ -177,9 +185,8 @@ def two_sample_mrr(real_rr: Sequence[float], placebo_rr: Sequence[float], *, n_p
     cnt = 0
     for _ in range(n_perm):
         rng.shuffle(pool)
-        cnt += pool[:len(a)].mean() - pool[len(a):].mean() >= obs - 1e-12
-    return {"real_mrr": float(a.mean()), "placebo_mrr": float(b.mean()), "diff": obs,
-            "p_perm": float((1 + cnt) / (1 + n_perm))}
+        cnt += pool[: len(a)].mean() - pool[len(a) :].mean() >= obs - 1e-12
+    return {"real_mrr": float(a.mean()), "placebo_mrr": float(b.mean()), "diff": obs, "p_perm": float((1 + cnt) / (1 + n_perm))}
 
 
 def position_bias(items: Sequence[AuditItem], answers: Sequence[Sequence[str] | None]) -> dict[str, Any]:
@@ -194,8 +201,7 @@ def position_bias(items: Sequence[AuditItem], answers: Sequence[Sequence[str] | 
         return {"counts": counts, "n": n, "first_share": None, "chi2": None, "p": None}
     e = n / n_pos
     chi2 = float(sum((c - e) ** 2 / e for c in counts))
-    return {"counts": counts, "n": n, "first_share": counts[0] / n, "chi2": chi2,
-            "p": chi2_sf(chi2, n_pos - 1)}
+    return {"counts": counts, "n": n, "first_share": counts[0] / n, "chi2": chi2, "p": chi2_sf(chi2, n_pos - 1)}
 
 
 def chi2_sf(x: float, df: int) -> float:
@@ -242,6 +248,7 @@ def answer_concentration(answers: Sequence[Sequence[str] | None]) -> dict[str, A
 
 # ---- behavioural leak test ------------------------------------------------------------------
 
+
 def _rank(x: np.ndarray) -> np.ndarray:
     order = np.argsort(x, kind="mergesort")
     r = np.empty(len(x))
@@ -254,7 +261,7 @@ def _rank(x: np.ndarray) -> np.ndarray:
         while j + 1 < len(x) and vals[j + 1] == vals[i]:
             j += 1
         if j > i:
-            r[order[i:j + 1]] = (i + j) / 2.0
+            r[order[i : j + 1]] = (i + j) / 2.0
         i = j + 1
     return r
 
@@ -277,8 +284,9 @@ def leak_test(rows: Sequence[dict[str, Any]], *, n_boot: int = 2000, seed: int =
     95 % interval above zero says the signal is specific to the true future of that window.
     Whether that is memory or skill is settled by the in-training vs post-cutoff contrast (N9),
     not by this test alone."""
-    rs = [r for r in rows if all(r.get(k) is not None and math.isfinite(float(r[k]))
-                                 for k in ("signal", "fwd_real", "fwd_shift"))]
+    rs = [
+        r for r in rows if all(r.get(k) is not None and math.isfinite(float(r[k])) for k in ("signal", "fwd_real", "fwd_shift"))
+    ]
     if len(rs) < 5:
         return {"n": len(rs), "ic_real": None, "ic_shift": None, "diff": None, "ci95": None, "p": None}
     s = [r["signal"] for r in rs]
@@ -297,11 +305,11 @@ def leak_test(rows: Sequence[dict[str, Any]], *, n_boot: int = 2000, seed: int =
     d = d[np.isfinite(d)]
     lo, hi = (float(np.quantile(d, 0.025)), float(np.quantile(d, 0.975))) if len(d) else (None, None)
     p = float(min(1.0, 2 * min(np.mean(d <= 0), np.mean(d >= 0)))) if len(d) else None
-    return {"n": len(rs), "dates": len(keys), "ic_real": ic_r, "ic_shift": ic_s, "diff": ic_r - ic_s,
-            "ci95": [lo, hi], "p": p}
+    return {"n": len(rs), "dates": len(keys), "ic_real": ic_r, "ic_shift": ic_s, "diff": ic_r - ic_s, "ci95": [lo, hi], "p": p}
 
 
 # ---- placebo series ---------------------------------------------------------------------------
+
 
 def placebo_ohlc(history: Any, seed: int) -> Any:
     """A synthetic OHLCV frame on the same index as ``history`` whose log returns are iid normal
@@ -309,6 +317,7 @@ def placebo_ohlc(history: Any, seed: int) -> Any:
     starting level, and High/Low set from the real bars' relative ranges. No model can have seen
     it, so recall of the matched name on it is chance by construction."""
     import pandas as pd
+
     close = history["Close"].astype(float).to_numpy()
     r = np.diff(np.log(close))
     mu, sd = (float(r.mean()), float(r.std(ddof=1))) if len(r) > 1 else (0.0, 0.01)
@@ -331,7 +340,7 @@ def placebo_ohlc(history: Any, seed: int) -> Any:
 
 # ---- power of the audit (round 2, review C11) ---------------------------------------------------
 
-DEFAULT_RECALL_SHARE = 0.10     # the stated excess: the model truly recognises 10 % of real items
+DEFAULT_RECALL_SHARE = 0.10  # the stated excess: the model truly recognises 10 % of real items
 POWER_TARGET = 0.80
 
 
@@ -339,13 +348,21 @@ def _rr_draws(rng: np.random.Generator, n: int, sims: int, n_candidates: int, sh
     """(sims x n) reciprocal ranks: with prob ``share`` the model ranks the truth first (RR 1),
     otherwise it ranks uniformly at random (truth at rank k <= 3 with prob 1/N each)."""
     know = rng.random((sims, n)) < share
-    pos = rng.integers(0, n_candidates, size=(sims, n))          # truth's rank - 1 under a random ranking
+    pos = rng.integers(0, n_candidates, size=(sims, n))  # truth's rank - 1 under a random ranking
     rr_rand = np.where(pos < TOP_K, 1.0 / (pos + 1.0), 0.0)
     return np.where(know, 1.0, rr_rand)
 
 
-def audit_power(n_real: int, n_placebo: int, n_candidates: int, *, recall_share: float = DEFAULT_RECALL_SHARE,
-                alpha: float = 0.05, n_sim: int = 4000, seed: int = 11) -> dict[str, Any]:
+def audit_power(
+    n_real: int,
+    n_placebo: int,
+    n_candidates: int,
+    *,
+    recall_share: float = DEFAULT_RECALL_SHARE,
+    alpha: float = 0.05,
+    n_sim: int = 4000,
+    seed: int = 11,
+) -> dict[str, Any]:
     """Probability that ``summarise`` flags recall at these sample sizes when the model truly
     recognises a share ``recall_share`` of the real items (and none of the placebo items).
 
@@ -361,11 +378,18 @@ def audit_power(n_real: int, n_placebo: int, n_candidates: int, *, recall_share:
     if n_candidates < 2 or n_real < 1 or not (0 <= recall_share <= 1) or not 0 < alpha < 1:
         raise ValueError("need n_candidates >= 2, n_real >= 1, 0 <= recall_share <= 1, 0 < alpha < 1")
     m0 = chance_mrr(n_candidates)
-    v0 = sum(1.0 / j ** 2 for j in range(1, TOP_K + 1)) / n_candidates - m0 ** 2
-    out: dict[str, Any] = {"recall_share": recall_share, "n_real": n_real, "n_placebo": n_placebo,
-                           "n_candidates": n_candidates, "alpha": alpha, "chance_mrr": m0,
-                           "mrr_under_alternative": recall_share + (1 - recall_share) * m0,
-                           "n_sim": n_sim, "method": "Monte Carlo, normal approximations to both tests"}
+    v0 = sum(1.0 / j**2 for j in range(1, TOP_K + 1)) / n_candidates - m0**2
+    out: dict[str, Any] = {
+        "recall_share": recall_share,
+        "n_real": n_real,
+        "n_placebo": n_placebo,
+        "n_candidates": n_candidates,
+        "alpha": alpha,
+        "chance_mrr": m0,
+        "mrr_under_alternative": recall_share + (1 - recall_share) * m0,
+        "n_sim": n_sim,
+        "method": "Monte Carlo, normal approximations to both tests",
+    }
     if n_placebo < 1:
         return {**out, "power": 0.0, "note": "no placebo arm: the audit cannot flag recall"}
     z = NormalDist().inv_cdf(1 - alpha)
@@ -381,18 +405,24 @@ def audit_power(n_real: int, n_placebo: int, n_candidates: int, *, recall_share:
     return {**out, "power": float(np.mean((t1 > z) & (t2 > z)))}
 
 
-def min_detectable_recall_share(n_real: int, n_placebo: int, n_candidates: int, *, power: float = POWER_TARGET,
-                                alpha: float = 0.05, n_sim: int = 1000, seed: int = 11) -> float | None:
+def min_detectable_recall_share(
+    n_real: int,
+    n_placebo: int,
+    n_candidates: int,
+    *,
+    power: float = POWER_TARGET,
+    alpha: float = 0.05,
+    n_sim: int = 1000,
+    seed: int = 11,
+) -> float | None:
     """Smallest recognised share (to 0.005) that ``audit_power`` detects with ``power``; ``None``
     when even full recall is not detected (no placebo arm)."""
     lo, hi = 0.0, 1.0
-    if audit_power(n_real, n_placebo, n_candidates, recall_share=hi, alpha=alpha, n_sim=n_sim,
-                   seed=seed)["power"] < power:
+    if audit_power(n_real, n_placebo, n_candidates, recall_share=hi, alpha=alpha, n_sim=n_sim, seed=seed)["power"] < power:
         return None
     while hi - lo > 0.005:
         mid = (lo + hi) / 2
-        if audit_power(n_real, n_placebo, n_candidates, recall_share=mid, alpha=alpha, n_sim=n_sim,
-                       seed=seed)["power"] >= power:
+        if audit_power(n_real, n_placebo, n_candidates, recall_share=mid, alpha=alpha, n_sim=n_sim, seed=seed)["power"] >= power:
             hi = mid
         else:
             lo = mid
@@ -401,14 +431,16 @@ def min_detectable_recall_share(n_real: int, n_placebo: int, n_candidates: int, 
 
 # ---- equivalence gate (review C11, 2026-11-13) --------------------------------------------------
 
+
 def equivalence_margin(n_candidates: int, recall_share: float = DEFAULT_RECALL_SHARE) -> float:
     """The margin in MRR units: the excess over chance of a model that truly recognises a share
     ``recall_share`` of items, ``s * (1 - chance_mrr(N))``."""
     return recall_share * (1.0 - chance_mrr(n_candidates))
 
 
-def equivalence_test(real_rr: Sequence[float], n_candidates: int, *, margin: float | None = None,
-                     alpha: float = 0.05, power: float = POWER_TARGET) -> dict[str, Any]:
+def equivalence_test(
+    real_rr: Sequence[float], n_candidates: int, *, margin: float | None = None, alpha: float = 0.05, power: float = POWER_TARGET
+) -> dict[str, Any]:
     """One-sided equivalence test: is real MRR shown to be below chance + ``margin``?
 
     Plain idea. "Not flagged" passes on absence of evidence: at n = 100 a model that truly
@@ -430,32 +462,48 @@ def equivalence_test(real_rr: Sequence[float], n_candidates: int, *, margin: flo
     if n_candidates < 2 or not 0 < alpha < 0.5 or not 0 < power < 1:
         raise ValueError("need n_candidates >= 2, 0 < alpha < 0.5 and 0 < power < 1")
     m0 = chance_mrr(n_candidates)
-    v0 = sum(1.0 / j ** 2 for j in range(1, TOP_K + 1)) / n_candidates - m0 ** 2
+    v0 = sum(1.0 / j**2 for j in range(1, TOP_K + 1)) / n_candidates - m0**2
     marg = equivalence_margin(n_candidates) if margin is None else float(margin)
     if marg <= 0:
         raise ValueError("margin must be positive")
     rr = np.asarray(real_rr, dtype=float)
     n = int(rr.size)
     z, zb = NormalDist().inv_cdf(1 - alpha), NormalDist().inv_cdf(power)
-    n_need = int(math.ceil((z + zb) ** 2 * v0 / marg ** 2))
-    out: dict[str, Any] = {"test": "one-sided equivalence: H0 recall above chance >= margin",
-                           "n": n, "chance_mrr": m0, "margin": marg, "alpha": alpha,
-                           "power_target": power, "n_for_power": n_need}
+    n_need = int(math.ceil((z + zb) ** 2 * v0 / marg**2))
+    out: dict[str, Any] = {
+        "test": "one-sided equivalence: H0 recall above chance >= margin",
+        "n": n,
+        "chance_mrr": m0,
+        "margin": marg,
+        "alpha": alpha,
+        "power_target": power,
+        "n_for_power": n_need,
+    }
     if n < 2:
-        return {**out, "excess": None, "upper_bound": None, "power": 0.0, "passed": False,
-                "reason": "fewer than two items: the margin cannot be rejected"}
+        return {
+            **out,
+            "excess": None,
+            "upper_bound": None,
+            "power": 0.0,
+            "passed": False,
+            "reason": "fewer than two items: the margin cannot be rejected",
+        }
     excess = float(rr.mean()) - m0
     se = math.sqrt(max(float(rr.var(ddof=1)), v0) / n)
     upper = excess + z * se
     pw = NormalDist().cdf(marg / math.sqrt(v0 / n) - z)
     passed = upper < marg
-    reason = (f"upper bound of recall above chance {upper:.3f} < margin {marg:.3f}" if passed else
-              f"cannot reject recall above chance >= {marg:.3f} (upper bound {upper:.3f}); "
-              f"n = {n}, about {n_need} items give {power:.0%} power")
+    reason = (
+        f"upper bound of recall above chance {upper:.3f} < margin {marg:.3f}"
+        if passed
+        else f"cannot reject recall above chance >= {marg:.3f} (upper bound {upper:.3f}); "
+        f"n = {n}, about {n_need} items give {power:.0%} power"
+    )
     return {**out, "excess": excess, "upper_bound": upper, "power": pw, "passed": passed, "reason": reason}
 
 
 # ---- summary and verdict ----------------------------------------------------------------------
+
 
 @dataclass
 class AuditResult:
@@ -479,29 +527,48 @@ class AuditResult:
         return (not self.flagged) and bool(self.equivalence and self.equivalence.get("passed"))
 
     def as_dict(self) -> dict[str, Any]:
-        return {"real": self.real, "placebo": self.placebo, "real_vs_placebo": self.real_vs_placebo,
-                "position_bias": self.position_bias, "concentration": self.concentration,
-                "month": self.month, "leak": self.leak, "recall_flagged": self.flagged,
-                "reasons": self.reasons, "power": self.power,
-                "equivalence": self.equivalence, "gate_passed": self.gate_passed}
+        return {
+            "real": self.real,
+            "placebo": self.placebo,
+            "real_vs_placebo": self.real_vs_placebo,
+            "position_bias": self.position_bias,
+            "concentration": self.concentration,
+            "month": self.month,
+            "leak": self.leak,
+            "recall_flagged": self.flagged,
+            "reasons": self.reasons,
+            "power": self.power,
+            "equivalence": self.equivalence,
+            "gate_passed": self.gate_passed,
+        }
 
 
-def month_test(answers_month: Sequence[str | None], truths_month: Sequence[str], *, n_perm: int = 2000,
-               seed: int = 3) -> dict[str, Any]:
+def month_test(
+    answers_month: Sequence[str | None], truths_month: Sequence[str], *, n_perm: int = 2000, seed: int = 3
+) -> dict[str, Any]:
     """Exact-month hit rate against the permutation null of true months across items."""
     hits = lambda tr: float(np.mean([a == t for a, t in zip(answers_month, tr)])) if tr else float("nan")  # noqa: E731
     obs = hits(list(truths_month))
     rng = np.random.default_rng(seed)
     t = np.asarray(truths_month, dtype=object)
     null = np.array([hits(list(rng.permutation(t))) for _ in range(n_perm)])
-    return {"hit_rate": obs, "null_mean": float(null.mean()) if len(null) else None,
-            "p_perm": float((1 + np.sum(null >= obs - 1e-12)) / (1 + n_perm))}
+    return {
+        "hit_rate": obs,
+        "null_mean": float(null.mean()) if len(null) else None,
+        "p_perm": float((1 + np.sum(null >= obs - 1e-12)) / (1 + n_perm)),
+    }
 
 
-def summarise(real_items: Sequence[AuditItem], real_answers: Sequence[dict[str, Any] | None],
-              placebo_items: Sequence[AuditItem] = (), placebo_answers: Sequence[dict[str, Any] | None] = (),
-              leak_rows: Sequence[dict[str, Any]] = (), *, alpha: float = 0.05,
-              n_perm: int = 2000) -> AuditResult:
+def summarise(
+    real_items: Sequence[AuditItem],
+    real_answers: Sequence[dict[str, Any] | None],
+    placebo_items: Sequence[AuditItem] = (),
+    placebo_answers: Sequence[dict[str, Any] | None] = (),
+    leak_rows: Sequence[dict[str, Any]] = (),
+    *,
+    alpha: float = 0.05,
+    n_perm: int = 2000,
+) -> AuditResult:
     """The audit verdict. Recall is flagged only when (a) real MRR beats the label-permutation
     null at ``alpha`` and (b) real MRR beats the placebo arm at ``alpha`` (when a placebo arm
     was run; without one the verdict says 'incomplete'). Position bias and answer
@@ -510,22 +577,27 @@ def summarise(real_items: Sequence[AuditItem], real_answers: Sequence[dict[str, 
     recall above chance >= its margin (review C11)."""
     ra = [(a or {}).get("ranked") for a in real_answers]
     truths = [i.truth for i in real_items]
-    real = {**permutation_test(ra, truths, n_perm=n_perm),
-            "chance_mrr": chance_mrr(len(real_items[0].candidates)) if real_items else None,
-            "unparsed": sum(a is None for a in real_answers)}
+    real = {
+        **permutation_test(ra, truths, n_perm=n_perm),
+        "chance_mrr": chance_mrr(len(real_items[0].candidates)) if real_items else None,
+        "unparsed": sum(a is None for a in real_answers),
+    }
     plc = rvp = None
     if placebo_items:
         pa = [(a or {}).get("ranked") for a in placebo_answers]
-        plc = {**permutation_test(pa, [i.truth for i in placebo_items], n_perm=n_perm),
-               "unparsed": sum(a is None for a in placebo_answers)}
-        rvp = two_sample_mrr([reciprocal_rank(a, t) for a, t in zip(ra, truths)],
-                             [reciprocal_rank(a, i.truth) for a, i in zip(pa, placebo_items)], n_perm=n_perm)
-    months = month_test([(a or {}).get("month") for a in real_answers], [i.as_of[:7] for i in real_items],
-                        n_perm=n_perm)
+        plc = {
+            **permutation_test(pa, [i.truth for i in placebo_items], n_perm=n_perm),
+            "unparsed": sum(a is None for a in placebo_answers),
+        }
+        rvp = two_sample_mrr(
+            [reciprocal_rank(a, t) for a, t in zip(ra, truths)],
+            [reciprocal_rank(a, i.truth) for a, i in zip(pa, placebo_items)],
+            n_perm=n_perm,
+        )
+    months = month_test([(a or {}).get("month") for a in real_answers], [i.as_of[:7] for i in real_items], n_perm=n_perm)
     reasons = []
     beats_null = real["p_perm"] < alpha
-    reasons.append(f"real MRR {real['mrr']:.3f} vs permutation null mean {real['null_mean']:.3f} "
-                   f"(p={real['p_perm']:.3f})")
+    reasons.append(f"real MRR {real['mrr']:.3f} vs permutation null mean {real['null_mean']:.3f} (p={real['p_perm']:.3f})")
     beats_placebo = None
     if rvp is not None and rvp.get("p_perm") is not None:
         beats_placebo = rvp["p_perm"] < alpha
@@ -539,20 +611,42 @@ def summarise(real_items: Sequence[AuditItem], real_answers: Sequence[dict[str, 
         n_c = len(real_items[0].candidates)
         power = audit_power(len(real_items), len(placebo_items), n_c, alpha=alpha)
         power["min_detectable_recall_share_80pct"] = min_detectable_recall_share(
-            len(real_items), len(placebo_items), n_c, alpha=alpha)
+            len(real_items), len(placebo_items), n_c, alpha=alpha
+        )
         if not flagged:
-            reasons.append(f"not flagged; power to flag a {power['recall_share']:.0%} recognised share at "
-                           f"n = {len(real_items)} is {power['power']:.2f}")
+            reasons.append(
+                f"not flagged; power to flag a {power['recall_share']:.0%} recognised share at "
+                f"n = {len(real_items)} is {power['power']:.2f}"
+            )
     equiv = None
     if real_items:
-        equiv = equivalence_test([reciprocal_rank(a, t) for a, t in zip(ra, truths)],
-                                 len(real_items[0].candidates), alpha=alpha)
+        equiv = equivalence_test([reciprocal_rank(a, t) for a, t in zip(ra, truths)], len(real_items[0].candidates), alpha=alpha)
         reasons.append(f"equivalence gate: {equiv['reason']} (power {equiv['power']:.2f} at n = {equiv['n']})")
-    return AuditResult(real, plc, rvp, position_bias(real_items, ra), answer_concentration(ra), months,
-                       leak, flagged, reasons, power, equiv)
+    return AuditResult(
+        real, plc, rvp, position_bias(real_items, ra), answer_concentration(ra), months, leak, flagged, reasons, power, equiv
+    )
 
 
-__all__ = ["AuditItem", "AuditResult", "build_items", "question", "parse_ranked", "reciprocal_rank",
-           "chance_mrr", "mrr", "permutation_test", "two_sample_mrr", "position_bias",
-           "answer_concentration", "spearman", "leak_test", "placebo_ohlc", "month_test", "summarise",
-           "audit_power", "min_detectable_recall_share", "equivalence_margin", "equivalence_test"]
+__all__ = [
+    "AuditItem",
+    "AuditResult",
+    "build_items",
+    "question",
+    "parse_ranked",
+    "reciprocal_rank",
+    "chance_mrr",
+    "mrr",
+    "permutation_test",
+    "two_sample_mrr",
+    "position_bias",
+    "answer_concentration",
+    "spearman",
+    "leak_test",
+    "placebo_ohlc",
+    "month_test",
+    "summarise",
+    "audit_power",
+    "min_detectable_recall_share",
+    "equivalence_margin",
+    "equivalence_test",
+]

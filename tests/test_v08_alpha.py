@@ -2,6 +2,7 @@
 is overlap-aware for a multi-bar forward horizon and is threaded through every caller, the
 tercile spread is computed on rank-assigned disjoint terciles that survive tied signals, and
 the hit rate is reported next to the base rate it must be read against."""
+
 import math
 from datetime import date, timedelta
 
@@ -12,8 +13,16 @@ import pytest
 from agentic_trader import Instrument, make_config
 from agentic_trader.agents.analysts import AlphaAnalyst
 from agentic_trader.leakage import ic_purged, scored_mask
-from agentic_trader.alpha import (IC_T_METHODS, _alpha_diagnostics, alpha_report, compute_alphas, forward_returns,
-                                  information_coefficient, significant_alpha_signal, tercile_spread)
+from agentic_trader.alpha import (
+    IC_T_METHODS,
+    _alpha_diagnostics,
+    alpha_report,
+    compute_alphas,
+    forward_returns,
+    information_coefficient,
+    significant_alpha_signal,
+    tercile_spread,
+)
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.state import TradingState
 
@@ -27,8 +36,10 @@ def _random_walk_frame(rng: np.random.Generator, n_bars: int = 620) -> pd.DataFr
     close = 100 * np.cumprod(1 + r)
     noise = np.abs(rng.normal(0, 0.007, n_bars))
     idx = pd.bdate_range("2019-01-01", periods=n_bars)
-    return pd.DataFrame({"Open": close, "High": close * (1 + noise), "Low": close * (1 - noise),
-                         "Close": close, "Volume": np.full(n_bars, 1e6)}, index=idx)
+    return pd.DataFrame(
+        {"Open": close, "High": close * (1 + noise), "Low": close * (1 - noise), "Close": close, "Volume": np.full(n_bars, 1e6)},
+        index=idx,
+    )
 
 
 # ------------------------------------------------------------ finding 5: overlap-aware t(IC)
@@ -76,8 +87,7 @@ def test_ic_tstat_variants_on_synthetic_overlapping_returns():
     assert 0.6 < n_eff.std() < 1.1 and np.mean(np.abs(n_eff) >= 2) <= 0.05
     assert nw.std() < 1.6 and np.mean(np.abs(nw) >= 2) < np.mean(np.abs(naive) >= 2) / 2
     # Newey-West with no lags is the plain heteroskedasticity-robust t: SD 1 on iid pairs
-    iid = np.array([information_coefficient(rng.normal(size=300), rng.normal(size=300), 1, "newey_west")[1]
-                    for _ in range(500)])
+    iid = np.array([information_coefficient(rng.normal(size=300), rng.normal(size=300), 1, "newey_west")[1] for _ in range(500)])
     assert 0.85 < iid.std() < 1.15
 
 
@@ -112,12 +122,20 @@ def test_alpha_analyst_gate_is_a_five_percent_test_on_pure_noise():
     rate_new = {k: float(np.mean(np.abs(v) >= 2)) for k, v in t_new.items()}
     rate_old = {k: float(np.mean(np.abs(v) >= 2)) for k, v in t_old.items()}
     sd_new = {k: float(np.std(v)) for k, v in t_new.items()}
-    assert set(rate_new) == {"tsmom_12_1", "mom_20_vol", "reversal_5", "high_52w", "donchian_20",
-                             "macd_norm", "rsi_contrarian", "low_vol"}
+    assert set(rate_new) == {
+        "tsmom_12_1",
+        "mom_20_vol",
+        "reversal_5",
+        "high_52w",
+        "donchian_20",
+        "macd_norm",
+        "rsi_contrarian",
+        "low_vol",
+    }
     for name in rate_new:
         assert rate_new[name] <= 0.10, (name, rate_new[name])
-        assert 0.5 <= sd_new[name] <= 1.25, (name, sd_new[name])      # null SD of a t-statistic is 1
-        assert rate_old[name] > 0.10, (name, rate_old[name])          # the shipped formula fails the band
+        assert 0.5 <= sd_new[name] <= 1.25, (name, sd_new[name])  # null SD of a t-statistic is 1
+        assert rate_old[name] > 0.10, (name, rate_old[name])  # the shipped formula fails the band
     pooled_new = float(np.mean([r for r in rate_new.values()]))
     pooled_old = float(np.mean([r for r in rate_old.values()]))
     assert 0.02 <= pooled_new <= 0.10, pooled_new
@@ -181,14 +199,14 @@ def test_tercile_spread_survives_a_signal_tied_on_most_bars():
     s = np.full(n, -1.0)
     s[rng.choice(n, 30, replace=False)] = rng.uniform(-0.9, 1.0, 30)
     fwd = rng.normal(0, 0.01, n)
-    fwd[s == -1.0] -= 0.02                                       # the -1 days really are 2% worse
+    fwd[s == -1.0] -= 0.02  # the -1 days really are 2% worse
     true_spread = fwd[s > -1.0].mean() - fwd[s == -1.0].mean()
     old = _quantile_threshold_spread(s, fwd)
     new = tercile_spread(s, fwd)
-    assert old < 0.4 * true_spread                               # lo == hi == -1: "top" was every bar
+    assert old < 0.4 * true_spread  # lo == hi == -1: "top" was every bar
     assert new == pytest.approx(true_spread, rel=0.15)
     assert new > 2.5 * old
-    m = scored_mask(n, 1)                                        # the row is measured on the scored pairs
+    m = scored_mask(n, 1)  # the row is measured on the scored pairs
     assert _alpha_diagnostics(s, fwd)["tercile spread%"] == pytest.approx(100 * tercile_spread(s[m], fwd[m]))
     # the same bars in another order give the same number: ties are shared, not broken by position
     perm = rng.permutation(n)
@@ -211,19 +229,19 @@ def test_tercile_spread_on_distinct_values_is_the_plain_top_minus_bottom_third()
     assert tercile_spread(s, fwd) == pytest.approx(fwd[order[-k:]].mean() - fwd[order[:k]].mean())
     # without ties the old threshold rule differs only by the one boundary bar np.quantile interpolates
     assert tercile_spread(s, fwd) == pytest.approx(_quantile_threshold_spread(s, fwd), rel=0.15)
-    assert tercile_spread(np.ones(60), fwd[:60]) == 0.0           # no ranking possible -> no spread
+    assert tercile_spread(np.ones(60), fwd[:60]) == 0.0  # no ranking possible -> no spread
     assert math.isnan(tercile_spread(s[:2], fwd[:2]))
     assert math.isnan(tercile_spread(np.full(40, NAN), fwd[:40]))
 
 
 def test_hit_rate_is_reported_next_to_the_base_rate():
     rng = np.random.default_rng(1)
-    fwd = rng.normal(0.003, 0.01, 200)                            # a rally: most 10-day returns are up
+    fwd = rng.normal(0.003, 0.01, 200)  # a rally: most 10-day returns are up
     fwd[fwd == 0] = 1e-6
     bull = _alpha_diagnostics(np.ones(200), fwd)
-    m = scored_mask(200, 1)                                       # every column uses the scored pairs
+    m = scored_mask(200, 1)  # every column uses the scored pairs
     assert bull["up%"] == pytest.approx(100 * np.mean(fwd[m] > 0)) and bull["up%"] > 55
-    assert bull["hit%"] == pytest.approx(bull["up%"])              # zero skill reads as hit == base
+    assert bull["hit%"] == pytest.approx(bull["up%"])  # zero skill reads as hit == base
     bear = _alpha_diagnostics(-np.ones(200), fwd)
     assert bear["hit%"] == pytest.approx(100 - bear["up%"])
     assert math.isnan(_alpha_diagnostics(np.full(5, NAN), fwd[:5])["up%"])

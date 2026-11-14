@@ -21,6 +21,7 @@ from ``scripts/measure_v08.py --out results/v11``. No network, no model calls.
 
 Usage: ``python scripts/selection_stat.py [--results results/v11] [--out docs/results/round2/selection_stat.md]``
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,17 +57,26 @@ def compute(results: Path) -> dict:
     desk, ctl = _excess(frame, DESK), _excess(frame, CONTROL)
     n_reg = len(evaluation.TRIALS)
     pre = evaluation.PRE_REGISTRY_TRIALS_ESTIMATE
-    diff = {k: deflated_sharpe_differential(desk, ctl, n, PPY) for k, n in
-            (("registry", n_reg), ("registry_plus_pre_registry", n_reg + pre))}
+    diff = {
+        k: deflated_sharpe_differential(desk, ctl, n, PPY)
+        for k, n in (("registry", n_reg), ("registry_plus_pre_registry", n_reg + pre))
+    }
     diff["registry_raw_difference"] = deflated_sharpe_differential(desk, ctl, n_reg, PPY, match_vol=False)
     old = {
-        "desk_at_stored_trials": selection_report(desk, measured, PPY),   # 42 measured: the published v0.11 row
+        "desk_at_stored_trials": selection_report(desk, measured, PPY),  # 42 measured: the published v0.11 row
         "desk_at_registry": selection_report(desk, measured, PPY, n_trials=n_reg),
         "control_at_registry": selection_report(ctl, measured, PPY, n_trials=n_reg),
     }
-    return {"sample": f"{frame.index[1].date()}..{frame.index[-1].date()}", "ppy": PPY,
-            "n_registry": n_reg, "n_pre_registry": pre, "n_stored_trials": len(trials),
-            "n_measured_trial_sharpes": len(measured), "differential": diff, "absolute": old}
+    return {
+        "sample": f"{frame.index[1].date()}..{frame.index[-1].date()}",
+        "ppy": PPY,
+        "n_registry": n_reg,
+        "n_pre_registry": pre,
+        "n_stored_trials": len(trials),
+        "n_measured_trial_sharpes": len(measured),
+        "differential": diff,
+        "absolute": old,
+    }
 
 
 def _f(x, nd: int = 3) -> str:
@@ -96,8 +106,7 @@ def render(out: dict) -> str:
         "|---|---:|",
         f"| differential Sharpe (desk - vol-matched control), annualised | {_f(d['sharpe_annual'])} |",
         f"| PSR of the differential Sharpe against 0 | {_f(d['psr_vs_zero'])} |",
-        f"| expected max of {out['n_registry']} zero-skill trials, annualised | "
-        f"{_f(d['expected_max_sharpe_annual'])} |",
+        f"| expected max of {out['n_registry']} zero-skill trials, annualised | {_f(d['expected_max_sharpe_annual'])} |",
         f"| **differential DSR, {out['n_registry']} trials (registry)** | **{_f(d['deflated_sharpe_prob'])}** |",
         f"| differential DSR, {out['n_registry'] + out['n_pre_registry']} trials "
         f"(registry + pre-registry estimate {out['n_pre_registry']}) | {_f(d2['deflated_sharpe_prob'])} |",
@@ -113,16 +122,21 @@ def render(out: dict) -> str:
         "| series | trials | expected max (annual) | absolute DSR |",
         "|---|---:|---:|---:|",
     ]
-    for label, key in (("desk (frozen rules), as published in v0.11", "desk_at_stored_trials"),
-                       ("desk (frozen rules)", "desk_at_registry"),
-                       ("vol-target control, no desk", "control_at_registry")):
+    for label, key in (
+        ("desk (frozen rules), as published in v0.11", "desk_at_stored_trials"),
+        ("desk (frozen rules)", "desk_at_registry"),
+        ("vol-target control, no desk", "control_at_registry"),
+    ):
         r = a[key]
-        lines.append(f"| {label} | {r['trials']} | {_f(r['expected_max_sharpe_annual'])} | "
-                     f"{_f(r['deflated_sharpe_prob'])} |")
-    lines += ["", "The control row is the C1 failure case: a book that took no decisions scores about the same "
-              "absolute DSR as the desk, so that number carries no information about selection. The absolute "
-              "rows use the "
-              f"{out['n_measured_trial_sharpes']} measured trial portfolio Sharpes for the dispersion.", ""]
+        lines.append(f"| {label} | {r['trials']} | {_f(r['expected_max_sharpe_annual'])} | {_f(r['deflated_sharpe_prob'])} |")
+    lines += [
+        "",
+        "The control row is the C1 failure case: a book that took no decisions scores about the same "
+        "absolute DSR as the desk, so that number carries no information about selection. The absolute "
+        "rows use the "
+        f"{out['n_measured_trial_sharpes']} measured trial portfolio Sharpes for the dispersion.",
+        "",
+    ]
     return "\n".join(lines)
 
 
@@ -133,8 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     res = Path(args.results)
     if not (res / "portfolio_design.csv").exists() or not (res / "trials.json").exists():
-        print(f"stored inputs not found under {res}: run scripts/measure_v08.py --out results/v11 first",
-              file=sys.stderr)
+        print(f"stored inputs not found under {res}: run scripts/measure_v08.py --out results/v11 first", file=sys.stderr)
         return 2
     text = render(compute(res))
     print(text)

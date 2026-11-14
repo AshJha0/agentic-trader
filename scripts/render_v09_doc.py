@@ -8,6 +8,7 @@ tables, with the fixed prose around them. Every table is copied from ``tables.md
 
     .venv\\Scripts\\python.exe scripts/render_v09_doc.py
 """
+
 from __future__ import annotations
 
 import json
@@ -28,15 +29,17 @@ def section(text: str, title_start: str) -> str:
 
 
 def combine_tables(text: str) -> str:
-    body = text.split("\n", 1)[1]                       # drop the H1
+    body = text.split("\n", 1)[1]  # drop the H1
     return body.replace("\n## ", "\n#### ").strip() + "\n"
 
 
 def provenance_line(d: Path) -> str:
     m = json.load(open(d / "manifest.json", encoding="utf-8"))
     p = m["provenance"]
-    return (f"Measured {m['finished']} at commit `{p['git_commit'][:7]}` "
-            f"({'dirty' if p['git_dirty'] else 'clean'} tree), {p['quant_backend']} backend, {m['seconds']} s.")
+    return (
+        f"Measured {m['finished']} at commit `{p['git_commit'][:7]}` "
+        f"({'dirty' if p['git_dirty'] else 'clean'} tree), {p['quant_backend']} backend, {m['seconds']} s."
+    )
 
 
 def block(d: Path, label: str) -> str:
@@ -44,8 +47,11 @@ def block(d: Path, label: str) -> str:
     out = [provenance_line(d), ""]
     for run in RUNS:
         out.append(section(tables, f"portfolio table, {run}").replace("### ", "#### ", 1))
-        out.append(section(tables, "Sharpe difference against the run's B&H vol-target (paired block bootstrap over days): " + run)
-                   .replace("### ", "#### ", 1))
+        out.append(
+            section(
+                tables, "Sharpe difference against the run's B&H vol-target (paired block bootstrap over days): " + run
+            ).replace("### ", "#### ", 1)
+        )
     out.append(f"#### Stream combination ({label})\n")
     out.append(combine_tables((d / "combine.md").read_text(encoding="utf-8")))
     return "\n".join(out)
@@ -117,8 +123,16 @@ forward Sharpe minus its control's clears a block-bootstrap interval that exclud
 def main() -> int:
     design, holdout = ROOT / "results" / "v09", ROOT / "results" / "v09" / "holdout"
     attribution = (design / "attribution.md").read_text(encoding="utf-8").split("\n", 1)[1]
-    doc = (INTRO + attribution.replace("\n## ", "\n### ").strip() + "\n" + DESIGN + block(design, "design")
-           + HOLDOUT + block(holdout, "holdout") + FORWARD)
+    doc = (
+        INTRO
+        + attribution.replace("\n## ", "\n### ").strip()
+        + "\n"
+        + DESIGN
+        + block(design, "design")
+        + HOLDOUT
+        + block(holdout, "holdout")
+        + FORWARD
+    )
     out = ROOT / "docs" / "evaluation" / "v09_research.md"
     out.write_text(doc, encoding="utf-8")
     print(f"wrote {out}: {len(doc.splitlines())} lines")

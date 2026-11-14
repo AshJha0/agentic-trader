@@ -18,6 +18,7 @@ The label is exposed to the agents as a fact (``config["regime"]["enabled"]``) a
 ``config["regime"]["condition"]``, conditions the IC combination: ICs and the sizing
 volatility come only from bars in the current regime (``combine.desk_forecast``).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -35,17 +36,16 @@ _FIT_CACHE: dict[tuple[str, int], tuple["GaussianHMM", np.ndarray, np.ndarray]] 
 _FIT_CACHE_MAX = 512
 
 
-def regime_features(close: pd.Series, risk_free: np.ndarray | None = None,
-                    periods_per_year: float = 252.0) -> pd.DataFrame:
+def regime_features(close: pd.Series, risk_free: np.ndarray | None = None, periods_per_year: float = 252.0) -> pd.DataFrame:
     """The three features, indexed like ``close``; rows with any NaN are left NaN."""
     r = close.astype(float).pct_change()
     vol20 = r.rolling(20).std() * math.sqrt(periods_per_year)
     vol60 = r.rolling(60).std() * math.sqrt(60)
     trend = (close / close.shift(60) - 1.0) / vol60.where(vol60 > 0)
-    rf = pd.Series(np.zeros(len(close)) if risk_free is None else np.asarray(risk_free, float),
-                   index=close.index)
-    return pd.DataFrame({"log_vol": np.log(vol20.where(vol20 > 0)), "trend": trend,
-                         "rate_change": rf - rf.shift(20)}, index=close.index)
+    rf = pd.Series(np.zeros(len(close)) if risk_free is None else np.asarray(risk_free, float), index=close.index)
+    return pd.DataFrame(
+        {"log_vol": np.log(vol20.where(vol20 > 0)), "trend": trend, "rate_change": rf - rf.shift(20)}, index=close.index
+    )
 
 
 @dataclass
@@ -53,6 +53,7 @@ class GaussianHMM:
     """Diagonal-covariance Gaussian HMM. ``means`` and ``variances`` are ``K x D``,
     ``trans`` ``K x K`` (rows sum to one), ``start`` length ``K``. States are sorted by the
     mean of feature 0 (``log_vol``) after fitting."""
+
     means: np.ndarray
     variances: np.ndarray
     trans: np.ndarray
@@ -129,7 +130,8 @@ def fit_hmm(x: np.ndarray, k: int = 2, n_iter: int = 100, tol: float = 1e-6) -> 
             means=(gamma.T @ x) / w[:, None],
             variances=np.maximum((gamma.T @ (x * x)) / w[:, None] - ((gamma.T @ x) / w[:, None]) ** 2, floor),
             trans=xi / xi.sum(axis=1, keepdims=True),
-            start=gamma[0] / gamma[0].sum())
+            start=gamma[0] / gamma[0].sum(),
+        )
         if total - prev < tol * abs(total):
             break
         prev = total
@@ -147,16 +149,16 @@ class RegimeSeries:
     runs one forward pass per refit instead of one per decision.
     """
 
-    def __init__(self, close: pd.Series, risk_free: np.ndarray | None = None,
-                 periods_per_year: float = 252.0):
+    def __init__(self, close: pd.Series, risk_free: np.ndarray | None = None, periods_per_year: float = 252.0):
         feats = regime_features(close, risk_free, periods_per_year)
         self.index = close.index
         self.x = feats.to_numpy(float)
         self.ok = feats.notna().all(axis=1).to_numpy()
         self._filtered: dict[tuple[str, int], np.ndarray] = {}
 
-    def labels(self, end: int, k: int, fit_start: pd.Timestamp | None, fit_end: pd.Timestamp
-               ) -> tuple[np.ndarray, np.ndarray | None, GaussianHMM | None]:
+    def labels(
+        self, end: int, k: int, fit_start: pd.Timestamp | None, fit_end: pd.Timestamp
+    ) -> tuple[np.ndarray, np.ndarray | None, GaussianHMM | None]:
         """``regime_labels`` for the prefix of bars ``0..end``."""
         n = end + 1
         ok, idx, x = self.ok[:n], self.index[:n], self.x[:n]
@@ -180,14 +182,19 @@ class RegimeSeries:
         if full is None:
             full = model.filtered(((self.x - mu) / sd)[self.ok])
             self._filtered[key] = full
-        probs = full[:int(ok.sum())]
+        probs = full[: int(ok.sum())]
         labels[ok] = probs.argmax(axis=1)
         return labels, (probs[-1] if ok[-1] else None), model
 
 
-def regime_labels(close: pd.Series, risk_free: np.ndarray | None, k: int, fit_start: pd.Timestamp | None,
-                  fit_end: pd.Timestamp, periods_per_year: float = 252.0
-                  ) -> tuple[np.ndarray, np.ndarray | None, GaussianHMM | None]:
+def regime_labels(
+    close: pd.Series,
+    risk_free: np.ndarray | None,
+    k: int,
+    fit_start: pd.Timestamp | None,
+    fit_end: pd.Timestamp,
+    periods_per_year: float = 252.0,
+) -> tuple[np.ndarray, np.ndarray | None, GaussianHMM | None]:
     """Filtered labels for every bar of ``close`` (``-1`` where the features are undefined),
     from an HMM fitted on bars in ``[fit_start, min(fit_end, last bar)]``.
 

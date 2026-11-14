@@ -34,6 +34,7 @@ rules +1 on a -1% outcome. Model hit rate 1/2, rules hit rate 0/2; the delta boo
 The library computes; it does not judge. A KPI table built from fixtures says nothing about
 any model; P2 results feed the same function later.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,16 +61,17 @@ class KPIRecord:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "KPIRecord":
-        missing = [k for k in ("as_of", "symbol", "model_signal", "rule_signal", "outcome_return")
-                   if d.get(k) is None]
+        missing = [k for k in ("as_of", "symbol", "model_signal", "rule_signal", "outcome_return") if d.get(k) is None]
         if missing:
             raise ValueError(f"KPI record missing {missing}: {d}")
         p = d.get("prob_up")
         if p is not None and not 0.0 <= float(p) <= 1.0:
             raise ValueError(f"prob_up must lie in [0, 1], got {p}")
         return cls(
-            as_of=str(d["as_of"]), symbol=str(d["symbol"]),
-            model_signal=float(d["model_signal"]), rule_signal=float(d["rule_signal"]),
+            as_of=str(d["as_of"]),
+            symbol=str(d["symbol"]),
+            model_signal=float(d["model_signal"]),
+            rule_signal=float(d["rule_signal"]),
             outcome_return=float(d["outcome_return"]),
             prob_up=None if p is None else float(p),
             model_weight=None if d.get("model_weight") is None else float(d["model_weight"]),
@@ -115,9 +117,15 @@ def calibration_bins(probs: list[float], outcomes: list[float], bins: int = 10) 
     rows = []
     for b in sorted(acc):
         xs = acc[b]
-        rows.append({"lo": b / bins, "hi": (b + 1) / bins, "n": len(xs),
-                     "mean_prob": sum(p for p, _ in xs) / len(xs),
-                     "freq_up": sum(y for _, y in xs) / len(xs)})
+        rows.append(
+            {
+                "lo": b / bins,
+                "hi": (b + 1) / bins,
+                "n": len(xs),
+                "mean_prob": sum(p for p, _ in xs) / len(xs),
+                "freq_up": sum(y for _, y in xs) / len(xs),
+            }
+        )
     return rows
 
 
@@ -144,12 +152,13 @@ def decision_ppy(dates: Iterable[str]) -> float | None:
     consecutive distinct dates (``None`` with fewer than two dates or non-ISO labels). Worked example: weekly
     Mondays -> gap 5 -> 50.4; daily sessions -> 252."""
     import numpy as np
+
     ds = sorted({str(d)[:10] for d in dates})
     if len(ds) < 2:
         return None
     try:
         arr = np.array(ds, dtype="datetime64[D]")
-    except ValueError:          # labels that are not ISO dates: the frequency is unknown
+    except ValueError:  # labels that are not ISO dates: the frequency is unknown
         return None
     gaps = np.busday_count(arr[:-1], arr[1:])
     gaps = gaps[gaps > 0]
@@ -158,8 +167,7 @@ def decision_ppy(dates: Iterable[str]) -> float | None:
     return 252.0 / float(np.median(gaps))
 
 
-def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float | None = None,
-              ppy_check: bool = True) -> dict[str, Any]:
+def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float | None = None, ppy_check: bool = True) -> dict[str, Any]:
     """All KPIs in one dict; ``rows`` is the flat table the CLI prints.
 
     ``ppy=None`` (round 2 default) annualises by the decision frequency (``decision_ppy``);
@@ -170,8 +178,10 @@ def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float | None = N
     if ppy is None:
         ppy = inferred if inferred is not None else 252.0
     elif ppy_check and inferred is not None and abs(ppy / inferred - 1.0) > PPY_TOLERANCE:
-        raise ValueError(f"ppy {ppy:g} does not match the decision frequency ({inferred:.1f} decisions a year "
-                         f"from the record dates); pass ppy=None to infer it, or ppy_check=False")
+        raise ValueError(
+            f"ppy {ppy:g} does not match the decision frequency ({inferred:.1f} decisions a year "
+            f"from the record dates); pass ppy=None to infer it, or ppy_check=False"
+        )
     outs = [r.outcome_return for r in records]
     m_hit, m_n = hit_rate([r.model_signal for r in records], outs)
     c_hit, c_n = hit_rate([r.rule_signal for r in records], outs)
@@ -196,11 +206,15 @@ def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float | None = N
     out: dict[str, Any] = {
         "n_records": len(records),
         "n_dates": len(delta),
-        "ppy": ppy, "ppy_inferred": inferred,
-        "hit_rate_model": m_hit, "hit_n_model": m_n,
-        "hit_rate_control": c_hit, "hit_n_control": c_n,
+        "ppy": ppy,
+        "ppy_inferred": inferred,
+        "hit_rate_model": m_hit,
+        "hit_n_model": m_n,
+        "hit_rate_control": c_hit,
+        "hit_n_control": c_n,
         "hit_rate_delta": None if m_hit is None or c_hit is None else m_hit - c_hit,
-        "brier": brier(probs, pouts), "brier_n": len(probs),
+        "brier": brier(probs, pouts),
+        "brier_n": len(probs),
         "calibration": calibration_bins(probs, pouts, bins) if probs else [],
         "delta_book_total": sum(delta),
         "delta_book_mean": sum(delta) / len(delta),
@@ -233,8 +247,9 @@ def kpi_table(records: list[KPIRecord], *, bins: int = 10, ppy: float | None = N
     return out
 
 
-def model_changed_attribution(records: list[KPIRecord], *, by: str = "sign", tol: float = 1e-9,
-                              n_boot: int = 2000, ci: float = 0.95, seed: int = 0) -> dict[str, Any]:
+def model_changed_attribution(
+    records: list[KPIRecord], *, by: str = "sign", tol: float = 1e-9, n_boot: int = 2000, ci: float = 0.95, seed: int = 0
+) -> dict[str, Any]:
     """P&L of the decisions the model changed versus the rule decision (v0.17 R1.5).
 
     Plain idea: where the model and the rules agree, the model added nothing; all of its value
@@ -264,11 +279,23 @@ def model_changed_attribution(records: list[KPIRecord], *, by: str = "sign", tol
         changed = [r for r in records if _sign(r.model_signal) != _sign(r.rule_signal)]
     else:
         changed = [r for r in records if abs(mw(r) - cw(r)) > tol]
-    out: dict[str, Any] = {"by": by, "n_records": len(records), "n_changed": len(changed),
-                           "share_changed": len(changed) / len(records) if records else None}
+    out: dict[str, Any] = {
+        "by": by,
+        "n_records": len(records),
+        "n_changed": len(changed),
+        "share_changed": len(changed) / len(records) if records else None,
+    }
     if not changed:
-        out.update(hit_rate_model=None, hit_rate_rules=None, hit_n=0, pnl_delta_total=0.0,
-                   pnl_delta_mean=None, ci_total=(None, None), ci_mean=(None, None), n_dates=0)
+        out.update(
+            hit_rate_model=None,
+            hit_rate_rules=None,
+            hit_n=0,
+            pnl_delta_total=0.0,
+            pnl_delta_mean=None,
+            ci_total=(None, None),
+            ci_mean=(None, None),
+            n_dates=0,
+        )
         return out
     outs = [r.outcome_return for r in changed]
     m_hit, m_n = hit_rate([r.model_signal for r in changed], outs)
@@ -295,21 +322,29 @@ def model_changed_attribution(records: list[KPIRecord], *, by: str = "sign", tol
 
     def q(xs: list[float], p: float) -> float:
         return xs[min(len(xs) - 1, max(0, int(round(p * (len(xs) - 1)))))]
-    out.update(hit_rate_model=m_hit, hit_rate_rules=c_hit, hit_n=m_n,
-               pnl_delta_total=total, pnl_delta_mean=total / len(changed),
-               ci_total=(q(tot_bs, a), q(tot_bs, 1 - a)) if k >= 2 else (None, None),
-               ci_mean=(q(mean_bs, a), q(mean_bs, 1 - a)) if k >= 2 else (None, None),
-               n_dates=k)
+
+    out.update(
+        hit_rate_model=m_hit,
+        hit_rate_rules=c_hit,
+        hit_n=m_n,
+        pnl_delta_total=total,
+        pnl_delta_mean=total / len(changed),
+        ci_total=(q(tot_bs, a), q(tot_bs, 1 - a)) if k >= 2 else (None, None),
+        ci_mean=(q(mean_bs, a), q(mean_bs, 1 - a)) if k >= 2 else (None, None),
+        n_dates=k,
+    )
     return out
 
 
 def format_table(t: dict[str, Any]) -> str:
     def f(v: Any) -> str:
         return "n/a" if v is None else f"{v:.4f}"
+
     lines = ["| KPI | value | n |", "|---|---:|---:|"]
     lines += [f"| {name} | {f(v)} | {'' if n is None else n} |" for name, v, n in t["rows"]]
     if t["calibration"]:
         lines += ["", "| bin | n | mean prob | observed up |", "|---|---:|---:|---:|"]
-        lines += [f"| [{b['lo']:.1f}, {b['hi']:.1f}) | {b['n']} | {b['mean_prob']:.3f} | "
-                  f"{b['freq_up']:.3f} |" for b in t["calibration"]]
+        lines += [
+            f"| [{b['lo']:.1f}, {b['hi']:.1f}) | {b['n']} | {b['mean_prob']:.3f} | {b['freq_up']:.3f} |" for b in t["calibration"]
+        ]
     return "\n".join(lines)

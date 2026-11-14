@@ -1,5 +1,6 @@
 """v0.18 lane D: behaviour and error-path tests for the honest-trial-count DSR (N6/N8, R1.3),
 the walk-forward gate and the ``stats`` CLI flags that render them."""
+
 import json
 
 import numpy as np
@@ -34,7 +35,7 @@ def test_n_trials_floor_and_validation():
     r = _returns(1)
     rep = selection_report(r, [0.4, 0.6], n_trials=10)
     assert rep["trials"] == 10 and rep["trials_measured"] == 2
-    assert selection_report(r, [0.4, 0.6], n_trials=1)["trials"] == 2   # never below measured
+    assert selection_report(r, [0.4, 0.6], n_trials=1)["trials"] == 2  # never below measured
     with pytest.raises(ValueError, match="n_trials"):
         selection_report(r, [0.4, 0.6], n_trials=0)
 
@@ -47,14 +48,14 @@ def test_effective_trials_collapse_for_identical_trials():
     independent = np.column_stack([_returns(10 + k) for k in range(8)])
     copies = selection_report(r, [0.5] * 7 + [0.6], trial_returns=near_copies)
     indep = selection_report(r, [0.5] * 7 + [0.6], trial_returns=independent)
-    assert copies["trials_effective"] < 1.5          # eight copies of one strategy are ~one trial
+    assert copies["trials_effective"] < 1.5  # eight copies of one strategy are ~one trial
     assert indep["trials_effective"] > 4.0
     assert copies["trials_mean_corr"] > 0.99
 
 
 def test_pre_registry_estimate_default_and_error():
     assert PRE_REGISTRY_TRIALS_ESTIMATE == pre_registry_trial_estimate()
-    assert pre_registry_trial_estimate(1) == 0       # one value per constant = nothing rejected
+    assert pre_registry_trial_estimate(1) == 0  # one value per constant = nothing rejected
     with pytest.raises(ValueError):
         pre_registry_trial_estimate(0)
 
@@ -66,10 +67,15 @@ def test_walk_forward_gate_is_nan_before_min_bars_and_uses_no_future():
     close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
     fwd = np.r_[np.log(close[h:] / close[:-h]), [np.nan] * h]
     idx = pd.bdate_range("2020-01-01", periods=n)
-    sig = pd.DataFrame({"good": np.clip(np.nan_to_num(fwd) * 50, -1, 1),   # peeks: a perfect alpha
-                        "noise": rng.uniform(-1, 1, n)}, index=idx)
+    sig = pd.DataFrame(
+        {
+            "good": np.clip(np.nan_to_num(fwd) * 50, -1, 1),  # peeks: a perfect alpha
+            "noise": rng.uniform(-1, 1, n),
+        },
+        index=idx,
+    )
     g = walk_forward_gated_series(sig, close, h, window=200, min_bars=100)
-    assert g.iloc[:100 + h].isna().all()
+    assert g.iloc[: 100 + h].isna().all()
     assert g.dropna().between(-1, 1).all() and g.notna().sum() > 0
     # changing the future of the signals must not change any earlier gated value
     cut = 300
@@ -95,15 +101,31 @@ def _csv(tmp_path, name, data: dict) -> str:
 
 
 def _json_out(out: str) -> dict:
-    return json.loads(out[out.index("{"):])
+    return json.loads(out[out.index("{") :])
 
 
 def test_cli_stats_renders_honest_and_effective_dsr(tmp_path, capsys):
     from agentic_trader.cli import main
+
     r = _csv(tmp_path, "r.csv", {"r": _returns(7)})
     tr = _csv(tmp_path, "t.csv", {f"t{k}": _returns(20 + k) for k in range(4)})
-    assert main(["stats", r, "--trials", "4", "--trial-sharpes", "0.2,0.4,0.6,0.8",
-                 "--pre-registry-trials", "64", "--trial-returns", tr]) == 0
+    assert (
+        main(
+            [
+                "stats",
+                r,
+                "--trials",
+                "4",
+                "--trial-sharpes",
+                "0.2,0.4,0.6,0.8",
+                "--pre-registry-trials",
+                "64",
+                "--trial-returns",
+                tr,
+            ]
+        )
+        == 0
+    )
     rep = _json_out(capsys.readouterr().out)
     assert rep["trials_incl_pre_registry"] == 68
     assert "deflated_sharpe_prob_effective" in rep and rep["trials_effective"] > 1.0
@@ -111,6 +133,7 @@ def test_cli_stats_renders_honest_and_effective_dsr(tmp_path, capsys):
 
 def test_cli_stats_trials_count_exceeds_listed_sharpes(tmp_path, capsys):
     from agentic_trader.cli import main
+
     r = _csv(tmp_path, "r.csv", {"r": _returns(8)})
     assert main(["stats", r, "--trials", "9", "--trial-sharpes", "0.2,0.5"]) == 0
     rep = _json_out(capsys.readouterr().out)
@@ -119,6 +142,7 @@ def test_cli_stats_trials_count_exceeds_listed_sharpes(tmp_path, capsys):
 
 def test_cli_stats_rejects_single_column_trial_returns(tmp_path, capsys):
     from agentic_trader.cli import main
+
     r = _csv(tmp_path, "r.csv", {"r": _returns(9)})
     tr = _csv(tmp_path, "t.csv", {"t0": _returns(30)})
     assert main(["stats", r, "--trials", "2", "--trial-returns", tr]) != 0

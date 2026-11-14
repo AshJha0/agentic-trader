@@ -1,5 +1,6 @@
 """Edge cases of the quant core, run on whichever backend is active, plus a
 randomised C++ vs numpy cross-check of the extended backtester."""
+
 import numpy as np
 import pytest
 
@@ -52,10 +53,10 @@ def test_sma_sums_each_window_directly():
 
 def test_flat_prices():
     flat = np.full(40, 7.0)
-    assert quant.zscore(flat, 20)[-1] == 0.0                # zero std -> 0, not NaN/inf
-    assert quant.bollinger(flat, 20)[3][-1] == 0.5          # %B mid-band
+    assert quant.zscore(flat, 20)[-1] == 0.0  # zero std -> 0, not NaN/inf
+    assert quant.bollinger(flat, 20)[3][-1] == 0.5  # %B mid-band
     k, d, j = quant.kdj(flat, flat, flat, 9)
-    assert k[-1] == pytest.approx(50.0)                     # no range -> neutral RSV
+    assert k[-1] == pytest.approx(50.0)  # no range -> neutral RSV
     assert quant.realized_vol(flat, 20, 252)[-1] == 0.0
 
 
@@ -78,8 +79,8 @@ def test_risk_degenerate_inputs():
     assert quant.kelly_fraction(0.9, 0.0) == 0.0
     assert quant.vol_target_weight(1.0, NAN, 0.15, 1.0) == 0.0
     assert quant.vol_target_weight(1.0, 0.0, 0.15, 1.0) == 0.0
-    assert quant.vol_target_weight(-1.0, 0.05, 0.15, 1.0) == -1.0     # capped at leverage
-    assert quant.position_units(1e5, 0.01, 50.0, 50.0) == 0.0         # stop at entry
+    assert quant.vol_target_weight(-1.0, 0.05, 0.15, 1.0) == -1.0  # capped at leverage
+    assert quant.position_units(1e5, 0.01, 50.0, 50.0) == 0.0  # stop at entry
 
 
 def test_var_is_positive_loss_even_when_all_returns_positive():
@@ -121,7 +122,7 @@ def test_stop_fill_gap_and_take():
     assert r.stop_exits == 1 and r.equity[1] == pytest.approx(95_000)
     assert r.trades[-1].to_weight == 0.0 and r.trades[-1].price == 95
     r = quant.run_backtest(c, [1, 1, 1], cfg, open=[100, 90, 97], high=h, low=[100, 89, 96], stop=[95] * 3)
-    assert r.equity[1] == pytest.approx(90_000)          # gapped through: filled at the open
+    assert r.equity[1] == pytest.approx(90_000)  # gapped through: filled at the open
 
 
 def test_exit_costs_charged_once():
@@ -137,8 +138,7 @@ def test_stop_stays_flat_without_rebalance_mask_until_target_changes():
     c = [100, 95, 95, 95, 100]
     lows = [100, 90, 95, 95, 95]
     w = [1, 1, 1, 0.5, 0.5]
-    r = quant.run_backtest(c, w, quant.BacktestConfig(cost_bps=0), open=c, high=c, low=lows,
-                           stop=[96, 96, 96, 80, 80])
+    r = quant.run_backtest(c, w, quant.BacktestConfig(cost_bps=0), open=c, high=c, low=lows, stop=[96, 96, 96, 80, 80])
     # v0.8: the final bar reports the weight actually carried into it -- the 0.5 bought at bar 3,
     # drifted by the 95 -> 100 move (constant units between decisions), not the 0.5 target.
     drifted = 0.5 * (100 / 95) / (1 + 0.5 * (100 / 95 - 1))
@@ -166,10 +166,17 @@ def test_impact_is_square_root_and_charged_on_exits():
     assert r.equity[1] == pytest.approx(100000 * 0.99) and r.equity[-1] == pytest.approx(r.equity[1])
     assert r.impact_paid == pytest.approx(0.01)
     half = quant.run_backtest(flat, np.full(4, 0.5), cfg, impact=np.full(4, 0.01))
-    assert half.equity[1] == pytest.approx(100000 * (1 - 0.5 ** 1.5 * 0.01))   # concave in size
-    stopped = quant.run_backtest(flat, np.ones(4), cfg, open=flat, high=flat,
-                                 low=np.array([100, 90, 100, 100.0]), stop=np.full(4, 95.0),
-                                 impact=np.array([0.0, 0.02, 0.0, 0.0]))
+    assert half.equity[1] == pytest.approx(100000 * (1 - 0.5**1.5 * 0.01))  # concave in size
+    stopped = quant.run_backtest(
+        flat,
+        np.ones(4),
+        cfg,
+        open=flat,
+        high=flat,
+        low=np.array([100, 90, 100, 100.0]),
+        stop=np.full(4, 95.0),
+        impact=np.array([0.0, 0.02, 0.0, 0.0]),
+    )
     assert stopped.stop_exits == 1 and stopped.impact_paid == pytest.approx(0.02)
     none = quant.run_backtest(flat, np.ones(4), cfg, impact=np.full(4, NAN))
     assert none.impact_paid == 0.0 and none.equity[-1] == pytest.approx(100000.0)
@@ -196,10 +203,8 @@ def test_cpp_matches_python_extended_backtest(seed):
     carry = rng.normal(0.01, 0.02, n)
     impact = np.abs(rng.normal(0.002, 0.001, n))
     impact[rng.random(n) > 0.9] = NAN
-    cfg = quant.BacktestConfig(cost_bps=1.5, slippage_bps=0.5, borrow_annual=0.02,
-                               allow_short=bool(seed % 2), max_leverage=1.0)
-    kw = dict(carry=carry, open=o, high=h, low=l, stop=stop, take=take, rebalance=reb,
-              impact=impact)
+    cfg = quant.BacktestConfig(cost_bps=1.5, slippage_bps=0.5, borrow_annual=0.02, allow_short=bool(seed % 2), max_leverage=1.0)
+    kw = dict(carry=carry, open=o, high=h, low=l, stop=stop, take=take, rebalance=reb, impact=impact)
     rc = quant.run_backtest(c, w, cfg, **kw)
     rp = pycore.run_backtest_ex(c, w, cfg, **kw)
     np.testing.assert_allclose(rc.equity, rp.equity, rtol=1e-11)

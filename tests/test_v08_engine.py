@@ -4,6 +4,7 @@ Every test fails on the v0.7 engine and passes now. Engine-level tests run on bo
 active backend (``quant``) and the numpy twin (``pycore``) and, when the extension is
 built, assert the two agree to 1e-12.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -12,8 +13,7 @@ import pytest
 
 from agentic_trader import TradingGraph, make_config, quant
 from agentic_trader.algo import algo_cost_ratio
-from agentic_trader.backtest import (AGENT, impact_coefficients, risk_free_series, run_agent_backtest,
-                                     run_portfolio_backtest)
+from agentic_trader.backtest import AGENT, impact_coefficients, risk_free_series, run_agent_backtest, run_portfolio_backtest
 from agentic_trader.data import SyntheticProvider
 from agentic_trader.instruments import Instrument
 from agentic_trader.quant import pycore
@@ -39,8 +39,7 @@ def _same_result(a, b, rtol=1e-12):
     np.testing.assert_array_equal(a.exits, b.exits)
     assert a.ruined_at == b.ruined_at and a.stop_exits == b.stop_exits
     assert a.impact_paid == pytest.approx(b.impact_paid, rel=rtol, abs=1e-15)
-    for f in ("sharpe", "sortino", "sharpe_tstat", "max_drawdown", "turnover", "avg_exposure",
-              "cumulative_return", "win_rate"):
+    for f in ("sharpe", "sortino", "sharpe_tstat", "max_drawdown", "turnover", "avg_exposure", "cumulative_return", "win_rate"):
         assert getattr(a.metrics, f) == pytest.approx(getattr(b.metrics, f), rel=1e-11, abs=1e-14), f
     assert a.metrics.num_trades == b.metrics.num_trades and a.metrics.ruined == b.metrics.ruined
 
@@ -51,9 +50,9 @@ def test_79_hold_bars_carry_units_not_weight(engine):
     p = [100, 110, 110, 121]
     cfg = quant.BacktestConfig(cost_bps=10.0)
     r = engine(p, np.full(4, 0.5), cfg)
-    assert r.equity[1] == pytest.approx(100000 * (1 - 0.0005) * 1.05)   # fee out first, then 0.5 * 10%
-    assert r.equity[2] == r.equity[1]                               # a hold bar costs nothing
-    w1 = 0.5 * 1.1 / 1.05                                           # drifted weight
+    assert r.equity[1] == pytest.approx(100000 * (1 - 0.0005) * 1.05)  # fee out first, then 0.5 * 10%
+    assert r.equity[2] == r.equity[1]  # a hold bar costs nothing
+    w1 = 0.5 * 1.1 / 1.05  # drifted weight
     assert r.positions[1] == pytest.approx(w1) and r.positions[2] == pytest.approx(w1)
     assert r.equity[3] == pytest.approx(r.equity[2] * (1 + w1 * 0.1))
     assert r.metrics.num_trades == 1 and r.metrics.turnover == pytest.approx(0.5)
@@ -74,8 +73,8 @@ def test_79_rebalancing_to_the_same_target_is_a_charged_trade(engine):
 def test_79_carry_accrues_on_the_constant_notional(engine):
     cfg = quant.BacktestConfig(cost_bps=0, carry_annual=0.0252, periods_per_year=252)
     r = engine(np.ones(11), np.ones(11), cfg)
-    assert r.equity[-1] == pytest.approx(100000 * 1.001, rel=1e-12)   # linear, not 1.0001**10
-    assert r.positions[-1] == pytest.approx(1 / 1.001, rel=1e-12)     # cash grew, units did not
+    assert r.equity[-1] == pytest.approx(100000 * 1.001, rel=1e-12)  # linear, not 1.0001**10
+    assert r.positions[-1] == pytest.approx(1 / 1.001, rel=1e-12)  # cash grew, units did not
 
 
 def test_79_desk_holds_units_between_decisions_and_pays_only_for_decisions():
@@ -85,7 +84,7 @@ def test_79_desk_holds_units_between_decisions_and_pays_only_for_decisions():
     n = len(p)
     decision_bars = set(range(0, n - 1, 5))
     trade_bars = set(np.flatnonzero(res.traded))
-    assert trade_bars <= decision_bars                                  # no hidden daily rebalancing
+    assert trade_bars <= decision_bars  # no hidden daily rebalancing
     # on a hold bar whose previous bar was also a hold bar, returns[t] is the gross return g
     hold = [t for t in range(2, n) if t not in decision_bars and t - 1 not in decision_bars and res.positions[t - 1] != 0]
     assert hold
@@ -118,8 +117,7 @@ def test_18_ruin_floors_equity_and_flattens(engine):
 
 @needs_cpp
 def test_18_ruin_parity():
-    for p, w, lev in (([10, 10, 24, 20, 15, 12], -1.0, 1.0), ([100, 40, 50, 60], 2.0, 2.0),
-                      ([100, 50.0000001, 60], 2.0, 3.0)):
+    for p, w, lev in (([10, 10, 24, 20, 15, 12], -1.0, 1.0), ([100, 40, 50, 60], 2.0, 2.0), ([100, 50.0000001, 60], 2.0, 3.0)):
         cfg = quant.BacktestConfig(cost_bps=1.0, max_leverage=lev)
         _same_result(quant.run_backtest(p, np.full(len(p), w), cfg), pycore.run_backtest_ex(p, np.full(len(p), w), cfg))
 
@@ -171,7 +169,7 @@ def test_22_desk_sees_flat_after_a_stop_and_the_drifted_weight_otherwise(monkeyp
         assert told[k] == pytest.approx(expected, abs=1e-12), (k, i)
         if expected == 0.0 and rep.decisions[k - 1].target_weight != 0.0:
             flat_after_stop += 1
-    assert flat_after_stop > 0        # the finding's scenario occurred and the desk was told 0, not the old target
+    assert flat_after_stop > 0  # the finding's scenario occurred and the desk was told 0, not the old target
     # every adjustment that "keeps" the current position keeps a real one
     for k, dec in enumerate(rep.decisions):
         if any("no-trade band" in a for a in dec.adjustments):
@@ -190,8 +188,16 @@ def test_23_impact_coefficient_scales_with_sqrt_equity(engine):
     r = engine([100, 50, 50, 50], [1, 1, 0, 0], cfg, impact=[0.0, 0.0, 0.01, 0.0])
     assert r.impact_paid == pytest.approx(0.01 * np.sqrt(0.5))
     # and the exit fill of a stop is charged at the same scale
-    r = engine([100, 200, 200, 200], [1, 1, 1, 1], cfg, open=[100, 200, 200, 200], high=[100, 200, 200, 200],
-               low=[100, 200, 150, 200], stop=[NAN, 180, 180, 180], impact=[0.0, 0.0, 0.01, 0.0])
+    r = engine(
+        [100, 200, 200, 200],
+        [1, 1, 1, 1],
+        cfg,
+        open=[100, 200, 200, 200],
+        high=[100, 200, 200, 200],
+        low=[100, 200, 150, 200],
+        stop=[NAN, 180, 180, 180],
+        impact=[0.0, 0.0, 0.01, 0.0],
+    )
     assert r.stop_exits == 1 and r.impact_paid == pytest.approx(0.01 * np.sqrt(2))
 
 
@@ -200,8 +206,9 @@ def test_1_capital_share_equals_a_smaller_account():
     big = make_config(CFG, costs={"impact_coeff": 1.0}, initial_capital=1e9)
     quarter = make_config(big, initial_capital=0.25e9)
     full = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", big, rebalance_every=10)
-    shared = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", big, rebalance_every=10,
-                                capital_share=pd.Series(0.25, index=full.dates))
+    shared = run_agent_backtest(
+        "AAPL", "2024-01-02", "2024-03-28", big, rebalance_every=10, capital_share=pd.Series(0.25, index=full.dates)
+    )
     small = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", quarter, rebalance_every=10)
     for name in full.results:
         assert shared.results[name].impact_paid == pytest.approx(small.results[name].impact_paid, rel=1e-9)
@@ -221,12 +228,11 @@ def test_1_portfolio_of_n_sleeves_pays_the_impact_of_capital_over_n():
             assert r.impact_paid == pytest.approx(alone.results[name].impact_paid, rel=1e-9), (s, name)
         assert port.sleeves[s].results["Buy&Hold"].impact_paid > 0
     # class budgets: an equity sleeve given 30% of the book pays the impact of 30% of the capital
-    port = run_portfolio_backtest(["AAPL", "EURUSD"], "2024-01-02", "2024-03-28", big, rebalance_every=10,
-                                  class_budgets={"equity": 0.3, "fx": 0.7})
-    alone = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", make_config(big, initial_capital=0.3e9),
-                               rebalance_every=10)
-    assert port.sleeves["AAPL"].results["Buy&Hold"].impact_paid == pytest.approx(
-        alone.results["Buy&Hold"].impact_paid, rel=1e-9)
+    port = run_portfolio_backtest(
+        ["AAPL", "EURUSD"], "2024-01-02", "2024-03-28", big, rebalance_every=10, class_budgets={"equity": 0.3, "fx": 0.7}
+    )
+    alone = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", make_config(big, initial_capital=0.3e9), rebalance_every=10)
+    assert port.sleeves["AAPL"].results["Buy&Hold"].impact_paid == pytest.approx(alone.results["Buy&Hold"].impact_paid, rel=1e-9)
 
 
 # ================================================================== 14: cash leg, excess Sharpe
@@ -257,7 +263,7 @@ def test_14_metrics_use_excess_returns_over_the_per_bar_rate(engine):
     assert m.sharpe_tstat == pytest.approx(ex.mean() / ex.std(ddof=1) * 2, rel=1e-12)
     assert m.sortino == pytest.approx(ex.mean() / np.sqrt(np.mean(np.minimum(ex, 0) ** 2)) * np.sqrt(252), rel=1e-12)
     assert m.annualized_vol == pytest.approx(ex.std(ddof=1) * np.sqrt(252), rel=1e-12)
-    assert m.cumulative_return == pytest.approx(0.03)                    # total, not excess
+    assert m.cumulative_return == pytest.approx(0.03)  # total, not excess
     const = cm(e, np.ones(5), 252, 0.03)
     assert cm(e, np.ones(5), 252, np.full(5, 0.03)).sharpe == pytest.approx(const.sharpe, rel=1e-12)
     assert cm(e, np.ones(5), 252, np.array([0.03, NAN, 0.03, 0.03, 0.03])).sharpe != pytest.approx(const.sharpe)
@@ -280,13 +286,13 @@ class _NoRate(SyntheticProvider):
 
 def test_14_backtest_wiring_credits_cash_and_reports_excess_sharpe():
     base = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", CFG, rebalance_every=10, provider=_NoRate(CFG))
-    assert base.rf is not None and (base.rf == 0.0).all()                 # config constant fallback
+    assert base.rf is not None and (base.rf == 0.0).all()  # config constant fallback
     rep = run_agent_backtest("AAPL", "2024-01-02", "2024-03-28", CFG, rebalance_every=10, provider=_Rate(CFG))
     assert rep.rf is not None and (rep.rf == 0.04).all() and rep.backtest_config.funded
     bh, bh0 = rep.results["Buy&Hold"], base.results["Buy&Hold"]
-    np.testing.assert_allclose(bh.equity, bh0.equity, rtol=1e-12)         # fully invested: no idle cash
-    assert (bh.positions == 1.0).all()                                     # and it stays exactly fully invested
-    assert bh.metrics.sharpe < bh0.metrics.sharpe                          # Sharpe is now excess
+    np.testing.assert_allclose(bh.equity, bh0.equity, rtol=1e-12)  # fully invested: no idle cash
+    assert (bh.positions == 1.0).all()  # and it stays exactly fully invested
+    assert bh.metrics.sharpe < bh0.metrics.sharpe  # Sharpe is now excess
     vt, vt0 = rep.results["B&H vol-target"], base.results["B&H vol-target"]
     assert vt.metrics.avg_exposure < 1 and vt.equity[-1] > vt0.equity[-1]  # idle cash earned 4%
     for name, r in rep.results.items():
@@ -311,16 +317,19 @@ def test_14_backtest_wiring_credits_cash_and_reports_excess_sharpe():
 
 
 def test_14_portfolio_metrics_use_the_same_per_bar_rate():
-    p0 = run_portfolio_backtest(["AAPL", "EURUSD"], "2024-01-02", "2024-03-28", CFG, rebalance_every=10,
-                                provider=_NoRate(CFG))
-    p1 = run_portfolio_backtest(["AAPL", "EURUSD"], "2024-01-02", "2024-03-28", CFG, rebalance_every=10,
-                                provider=_Rate(CFG))
+    p0 = run_portfolio_backtest(["AAPL", "EURUSD"], "2024-01-02", "2024-03-28", CFG, rebalance_every=10, provider=_NoRate(CFG))
+    p1 = run_portfolio_backtest(["AAPL", "EURUSD"], "2024-01-02", "2024-03-28", CFG, rebalance_every=10, provider=_Rate(CFG))
     assert p1.metrics["Buy&Hold"].sharpe < p0.metrics["Buy&Hold"].sharpe
     rf = np.full(len(p1.dates), 0.04)
     ppy = max(r.instrument.periods_per_year for r in p1.sleeves.values())
     eq = CFG["initial_capital"] * np.cumprod(1 + p1.returns["Buy&Hold"].to_numpy())
-    pos = sum(pd.Series(np.abs(r.results["Buy&Hold"].positions), index=r.dates).reindex(p1.dates).fillna(0.0)
-              for r in p1.sleeves.values()) / 2
+    pos = (
+        sum(
+            pd.Series(np.abs(r.results["Buy&Hold"].positions), index=r.dates).reindex(p1.dates).fillna(0.0)
+            for r in p1.sleeves.values()
+        )
+        / 2
+    )
     assert p1.metrics["Buy&Hold"].sharpe == pytest.approx(quant.compute_metrics(eq, pos.to_numpy(), ppy, rf).sharpe, rel=1e-9)
     assert p1.metrics["Buy&Hold"].sharpe != pytest.approx(quant.compute_metrics(eq, pos.to_numpy(), ppy, 0.0).sharpe)
 
@@ -332,12 +341,11 @@ def test_19_almgren_chriss_is_finite_and_sums_to_total(kappa):
         q = fn(1.0, 78, kappa)
         assert np.isfinite(q).all() and (q >= -1e-15).all() and q.sum() == pytest.approx(1.0, abs=1e-9)
         if kappa >= 1e4:
-            assert q[0] == pytest.approx(1.0, abs=1e-12)                 # everything in the first slice
+            assert q[0] == pytest.approx(1.0, abs=1e-12)  # everything in the first slice
         elif kappa >= 700:
-            assert q[0] > 0.999 and q[1] > q[2] > 0                        # front-loaded, still a schedule
-    np.testing.assert_allclose(quant.almgren_chriss(1e6, 78, kappa), pycore.almgren_chriss(1e6, 78, kappa),
-                               rtol=1e-12, atol=1e-6)
-    if kappa <= 50:                                                     # where the textbook form is representable
+            assert q[0] > 0.999 and q[1] > q[2] > 0  # front-loaded, still a schedule
+    np.testing.assert_allclose(quant.almgren_chriss(1e6, 78, kappa), pycore.almgren_chriss(1e6, 78, kappa), rtol=1e-12, atol=1e-6)
+    if kappa <= 50:  # where the textbook form is representable
         t = np.arange(1, 79) / 78
         rem = np.sinh(kappa * (1 - t)) / np.sinh(kappa)
         ref = np.concatenate([[1.0], rem[:-1]]) - rem
@@ -356,14 +364,16 @@ def test_33_large_kappa_charges_impact_instead_of_switching_it_off(monkeypatch):
     finite = np.isfinite(k_vwap)
     assert finite.sum() > 100 and np.array_equal(np.isfinite(k_ac), finite)
     np.testing.assert_allclose(k_ac[finite], k_vwap[finite] * r1e4)
-    rep = run_agent_backtest("AAPL", "2024-01-02", "2024-02-29", make_config(base, costs={"execution_algo": "ac", "ac_kappa": 1e4}),
-                             rebalance_every=10)
+    rep = run_agent_backtest(
+        "AAPL", "2024-01-02", "2024-02-29", make_config(base, costs={"execution_algo": "ac", "ac_kappa": 1e4}), rebalance_every=10
+    )
     vwap = run_agent_backtest("AAPL", "2024-01-02", "2024-02-29", base, rebalance_every=10)
     for name in rep.results:
         if vwap.results[name].impact_paid > 0:
             assert rep.results[name].impact_paid > vwap.results[name].impact_paid
     # a non-finite schedule cost can never reach the engine as "no impact"
     import agentic_trader.backtest as bt_mod
+
     monkeypatch.setattr(bt_mod, "algo_cost_ratio", lambda *a, **k: NAN)
     with pytest.raises(ValueError, match="non-finite"):
         impact_coefficients(full, ins, make_config(base, costs={"execution_algo": "ac"}))
@@ -374,10 +384,14 @@ def test_20_flat_and_near_flat_series_give_no_position_on_either_backend():
     rng = np.random.default_rng(0)
     for level in np.r_[1.08, 7e5, 0.3333333, rng.uniform(0.5, 500, 100)]:
         flat = np.full(120, level)
-        for fn, args in ((quant.strat_sma_cross, (20, 50, True)), (pycore.strat_sma_cross, (20, 50, True)),
-                         (quant.strat_macd, (12, 26, 9, True)), (pycore.strat_macd, (12, 26, 9, True))):
+        for fn, args in (
+            (quant.strat_sma_cross, (20, 50, True)),
+            (pycore.strat_sma_cross, (20, 50, True)),
+            (quant.strat_macd, (12, 26, 9, True)),
+            (pycore.strat_macd, (12, 26, 9, True)),
+        ):
             assert not fn(flat, *args).any(), (fn.__name__, level)
-        near = level * (1 + 1e-15 * rng.standard_normal(120))           # rounding-level noise
+        near = level * (1 + 1e-15 * rng.standard_normal(120))  # rounding-level noise
         assert not quant.strat_sma_cross(near, 20, 50, True).any() and not pycore.strat_macd(near, 12, 26, 9, True).any()
     # prices then a halt at the last price: the halted stretch is flat once the windows have passed
     # (the SMAs after 50 bars; the EMAs behind MACD only converge exponentially, ~1e-27 after 800 bars)
@@ -392,7 +406,7 @@ def test_20_flat_and_near_flat_series_give_no_position_on_either_backend():
     # a real (if tiny) trend is still a signal, and the backends agree on it
     trend = 100 * (1 + 1e-9 * np.arange(120))
     assert quant.strat_sma_cross(trend, 20, 50, True)[-1] == 1.0 == pycore.strat_sma_cross(trend, 20, 50, True)[-1]
-    wave = 100 * (1 + 1e-9 * np.sin(np.arange(120) / 5))                # MACD hist of a straight line is 0
+    wave = 100 * (1 + 1e-9 * np.sin(np.arange(120) / 5))  # MACD hist of a straight line is 0
     a, b = quant.strat_macd(wave, 12, 26, 9, True), pycore.strat_macd(wave, 12, 26, 9, True)
     assert np.abs(a[40:]).all() and np.array_equal(a, b)
 
@@ -404,8 +418,12 @@ def test_20_backends_agree_on_piecewise_constant_series():
         pieces = [np.full(int(rng.integers(5, 70)), rng.uniform(0.5, 500)) for _ in range(int(rng.integers(1, 5)))]
         x = np.concatenate(pieces)
         for allow_short in (False, True):
-            np.testing.assert_array_equal(quant.strat_sma_cross(x, 20, 50, allow_short), pycore.strat_sma_cross(x, 20, 50, allow_short))
-            np.testing.assert_array_equal(quant.strat_macd(x, 12, 26, 9, allow_short), pycore.strat_macd(x, 12, 26, 9, allow_short))
+            np.testing.assert_array_equal(
+                quant.strat_sma_cross(x, 20, 50, allow_short), pycore.strat_sma_cross(x, 20, 50, allow_short)
+            )
+            np.testing.assert_array_equal(
+                quant.strat_macd(x, 12, 26, 9, allow_short), pycore.strat_macd(x, 12, 26, 9, allow_short)
+            )
 
 
 # ============================================================= 76: one NaN rule for every indicator
@@ -444,15 +462,22 @@ def test_76_a_missing_bar_is_nan_for_its_window_and_the_series_recovers(name, fn
     hn[K] = ln[K] = cn[K] = NAN
     out = fn(hn, ln, cn)
     assert _nan_span(out, start) == span, (name, _nan_span(out, start))
-    assert np.isfinite(out[span[1] + 1:]).all()
+    assert np.isfinite(out[span[1] + 1 :]).all()
     np.testing.assert_allclose(out[start:K], clean[start:K], rtol=1e-12)
     if CPP:
-        pyfn = {"macd_hist": lambda: pycore.macd(cn)[2], "kdj_j": lambda: pycore.kdj(hn, ln, cn, 9)[2],
-                "bollinger_pb": lambda: pycore.bollinger(cn, 20)[3], "realized_vol": lambda: pycore.realized_vol(cn, 20, 252),
-                "atr": lambda: pycore.atr(hn, ln, cn, 14), "rsi": lambda: pycore.rsi(cn, 14),
-                "sma": lambda: pycore.sma(cn, 20), "ema": lambda: pycore.ema(cn, 20),
-                "rolling_std": lambda: pycore.rolling_std(cn, 20), "zscore": lambda: pycore.zscore(cn, 20),
-                "rolling_max": lambda: pycore.rolling_max(cn, 20)}[name]()
+        pyfn = {
+            "macd_hist": lambda: pycore.macd(cn)[2],
+            "kdj_j": lambda: pycore.kdj(hn, ln, cn, 9)[2],
+            "bollinger_pb": lambda: pycore.bollinger(cn, 20)[3],
+            "realized_vol": lambda: pycore.realized_vol(cn, 20, 252),
+            "atr": lambda: pycore.atr(hn, ln, cn, 14),
+            "rsi": lambda: pycore.rsi(cn, 14),
+            "sma": lambda: pycore.sma(cn, 20),
+            "ema": lambda: pycore.ema(cn, 20),
+            "rolling_std": lambda: pycore.rolling_std(cn, 20),
+            "zscore": lambda: pycore.zscore(cn, 20),
+            "rolling_max": lambda: pycore.rolling_max(cn, 20),
+        }[name]()
         np.testing.assert_allclose(out, pyfn, rtol=1e-9, atol=1e-12, equal_nan=True)
 
 
@@ -462,8 +487,8 @@ def test_76_rsi_never_treats_a_missing_close_as_a_zero_change():
     cn[K] = NAN
     for fn in (quant.rsi, pycore.rsi):
         out = fn(cn, 14)
-        assert np.isnan(out[K:K + 15]).all() and np.isfinite(out[K + 15:]).all()
-    e = quant.ema([NAN, NAN, 1.0, 2.0, 3.0], 3)                          # leading NaNs are still skipped
+        assert np.isnan(out[K : K + 15]).all() and np.isfinite(out[K + 15 :]).all()
+    e = quant.ema([NAN, NAN, 1.0, 2.0, 3.0], 3)  # leading NaNs are still skipped
     assert np.isnan(e[:4]).all() and e[4] == pytest.approx(2.0)
 
 
@@ -503,7 +528,7 @@ def test_78_window_arguments_outside_int_range_raise_value_error_on_both_backend
         quant.atr(x, x, x, n=2**40)
     with pytest.raises(ValueError):
         quant.almgren_chriss(1.0, 2**40, 1.0)
-    assert quant.strat_sma_cross(x, 5, 10, True).shape == (30,)         # the bool flag is still a flag
+    assert quant.strat_sma_cross(x, 5, 10, True).shape == (30,)  # the bool flag is still a flag
     assert quant.rsi(x, n=14).shape == (30,)
 
 
@@ -527,7 +552,14 @@ def test_v08_cpp_matches_numpy_with_cash_rate_drift_and_ruin(seed):
     impact = np.abs(rng.normal(0.003, 0.001, n))
     impact[rng.random(n) > 0.9] = NAN
     cash = np.where(rng.random(n) > 0.1, rng.uniform(0, 0.06, n), NAN)
-    cfg = quant.BacktestConfig(cost_bps=1.5, slippage_bps=0.5, borrow_annual=0.02, allow_short=bool(seed % 2),
-                               max_leverage=1.0 + seed * 0.5, funded=bool(seed % 3), initial_capital=1e6)
+    cfg = quant.BacktestConfig(
+        cost_bps=1.5,
+        slippage_bps=0.5,
+        borrow_annual=0.02,
+        allow_short=bool(seed % 2),
+        max_leverage=1.0 + seed * 0.5,
+        funded=bool(seed % 3),
+        initial_capital=1e6,
+    )
     kw = dict(carry=carry, open=o, high=h, low=l, stop=stop, take=take, rebalance=reb, impact=impact, cash_rate=cash)
     _same_result(quant.run_backtest(c, w, cfg, **kw), pycore.run_backtest_ex(c, w, cfg, **kw))

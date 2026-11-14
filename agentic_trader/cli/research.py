@@ -1,5 +1,6 @@
 """``backtest`` / ``baselines`` / ``portfolio`` / ``xalpha`` / ``alpha`` / ``execute`` /
 ``stats``: the quant research commands, run without the agentic harness."""
+
 from __future__ import annotations
 
 import json
@@ -19,16 +20,24 @@ def cmd_backtest(args, include_agent: bool = True) -> int:
         print(f"  {d.as_of}  {d.action.value:<4} {d.target_weight:+.2f}", flush=True)
 
     _header(f"backtest {args.symbol} {args.start} -> {args.end}", cfg)
-    rep = run_agent_backtest(args.symbol, args.start, args.end, cfg,
-                             rebalance_every=getattr(args, "every", 5),
-                             asset_class=args.asset_class, include_agent=include_agent,
-                             on_decision=on_dec if include_agent and args.verbose else None)
+    rep = run_agent_backtest(
+        args.symbol,
+        args.start,
+        args.end,
+        cfg,
+        rebalance_every=getattr(args, "every", 5),
+        asset_class=args.asset_class,
+        include_agent=include_agent,
+        on_decision=on_dec if include_agent and args.verbose else None,
+    )
     bt = rep.backtest_config
     assert bt is not None  # run_agent_backtest always attaches its config
     carry = carry_summary(rep.carry, bt.carry_annual)
-    print(f"\n{rep.instrument.display}: {len(rep.dates)} bars, cost {bt.cost_bps:.2f}bps + "
-          f"slippage {bt.slippage_bps:.2f}bps, {carry}, shorts {'on' if bt.allow_short else 'off'}, "
-          f"stops {'on' if cfg['backtest']['use_stops'] else 'off'}")
+    print(
+        f"\n{rep.instrument.display}: {len(rep.dates)} bars, cost {bt.cost_bps:.2f}bps + "
+        f"slippage {bt.slippage_bps:.2f}bps, {carry}, shorts {'on' if bt.allow_short else 'off'}, "
+        f"stops {'on' if cfg['backtest']['use_stops'] else 'off'}"
+    )
     print(rep.table().to_string())
     if args.out:
         rep.equity_curves().to_csv(args.out)
@@ -50,9 +59,13 @@ def carry_summary(carry: np.ndarray | None, carry_annual: float) -> str:
     unknown = int(np.isnan(c).sum())
     credited = float(np.nan_to_num(c, nan=0.0).mean()) if n else 0.0
     known = c[~np.isnan(c)]
-    detail = f"{known.mean():+.2%} on {known.size}/{n} accruing bars, 0 on {unknown} with no point-in-time rate" \
-        if unknown and known.size else f"{unknown}/{n} accruing bars with no point-in-time rate" if unknown \
+    detail = (
+        f"{known.mean():+.2%} on {known.size}/{n} accruing bars, 0 on {unknown} with no point-in-time rate"
+        if unknown and known.size
+        else f"{unknown}/{n} accruing bars with no point-in-time rate"
+        if unknown
         else f"point-in-time, all {n} accruing bars"
+    )
     return f"carry {credited:+.2%} p.a. credited ({detail})"
 
 
@@ -66,17 +79,24 @@ def cmd_portfolio(args) -> int:
             budgets = {k.strip(): float(v) for k, v in (kv.split("=") for kv in args.class_budgets.split(","))}
         except ValueError:
             raise ValueError("--class-budgets must look like equity=0.6,fx=0.4") from None
-    _header(f"portfolio of {len(syms)} sleeves {args.start} -> {args.end} weighting={args.weighting}"
-            + (f" class budgets {budgets}" if budgets else ""), cfg)
-    rep = run_portfolio_backtest(syms, args.start, args.end, cfg, rebalance_every=args.every,
-                                 weighting=args.weighting, class_budgets=budgets)
+    _header(
+        f"portfolio of {len(syms)} sleeves {args.start} -> {args.end} weighting={args.weighting}"
+        + (f" class budgets {budgets}" if budgets else ""),
+        cfg,
+    )
+    rep = run_portfolio_backtest(
+        syms, args.start, args.end, cfg, rebalance_every=args.every, weighting=args.weighting, class_budgets=budgets
+    )
     print(rep.table().to_string())
     from ..backtest import AGENT
+
     for base in ("B&H vol-target", "Buy&Hold"):
         if base in rep.returns:
             d = rep.sharpe_difference(AGENT, base)
-            print(f"Sharpe {AGENT} - {base}: {d.diff:+.2f} [{d.ci_low:+.2f}, {d.ci_high:+.2f}] p={d.p_value:.3f} "
-                  f"(paired block bootstrap over {d.n} days, block {d.block})")
+            print(
+                f"Sharpe {AGENT} - {base}: {d.diff:+.2f} [{d.ci_low:+.2f}, {d.ci_high:+.2f}] p={d.p_value:.3f} "
+                f"(paired block bootstrap over {d.n} days, block {d.block})"
+            )
     if rep.allocations is not None:
         print("\nlatest capital allocation:")
         print(rep.allocations.iloc[-1].round(3).to_string())
@@ -91,6 +111,7 @@ def cmd_xalpha(args) -> int:
     from ..data import get_provider
     from ..instruments import Instrument
     from ..xalpha import xalpha_report
+
     cfg = _config(args)
     provider = get_provider(cfg)
     syms = _symbols(args.symbol)
@@ -124,6 +145,7 @@ def cmd_alpha(args) -> int:
     from ..alpha import alpha_report
     from ..data import get_provider
     from ..instruments import Instrument
+
     cfg = _config(args)
     provider = get_provider(cfg)
     ins = Instrument.parse(args.symbol, args.asset_class)
@@ -153,6 +175,7 @@ def cmd_execute(args) -> int:
     from ..state import Action, FinalDecision
     import pandas as pd
     from ..algo import base_to_account_rate
+
     cfg = _config(args)
     provider = get_provider(cfg)
     ins = Instrument.parse(args.symbol, args.asset_class)
@@ -175,50 +198,84 @@ def cmd_execute(args) -> int:
     if ins.is_fx and ins.base is not None and account not in (ins.base, ins.quote):
         rate = base_to_account_rate(provider, ins.base, account, as_of)
     allow_short = bool(cfg["risk"]["allow_short_fx"] if ins.is_fx else cfg["risk"]["allow_short_equity"])
-    dec = FinalDecision(ins.symbol, as_of, Action.BUY if args.target > args.current else Action.SELL,
-                        args.target, 0.0, None, None, "")
-    plan = plan_execution(dec, ins, args.current, capital, last, adv, args.algo, account_currency=account,
-                          base_to_account=rate, allow_short=allow_short,
-                          lot_size=cfg["execution"]["fx_lot_size"], ac_kappa=float(cfg["costs"]["ac_kappa"]))
+    dec = FinalDecision(
+        ins.symbol, as_of, Action.BUY if args.target > args.current else Action.SELL, args.target, 0.0, None, None, ""
+    )
+    plan = plan_execution(
+        dec,
+        ins,
+        args.current,
+        capital,
+        last,
+        adv,
+        args.algo,
+        account_currency=account,
+        base_to_account=rate,
+        allow_short=allow_short,
+        lot_size=cfg["execution"]["fx_lot_size"],
+        ac_kappa=float(cfg["costs"]["ac_kappa"]),
+    )
     _header(f"execute {ins.display} {args.current:+.2f} -> {args.target:+.2f} capital {capital:,.0f} {account}", cfg)
     if plan is None:
-        effective = args.target if (allow_short or args.target >= 0) else 0.0   # what plan_execution sized
-        truncated = "" if effective == args.target else \
-            f" (target {args.target:+.2f} truncated to flat: shorting {ins.display} is not allowed)"
+        effective = args.target if (allow_short or args.target >= 0) else 0.0  # what plan_execution sized
+        truncated = (
+            ""
+            if effective == args.target
+            else f" (target {args.target:+.2f} truncated to flat: shorting {ins.display} is not allowed)"
+        )
         if not allow_short and args.target < 0 and args.current <= 0:
-            print(f"nothing to trade: target {args.target:+.2f} truncated to flat (shorting {ins.display} is not "
-                  "allowed) and the position is already flat")
+            print(
+                f"nothing to trade: target {args.target:+.2f} truncated to flat (shorting {ins.display} is not "
+                "allowed) and the position is already flat"
+            )
         elif abs(effective - args.current) > 1e-9:
             unit = f"{cfg['execution']['fx_lot_size']:,.0f}-unit lot" if ins.is_fx else "share"
-            print(f"nothing to trade: the change {args.current:+.4f} -> {effective:+.4f} "
-                  f"({abs(effective - args.current) * capital:,.0f} {account}) is below one {unit}{truncated}")
+            print(
+                f"nothing to trade: the change {args.current:+.4f} -> {effective:+.4f} "
+                f"({abs(effective - args.current) * capital:,.0f} {account}) is below one {unit}{truncated}"
+            )
         else:
             print(f"nothing to trade: target equals the current position{truncated}")
         return 0
-    print(f"{plan.side.upper()} {plan.quantity:,.0f} {plan.quantity_unit} (notional {plan.notional:,.0f} "
-          f"{plan.notional_currency} at {plan.price:.5g}) via {plan.algo.upper()} in {plan.slices} slices; "
-          f"{plan.reason}; intent {plan.intent}; {plan.id}")
+    print(
+        f"{plan.side.upper()} {plan.quantity:,.0f} {plan.quantity_unit} (notional {plan.notional:,.0f} "
+        f"{plan.notional_currency} at {plan.price:.5g}) via {plan.algo.upper()} in {plan.slices} slices; "
+        f"{plan.reason}; intent {plan.intent}; {plan.id}"
+    )
     if plan.participation_of_adv is not None:
         print(f"order is {plan.participation_of_adv:.2%} of 20-day ADV")
     nxt = provider.history(ins, as_of + timedelta(days=1), as_of + timedelta(days=14))
     nxt = nxt[nxt.index > pd.Timestamp(as_of)] if len(nxt) else nxt
     if nxt.empty:
-        print(f"no session after {as_of} is available yet: the order executes on the next session, so no fill "
-              "was simulated")
+        print(f"no session after {as_of} is available yet: the order executes on the next session, so no fill was simulated")
         return 0
     day = nxt.iloc[0]
     from ..agentic.servers import _daily_vol
+
     bars = synthetic_intraday_bars(day, plan.slices, "fx" if ins.is_fx else "equity", seed=args.seed)
     daily_vol = _daily_vol(df)
     spread = cfg["costs"]["fx_spread_pips"] * ins.pip_size / last * 1e4 if ins.is_fx else args.spread_bps
-    rep = simulate_execution(plan.schedule(bars, participation=args.participation), bars, plan.side,
-                             plan.algo, spread, args.impact, daily_vol, adv, requested=plan.quantity)
-    print(f"executed {rep.executed:,.0f} of {rep.requested:,.0f} {plan.quantity_unit} ({rep.completion:.0%}) on "
-          f"{pd.Timestamp(nxt.index[0]).date()}; arrival {rep.arrival:.5g}, avg fill {rep.avg_price:.5g}, "
-          f"session VWAP {rep.session_vwap:.5g}, close {rep.close:.5g}")
-    line = (f"implementation shortfall {rep.is_bps:+.1f} bps, vs VWAP {rep.vs_vwap_bps:+.1f} bps "
-            f"(spread {rep.spread_cost_bps:.1f} bps, impact {rep.impact_cost_bps:.1f} bps")
-    if rep.unfilled >= plan.lot_size * (1.0 - 1e-9):   # a closed-form schedule can leave 1e-14 of a share
+    rep = simulate_execution(
+        plan.schedule(bars, participation=args.participation),
+        bars,
+        plan.side,
+        plan.algo,
+        spread,
+        args.impact,
+        daily_vol,
+        adv,
+        requested=plan.quantity,
+    )
+    print(
+        f"executed {rep.executed:,.0f} of {rep.requested:,.0f} {plan.quantity_unit} ({rep.completion:.0%}) on "
+        f"{pd.Timestamp(nxt.index[0]).date()}; arrival {rep.arrival:.5g}, avg fill {rep.avg_price:.5g}, "
+        f"session VWAP {rep.session_vwap:.5g}, close {rep.close:.5g}"
+    )
+    line = (
+        f"implementation shortfall {rep.is_bps:+.1f} bps, vs VWAP {rep.vs_vwap_bps:+.1f} bps "
+        f"(spread {rep.spread_cost_bps:.1f} bps, impact {rep.impact_cost_bps:.1f} bps"
+    )
+    if rep.unfilled >= plan.lot_size * (1.0 - 1e-9):  # a closed-form schedule can leave 1e-14 of a share
         line += f", opportunity cost of {rep.unfilled:,.0f} unfilled {rep.opportunity_cost_bps:+.1f} bps"
     line += ")"
     if rep.max_participation == rep.max_participation:
@@ -230,6 +287,7 @@ def cmd_execute(args) -> int:
 def cmd_stats(args) -> int:
     import pandas as pd
     from ..stats import rolling_var_forecast, selection_report, sharpe_ci_bootstrap, sharpe_stats, var_backtest
+
     df = pd.read_csv(args.path, index_col=0)
     col = args.column or df.columns[0]
     if col not in df:
@@ -237,28 +295,38 @@ def cmd_stats(args) -> int:
     r = df[col].astype(float).dropna().to_numpy()
     s = sharpe_stats(r, args.ppy)
     lo, hi = sharpe_ci_bootstrap(r, args.ppy)
-    print(f"{col}: n={s.n} Sharpe {s.sharpe_annual:.3f} (t {s.t_stat:.2f}), skew {s.skew:.2f}, "
-          f"kurtosis {s.kurt:.2f}, 95% bootstrap CI [{lo:.3f}, {hi:.3f}]")
+    print(
+        f"{col}: n={s.n} Sharpe {s.sharpe_annual:.3f} (t {s.t_stat:.2f}), skew {s.skew:.2f}, "
+        f"kurtosis {s.kurt:.2f}, 95% bootstrap CI [{lo:.3f}, {hi:.3f}]"
+    )
     if args.trials:
-        trials = [float(x) for x in args.trial_sharpes.split(",")] if args.trial_sharpes else \
-            [s.sharpe_annual] * args.trials
+        trials = [float(x) for x in args.trial_sharpes.split(",")] if args.trial_sharpes else [s.sharpe_annual] * args.trials
         tr = None
         if args.trial_returns:
             tr = pd.read_csv(args.trial_returns, index_col=0).astype(float).dropna().to_numpy()
             if tr.ndim != 2 or tr.shape[1] < 2:
                 raise ValueError("--trial-returns needs at least two trial columns")
-        print(json.dumps(selection_report(r, trials, args.ppy, n_trials=args.trials,
-                                          pre_registry_trials=args.pre_registry_trials,
-                                          trial_returns=tr), indent=1))
+        print(
+            json.dumps(
+                selection_report(
+                    r, trials, args.ppy, n_trials=args.trials, pre_registry_trials=args.pre_registry_trials, trial_returns=tr
+                ),
+                indent=1,
+            )
+        )
     if args.var_backtest:
         forecast = rolling_var_forecast(r, window=args.var_window, alpha=args.var_alpha)
         vb = var_backtest(r, forecast, alpha=args.var_alpha)
-        print(f"\nVaR coverage ({int(args.var_alpha * 100)}%, {args.var_window}-day rolling historical "
-              f"VaR forecast, no look-ahead):")
+        print(
+            f"\nVaR coverage ({int(args.var_alpha * 100)}%, {args.var_window}-day rolling historical "
+            f"VaR forecast, no look-ahead):"
+        )
         print(json.dumps(vb.__dict__, indent=1))
         if vb.kupiec_p < 0.05:
-            print(f"  -> breach rate {vb.breach_rate:.1%} vs expected {vb.expected_rate:.1%}: "
-                  f"REJECTS calibration at 95% (p={vb.kupiec_p:.4f})")
+            print(
+                f"  -> breach rate {vb.breach_rate:.1%} vs expected {vb.expected_rate:.1%}: "
+                f"REJECTS calibration at 95% (p={vb.kupiec_p:.4f})"
+            )
         if vb.christoffersen_p is not None and vb.christoffersen_p < 0.05:
             print(f"  -> breaches cluster in time (p={vb.christoffersen_p:.4f}): REJECTS independence")
     return 0
@@ -266,6 +334,7 @@ def cmd_stats(args) -> int:
 
 def cmd_kpi(args) -> int:
     from ..kpi import format_table, kpi_table, load_records
+
     t = kpi_table(load_records(args.path), bins=args.bins, ppy=args.ppy)
     if args.json:
         print(json.dumps({k: v for k, v in t.items() if k != "rows"}, indent=1))

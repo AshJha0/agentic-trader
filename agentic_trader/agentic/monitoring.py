@@ -25,6 +25,7 @@ confidence vs hit rate, count) with the expected calibration error. The forward 
 to the same symbol's next row in that cell and seed. Worked example: replies (0.9, right),
 (0.9, wrong) give Brier (0.01 + 0.81) / 2 = 0.41 and a 0.9 bin with hit rate 0.5.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,6 +44,7 @@ def _reply_json(reply: Any) -> dict[str, Any] | None:
     if not isinstance(reply, str):
         return None
     from ..llm import extract_json
+
     return extract_json(reply)
 
 
@@ -79,6 +81,7 @@ def _psi(base: list[float], cur: list[float]) -> float:
                     break
         tot = max(1, len(xs))
         return [max(k / tot, 1e-4) for k in n]
+
     b, c = hist(base), hist(cur)
     return float(sum((ci - bi) * math.log(ci / bi) for bi, ci in zip(b, c)))
 
@@ -87,22 +90,29 @@ def _sign(x: float) -> int:
     return (x > 1e-12) - (x < -1e-12)
 
 
-def daily_drift(rows: Iterable[dict[str, Any]], cell: str, control_cell: str | None = None,
-                baseline_days: int = 5, baseline_signals: list[float] | None = None,
-                thresholds: dict[str, float] | None = None) -> dict[str, Any]:
+def daily_drift(
+    rows: Iterable[dict[str, Any]],
+    cell: str,
+    control_cell: str | None = None,
+    baseline_days: int = 5,
+    baseline_signals: list[float] | None = None,
+    thresholds: dict[str, float] | None = None,
+) -> dict[str, Any]:
     """Per-day output statistics for ``cell`` and the alerts they raise."""
     th = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     rows = list(rows)
-    control = {(r["symbol"], r["as_of"], int(r.get("seed", 0))): float(r["target_weight"])
-               for r in rows if control_cell is not None and r.get("cell") == control_cell}
+    control = {
+        (r["symbol"], r["as_of"], int(r.get("seed", 0))): float(r["target_weight"])
+        for r in rows
+        if control_cell is not None and r.get("cell") == control_cell
+    }
     by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
         if r.get("cell") == cell:
             by_day[str(r["as_of"])].append(r)
     days = sorted(by_day)
     sigs = {d: [s for r in by_day[d] for s, _ in analyst_outputs(r)] for d in days}
-    base = list(baseline_signals) if baseline_signals is not None else \
-        [s for d in days[:baseline_days] for s in sigs[d]]
+    base = list(baseline_signals) if baseline_signals is not None else [s for d in days[:baseline_days] for s in sigs[d]]
     stats, alerts = [], []
     for i, d in enumerate(days):
         rs = by_day[d]
@@ -112,19 +122,39 @@ def daily_drift(rows: Iterable[dict[str, Any]], cell: str, control_cell: str | N
         mean = sum(s) / len(s) if s else None
         std = math.sqrt(sum((x - mean) ** 2 for x in s) / (len(s) - 1)) if mean is not None and len(s) > 1 else None
         ext = sum(abs(x) >= 0.99 for x in s) / len(s) if s else None
-        pairs = [(float(r["target_weight"]), control[k]) for r in rs
-                 if (k := (r["symbol"], r["as_of"], int(r.get("seed", 0)))) in control]
+        pairs = [
+            (float(r["target_weight"]), control[k])
+            for r in rs
+            if (k := (r["symbol"], r["as_of"], int(r.get("seed", 0)))) in control
+        ]
         div = sum(_sign(a) != _sign(b) for a, b in pairs) / len(pairs) if pairs else None
         in_base = baseline_signals is None and i < baseline_days
         psi = _psi(base, s) if s and base and not in_base else None
-        st: dict[str, Any] = {"day": d, "decisions": len(rs), "calls": len(calls), "rejection_rate": rej, "signal_mean": mean,
-              "signal_std": std, "extreme_share": ext, "divergence_rate": div, "psi": psi}
+        st: dict[str, Any] = {
+            "day": d,
+            "decisions": len(rs),
+            "calls": len(calls),
+            "rejection_rate": rej,
+            "signal_mean": mean,
+            "signal_std": std,
+            "extreme_share": ext,
+            "divergence_rate": div,
+            "psi": psi,
+        }
         stats.append(st)
         for m, lim in th.items():
             v = st.get(m)
             if v is not None and v > lim:
-                alerts.append({"kind": "model_output_drift", "cell": cell, "day": d, "metric": m,
-                               "value": round(float(v), 6), "threshold": lim})
+                alerts.append(
+                    {
+                        "kind": "model_output_drift",
+                        "cell": cell,
+                        "day": d,
+                        "metric": m,
+                        "value": round(float(v), 6),
+                        "threshold": lim,
+                    }
+                )
     return {"cell": cell, "control_cell": control_cell, "thresholds": th, "days": stats, "alerts": alerts}
 
 
@@ -140,8 +170,7 @@ def append_alerts(path: str | Path, alerts: list[dict[str, Any]]) -> int:
     return len(alerts)
 
 
-def confidence_calibration(rows: Iterable[dict[str, Any]], cell: str | None = None,
-                           bins: int = 5) -> dict[str, Any]:
+def confidence_calibration(rows: Iterable[dict[str, Any]], cell: str | None = None, bins: int = 5) -> dict[str, Any]:
     """Brier score and reliability table of analyst ``confidence`` vs realised direction."""
     rows = [r for r in rows if cell is None or r.get("cell") == cell]
     series: dict[tuple, list[dict[str, Any]]] = defaultdict(list)

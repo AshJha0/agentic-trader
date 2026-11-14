@@ -1,5 +1,6 @@
 """Agent-level behaviour: rule switches, guardrails, protective levels, the
 no-trade band, prompt-injection containment and the LLM call budget."""
+
 import json
 import math
 from datetime import date
@@ -9,8 +10,14 @@ import pandas as pd
 import pytest
 
 from agentic_trader import Instrument, TradingGraph, make_config
-from agentic_trader.agents.analysts import (AlphaAnalyst, FundamentalsAnalyst, MacroAnalyst, NewsAnalyst,
-                                            SentimentAnalyst, TechnicalAnalyst)
+from agentic_trader.agents.analysts import (
+    AlphaAnalyst,
+    FundamentalsAnalyst,
+    MacroAnalyst,
+    NewsAnalyst,
+    SentimentAnalyst,
+    TechnicalAnalyst,
+)
 from agentic_trader.agents.base import clip, untrusted_block
 from agentic_trader.agents.researchers import consensus_score
 from agentic_trader.agents.risk import PortfolioManager
@@ -32,8 +39,7 @@ def graph(cfg=CFG, **kw):
 def _state(prices, symbol="AAPL"):
     idx = pd.bdate_range(end="2024-03-01", periods=len(prices))
     c = np.asarray(prices, dtype=float)
-    h = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c,
-                      "Volume": np.full(len(c), 1e6)}, index=idx)
+    h = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": np.full(len(c), 1e6)}, index=idx)
     return TradingState(Instrument.parse(symbol), idx[-1].date(), h)
 
 
@@ -65,17 +71,19 @@ def test_alpha_analyst_agrees_with_itself_direct_vs_harness_populated():
 # ------------------------------------------------------------ FX carry neutral
 def test_fx_carry_neutral_rule_sets_the_strategic_weight_from_point_in_time_carry():
     from agentic_trader.config import RULES_V03
+
     off = graph(make_config(CFG, **RULES_V03)).propagate("USDJPY", "2024-03-01")[0]
-    on = graph()                                                   # the rule is on by default since v0.5.1
+    on = graph()  # the rule is on by default since v0.5.1
     st = on.propagate("USDJPY", "2024-03-01")[0]
-    assert off.proposal.rationale and "strategic weight" not in off.proposal.rationale   # v0.3: FX neutral 0
-    rd = st.reports["macro"].facts["rate_diff"]                    # USD 4.25 - JPY 0.50 on synthetic data
-    assert rd / 2.0 > 0.5 and "strategic weight +0.50 plus tilt" in st.proposal.rationale   # capped
+    assert off.proposal.rationale and "strategic weight" not in off.proposal.rationale  # v0.3: FX neutral 0
+    rd = st.reports["macro"].facts["rate_diff"]  # USD 4.25 - JPY 0.50 on synthetic data
+    assert rd / 2.0 > 0.5 and "strategic weight +0.50 plus tilt" in st.proposal.rationale  # capped
     # Equities are untouched, and the rule needs the macro analyst's carry to act.
     eq = on.propagate("AAPL", "2024-03-01")[0]
     assert "strategic weight +1.00 plus tilt" in eq.proposal.rationale
-    scaled = graph(make_config(CFG, rules={"fx_carry_neutral": True},
-                               risk={"fx_carry_neutral_scale": 10.0, "fx_carry_neutral_cap": 1.0}))
+    scaled = graph(
+        make_config(CFG, rules={"fx_carry_neutral": True}, risk={"fx_carry_neutral_scale": 10.0, "fx_carry_neutral_cap": 1.0})
+    )
     assert f"strategic weight {rd / 10.0:+.2f} plus tilt" in scaled.propagate("USDJPY", "2024-03-01")[0].proposal.rationale
 
 
@@ -125,15 +133,20 @@ def test_all_abstaining_gives_zero_consensus():
 # golden number below (and not at all under the default rules, where the strategic weight
 # and vol-target sizing absorb a non-consensus-flipping sign change).
 def _news_facts(headlines, as_of, sentiment=None):
-    items = [NewsItem(as_of - pd.Timedelta(days=k).to_pytimedelta(), h, sentiment=sentiment)
-             for k, h in enumerate(headlines)]
+    items = [NewsItem(as_of - pd.Timedelta(days=k).to_pytimedelta(), h, sentiment=sentiment) for k, h in enumerate(headlines)]
     return {"lookback_days": 7, "count": len(items), "headlines": [i.headline for i in items], "_items": items}
 
 
-POS_EQ = ["AAPL beats earnings estimates as revenue growth accelerates", "Analysts upgrade AAPL on strong demand",
-          "AAPL rallies to a record on robust guidance"]
-NEG_EQ = ["AAPL misses estimates as margins decline", "Analysts downgrade AAPL on weak demand",
-          "AAPL slides on a regulatory probe and recession fears"]
+POS_EQ = [
+    "AAPL beats earnings estimates as revenue growth accelerates",
+    "Analysts upgrade AAPL on strong demand",
+    "AAPL rallies to a record on robust guidance",
+]
+NEG_EQ = [
+    "AAPL misses estimates as margins decline",
+    "Analysts downgrade AAPL on weak demand",
+    "AAPL slides on a regulatory probe and recession fears",
+]
 
 
 def test_news_analyst_signal_follows_the_headlines():
@@ -157,8 +170,8 @@ def test_news_analyst_recency_weights_the_latest_headline_most():
     # equal-magnitude tones (two lexicon words each), so only the recency weights differ:
     # today's headline carries weight 1, yesterday's 2^-0.5 (half-life two days)
     good, bad = "Analysts upgrade AAPL on strong demand", "Analysts downgrade AAPL on weak demand"
-    fresh_bad = na.rules(_news_facts([bad, good], st.as_of), st)     # newest is bad
-    fresh_good = na.rules(_news_facts([good, bad], st.as_of), st)    # newest is good
+    fresh_bad = na.rules(_news_facts([bad, good], st.as_of), st)  # newest is bad
+    fresh_good = na.rules(_news_facts([good, bad], st.as_of), st)  # newest is good
     assert fresh_bad.signal < 0 < fresh_good.signal
     assert fresh_bad.signal == pytest.approx(-fresh_good.signal)
 
@@ -177,11 +190,17 @@ def test_sentiment_analyst_signal_follows_the_posts_and_fades_extremes():
     sa = SentimentAnalyst(None, CFG)
 
     def facts(mean, recent=None, rsi=50.0, posts=10):
-        return {"posts": posts, "mean_post_sentiment": mean, "recent_post_sentiment": mean if recent is None else recent,
-                "bullish_share": 0.5, "rsi14": rsi}
+        return {
+            "posts": posts,
+            "mean_post_sentiment": mean,
+            "recent_post_sentiment": mean if recent is None else recent,
+            "bullish_share": 0.5,
+            "rsi14": rsi,
+        }
+
     assert sa.rules(facts(0.8), st).signal > 0.3
     assert sa.rules(facts(-0.8), st).signal < -0.3
-    assert sa.rules(facts(0.2, recent=0.6), st).signal > sa.rules(facts(0.2, recent=-0.2), st).signal   # improving
+    assert sa.rules(facts(0.2, recent=0.6), st).signal > sa.rules(facts(0.2, recent=-0.2), st).signal  # improving
     # RSI extremes are contrarian, and on their own give a view even with no posts
     euphoria = sa.rules({"posts": 0, "rsi14": 85.0}, st)
     capitulation = sa.rules({"posts": 0, "rsi14": 15.0}, st)
@@ -197,15 +216,15 @@ def test_fundamentals_analyst_orders_cheap_growing_above_rich_shrinking():
     bad = fa.rules({**base, "pe_ratio": 40.0, "revenue_growth_yoy": -0.3, "eps_surprise": -0.05, "insider_net_buying": -3}, st)
     assert good.signal > 0.3 and bad.signal < -0.3
     # each term alone moves the score the right way
-    only = lambda **kv: fa.rules({**base, **kv}, st).signal                                  # noqa: E731
+    only = lambda **kv: fa.rules({**base, **kv}, st).signal  # noqa: E731
     assert only(pe_ratio=10.0) > only(pe_ratio=22.0) > only(pe_ratio=40.0)
-    assert only(pe_ratio=-5.0) < only(pe_ratio=22.0)                       # negative earnings
+    assert only(pe_ratio=-5.0) < only(pe_ratio=22.0)  # negative earnings
     assert only(revenue_growth_yoy=0.3) > only(revenue_growth_yoy=-0.3)
     assert only(eps_surprise=0.05) > only(eps_surprise=-0.05)
     assert only(insider_net_buying=2) > only(insider_net_buying=-2)
     assert only(debt_to_equity=3.0) < only(debt_to_equity=0.5)
     assert only(fcf_yield=0.08) > only(fcf_yield=-0.02)
-    assert fa.rules({"report_period_end": "2023-12-31"}, st).abstained    # nothing numeric -> no view
+    assert fa.rules({"report_period_end": "2023-12-31"}, st).abstained  # nothing numeric -> no view
 
 
 def test_fundamentals_analyst_skips_stale_windows_and_abstains_on_a_stale_report():
@@ -214,10 +233,19 @@ def test_fundamentals_analyst_skips_stale_windows_and_abstains_on_a_stale_report
     2017-05-03) was scored at full strength, and a report months old scored like a fresh one."""
     st = _state(100 + np.arange(60.0))
     fa = FundamentalsAnalyst(None, CFG)
-    base = {"report_period_end": "2019-12-31", "filed": "2020-02-24", "lag_days": 7, "pe_ratio": 40.0, "sector_pe": None,
-            "revenue_growth_yoy": -0.0325, "net_margin": 0.2, "debt_to_equity": 0.5, "fcf_yield": 0.03}
+    base = {
+        "report_period_end": "2019-12-31",
+        "filed": "2020-02-24",
+        "lag_days": 7,
+        "pe_ratio": 40.0,
+        "sector_pe": None,
+        "revenue_growth_yoy": -0.0325,
+        "net_margin": 0.2,
+        "debt_to_equity": 0.5,
+        "fcf_yield": 0.03,
+    }
     ref = fa.rules(base, st)
-    term = lambda **kv: fa.rules({**base, **kv}, st)                                        # noqa: E731
+    term = lambda **kv: fa.rules({**base, **kv}, st)  # noqa: E731
     # a window one quarter behind is scored as before; more than STALE_WINDOW_DAYS behind is not
     assert term(revenue_period_end="2019-09-30").signal == pytest.approx(ref.signal)
     stale = term(revenue_period_end="2019-06-28")
@@ -226,12 +254,15 @@ def test_fundamentals_analyst_skips_stale_windows_and_abstains_on_a_stale_report
     assert any(p.startswith("Revenue growth not scored") and "2019-06-28" in p and "186 days" in p for p in stale.key_points)
     assert "revenue figures through 2019-06-28" in stale.summary
     # P/E (positive or negative), margin and FCF each key off their own window
-    assert term(eps_period_end="2019-03-31").signal == pytest.approx(ref.signal)             # no benchmark: P/E was text only
+    assert term(eps_period_end="2019-03-31").signal == pytest.approx(ref.signal)  # no benchmark: P/E was text only
     assert term(eps_period_end="2019-03-31", sector_pe=22.0).signal == pytest.approx(ref.signal)
     assert term(sector_pe=22.0).signal < ref.signal
     assert term(pe_ratio=-1.0, eps_period_end="2019-03-31").signal == pytest.approx(ref.signal)
     assert term(pe_ratio=-1.0).signal == pytest.approx(ref.signal - 0.1)
-    assert any("P/E not scored" in p and "EPS through 2019-03-31" not in p for p in term(pe_ratio=-1.0, eps_period_end="2019-03-31").key_points)
+    assert any(
+        "P/E not scored" in p and "EPS through 2019-03-31" not in p
+        for p in term(pe_ratio=-1.0, eps_period_end="2019-03-31").key_points
+    )
     assert term(net_income_period_end="2019-06-30").signal == pytest.approx(ref.signal - 0.15 * math.tanh(0.2 / 0.15))
     assert term(ocf_period_end="2018-12-31").signal == pytest.approx(ref.signal - 0.15 * math.tanh(0.03 / 0.05))
     assert "cash flow through 2018-12-31" in term(ocf_period_end="2018-12-31").summary
@@ -240,8 +271,13 @@ def test_fundamentals_analyst_skips_stale_windows_and_abstains_on_a_stale_report
     old = term(lag_days=121)
     assert old.abstained and "121 days old" in old.summary
     # every term stale: nothing to score
-    allstale = term(revenue_period_end="2019-06-28", eps_period_end="2019-06-28", net_income_period_end="2019-06-28",
-                    ocf_period_end="2019-06-28", debt_to_equity=None)
+    allstale = term(
+        revenue_period_end="2019-06-28",
+        eps_period_end="2019-06-28",
+        net_income_period_end="2019-06-28",
+        ocf_period_end="2019-06-28",
+        debt_to_equity=None,
+    )
     assert allstale.abstained and "Revenue growth not scored" in allstale.summary
     # the report's age alone is not a fundamental
     assert fa.rules({"report_period_end": "2019-12-31", "filed": "2020-02-24", "lag_days": 7}, st).abstained
@@ -249,11 +285,18 @@ def test_fundamentals_analyst_skips_stale_windows_and_abstains_on_a_stale_report
     syn = SyntheticProvider(CFG).fundamentals(st.instrument, st.as_of)
     assert not any(k.endswith("_period_end") for k in syn if k != "report_period_end") and "lag_days" not in syn
     r = fa.rules(syn, st)
-    expected = (clip((22.0 - syn["pe_ratio"]) / 22.0, -0.3, 0.3) + 0.3 * math.tanh(syn["revenue_growth_yoy"] / 0.15)
-                + 0.15 * math.tanh(syn["net_margin"] / 0.15) - (0.15 if syn["debt_to_equity"] > 2 else 0.0)
-                + 0.15 * math.tanh(syn["fcf_yield"] / 0.05) + 0.15 * math.tanh(syn["eps_surprise"] / 0.05)
-                + 0.05 * np.sign(syn["insider_net_buying"]))
-    assert not r.abstained and r.signal == pytest.approx(clip(expected, -1, 1)) and not any("not scored" in p for p in r.key_points)
+    expected = (
+        clip((22.0 - syn["pe_ratio"]) / 22.0, -0.3, 0.3)
+        + 0.3 * math.tanh(syn["revenue_growth_yoy"] / 0.15)
+        + 0.15 * math.tanh(syn["net_margin"] / 0.15)
+        - (0.15 if syn["debt_to_equity"] > 2 else 0.0)
+        + 0.15 * math.tanh(syn["fcf_yield"] / 0.05)
+        + 0.15 * math.tanh(syn["eps_surprise"] / 0.05)
+        + 0.05 * np.sign(syn["insider_net_buying"])
+    )
+    assert (
+        not r.abstained and r.signal == pytest.approx(clip(expected, -1, 1)) and not any("not scored" in p for p in r.key_points)
+    )
 
 
 def test_macro_analyst_follows_carry_and_fades_inflation_and_stretch():
@@ -262,17 +305,21 @@ def test_macro_analyst_follows_carry_and_fades_inflation_and_stretch():
 
     def facts(rate_diff, **kv):
         return {"rate_diff": rate_diff, "base_rate": 2.0 + rate_diff, "quote_rate": 2.0, **kv}
+
     assert ma.rules(facts(3.0), st).signal > 0.3 and ma.rules(facts(-3.0), st).signal < -0.3
     assert "favours long" in ma.rules(facts(3.0), st).key_points[0]
-    assert ma.rules(facts(0.0, base_inflation=6.0, quote_inflation=2.0), st).signal < 0     # PPP drag on USD
+    assert ma.rules(facts(0.0, base_inflation=6.0, quote_inflation=2.0), st).signal < 0  # PPP drag on USD
     assert ma.rules(facts(0.0, base_inflation=2.0, quote_inflation=6.0), st).signal > 0
-    assert ma.rules(facts(0.0, deviation_from_200d=0.1), st).signal < 0 < ma.rules(facts(0.0, deviation_from_200d=-0.1), st).signal
+    assert (
+        ma.rules(facts(0.0, deviation_from_200d=0.1), st).signal < 0 < ma.rules(facts(0.0, deviation_from_200d=-0.1), st).signal
+    )
     assert ma.rules({"base_rate": 1.0}, st).abstained
 
 
 def test_pipeline_news_and_social_tone_move_the_debate_the_same_way():
     """Flip the whole synthetic feed's tone on one date: the news and sentiment reports must
     flip sign and the research debate must lean the same way as the feed."""
+
     class Toned(SyntheticProvider):
         tone = 1.0
 
@@ -298,6 +345,7 @@ def test_sentiment_without_posts_or_extremes_abstains():
     class NoSocial(SyntheticProvider):
         def social(self, *a, **k):
             return []
+
     st = _state(100 + np.sin(np.arange(120.0)))
     rep = SentimentAnalyst(None, CFG).run(st, NoSocial(CFG))
     assert rep.abstained and rep.signal == 0.0
@@ -314,9 +362,10 @@ def test_abstaining_analyst_makes_no_llm_call():
     class NoNews(SyntheticProvider):
         def news(self, *a, **k):
             return []
+
     graph(llm=Spy(), provider=NoNews(CFG)).propagate("AAPL", "2024-03-01")
     assert not any("News Analyst" in s for s in calls)
-    assert len(calls) == 13          # 14 at default rounds, minus the silent news analyst
+    assert len(calls) == 13  # 14 at default rounds, minus the silent news analyst
 
 
 # ------------------------------------------------------ protective levels
@@ -325,17 +374,20 @@ def test_protective_levels_directions():
     assert protective_levels(1, 100, 2, risk) == (96, 106)
     assert protective_levels(-1, 100, 2, risk) == (104, 94)
     assert protective_levels(0, 100, 2, risk) == (None, None)
-    assert protective_levels(-1, 5, 2, risk)[1] is None      # target below zero -> none
+    assert protective_levels(-1, 5, 2, risk)[1] is None  # target below zero -> none
 
 
-@pytest.mark.parametrize("d,stop,take,expected", [
-    (1, 95, 110, (95, 110)),        # sane long
-    (1, 105, 110, (96, 110)),       # stop above a long's entry -> ATR stop
-    (1, 95, 90, (95, 106)),         # target below a long's entry -> ATR target
-    (-1, 104, 90, (104, 90)),       # sane short
-    (-1, 95, 90, (104, 90)),        # short stop below entry -> ATR stop
-    (0, 95, 110, (None, None)),     # flat has no levels
-])
+@pytest.mark.parametrize(
+    "d,stop,take,expected",
+    [
+        (1, 95, 110, (95, 110)),  # sane long
+        (1, 105, 110, (96, 110)),  # stop above a long's entry -> ATR stop
+        (1, 95, 90, (95, 106)),  # target below a long's entry -> ATR target
+        (-1, 104, 90, (104, 90)),  # sane short
+        (-1, 95, 90, (104, 90)),  # short stop below entry -> ATR stop
+        (0, 95, 110, (None, None)),  # flat has no levels
+    ],
+)
 def test_sane_levels(d, stop, take, expected):
     fb = protective_levels(d, 100, 2, CFG["risk"])
     assert sane_levels(d, 100, stop, take, fb) == expected
@@ -343,8 +395,14 @@ def test_sane_levels(d, stop, take, expected):
 
 # ------------------------------------------------------------- guardrails
 def _facts(**over):
-    f = {"max_position": 1.0, "max_var_95": 0.02, "var_95_1d": 0.01, "short_selling_allowed": True,
-         "rebalance_band": 0.10, "atr14": 2.0}
+    f = {
+        "max_position": 1.0,
+        "max_var_95": 0.02,
+        "var_95_1d": 0.01,
+        "short_selling_allowed": True,
+        "rebalance_band": 0.10,
+        "atr14": 2.0,
+    }
     f.update(over)
     return f
 
@@ -355,15 +413,15 @@ def test_guardrail_order_and_zero_var():
     assert pm.guardrails(3.0, _facts())[0] == 1.0
     w, notes = pm.guardrails(1.0, _facts(var_95_1d=0.04))
     assert w == pytest.approx(0.5) and "VaR" in notes[0]
-    assert pm.guardrails(0.8, _facts(var_95_1d=0.0))[0] == 0.8   # flat history: no VaR division
-    assert pm.guardrails(0.03, _facts())[0] == 0.0                  # below min trade size
+    assert pm.guardrails(0.8, _facts(var_95_1d=0.0))[0] == 0.8  # flat history: no VaR division
+    assert pm.guardrails(0.03, _facts())[0] == 0.0  # below min trade size
 
 
 def test_no_trade_band_keeps_position_only_when_legal():
     pm = PortfolioManager(None, CFG)
     assert pm.no_trade_band(0.55, 0.50, _facts())[0] == 0.50
-    assert pm.no_trade_band(0.70, 0.50, _facts())[0] == 0.70           # outside the band
-    assert pm.no_trade_band(0.45, None, _facts())[0] == 0.45            # no current position
+    assert pm.no_trade_band(0.70, 0.50, _facts())[0] == 0.70  # outside the band
+    assert pm.no_trade_band(0.45, None, _facts())[0] == 0.45  # no current position
     # Holding 0.40 would breach today's VaR cap (0.06 * 0.40 = 2.4% > 2%), so the band
     # must not keep it even though the new target is within 0.10 of it.
     assert pm.no_trade_band(0.33, 0.40, _facts(var_95_1d=0.06))[0] == 0.33
@@ -373,13 +431,13 @@ def test_no_trade_band_keeps_position_only_when_legal():
 def test_band_in_pipeline_keeps_nearby_position():
     free = graph(make_config(CFG, risk={"rebalance_band": 0.0}))
     _, d0 = free.propagate("AAPL", "2024-03-01")
-    held = round(d0.target_weight - 0.04, 4)            # a position 0.04 away from the new target
+    held = round(d0.target_weight - 0.04, 4)  # a position 0.04 away from the new target
     banded = graph(make_config(CFG, risk={"rebalance_band": 0.10}))
     _, d1 = banded.propagate("AAPL", "2024-03-01", current_weight=held)
     assert d1.target_weight == held
     assert any("no-trade band" in a for a in d1.adjustments)
     _, d2 = banded.propagate("AAPL", "2024-03-01", current_weight=round(d0.target_weight - 0.3, 4))
-    assert d2.target_weight == d0.target_weight          # too far away: trade to the target
+    assert d2.target_weight == d0.target_weight  # too far away: trade to the target
 
 
 def test_current_weight_must_be_finite():
@@ -390,13 +448,14 @@ def test_current_weight_must_be_finite():
 # ----------------------------------------------------- strategic weight
 def test_neutral_weight_holds_benchmark_when_no_view():
     from agentic_trader.config import RULES_V03
-    cfg = make_config(CFG, decision_threshold=5.0)   # no score can clear it -> no view
+
+    cfg = make_config(CFG, decision_threshold=5.0)  # no score can clear it -> no view
     _, d = graph(cfg).propagate("AAPL", "2024-03-01")
     _, d_fx = graph(cfg).propagate("EURUSD", "2024-03-01")
-    assert d.target_weight > 0          # equities: strategic long (after risk sizing)
-    assert d_fx.target_weight < 0       # FX (v0.5.1): the carry side, here short EUR (USD yields more)
+    assert d.target_weight > 0  # equities: strategic long (after risk sizing)
+    assert d_fx.target_weight < 0  # FX (v0.5.1): the carry side, here short EUR (USD yields more)
     _, flat = graph(make_config(cfg, **RULES_V03)).propagate("EURUSD", "2024-03-01")
-    assert flat.target_weight == 0.0    # v0.3 rules: FX flat without a view
+    assert flat.target_weight == 0.0  # v0.3 rules: FX flat without a view
 
 
 def test_v02_rules_reproduce_published_decision():
@@ -442,15 +501,23 @@ def test_injected_model_cannot_breach_limits():
             if "Trader." in system:
                 # Numbers, but each one is absurd: since v0.17 R0.4 the schema ranges make
                 # this a contract rejection (rules apply), not a clip to the nearest bound.
-                return json.dumps({"action": "buy", "target_weight": 1e9, "stop_loss": -5,
-                                   "take_profit": 1e12, "horizon_days": 10**9, "rationale": "x"})
+                return json.dumps(
+                    {
+                        "action": "buy",
+                        "target_weight": 1e9,
+                        "stop_loss": -5,
+                        "take_profit": 1e12,
+                        "horizon_days": 10**9,
+                        "rationale": "x",
+                    }
+                )
             return None
-    st, d = graph(make_config(CFG, risk={"max_position": 0.3}), llm=Hijacked()).propagate(
-        "NVDA", "2024-03-01")
+
+    st, d = graph(make_config(CFG, risk={"max_position": 0.3}), llm=Hijacked()).propagate("NVDA", "2024-03-01")
     assert 0 <= d.target_weight <= 0.3 and d.confidence <= 1
     assert st.proposal.source == "rules" and d.source == "rules"
     assert st.proposal.horizon_days != 10**9 and st.proposal.stop_loss is not None
-    assert st.proposal.stop_loss < st.last_price           # a sane long stop replaced the -5
+    assert st.proposal.stop_loss < st.last_price  # a sane long stop replaced the -5
 
 
 # ------------------------------------------------------------ call budget
@@ -461,6 +528,7 @@ def test_budgeted_llm_caps_calls_and_falls_back():
         def complete(self, *a, **k):
             Counter.n += 1
             return None
+
     b = BudgetedLLM(Counter(), 5)
     graph(llm=b).propagate("AAPL", "2024-03-01")
     assert Counter.n == 5 and b.calls == 5 and b.refused > 0 and b.exhausted
@@ -470,6 +538,7 @@ def test_max_llm_calls_config_wraps_any_llm():
     class Quiet:
         def complete(self, *a, **k):
             return None
+
     g = graph(make_config(CFG, max_llm_calls=0), llm=Quiet())
     assert isinstance(g.llm, BudgetedLLM)
     _, d = g.propagate("AAPL", "2024-03-01")

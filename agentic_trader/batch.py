@@ -18,6 +18,7 @@ NEVER RUN AGAINST THE LIVE API (review 2026-11-09, section d): ``BatchLLM`` and
 ``AnthropicBatchBackend`` are tested only against ``FakeBatchBackend``. No funded batch has
 been submitted. Frozen until one is; see the box in ``llm.py``.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -41,6 +42,7 @@ _RETRYABLE_ERRORS = {"overloaded_error", "api_error", "rate_limit_error", "timeo
 class Outcome:
     """One request's batch result. ``text`` is set only for ``succeeded`` (and may still be
     ``None`` after a refusal); ``retryable`` marks an ``errored`` result worth resubmitting."""
+
     type: str
     text: str | None = None
     retryable: bool = False
@@ -55,8 +57,7 @@ class BatchBackend(Protocol):
 class RequestBuilder(Protocol):
     """What ``BatchLLM`` needs from the direct backend (``AnthropicLLM`` satisfies it)."""
 
-    def build_request(self, system: str, prompt: str, *, deep: bool,
-                      schema: dict[str, Any] | None = None) -> dict[str, Any]: ...
+    def build_request(self, system: str, prompt: str, *, deep: bool, schema: dict[str, Any] | None = None) -> dict[str, Any]: ...
 
 
 def custom_id(system: str, prompt: str, *, deep: bool, schema: dict[str, Any] | None) -> str:
@@ -75,15 +76,14 @@ class BatchLLM:
     retries spent) stays ``None``: the agents use rules for it on every later pass.
     """
 
-    def __init__(self, inner: RequestBuilder | None, backend: BatchBackend, store_path: str | Path,
-                 *, max_resubmits: int = 2):
+    def __init__(self, inner: RequestBuilder | None, backend: BatchBackend, store_path: str | Path, *, max_resubmits: int = 2):
         self.inner = inner
         self.backend = backend
         self.store_path = Path(store_path)
         self.max_resubmits = max_resubmits
         self.incomplete = False
         self.submissions = 0
-        self.misses = 0   # lookups answered None because no result is held yet (read by run_jobs)
+        self.misses = 0  # lookups answered None because no result is held yet (read by run_jobs)
         self.summary: dict[str, int] = {"succeeded": 0, "resubmitted": 0, "failed": 0, "from_store": 0}
         self._lock = threading.Lock()
         self._results: dict[str, str | None] = {}
@@ -108,9 +108,11 @@ class BatchLLM:
             if cid in self._results:
                 return self._results[cid]
             if cid not in self._queue:
-                self._queue[cid] = (self.inner.build_request(system, prompt, deep=deep, schema=schema)
-                                    if self.inner is not None else
-                                    {"system": system, "prompt": prompt, "deep": deep, "schema": schema})
+                self._queue[cid] = (
+                    self.inner.build_request(system, prompt, deep=deep, schema=schema)
+                    if self.inner is not None
+                    else {"system": system, "prompt": prompt, "deep": deep, "schema": schema}
+                )
             self.incomplete = True
             self.misses += 1
             return None
@@ -136,7 +138,7 @@ class BatchLLM:
         outcomes = self.backend.run(pending)
         with self._lock:
             for cid, params in pending.items():
-                out = outcomes.get(cid, Outcome(EXPIRED))   # a missing result is treated as expired
+                out = outcomes.get(cid, Outcome(EXPIRED))  # a missing result is treated as expired
                 if out.type == SUCCEEDED:
                     self.summary["succeeded"] += 1
                     self._record(cid, out.text)
@@ -173,8 +175,9 @@ class PassPending(Exception):
     """Raised by a job's ``stop`` check to end that job's pass early (see ``run_jobs``)."""
 
 
-def run_jobs(llm: BatchLLM, jobs: Sequence[Callable[[Callable[[], bool]], T]],
-             max_passes: int = 64, *, stop_at_pending: bool = False) -> list[T]:
+def run_jobs(
+    llm: BatchLLM, jobs: Sequence[Callable[[Callable[[], bool]], T]], max_passes: int = 64, *, stop_at_pending: bool = False
+) -> list[T]:
     """Batch-friendly driver (plan item 1.5b): independent jobs advance together, one batch per pass.
 
     Each job (one instrument, or one rebalance offset of one instrument) keeps its dates in
@@ -210,10 +213,19 @@ def run_jobs(llm: BatchLLM, jobs: Sequence[Callable[[Callable[[], bool]], T]],
     raise RuntimeError(f"batched jobs did not converge in {max_passes} passes")
 
 
-def walk_forward_jobs(llm: BatchLLM, symbols: Sequence[str], start: Any, end: Any,
-                      config: dict | None = None, *, rebalance_every: int = 5,
-                      offsets: Sequence[int] = (0,), stop_at_pending: bool = False,
-                      max_passes: int = 64, **kwargs: Any) -> list[Any]:
+def walk_forward_jobs(
+    llm: BatchLLM,
+    symbols: Sequence[str],
+    start: Any,
+    end: Any,
+    config: dict | None = None,
+    *,
+    rebalance_every: int = 5,
+    offsets: Sequence[int] = (0,),
+    stop_at_pending: bool = False,
+    max_passes: int = 64,
+    **kwargs: Any,
+) -> list[Any]:
     """``run_agent_backtest`` for every (symbol, offset) pair through ``run_jobs``.
 
     Returns ``ComparisonReport`` objects in (symbol, offset) order; each equals the report a
@@ -222,10 +234,11 @@ def walk_forward_jobs(llm: BatchLLM, symbols: Sequence[str], start: Any, end: An
     from .backtest import run_agent_backtest
 
     def job(sym: str, off: int) -> Callable[[Callable[[], bool]], Any]:
-        return lambda stop: run_agent_backtest(sym, start, end, config, rebalance_every=rebalance_every,
-                                               llm=llm, rebalance_offset=off, stop_check=stop, **kwargs)
-    return run_jobs(llm, [job(s, o) for s in symbols for o in offsets], max_passes,
-                    stop_at_pending=stop_at_pending)
+        return lambda stop: run_agent_backtest(
+            sym, start, end, config, rebalance_every=rebalance_every, llm=llm, rebalance_offset=off, stop_check=stop, **kwargs
+        )
+
+    return run_jobs(llm, [job(s, o) for s in symbols for o in offsets], max_passes, stop_at_pending=stop_at_pending)
 
 
 class FakeBatchBackend:
@@ -256,8 +269,14 @@ class AnthropicBatchBackend:
     booked exactly as for a direct call). Polls ``retrieve`` every ``poll_s`` seconds through
     the injectable ``sleep`` until ``processing_status == "ended"``."""
 
-    def __init__(self, client: Any, read: Callable[[Any, str], str | None], *,
-                 poll_s: float = 30.0, sleep: Callable[[float], None] = time.sleep):
+    def __init__(
+        self,
+        client: Any,
+        read: Callable[[Any, str], str | None],
+        *,
+        poll_s: float = 30.0,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         self.client = client
         self.read = read
         self.poll_s = poll_s

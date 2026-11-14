@@ -7,9 +7,7 @@ from pathlib import Path
 
 import pytest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "gen_counts", Path(__file__).resolve().parent.parent / "scripts" / "gen_counts.py"
-)
+_SPEC = importlib.util.spec_from_file_location("gen_counts", Path(__file__).resolve().parent.parent / "scripts" / "gen_counts.py")
 assert _SPEC is not None and _SPEC.loader is not None
 gc = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(gc)
@@ -20,9 +18,7 @@ def _repo(tmp: Path, readme: str) -> Path:
     (tmp / "LEARN.md").write_text("# L\n## 1. a\n## 2. b\n## Not numbered\n", encoding="utf-8")
     (tmp / "COOKBOOK.md").write_text("### r1\n### r2\n### r3\n", encoding="utf-8")
     (tmp / "docs" / "DIAGRAMS.md").write_text("```mermaid\n```\n", encoding="utf-8")
-    (tmp / "docs" / "threat-model" / "threat-model.md").write_text(
-        "| T1 | x |\n| T2 | y |\n| T2 | again |\n", encoding="utf-8"
-    )
+    (tmp / "docs" / "threat-model" / "threat-model.md").write_text("| T1 | x |\n| T2 | y |\n| T2 | again |\n", encoding="utf-8")
     (tmp / "README.md").write_bytes(readme.encode("utf-8"))
     return tmp
 
@@ -37,8 +33,7 @@ def test_cheap_counts(tmp_path: Path) -> None:
 def test_coverage_from_xml(tmp_path: Path) -> None:
     xml = tmp_path / "coverage.xml"
     xml.write_text(
-        '<coverage lines-valid="1000" lines-covered="950" branches-valid="200"'
-        ' branches-covered="180"/>',
+        '<coverage lines-valid="1000" lines-covered="950" branches-valid="200" branches-covered="180"/>',
         encoding="utf-8",
     )
     got = gc.coverage_counts(xml)

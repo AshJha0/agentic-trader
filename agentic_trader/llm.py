@@ -21,6 +21,7 @@ one backtest per instrument against a single client and a single call budget.
 | project publishes comes from the local Ollama path (``local_llm.py``).               |
 +--------------------------------------------------------------------------------------+
 """
+
 from __future__ import annotations
 
 import json
@@ -41,13 +42,11 @@ log = logging.getLogger(__name__)
 # NEVER RUN AGAINST THE LIVE API (see the module box). Server-side refusal fallback, ``fallbacks: "default"`` form (beta header below): the API
 # re-runs a declined request on a model it picks by refusal category. Families that accept it
 # on the Claude API; matched by family like the tables below. Claude Haiku 5.5 has none.
-REFUSAL_FALLBACK_FAMILIES = frozenset({"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5",
-                                       "claude-sonnet-5-5"})
+REFUSAL_FALLBACK_FAMILIES = frozenset({"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"})
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Families on which a forced ``tool_choice`` (``any`` / ``tool``) returns a 400. The desk never
 # forces a tool: JSON contracts go through ``output_config.format`` instead.
-NO_FORCED_TOOL_CHOICE = frozenset({"claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5",
-                                   "claude-sonnet-5-5"})
+NO_FORCED_TOOL_CHOICE = frozenset({"claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5", "claude-sonnet-5-5"})
 
 # NEVER RUN AGAINST THE LIVE API (see the module box). USD per million tokens (input, output), first-party API list prices. Cache reads
 # are billed at 0.1x input and cache writes at 1.25x input. Update when prices change.
@@ -64,7 +63,7 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet-5-5": (2.0, 10.0),
     "claude-sonnet-5": (2.0, 10.0),
     "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-haiku-5-5": (0.10, 0.50),   # prompts up to 100K tokens; $0.50 / $2.50 beyond
+    "claude-haiku-5-5": (0.10, 0.50),  # prompts up to 100K tokens; $0.50 / $2.50 beyond
     "claude-haiku-4-5": (1.0, 5.0),
 }
 
@@ -162,8 +161,9 @@ def request_shape(model: str, effort: str, max_tokens: int) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"model": model, "max_tokens": int(max_tokens)}
     fam = _family(model, MODEL_CAPABILITIES)
     if fam is None:
-        _warn_once(f"family:{model}", "model %r is not in MODEL_CAPABILITIES; sending a plain "
-                   "request without thinking or effort", model)
+        _warn_once(
+            f"family:{model}", "model %r is not in MODEL_CAPABILITIES; sending a plain request without thinking or effort", model
+        )
         return kwargs
     thinking, efforts = MODEL_CAPABILITIES[fam]
     if thinking == "adaptive":
@@ -174,8 +174,7 @@ def request_shape(model: str, effort: str, max_tokens: int) -> dict[str, Any]:
             rank = EFFORT_LEVELS.index(want)
             lower = [e for e in efforts if EFFORT_LEVELS.index(e) <= rank]
             want = max(lower, key=EFFORT_LEVELS.index) if lower else min(efforts, key=EFFORT_LEVELS.index)
-            _warn_once(f"effort:{model}:{effort}", "model %r does not take effort %r; using %r",
-                       model, effort, want)
+            _warn_once(f"effort:{model}:{effort}", "model %r does not take effort %r; using %r", model, effort, want)
         kwargs["output_config"] = {"effort": want}
     return kwargs
 
@@ -253,7 +252,8 @@ def retry_after_seconds(error: Any) -> float | None:
                 wait = float(raw)
             except ValueError:
                 from email.utils import parsedate_to_datetime
-                wait = (parsedate_to_datetime(str(raw)).timestamp() - time.time())
+
+                wait = parsedate_to_datetime(str(raw)).timestamp() - time.time()
     except (TypeError, ValueError, AttributeError):
         return None
     if not math.isfinite(wait) or wait < 0 or wait > MAX_RETRY_AFTER_S:
@@ -265,6 +265,7 @@ class LLM(Protocol):
     """What every model backend implements. A backend may also offer
     ``complete_json(system, prompt, *, deep, schema)`` (structured outputs) and ``last_call``
     (per-call evidence); callers use them when present and fall back to ``complete``."""
+
     def complete(self, system: str, prompt: str, *, deep: bool) -> str | None: ...
 
 
@@ -282,20 +283,25 @@ class ModelUsage:
         if price is None:
             return None
         pin, pout = price
-        return (self.input_tokens * pin + self.output_tokens * pout
-                + self.cache_read_tokens * pin * 0.1 + self.cache_write_tokens * pin * 1.25) / 1e6
+        return (
+            self.input_tokens * pin
+            + self.output_tokens * pout
+            + self.cache_read_tokens * pin * 0.1
+            + self.cache_write_tokens * pin * 1.25
+        ) / 1e6
 
 
 @dataclass
 class UsageTracker:
     """Thread-safe token and outcome accounting, keyed by the model that served each call."""
+
     by_model: dict[str, ModelUsage] = field(default_factory=dict)
     refusals: int = 0
     errors: int = 0
     empty: int = 0
     timeouts: int = 0
-    fallbacks: int = 0      # replies finished by a server-side fallback model
-    model_drift: int = 0    # replies served by an unexpected model with no fallback recorded
+    fallbacks: int = 0  # replies finished by a server-side fallback model
+    model_drift: int = 0  # replies served by an unexpected model with no fallback recorded
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add(self, model: str, usage: Any) -> None:
@@ -350,15 +356,21 @@ class UsageTracker:
     def summary(self) -> dict[str, Any]:
         with self._lock:
             return {
-                "calls": self._calls(), "refusals": self.refusals, "errors": self.errors,
-                "empty_replies": self.empty, "timeouts": self.timeouts,
-                "fallbacks": self.fallbacks, "model_drift": self.model_drift,
+                "calls": self._calls(),
+                "refusals": self.refusals,
+                "errors": self.errors,
+                "empty_replies": self.empty,
+                "timeouts": self.timeouts,
+                "fallbacks": self.fallbacks,
+                "model_drift": self.model_drift,
                 "cache_read_tokens": sum(u.cache_read_tokens for u in self.by_model.values()),
                 "cache_write_tokens": sum(u.cache_write_tokens for u in self.by_model.values()),
                 "cost_usd": round(self._cost_usd(), 4),
                 "unpriced_models": self._unpriced_models(),
-                "by_model": {m: {**u.__dict__, "cost_usd": None if (c := u.cost(m)) is None else round(c, 4)}
-                             for m, u in self.by_model.items()},
+                "by_model": {
+                    m: {**u.__dict__, "cost_usd": None if (c := u.cost(m)) is None else round(c, 4)}
+                    for m, u in self.by_model.items()
+                },
             }
 
 
@@ -376,8 +388,7 @@ class AnthropicLLM:
                 raise ValueError(f"{key}: {e}") from None
         self.max_retries = _whole_number(config, "llm_max_retries", 2, 0)
         self.retry_backoff_s = _seconds(config, "llm_retry_backoff_s", 0.5)
-        self.reserve_output_tokens = _whole_number(config, "llm_reserve_output_tokens",
-                                                   DEFAULT_RESERVE_OUTPUT_TOKENS, 1)
+        self.reserve_output_tokens = _whole_number(config, "llm_reserve_output_tokens", DEFAULT_RESERVE_OUTPUT_TOKENS, 1)
         self.budget_mode = str(config.get("llm_budget_mode", "hard"))
         if self.budget_mode not in BUDGET_MODES:
             raise ValueError(f"llm_budget_mode must be one of {BUDGET_MODES}, got {config.get('llm_budget_mode')!r}")
@@ -401,9 +412,9 @@ class AnthropicLLM:
         return self.config["deep_think_llm" if deep else "quick_think_llm"]
 
     def _request(self, deep: bool) -> dict[str, Any]:
-        return request_shape(self.model_for(deep),
-                             self.config["deep_effort" if deep else "quick_effort"],
-                             self.config["max_tokens"])
+        return request_shape(
+            self.model_for(deep), self.config["deep_effort" if deep else "quick_effort"], self.config["max_tokens"]
+        )
 
     def count_input_tokens(self, deep: bool, system: str, prompt: str) -> int:
         """NEVER RUN AGAINST THE LIVE API. Input tokens of one request: the ``count_tokens`` endpoint (free, no spend) when
@@ -415,15 +426,16 @@ class AnthropicLLM:
         if remote:
             try:
                 r = self.client.messages.count_tokens(
-                    model=self.model_for(deep), system=self._system_blocks(system),  # type: ignore[arg-type,unused-ignore]  # SDK accepts cache_control blocks
-                    messages=[{"role": "user", "content": prompt}])
+                    model=self.model_for(deep),
+                    system=self._system_blocks(system),  # type: ignore[arg-type,unused-ignore]  # SDK accepts cache_control blocks
+                    messages=[{"role": "user", "content": prompt}],
+                )
                 return int(r.input_tokens)
             except Exception as e:  # noqa: BLE001 - counting is advisory, the estimate is safe
                 _warn_once("count_tokens", "count_tokens failed (%s); using the local estimate", e)
         return estimate_tokens(system, prompt)
 
-    def estimate_cost(self, deep: bool, prompt_chars: int = 0, *, system: str | None = None,
-                      prompt: str | None = None) -> float:
+    def estimate_cost(self, deep: bool, prompt_chars: int = 0, *, system: str | None = None, prompt: str | None = None) -> float:
         """What one call on this tier is reserved at before it is dispatched. Under
         ``llm_budget_mode="hard"`` it is the most the call can cost -- the prompt plus a full
         ``max_tokens`` reply, which is also what a timed-out attempt is billed at -- so the
@@ -450,8 +462,7 @@ class AnthropicLLM:
 
     def _create(self, kwargs: dict[str, Any]) -> Any:
         if self.config.get("use_refusal_fallback") and refusal_fallback_supported(kwargs["model"]):
-            return self.client.beta.messages.create(betas=[_FALLBACK_BETA], extra_body={"fallbacks": "default"},
-                                                    **kwargs)
+            return self.client.beta.messages.create(betas=[_FALLBACK_BETA], extra_body={"fallbacks": "default"}, **kwargs)
         return self.client.messages.create(**kwargs)
 
     def _retry_delay(self, attempt: int) -> float:
@@ -472,14 +483,15 @@ class AnthropicLLM:
         parse failure mode, the contract check stays as the second gate."""
         return self._run(system, prompt, deep=deep, schema=schema)
 
-    def build_request(self, system: str, prompt: str, *, deep: bool,
-                      schema: dict[str, Any] | None = None) -> dict[str, Any]:
+    def build_request(self, system: str, prompt: str, *, deep: bool, schema: dict[str, Any] | None = None) -> dict[str, Any]:
         """The Messages API parameters for one call (also the body of a batch request)."""
         kwargs = self._request(deep)
         kwargs.update(system=self._system_blocks(system), messages=[{"role": "user", "content": prompt}])
         if schema is not None:
-            kwargs["output_config"] = {**kwargs.get("output_config", {}),
-                                       "format": {"type": "json_schema", "schema": api_schema(schema)}}
+            kwargs["output_config"] = {
+                **kwargs.get("output_config", {}),
+                "format": {"type": "json_schema", "schema": api_schema(schema)},
+            }
         return kwargs
 
     def read_response(self, resp: Any, configured: str) -> str | None:
@@ -488,27 +500,36 @@ class AnthropicLLM:
         recorded fallback while ``llm_strict_model`` is on)."""
         served = getattr(resp, "model", None) or configured
         self.usage.add(served, getattr(resp, "usage", None))
-        switches = [{"from": getattr(getattr(b, "from_", None), "model", None),
-                     "to": getattr(getattr(b, "to", None), "model", None)}
-                    for b in (getattr(resp, "content", None) or []) if getattr(b, "type", "") == "fallback"]
+        switches = [
+            {"from": getattr(getattr(b, "from_", None), "model", None), "to": getattr(getattr(b, "to", None), "model", None)}
+            for b in (getattr(resp, "content", None) or [])
+            if getattr(b, "type", "") == "fallback"
+        ]
         details = getattr(resp, "stop_details", None)
         drift = not model_matches(configured, served) and not switches
-        evidence = {"model_configured": configured, "model_served": served,
-                    "stop_reason": getattr(resp, "stop_reason", None),
-                    "refusal_category": getattr(details, "category", None) if details is not None else None,
-                    "fallbacks": switches, "model_drift": drift}
+        evidence = {
+            "model_configured": configured,
+            "model_served": served,
+            "stop_reason": getattr(resp, "stop_reason", None),
+            "refusal_category": getattr(details, "category", None) if details is not None else None,
+            "fallbacks": switches,
+            "model_drift": drift,
+        }
         self._tls.last = evidence
         if switches:
             self.usage.count("fallbacks")
         if drift:
             self.usage.count("model_drift")
-            _warn_once(f"drift:{configured}:{served}", "configured model %r but the API served %r "
-                       "with no fallback recorded", configured, served)
+            _warn_once(
+                f"drift:{configured}:{served}",
+                "configured model %r but the API served %r with no fallback recorded",
+                configured,
+                served,
+            )
             if self.config.get("llm_strict_model", True):
                 return None
         if resp.stop_reason == "refusal":
-            log.warning("model declined the request (category %s); using rule-based fallback",
-                        evidence["refusal_category"])
+            log.warning("model declined the request (category %s); using rule-based fallback", evidence["refusal_category"])
             self.usage.count("refusals")
             return None
         text = "".join(b.text for b in resp.content if b.type == "text").strip()
@@ -535,8 +556,9 @@ class AnthropicLLM:
                 if isinstance(e, a.APITimeoutError):
                     # The server can finish (and bill) a request the client abandoned; an unknown
                     # charge is booked at its maximum, per attempt, whatever a later attempt does.
-                    self.usage.add_estimate(kwargs["model"], max(estimate_tokens(system, prompt), self.min_input_tokens),
-                                           kwargs["max_tokens"])
+                    self.usage.add_estimate(
+                        kwargs["model"], max(estimate_tokens(system, prompt), self.min_input_tokens), kwargs["max_tokens"]
+                    )
                     self.usage.count("timeouts")
                     problem = f"Claude API request timed out (attempt {attempt}, billed at the estimated maximum): {e}"
                 else:
@@ -588,7 +610,7 @@ class BudgetedLLM:
         self.refused = 0
         self.in_flight = 0
         self.reserved_usd = 0.0
-        self._call = threading.local()        # the reservation of the call in flight on each thread
+        self._call = threading.local()  # the reservation of the call in flight on each thread
         self._lock = threading.Lock()
 
     @property
@@ -619,7 +641,7 @@ class BudgetedLLM:
         chars = len(system or "") + len(prompt or "")
         try:
             return float(est(deep, chars, system=system, prompt=prompt))
-        except TypeError:                       # an older LLM whose estimate takes chars or only the tier
+        except TypeError:  # an older LLM whose estimate takes chars or only the tier
             try:
                 return float(est(deep, chars))
             except TypeError:
@@ -645,12 +667,16 @@ class BudgetedLLM:
             u = self.usage
             unpriced = u.unpriced_models if u is not None else []
             if unpriced:
-                return (f"LLM spend budget of ${self.max_cost_usd:.2f} cannot be enforced: calls were "
-                        f"served by unpriced model(s) {unpriced}; treating the budget as exhausted")
+                return (
+                    f"LLM spend budget of ${self.max_cost_usd:.2f} cannot be enforced: calls were "
+                    f"served by unpriced model(s) {unpriced}; treating the budget as exhausted"
+                )
             committed = self.spent_usd + self.reserved_usd + reserve
             if committed >= self.max_cost_usd:
-                return (f"LLM spend budget of ${self.max_cost_usd:.2f} reached (${self.spent_usd:.2f} "
-                        f"spent, ${self.reserved_usd + reserve:.2f} reserved for calls in flight)")
+                return (
+                    f"LLM spend budget of ${self.max_cost_usd:.2f} reached (${self.spent_usd:.2f} "
+                    f"spent, ${self.reserved_usd + reserve:.2f} reserved for calls in flight)"
+                )
         return None
 
     @property
@@ -707,8 +733,10 @@ def budget_llm(llm: LLM, config: dict) -> LLM:
         for key in ("deep_think_llm", "quick_think_llm"):
             model = config.get(key)
             if model and price_for(str(model)) is None:
-                raise ValueError(f"max_llm_cost_usd needs priced model ids: {key}={model!r} is not in "
-                                 f"PRICES_PER_MTOK (known families: {sorted(PRICES_PER_MTOK)})")
+                raise ValueError(
+                    f"max_llm_cost_usd needs priced model ids: {key}={model!r} is not in "
+                    f"PRICES_PER_MTOK (known families: {sorted(PRICES_PER_MTOK)})"
+                )
     if isinstance(llm, BudgetedLLM):
         return llm
     return BudgetedLLM(llm, None if cap is None else int(cap), None if spend is None else float(spend))
@@ -722,6 +750,7 @@ def get_llm(config: dict) -> LLM | None:
         llm: LLM = AnthropicLLM(config)
     elif provider == "local":
         from .local_llm import LocalLLM
+
         llm = LocalLLM(config)
     else:
         raise ValueError(f"unknown llm_provider {provider!r} (use 'offline', 'anthropic' or 'local')")
@@ -751,7 +780,7 @@ def extract_json(text: str | None) -> dict[str, Any] | None:
     candidates = [m.group(1)] if m else []
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end > start:
-        candidates.append(text[start:end + 1])
+        candidates.append(text[start : end + 1])
     for c in candidates:
         try:
             data = json.loads(c, parse_constant=_no_constants)

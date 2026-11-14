@@ -13,6 +13,7 @@ that interpreter and platform (``cp312-cp312-win_amd64``). Otherwise the wheel i
 pure Python (``py3-none-any``), contains no binary, and ``agentic_trader.quant`` warns once
 at import that it is running on the numpy backend.
 """
+
 from __future__ import annotations
 
 import sysconfig
@@ -38,8 +39,10 @@ def native_extension(quant_dir: Path = QUANT_DIR, ext_suffix: str | None = None)
 
 def package_data(quant_dir: Path = QUANT_DIR, ext_suffix: str | None = None) -> dict[str, list[str]]:
     ext = native_extension(quant_dir, ext_suffix)
-    return {"agentic_trader.quant": [ext.name] if ext else [],
-            "agentic_trader.agentic.knowledge": ["docs/*.md", "retrieval_eval/*.json", "eval_set/*.json"]}
+    return {
+        "agentic_trader.quant": [ext.name] if ext else [],
+        "agentic_trader.agentic.knowledge": ["docs/*.md", "retrieval_eval/*.json", "eval_set/*.json"],
+    }
 
 
 def build_cmdclass() -> dict:

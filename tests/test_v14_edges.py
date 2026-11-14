@@ -1,4 +1,5 @@
 """Plan item 5.7: edge-case validators and the conventions they pin (docs/review/PLAN.md section 6)."""
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -16,9 +17,18 @@ from agentic_trader.data import SyntheticProvider
 from agentic_trader.instruments import Instrument
 from agentic_trader.memory import DecisionMemory
 from agentic_trader.stats import sharpe_stats
-from agentic_trader.validate import (BarValidationError, bar_problems, cap_short_notional, common_sessions,
-                                     ledgers_match, read_ledger_csv, require_valid_bars, session_close_utc,
-                                     survivorship_statement, write_ledger_csv)
+from agentic_trader.validate import (
+    BarValidationError,
+    bar_problems,
+    cap_short_notional,
+    common_sessions,
+    ledgers_match,
+    read_ledger_csv,
+    require_valid_bars,
+    session_close_utc,
+    survivorship_statement,
+    write_ledger_csv,
+)
 
 CFG = make_config(memory_path=None)
 
@@ -28,9 +38,16 @@ def _bars(n: int = 40, start: str = "2024-01-02", seed: int = 0) -> pd.DataFrame
     idx = pd.bdate_range(start, periods=n)
     close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
     open_ = close * (1 + rng.normal(0, 0.002, n))
-    return pd.DataFrame({"Open": open_, "High": np.maximum(open_, close) * 1.005,
-                         "Low": np.minimum(open_, close) * 0.995, "Close": close,
-                         "Volume": np.full(n, 1e6)}, index=idx)
+    return pd.DataFrame(
+        {
+            "Open": open_,
+            "High": np.maximum(open_, close) * 1.005,
+            "Low": np.minimum(open_, close) * 0.995,
+            "Close": close,
+            "Volume": np.full(n, 1e6),
+        },
+        index=idx,
+    )
 
 
 # ------------------------------------------------------------------ bar validator
@@ -38,12 +55,15 @@ def test_clean_bars_pass():
     assert bar_problems(_bars(), "equity") == []
 
 
-@pytest.mark.parametrize("row, col, value, reason", [
-    (5, "Close", 0.0, "zero or negative Close"),
-    (6, "Open", -1.0, "zero or negative Open"),
-    (7, "Low", np.nan, "NaN Low"),
-    (8, "High", 1.0, "High below Low"),
-])
+@pytest.mark.parametrize(
+    "row, col, value, reason",
+    [
+        (5, "Close", 0.0, "zero or negative Close"),
+        (6, "Open", -1.0, "zero or negative Open"),
+        (7, "Low", np.nan, "NaN Low"),
+        (8, "High", 1.0, "High below Low"),
+    ],
+)
 def test_bad_prices_refused_with_reason(row, col, value, reason):
     d = _bars()
     d.iat[row, d.columns.get_loc(col)] = value
@@ -91,13 +111,19 @@ def _metrics_tuple(prices: np.ndarray, weights: np.ndarray) -> tuple[float, ...]
     res = quant.run_backtest(prices, weights, quant.BacktestConfig(cost_bps=1.0))
     m = res.metrics
     r = np.diff(prices) / prices[:-1]
-    return (m.cumulative_return, m.annualized_vol, m.sharpe, m.max_drawdown,
-            sharpe_stats(r).sharpe_annual, quant.historical_var(r, 0.95), quant.historical_cvar(r, 0.95))
+    return (
+        m.cumulative_return,
+        m.annualized_vol,
+        m.sharpe,
+        m.max_drawdown,
+        sharpe_stats(r).sharpe_annual,
+        quant.historical_var(r, 0.95),
+        quant.historical_cvar(r, 0.95),
+    )
 
 
 @settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-@given(seed=st.integers(0, 10_000), factor=st.sampled_from([2.0, 3.0, 0.5, 10.0, 1 / 3]),
-       split_at=st.integers(30, 270))
+@given(seed=st.integers(0, 10_000), factor=st.sampled_from([2.0, 3.0, 0.5, 10.0, 1 / 3]), split_at=st.integers(30, 270))
 def test_split_adjusted_series_leaves_metrics_unchanged(seed, factor, split_at):
     """An unadjusted series has a factor-k step at the split; adjusting it (dividing every
     earlier price by k) must give back a series whose returns, and so every return-based
@@ -106,9 +132,9 @@ def test_split_adjusted_series_leaves_metrics_unchanged(seed, factor, split_at):
     df = _bars(300, seed=seed)
     true = df["Close"].to_numpy()
     raw = true.copy()
-    raw[:split_at] *= factor           # as traded: pre-split prices k times higher
+    raw[:split_at] *= factor  # as traded: pre-split prices k times higher
     adjusted = raw.copy()
-    adjusted[:split_at] /= factor      # the split-adjusted series a provider hands over
+    adjusted[:split_at] /= factor  # the split-adjusted series a provider hands over
     w = np.where(np.arange(300) % 40 < 20, 1.0, 0.5)
     base = _metrics_tuple(true, w)
     np.testing.assert_allclose(_metrics_tuple(adjusted, w), base, rtol=1e-9, atol=1e-12)
@@ -122,13 +148,16 @@ def test_split_adjusted_series_leaves_metrics_unchanged(seed, factor, split_at):
 
 
 # ----------------------------------------------- FX 17:00 NY vs equity close, DST
-@pytest.mark.parametrize("d, eq_utc, fx_utc", [
-    (date(2024, 1, 16), 21, 22),   # EST: UTC-5
-    (date(2024, 7, 16), 20, 21),   # EDT: UTC-4
-    (date(2024, 3, 8), 21, 22),    # Friday before the US change
-    (date(2024, 3, 11), 20, 21),   # Monday after it
-    (date(2024, 3, 26), 20, 21),   # between the US (10 Mar) and EU (31 Mar) changes: NY clock rules
-])
+@pytest.mark.parametrize(
+    "d, eq_utc, fx_utc",
+    [
+        (date(2024, 1, 16), 21, 22),  # EST: UTC-5
+        (date(2024, 7, 16), 20, 21),  # EDT: UTC-4
+        (date(2024, 3, 8), 21, 22),  # Friday before the US change
+        (date(2024, 3, 11), 20, 21),  # Monday after it
+        (date(2024, 3, 26), 20, 21),  # between the US (10 Mar) and EU (31 Mar) changes: NY clock rules
+    ],
+)
 def test_session_closes_follow_new_york_clock(d, eq_utc, fx_utc):
     eq, fx = session_close_utc(d, "equity"), session_close_utc(d, "fx")
     assert (eq.hour, fx.hour) == (eq_utc, fx_utc)
@@ -139,7 +168,7 @@ def test_session_closes_follow_new_york_clock(d, eq_utc, fx_utc):
 def test_one_sleeve_holiday_is_not_a_rebalance_date():
     idx = pd.bdate_range("2024-07-01", "2024-07-08")
     fx = pd.DataFrame({"Close": 1.0}, index=idx)
-    eq = fx.drop(pd.Timestamp("2024-07-04"))   # US Independence Day: equities shut, FX trades
+    eq = fx.drop(pd.Timestamp("2024-07-04"))  # US Independence Day: equities shut, FX trades
     common = common_sessions({"SPY": eq, "EURUSD": fx})
     assert pd.Timestamp("2024-07-04") not in common
     assert list(common) == list(eq.index)
@@ -156,9 +185,16 @@ def backend(request, monkeypatch):
 def _stop_run(open_, high, low, close, stop, take):
     n = len(close)
     cfg = quant.BacktestConfig(cost_bps=0.0)
-    return quant.run_backtest(np.array(close, float), np.ones(n), cfg, open=np.array(open_, float),
-                              high=np.array(high, float), low=np.array(low, float),
-                              stop=np.full(n, stop), take=np.full(n, take))
+    return quant.run_backtest(
+        np.array(close, float),
+        np.ones(n),
+        cfg,
+        open=np.array(open_, float),
+        high=np.array(high, float),
+        low=np.array(low, float),
+        stop=np.full(n, stop),
+        take=np.full(n, take),
+    )
 
 
 def test_gap_through_stop_fills_at_open(backend):
@@ -207,8 +243,14 @@ def test_cap_short_notional():
 
 def test_guardrails_enforce_short_notional_cap():
     pm = PortfolioManager(None, CFG)
-    f = {"max_position": 1.0, "max_var_95": 0.0, "var_95_1d": 0.01, "var_95_1d_short": 0.01,
-         "short_selling_allowed": True, "max_short_notional": 0.25}
+    f = {
+        "max_position": 1.0,
+        "max_var_95": 0.0,
+        "var_95_1d": 0.01,
+        "var_95_1d_short": 0.01,
+        "short_selling_allowed": True,
+        "max_short_notional": 0.25,
+    }
     w, notes = pm.guardrails(-0.9, f)
     assert w == -0.25 and any("max short notional" in n for n in notes)
     assert pm.guardrails(0.9, f)[0] == 0.9
@@ -218,8 +260,9 @@ def test_guardrails_enforce_short_notional_cap():
 
 def test_ledger_floats_round_trip_exactly(tmp_path):
     rng = np.random.default_rng(3)
-    frame = pd.DataFrame(rng.normal(0, 0.01, (20, 3)) / 3, columns=["a", "b", "c"],
-                         index=pd.bdate_range("2026-09-29", periods=20))
+    frame = pd.DataFrame(
+        rng.normal(0, 0.01, (20, 3)) / 3, columns=["a", "b", "c"], index=pd.bdate_range("2026-09-29", periods=20)
+    )
     frame.iat[4, 1] = np.nan
     path = tmp_path / "ledger.csv"
     write_ledger_csv(frame, path)

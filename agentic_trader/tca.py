@@ -23,6 +23,7 @@ Today the OMS fills at the reference close, so its price term is zero and the re
 measures only rounding and participation; once real (or more realistic) fills exist the same
 report measures the model error. Evidence class: operational, simulated fills.
 """
+
 from __future__ import annotations
 
 from typing import Iterable
@@ -34,7 +35,7 @@ import pandas as pd
 def predicted_cost(notional: float, capital: float, unit_cost: float, impact_k: float | None = None) -> float:
     """The backtester's entry cost in account currency for a trade of ``notional``."""
     dw = abs(notional) / capital
-    return capital * (dw * unit_cost + (impact_k or 0.0) * dw ** 1.5)
+    return capital * (dw * unit_cost + (impact_k or 0.0) * dw**1.5)
 
 
 def tca_rows(orders: Iterable, arrival: dict[str, float], predicted: dict[str, float]) -> pd.DataFrame:
@@ -57,10 +58,21 @@ def tca_rows(orders: Iterable, arrival: dict[str, float], predicted: dict[str, f
             slip = 1e4 * (realised - pred) / (q * p0)
         else:
             vwap = fees = realised = pred = slip = float("nan")
-        rows.append({"client_order_id": cid, "side": o.side, "quantity": float(o.quantity), "filled": q,
-                     "fill_ratio": q / float(o.quantity) if o.quantity else float("nan"),
-                     "arrival": p0, "avg_fill": vwap, "fees": fees, "realised_cost": realised,
-                     "predicted_cost": pred, "slippage_bp": slip})
+        rows.append(
+            {
+                "client_order_id": cid,
+                "side": o.side,
+                "quantity": float(o.quantity),
+                "filled": q,
+                "fill_ratio": q / float(o.quantity) if o.quantity else float("nan"),
+                "arrival": p0,
+                "avg_fill": vwap,
+                "fees": fees,
+                "realised_cost": realised,
+                "predicted_cost": pred,
+                "slippage_bp": slip,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -69,12 +81,20 @@ def tca_summary(rows: pd.DataFrame) -> dict[str, float]:
     than predicted, and the mean fill ratio."""
     f = rows.dropna(subset=["slippage_bp"])
     if f.empty:
-        return {"orders": float(len(rows)), "filled": 0.0, "wmean_slippage_bp": float("nan"),
-                "mean_abs_slippage_bp": float("nan"), "worse_than_predicted": float("nan"),
-                "mean_fill_ratio": float(rows["fill_ratio"].mean()) if len(rows) else float("nan")}
+        return {
+            "orders": float(len(rows)),
+            "filled": 0.0,
+            "wmean_slippage_bp": float("nan"),
+            "mean_abs_slippage_bp": float("nan"),
+            "worse_than_predicted": float("nan"),
+            "mean_fill_ratio": float(rows["fill_ratio"].mean()) if len(rows) else float("nan"),
+        }
     w = f["filled"] * f["arrival"]
-    return {"orders": float(len(rows)), "filled": float(len(f)),
-            "wmean_slippage_bp": float(np.average(f["slippage_bp"], weights=w)),
-            "mean_abs_slippage_bp": float(f["slippage_bp"].abs().mean()),
-            "worse_than_predicted": float((f["slippage_bp"] > 1e-9).mean()),
-            "mean_fill_ratio": float(rows["fill_ratio"].mean())}
+    return {
+        "orders": float(len(rows)),
+        "filled": float(len(f)),
+        "wmean_slippage_bp": float(np.average(f["slippage_bp"], weights=w)),
+        "mean_abs_slippage_bp": float(f["slippage_bp"].abs().mean()),
+        "worse_than_predicted": float((f["slippage_bp"] > 1e-9).mean()),
+        "mean_fill_ratio": float(rows["fill_ratio"].mean()),
+    }

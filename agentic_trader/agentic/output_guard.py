@@ -22,6 +22,7 @@ It is deliberately strict and deterministic: a false refusal costs one lost memo
 miss can steer every later prompt on that instrument. Evidence class: rule-based, unit-tested
 on hand-written cases; not measured on real model replies.
 """
+
 from __future__ import annotations
 
 import re
@@ -39,14 +40,17 @@ _INSTRUCTION = re.compile(
     r"|\b(admin|override)\s+(override|mode|instruction)"
     r"|\bnew\s+(task|instructions?)\b"
     r"|<\s*/?\s*untrusted_data|<!--"
-    r"|\b(reply|respond|output)\s+(with|only)\b")
+    r"|\b(reply|respond|output)\s+(with|only)\b"
+)
 # Upper-case tokens that are words or finance terms, not instruments.
-COMMON_CAPS = frozenset("""
+COMMON_CAPS = frozenset(
+    """
 A I AN AND THE OR NOT BUT FOR TO OF IN ON AT BY NO OK US UK EU USD EUR GBP JPY CHF CAD AUD
 BUY SELL HOLD LONG SHORT FLAT RSI MACD EMA SMA ATR VWAP ADV EPS PE PB ROE ROA YOY QOQ CEO CFO
 GDP CPI PPI FOMC FED ECB BOE IPO ETF ESG AI ML LLM API SEC FX VAR CVAR KDJ ZMR TSMOM IC IR
 SR DD HMM OHLC NAV PNL Q1 Q2 Q3 Q4 FY H1 H2 TTM EBIT EBITDA FCF NYSE NASDAQ OTC UTC ET YTD MTD
-""".split())
+""".split()
+)
 
 
 # Generic steering phrases (not copies of any test corpus), matched by shingle containment.
@@ -106,8 +110,9 @@ def check_output(text: str, allowed_tickers: Iterable[str] = (), canaries: Itera
     if m:
         reasons.append(f"url: {m.group(0)[:40]!r}")
     allowed = {str(a).strip().upper().lstrip("$") for a in allowed_tickers}
-    bad = sorted({tok.lstrip("$") for tok in _TICKER.findall(t)
-                  if tok.lstrip("$") not in allowed and tok.lstrip("$") not in COMMON_CAPS})
+    bad = sorted(
+        {tok.lstrip("$") for tok in _TICKER.findall(t) if tok.lstrip("$") not in allowed and tok.lstrip("$") not in COMMON_CAPS}
+    )
     if bad:
         reasons.append("ticker outside allowed set: " + ",".join(bad[:5]))
     low = t.lower()

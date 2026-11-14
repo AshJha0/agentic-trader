@@ -1,6 +1,7 @@
 """v0.19 coverage: firm-limit guardrails, the policy gate's six default rules and the
 output contract. Offline and deterministic: no network, no model, no wall clock except
 the policy's own ``date.today()`` (compared against fixed past/future dates)."""
+
 from __future__ import annotations
 
 import math
@@ -11,13 +12,23 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from agentic_trader import contracts, make_config
-from agentic_trader.agentic.domain import (Capability, PolicyOutcome, RiskLevel, Role, ToolAnnotations,
-                                           ToolDescriptor, ToolRequest)
-from agentic_trader.agentic.policy import (DEFAULT_RULES, AppendOnlyApprovalLog, AutoApprovalGateway,
-                                           DenyApprovalGateway, PolicyEngine, QueuedApprovalGateway,
-                                           SignedApprovalGateway, allow_rule, argument_guard_rule,
-                                           capability_rule, deny_list_rule, read_only_rule, risk_level_rule,
-                                           sign_approval)
+from agentic_trader.agentic.domain import Capability, PolicyOutcome, RiskLevel, Role, ToolAnnotations, ToolDescriptor, ToolRequest
+from agentic_trader.agentic.policy import (
+    DEFAULT_RULES,
+    AppendOnlyApprovalLog,
+    AutoApprovalGateway,
+    DenyApprovalGateway,
+    PolicyEngine,
+    QueuedApprovalGateway,
+    SignedApprovalGateway,
+    allow_rule,
+    argument_guard_rule,
+    capability_rule,
+    deny_list_rule,
+    read_only_rule,
+    risk_level_rule,
+    sign_approval,
+)
 from agentic_trader.agents.risk import PortfolioManager, RiskAnalyst, position_cvar, position_var
 
 CFG = make_config(memory_path=None)
@@ -25,10 +36,21 @@ MIN_TRADE = CFG["risk"]["min_trade_weight"]
 
 
 def _facts(**over):
-    f = {"max_position": 1.0, "max_var_95": 0.02, "var_95_1d": 0.01, "var_95_1d_short": 0.015,
-         "cvar_95_1d": 0.02, "cvar_95_1d_short": 0.03, "short_selling_allowed": True,
-         "rebalance_band": 0.10, "atr14": 2.0, "max_short_notional": None, "proposed_weight": 0.5,
-         "realized_vol_20d_annual": 0.2, "target_vol": 0.15}
+    f = {
+        "max_position": 1.0,
+        "max_var_95": 0.02,
+        "var_95_1d": 0.01,
+        "var_95_1d_short": 0.015,
+        "cvar_95_1d": 0.02,
+        "cvar_95_1d_short": 0.03,
+        "short_selling_allowed": True,
+        "rebalance_band": 0.10,
+        "atr14": 2.0,
+        "max_short_notional": None,
+        "proposed_weight": 0.5,
+        "realized_vol_20d_annual": 0.2,
+        "target_vol": 0.15,
+    }
     f.update(over)
     return f
 
@@ -38,13 +60,25 @@ finite_w = st.floats(-5, 5, allow_nan=False)
 
 
 @settings(max_examples=150, deadline=None)
-@given(w=finite_w, mx=st.floats(0.05, 2.0), lim=st.floats(0.0, 0.05), var_l=st.floats(0.0, 0.1),
-       var_s=st.floats(0.0, 0.1), shorts=st.booleans(),
-       short_cap=st.one_of(st.none(), st.floats(0.0, 1.5)))
+@given(
+    w=finite_w,
+    mx=st.floats(0.05, 2.0),
+    lim=st.floats(0.0, 0.05),
+    var_l=st.floats(0.0, 0.1),
+    var_s=st.floats(0.0, 0.1),
+    shorts=st.booleans(),
+    short_cap=st.one_of(st.none(), st.floats(0.0, 1.5)),
+)
 def test_guardrails_never_breach_a_limit(w, mx, lim, var_l, var_s, shorts, short_cap):
     pm = PortfolioManager(None, CFG)
-    f = _facts(max_position=mx, max_var_95=lim, var_95_1d=var_l, var_95_1d_short=var_s,
-               short_selling_allowed=shorts, max_short_notional=short_cap)
+    f = _facts(
+        max_position=mx,
+        max_var_95=lim,
+        var_95_1d=var_l,
+        var_95_1d_short=var_s,
+        short_selling_allowed=shorts,
+        max_short_notional=short_cap,
+    )
     out, notes = pm.guardrails(w, f)
     assert math.isfinite(out)
     assert abs(out) <= mx + 1e-12
@@ -55,8 +89,8 @@ def test_guardrails_never_breach_a_limit(w, mx, lim, var_l, var_s, shorts, short
     if lim > 0:
         assert position_var(f, out) * abs(out) <= lim + 1e-12
     assert out == 0.0 or abs(out) >= MIN_TRADE
-    assert (out != w) <= bool(notes)          # every change is explained by a note
-    assert pm.guardrails(out, f)[0] == pytest.approx(out)   # idempotent
+    assert (out != w) <= bool(notes)  # every change is explained by a note
+    assert pm.guardrails(out, f)[0] == pytest.approx(out)  # idempotent
 
 
 def test_guardrails_notes_name_each_limit():
@@ -65,7 +99,7 @@ def test_guardrails_notes_name_each_limit():
     assert n == ["short selling not allowed -> flat"]
     w, n = pm.guardrails(-0.9, _facts(max_short_notional=0.3, max_var_95=0.0))
     assert w == pytest.approx(-0.3) and "max short notional" in n[0]
-    w, n = pm.guardrails(-1.0, _facts(var_95_1d_short=0.04))     # short side uses the right tail
+    w, n = pm.guardrails(-1.0, _facts(var_95_1d_short=0.04))  # short side uses the right tail
     assert w == pytest.approx(-0.5) and n[0].startswith("VaR limit")
     w, n = pm.guardrails(MIN_TRADE / 2, _facts())
     assert w == 0.0 and n == ["below minimum trade size -> flat"]
@@ -110,8 +144,7 @@ def test_risk_analyst_rules_weight_within_max_position(stance, w0, mx, vol):
 
 def test_conservative_view_respects_var_and_aggressive_legacy_rule():
     a = RiskAnalyst(None, CFG, "conservative")
-    w = a.rules_weight(_facts(proposed_weight=1.0, realized_vol_20d_annual=0.15, var_95_1d=0.2,
-                              max_var_95=0.02))
+    w = a.rules_weight(_facts(proposed_weight=1.0, realized_vol_20d_annual=0.15, var_95_1d=0.2, max_var_95=0.02))
     assert 0.2 * abs(w) <= 0.02 + 1e-12
     cfg = make_config(memory_path=None)
     cfg["risk"]["aggressive_vol_scaled"] = False
@@ -121,8 +154,7 @@ def test_conservative_view_respects_var_and_aggressive_legacy_rule():
 
 
 # ------------------------------------------------------------------ policy gate
-def _tool(name="market_data.prices", read_only=True, risk=RiskLevel.LOW,
-          required=frozenset({Capability.READ_MARKET_DATA})):
+def _tool(name="market_data.prices", read_only=True, risk=RiskLevel.LOW, required=frozenset({Capability.READ_MARKET_DATA})):
     return ToolDescriptor(name, name.split(".")[0], "t", {}, ToolAnnotations(read_only, risk, required))
 
 
@@ -134,31 +166,47 @@ PAST = (date.today() - timedelta(days=30)).isoformat()
 FUTURE = (date.today() + timedelta(days=30)).isoformat()
 
 
-@pytest.mark.parametrize("args,ok", [
-    ({}, True),
-    ({"symbol": "AAPL"}, True),
-    ({"symbol": "ZZZZ"}, False),                          # outside the universe
-    ({"symbol": ""}, False),                              # unparseable
-    ({"symbols": "AAPL"}, False),                         # not a list
-    ({"symbols": ["AAPL", "MSFT"]}, True),
-    ({"symbols": ["AAPL"] * 4}, False),                   # above the per-call cap
-    ({"quantity": 10}, True),
-    ({"quantity": 0}, False), ({"quantity": -1}, False), ({"quantity": True}, False),
-    ({"quantity": float("nan")}, False), ({"quantity": "x"}, False), ({"quantity": None}, True),
-    ({"as_of": PAST}, True), ({"end": FUTURE}, False), ({"start": "notadate"}, False),
-    ({"as_of": date.today() + timedelta(days=1)}, False),
-    ({"weight": 0.5}, True), ({"target_weight": -0.6}, False), ({"proposed_weight": "x"}, False),
-    ({"weight": float("inf")}, False), ({"weight": True}, False),
-    ({"current_weight": 3.0}, True),                      # a fact about the book, never capped
-    ({"current_weight": float("nan")}, False),
-    ({"lookback_days": 30}, True), ({"lookback_days": 0}, False), ({"lookback_days": 4000}, False),
-    ({"lookback_days": "30"}, False),
-    ({"notional": 500}, True), ({"notional": 5000}, False), ({"notional": -1}, False),
-    ({"notional": "big"}, False), ({"notional": float("nan")}, False),
-])
+@pytest.mark.parametrize(
+    "args,ok",
+    [
+        ({}, True),
+        ({"symbol": "AAPL"}, True),
+        ({"symbol": "ZZZZ"}, False),  # outside the universe
+        ({"symbol": ""}, False),  # unparseable
+        ({"symbols": "AAPL"}, False),  # not a list
+        ({"symbols": ["AAPL", "MSFT"]}, True),
+        ({"symbols": ["AAPL"] * 4}, False),  # above the per-call cap
+        ({"quantity": 10}, True),
+        ({"quantity": 0}, False),
+        ({"quantity": -1}, False),
+        ({"quantity": True}, False),
+        ({"quantity": float("nan")}, False),
+        ({"quantity": "x"}, False),
+        ({"quantity": None}, True),
+        ({"as_of": PAST}, True),
+        ({"end": FUTURE}, False),
+        ({"start": "notadate"}, False),
+        ({"as_of": date.today() + timedelta(days=1)}, False),
+        ({"weight": 0.5}, True),
+        ({"target_weight": -0.6}, False),
+        ({"proposed_weight": "x"}, False),
+        ({"weight": float("inf")}, False),
+        ({"weight": True}, False),
+        ({"current_weight": 3.0}, True),  # a fact about the book, never capped
+        ({"current_weight": float("nan")}, False),
+        ({"lookback_days": 30}, True),
+        ({"lookback_days": 0}, False),
+        ({"lookback_days": 4000}, False),
+        ({"lookback_days": "30"}, False),
+        ({"notional": 500}, True),
+        ({"notional": 5000}, False),
+        ({"notional": -1}, False),
+        ({"notional": "big"}, False),
+        ({"notional": float("nan")}, False),
+    ],
+)
 def test_argument_guard_matrix(args, ok):
-    cfg = {"symbol_universe": ["aapl", "msft"], "max_symbols_per_call": 3, "max_position": 0.5,
-           "max_order_notional": 1000}
+    cfg = {"symbol_universe": ["aapl", "msft"], "max_symbols_per_call": 3, "max_position": 0.5, "max_order_notional": 1000}
     eng = PolicyEngine(cfg)
     d = eng.evaluate(_req(**args), _tool(), Role.ANALYST)
     if ok:
@@ -168,34 +216,46 @@ def test_argument_guard_matrix(args, ok):
 
 
 def test_default_rule_order_is_documented():
-    assert DEFAULT_RULES == (deny_list_rule, capability_rule, argument_guard_rule, read_only_rule,
-                             risk_level_rule, allow_rule)
+    assert DEFAULT_RULES == (deny_list_rule, capability_rule, argument_guard_rule, read_only_rule, risk_level_rule, allow_rule)
 
 
-@pytest.mark.parametrize("role,tool,args,expected", [
-    # 1 deny list beats everything, even an admin
-    (Role.ADMIN, _tool("ops.wipe"), {}, (PolicyOutcome.DENY, "deny_list")),
-    # 2 capability: a viewer cannot run analytics
-    (Role.VIEWER, _tool(required=frozenset({Capability.RUN_ANALYTICS})), {},
-     (PolicyOutcome.DENY, "required_capabilities")),
-    # capability precedes the argument guard
-    (Role.VIEWER, _tool(required=frozenset({Capability.RUN_ANALYTICS})), {"symbol": ""},
-     (PolicyOutcome.DENY, "required_capabilities")),
-    # 3 a bad argument on a state-changing tool is refused, never parked for approval
-    (Role.TRADER, _tool("execution.submit_order", False, RiskLevel.HIGH), {"quantity": -5},
-     (PolicyOutcome.DENY, "argument_guard")),
-    # 4 read-only: state change without PROPOSE_TRADES is denied ...
-    (Role.RISK, _tool("execution.submit_order", False, RiskLevel.HIGH), {},
-     (PolicyOutcome.DENY, "read_only")),
-    # ... and with it needs approval (read-only rule decides before risk level)
-    (Role.TRADER, _tool("execution.submit_order", False, RiskLevel.HIGH), {"quantity": 5},
-     (PolicyOutcome.REQUIRE_APPROVAL, "read_only")),
-    # 5 a read-only HIGH-risk tool still needs approval, even for an admin
-    (Role.ADMIN, _tool("config.view", True, RiskLevel.HIGH), {}, (PolicyOutcome.REQUIRE_APPROVAL, "risk_level")),
-    # 6 allow
-    (Role.VIEWER, _tool(), {}, (PolicyOutcome.ALLOW, "default_allow")),
-    (Role.ANALYST, _tool(risk=RiskLevel.MEDIUM), {}, (PolicyOutcome.ALLOW, "default_allow")),
-])
+@pytest.mark.parametrize(
+    "role,tool,args,expected",
+    [
+        # 1 deny list beats everything, even an admin
+        (Role.ADMIN, _tool("ops.wipe"), {}, (PolicyOutcome.DENY, "deny_list")),
+        # 2 capability: a viewer cannot run analytics
+        (Role.VIEWER, _tool(required=frozenset({Capability.RUN_ANALYTICS})), {}, (PolicyOutcome.DENY, "required_capabilities")),
+        # capability precedes the argument guard
+        (
+            Role.VIEWER,
+            _tool(required=frozenset({Capability.RUN_ANALYTICS})),
+            {"symbol": ""},
+            (PolicyOutcome.DENY, "required_capabilities"),
+        ),
+        # 3 a bad argument on a state-changing tool is refused, never parked for approval
+        (
+            Role.TRADER,
+            _tool("execution.submit_order", False, RiskLevel.HIGH),
+            {"quantity": -5},
+            (PolicyOutcome.DENY, "argument_guard"),
+        ),
+        # 4 read-only: state change without PROPOSE_TRADES is denied ...
+        (Role.RISK, _tool("execution.submit_order", False, RiskLevel.HIGH), {}, (PolicyOutcome.DENY, "read_only")),
+        # ... and with it needs approval (read-only rule decides before risk level)
+        (
+            Role.TRADER,
+            _tool("execution.submit_order", False, RiskLevel.HIGH),
+            {"quantity": 5},
+            (PolicyOutcome.REQUIRE_APPROVAL, "read_only"),
+        ),
+        # 5 a read-only HIGH-risk tool still needs approval, even for an admin
+        (Role.ADMIN, _tool("config.view", True, RiskLevel.HIGH), {}, (PolicyOutcome.REQUIRE_APPROVAL, "risk_level")),
+        # 6 allow
+        (Role.VIEWER, _tool(), {}, (PolicyOutcome.ALLOW, "default_allow")),
+        (Role.ANALYST, _tool(risk=RiskLevel.MEDIUM), {}, (PolicyOutcome.ALLOW, "default_allow")),
+    ],
+)
 def test_each_default_rule_decides_in_order(role, tool, args, expected):
     eng = PolicyEngine({"deny_tools": ["ops.wipe"]})
     d = eng.evaluate(_req(tool.name, **args), tool, role)
@@ -205,9 +265,14 @@ def test_each_default_rule_decides_in_order(role, tool, args, expected):
 
 
 @settings(max_examples=100, deadline=None)
-@given(role=st.sampled_from(list(Role)), read_only=st.booleans(), risk=st.sampled_from(list(RiskLevel)),
-       req=st.frozensets(st.sampled_from(list(Capability)), max_size=3), denied=st.booleans(),
-       w=st.one_of(st.none(), st.floats(allow_nan=True, allow_infinity=True)))
+@given(
+    role=st.sampled_from(list(Role)),
+    read_only=st.booleans(),
+    risk=st.sampled_from(list(RiskLevel)),
+    req=st.frozensets(st.sampled_from(list(Capability)), max_size=3),
+    denied=st.booleans(),
+    w=st.one_of(st.none(), st.floats(allow_nan=True, allow_infinity=True)),
+)
 def test_policy_is_deterministic_and_first_decider_wins(role, read_only, risk, req, denied, w):
     tool = _tool("x.y", read_only, risk, req)
     args = {} if w is None else {"weight": w}
@@ -215,6 +280,7 @@ def test_policy_is_deterministic_and_first_decider_wins(role, read_only, risk, r
     d1, d2 = eng.evaluate(_req("x.y", **args), tool, role), eng.evaluate(_req("x.y", **args), tool, role)
     assert d1 == d2
     from agentic_trader.agentic.policy import PolicyContext
+
     ctx = PolicyContext(_req("x.y", **args), tool, role, eng.capabilities(role), eng.config)
     first = next(r(ctx) for r in DEFAULT_RULES if r(ctx) is not None)
     assert first == d1
@@ -290,7 +356,7 @@ def test_signed_gateway_quorum_ttl_and_log(tmp_path):
     g.resolve(aid, True, "b", signature=sign_approval(b"kb", aid, r, True))
     assert set(g.signatures(aid)) == {"a", "b"}
     assert g.decide("t", r, "x") is True
-    clock.t += 100                                  # past the TTL
+    clock.t += 100  # past the TTL
     assert g.decide("t", r, "x") is False and "expired" in g.get(aid).note
     assert log.verify() and [e["kind"] for e in log.entries()][:3] == ["signature", "signature", "decision"]
 
@@ -312,10 +378,15 @@ def test_signed_gateway_price_check_and_rejection():
     assert g.decide("t", r2, "x") is False
 
 
-@pytest.mark.parametrize("kw", [
-    {}, {"keys": {"a": b"k"}, "public_keys": {"a": b"x" * 32}},
-    {"public_keys": {"a": b"short"}}, {"keys": {"a": b"k"}, "default_quorum": 2},
-])
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {},
+        {"keys": {"a": b"k"}, "public_keys": {"a": b"x" * 32}},
+        {"public_keys": {"a": b"short"}},
+        {"keys": {"a": b"k"}, "default_quorum": 2},
+    ],
+)
 def test_signed_gateway_config_errors(kw):
     with pytest.raises(ValueError):
         SignedApprovalGateway(**kw)
@@ -336,15 +407,18 @@ def test_append_only_log_detects_tampering(tmp_path):
 
 
 # ------------------------------------------------------------------ output contract
-@pytest.mark.parametrize("data,bad", [
-    ({"target_weight": 0.5, "rationale": "r"}, False),
-    ({"target_weight": 1.5, "rationale": "r"}, True),     # rejected, not clipped
-    ({"target_weight": -1.0001}, True),
-    ({"target_weight": -1.0, "confidence": None}, False),
-    ({"target_weight": 0.0, "confidence": 1.2}, True),
-    ({"target_weight": float("nan")}, False),             # type gate is the caller's
-    ({"target_weight": True}, False),
-])
+@pytest.mark.parametrize(
+    "data,bad",
+    [
+        ({"target_weight": 0.5, "rationale": "r"}, False),
+        ({"target_weight": 1.5, "rationale": "r"}, True),  # rejected, not clipped
+        ({"target_weight": -1.0001}, True),
+        ({"target_weight": -1.0, "confidence": None}, False),
+        ({"target_weight": 0.0, "confidence": 1.2}, True),
+        ({"target_weight": float("nan")}, False),  # type gate is the caller's
+        ({"target_weight": True}, False),
+    ],
+)
 def test_contract_violation_rejects_out_of_range(data, bad):
     assert (contracts.violation(data, contracts.PORTFOLIO_MANAGER) is not None) is bad
 

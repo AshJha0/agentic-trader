@@ -418,10 +418,9 @@ from agentic_trader.agentic import AgentHarness, Role, Task
 harness = AgentHarness(TradingGraph(make_config()), positions={"EURUSD": 0.2})
 run = harness.run(Task("EURUSD", date(2024, 3, 1), Role.TRADER, current_weight=0.2))
 print(run.state.value, run.decision.target_weight, len(run.evidence), run.report.warnings)
-print(run.report.to_markdown())        # decision, findings with evidence ids, critic checks, evidence, audit warnings
+print(run.report.to_markdown())  # decision, findings with evidence ids, critic checks, evidence, audit warnings
 
-port = run_portfolio_backtest(["AAPL", "JPM", "EURUSD"], "2023-01-02", "2023-12-29", make_config(),
-                              weighting="risk_parity")
+port = run_portfolio_backtest(["AAPL", "JPM", "EURUSD"], "2023-01-02", "2023-12-29", make_config(), weighting="risk_parity")
 print(port.table())
 ```
 

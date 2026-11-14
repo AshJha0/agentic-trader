@@ -17,6 +17,7 @@ portfolio tables' convention (the largest periods-per-year among the sleeves; FX
 
     .venv\\Scripts\\python.exe scripts/attribution_v09.py [--in results/v08] [--out results/v09]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,8 +42,8 @@ CONTROLS = ("B&H vol-target", "Buy&Hold")
 
 
 def excess(frame: pd.DataFrame, col: str) -> np.ndarray:
-    r = frame[col].to_numpy(float)[1:]                     # bar 0 is the flat first day
-    rf = frame["rf"].to_numpy(float)[:-1]                  # the rate credited over (t-1, t]
+    r = frame[col].to_numpy(float)[1:]  # bar 0 is the flat first day
+    rf = frame["rf"].to_numpy(float)[:-1]  # the rate credited over (t-1, t]
     return r - np.where(np.isfinite(rf), rf, 0.0) / PPY
 
 
@@ -52,41 +53,55 @@ def regress(y: np.ndarray, x: np.ndarray) -> dict:
     resid = y - x1 @ coef
     n, k = y.size, 2
     ss_res, ss_tot = float(resid @ resid), float(((y - y.mean()) ** 2).sum())
-    sigma = np.sqrt(ss_res / (n - k))                                   # residual std, OLS dof
+    sigma = np.sqrt(ss_res / (n - k))  # residual std, OLS dof
     se_alpha = sigma * np.sqrt(np.linalg.inv(x1.T @ x1)[0, 0])
     # information ratio: the alpha per unit of residual risk (the OLS residual itself has mean 0)
     ir = float(coef[0] / sigma * np.sqrt(PPY)) if sigma > 0 else float("nan")
-    return {"alpha_annual_pct": float(coef[0] * PPY * 100), "alpha_t": float(coef[0] / se_alpha) if se_alpha > 0 else float("nan"),
-            "beta": float(coef[1]), "r2": 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan"),
-            "information_ratio": ir, "residual_vol_pct": float(sigma * np.sqrt(PPY) * 100), "n": int(n)}
+    return {
+        "alpha_annual_pct": float(coef[0] * PPY * 100),
+        "alpha_t": float(coef[0] / se_alpha) if se_alpha > 0 else float("nan"),
+        "beta": float(coef[1]),
+        "r2": 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan"),
+        "information_ratio": ir,
+        "residual_vol_pct": float(sigma * np.sqrt(PPY) * 100),
+        "n": int(n),
+    }
 
 
 def decompose(frame: pd.DataFrame) -> dict:
     d = excess(frame, AGENT)
-    out = {"n": int(d.size), "desk_sharpe": sharpe_stats(d, PPY).sharpe_annual,
-           "desk_vol_pct": float(d.std(ddof=1) * np.sqrt(PPY) * 100)}
+    out = {
+        "n": int(d.size),
+        "desk_sharpe": sharpe_stats(d, PPY).sharpe_annual,
+        "desk_vol_pct": float(d.std(ddof=1) * np.sqrt(PPY) * 100),
+    }
     for c in CONTROLS:
         v = excess(frame, c)
         tilt = d - v
         # the tilt's own Sharpe with a block-bootstrap interval: Sharpe(tilt) - Sharpe(0) over the same days
         boot = paired_sharpe_block_bootstrap(tilt, np.zeros_like(tilt), PPY, block=10, n_boot=5000)
-        out[c] = {"control_sharpe": sharpe_stats(v, PPY).sharpe_annual,
-                  "control_vol_pct": float(v.std(ddof=1) * np.sqrt(PPY) * 100),
-                  "sharpe_difference": asdict(paired_sharpe_block_bootstrap(d, v, PPY, block=10, n_boot=5000)),
-                  "correlation": float(np.corrcoef(d, v)[0, 1]),
-                  "tilt": {"mean_annual_pct": float(tilt.mean() * PPY * 100),
-                           "vol_annual_pct": float(tilt.std(ddof=1) * np.sqrt(PPY) * 100),
-                           "sharpe": boot.sharpe_a, "ci_low": boot.ci_low, "ci_high": boot.ci_high,
-                           "p_value": boot.p_value},
-                  "regression": regress(d, v)}
+        out[c] = {
+            "control_sharpe": sharpe_stats(v, PPY).sharpe_annual,
+            "control_vol_pct": float(v.std(ddof=1) * np.sqrt(PPY) * 100),
+            "sharpe_difference": asdict(paired_sharpe_block_bootstrap(d, v, PPY, block=10, n_boot=5000)),
+            "correlation": float(np.corrcoef(d, v)[0, 1]),
+            "tilt": {
+                "mean_annual_pct": float(tilt.mean() * PPY * 100),
+                "vol_annual_pct": float(tilt.std(ddof=1) * np.sqrt(PPY) * 100),
+                "sharpe": boot.sharpe_a,
+                "ci_low": boot.ci_low,
+                "ci_high": boot.ci_high,
+                "p_value": boot.p_value,
+            },
+            "regression": regress(d, v),
+        }
     return out
 
 
 def turnover(res: EvaluationResult, period: str) -> dict:
     rows = res.rows[(res.rows["period"] == period) & (res.rows["universe"] == "core")]
     g = rows.groupby("strategy")[["Trades", "Exp%"]].mean()
-    return {s: {"trades_mean": float(g.loc[s, "Trades"]), "exposure_mean_pct": float(g.loc[s, "Exp%"])}
-            for s in g.index}
+    return {s: {"trades_mean": float(g.loc[s, "Trades"]), "exposure_mean_pct": float(g.loc[s, "Exp%"])} for s in g.index}
 
 
 def fmt(x: float, nd: int = 2) -> str:
@@ -102,15 +117,19 @@ def render(results: dict) -> str:
         for c in CONTROLS:
             out.append(f"| {c} | {fmt(r[c]['control_sharpe'])} | {fmt(r[c]['control_vol_pct'])} | {fmt(r[c]['correlation'])} |")
         out.append("")
-        out.append("| against | desk − control Sharpe [95% CI] p | tilt mean %/yr | tilt vol %/yr | tilt Sharpe [95% CI] p | alpha %/yr (t) | beta | R² | IR | residual vol %/yr |")
+        out.append(
+            "| against | desk − control Sharpe [95% CI] p | tilt mean %/yr | tilt vol %/yr | tilt Sharpe [95% CI] p | alpha %/yr (t) | beta | R² | IR | residual vol %/yr |"
+        )
         out.append("|:--|:--|--:|--:|:--|:--|--:|--:|--:|--:|")
         for c in CONTROLS:
             x, t, g = r[c], r[c]["tilt"], r[c]["regression"]
             sd = x["sharpe_difference"]
-            out.append(f"| {c} | {sd['diff']:+.2f} [{sd['ci_low']:+.2f}, {sd['ci_high']:+.2f}] p {sd['p_value']:.3f} "
-                       f"| {t['mean_annual_pct']:+.2f} | {fmt(t['vol_annual_pct'])} "
-                       f"| {t['sharpe']:+.2f} [{t['ci_low']:+.2f}, {t['ci_high']:+.2f}] p {t['p_value']:.3f} "
-                       f"| {g['alpha_annual_pct']:+.2f} ({g['alpha_t']:+.2f}) | {fmt(g['beta'])} | {fmt(g['r2'])} | {g['information_ratio']:+.2f} | {fmt(g['residual_vol_pct'])} |")
+            out.append(
+                f"| {c} | {sd['diff']:+.2f} [{sd['ci_low']:+.2f}, {sd['ci_high']:+.2f}] p {sd['p_value']:.3f} "
+                f"| {t['mean_annual_pct']:+.2f} | {fmt(t['vol_annual_pct'])} "
+                f"| {t['sharpe']:+.2f} [{t['ci_low']:+.2f}, {t['ci_high']:+.2f}] p {t['p_value']:.3f} "
+                f"| {g['alpha_annual_pct']:+.2f} ({g['alpha_t']:+.2f}) | {fmt(g['beta'])} | {fmt(g['r2'])} | {g['information_ratio']:+.2f} | {fmt(g['residual_vol_pct'])} |"
+            )
         out.append("")
         tv = results["turnover"].get(period, {})
         if tv:
@@ -118,10 +137,12 @@ def render(results: dict) -> str:
             for s, v in tv.items():
                 out.append(f"| {s} | {fmt(v['trades_mean'], 1)} | {fmt(v['exposure_mean_pct'], 1)} |")
             out.append("")
-    out.append("Reading: the tilt is the desk's daily excess return minus the control's on the same day; its "
-               "Sharpe is what the signals add on top of holding the same sleeves mechanically. The regression "
-               "gives the same thing as alpha (annualised intercept, with its t) and beta on the control; the "
-               "information ratio is alpha per unit of residual risk. Intervals: circular block bootstrap over days (block 10, 5000 resamples).")
+    out.append(
+        "Reading: the tilt is the desk's daily excess return minus the control's on the same day; its "
+        "Sharpe is what the signals add on top of holding the same sleeves mechanically. The regression "
+        "gives the same thing as alpha (annualised intercept, with its t) and beta on the control; the "
+        "information ratio is alpha per unit of residual risk. Intervals: circular block bootstrap over days (block 10, 5000 resamples)."
+    )
     return "\n".join(out) + "\n"
 
 

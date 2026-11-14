@@ -23,6 +23,7 @@ can share one file without one writer's records racing another's. A repeated dec
 for the same instrument, date and provider replaces the earlier one on reload (the
 latest line wins).
 """
+
 from __future__ import annotations
 
 import json
@@ -44,8 +45,8 @@ log = logging.getLogger(__name__)
 if sys.platform == "win32":
     import msvcrt
 
-    _LOCK_AT = 1 << 60   # a byte far past any log: Windows locks are mandatory, and a reader
-                         # (another process loading the file) must never hit a locked region
+    _LOCK_AT = 1 << 60  # a byte far past any log: Windows locks are mandatory, and a reader
+    # (another process loading the file) must never hit a locked region
 
     def _lock_file(fd: int, timeout: float = 30.0) -> None:
         # LK_LOCK sleeps a whole second between its retries, so poll the non-blocking form.
@@ -79,16 +80,16 @@ class MemoryEntry:
     as_of: str
     action: str
     weight: float
-    price: float           # last close at decision time, on the recording provider's basis
-    horizon_days: int      # trading days (bars) to the outcome, matching the proposal's horizon
+    price: float  # last close at decision time, on the recording provider's basis
+    horizon_days: int  # trading days (bars) to the outcome, matching the proposal's horizon
     summary: str
-    provider: str = ""     # data provider that priced the decision; resolves only on the same one
+    provider: str = ""  # data provider that priced the decision; resolves only on the same one
     price_basis: str = ""  # what ``price`` is (adjusted close, as-traded close, ...)
     resolved_on: str | None = None
     exit_price: float | None = None
-    pnl: float | None = None      # weight * price return over the horizon
+    pnl: float | None = None  # weight * price return over the horizon
     lesson: str | None = None
-    expired: bool = False         # closed without a verdict: no consistent series covered it
+    expired: bool = False  # closed without a verdict: no consistent series covered it
 
     @property
     def key(self) -> str:
@@ -120,7 +121,7 @@ class DecisionMemory:
         self._by_key: dict[str, MemoryEntry] = {}
         self.skipped_lines = 0
         self._lock = threading.RLock()
-        self._offset = 0                      # bytes of the log already read into memory
+        self._offset = 0  # bytes of the log already read into memory
         self._line_no = 0
         if self.path and self.path.exists():
             self._load()
@@ -201,17 +202,33 @@ class DecisionMemory:
         self._append({"resolve": e.key, **{k: getattr(e, k) for k in _RESOLUTION_FIELDS}})
 
     # ---------------------------------------------------------------- writes
-    def record(self, symbol: str, as_of: date, action: str, weight: float, price: float,
-               summary: str, horizon_days: int = 10, provider: str = "", price_basis: str = "") -> None:
-        e = MemoryEntry(symbol, as_of.isoformat(), action, weight, price, int(horizon_days),
-                        summary[:400], provider, price_basis)
+    def record(
+        self,
+        symbol: str,
+        as_of: date,
+        action: str,
+        weight: float,
+        price: float,
+        summary: str,
+        horizon_days: int = 10,
+        provider: str = "",
+        price_basis: str = "",
+    ) -> None:
+        e = MemoryEntry(symbol, as_of.isoformat(), action, weight, price, int(horizon_days), summary[:400], provider, price_basis)
         with self._lock:
             self._catch_up()
             self._put(e)
             self._append(asdict(e))
 
-    def resolve(self, symbol: str, as_of: date, history: Any, provider: str = "",
-                price_basis: str = "", max_staleness_days: int | None = None) -> int:
+    def resolve(
+        self,
+        symbol: str,
+        as_of: date,
+        history: Any,
+        provider: str = "",
+        price_basis: str = "",
+        max_staleness_days: int | None = None,
+    ) -> int:
         """Attach outcomes to entries whose horizon bar lies within ``history``.
 
         ``history`` is the price series the desk sees at ``as_of`` (a frame with a ``Close``
@@ -241,12 +258,11 @@ class DecisionMemory:
                     if pos >= 0 and (entry_day - closes.index[pos].date()).days <= tolerance:
                         exit_pos = pos + e.horizon_days
                         if exit_pos <= last_pos:
-                            self._settle(e, float(closes.iloc[pos]), float(closes.iloc[exit_pos]),
-                                         closes.index[exit_pos].date())
+                            self._settle(e, float(closes.iloc[pos]), float(closes.iloc[exit_pos]), closes.index[exit_pos].date())
                             n += 1
                             continue
                 elif e.provider:
-                    continue   # another provider's entry: its own provider values or expires it
+                    continue  # another provider's entry: its own provider values or expires it
                 # Horizon not reached, or not valuable on this series: expire once the entry is
                 # older than twice its horizon, whether or not its exit bar ever arrives.
                 if (as_of - entry_day).days > self.max_age_days(e.horizon_days):
@@ -265,16 +281,17 @@ class DecisionMemory:
         ret = exit_px / entry_px - 1.0 if entry_px > 0 else 0.0
         e.resolved_on, e.exit_price, e.pnl = exit_day.isoformat(), exit_px, e.weight * ret
         if e.weight == 0:
-            verdict = ("stayed flat while price moved "
-                       f"{ret:+.1%}" + (" (missed opportunity)" if abs(ret) > 0.03 else ""))
+            verdict = f"stayed flat while price moved {ret:+.1%}" + (" (missed opportunity)" if abs(ret) > 0.03 else "")
         elif e.pnl > 0:
             verdict = f"was right: position {e.weight:+.2f} earned {e.pnl:+.2%}"
         else:
             verdict = f"was wrong: position {e.weight:+.2f} lost {e.pnl:+.2%}"
         # No raw price level in the lesson: it is fed back into prompts, which
         # may be anonymised; the return and dates carry the information.
-        e.lesson = (f"{e.as_of} {e.action} {e.symbol} {verdict} over {e.horizon_days} trading days "
-                    f"to {e.resolved_on}. Reasoning then: {e.summary[:160]}")
+        e.lesson = (
+            f"{e.as_of} {e.action} {e.symbol} {verdict} over {e.horizon_days} trading days "
+            f"to {e.resolved_on}. Reasoning then: {e.summary[:160]}"
+        )
         self._append_resolution(e)
 
     # ----------------------------------------------------------------- reads
@@ -283,22 +300,31 @@ class DecisionMemory:
     def lessons(self, symbol: str, as_of: date, k: int = 3, provider: str | None = None) -> list[str]:
         with self._lock:
             self._catch_up()
-            done = [e for e in self.entries if e.symbol == symbol and e.lesson
-                    and (provider is None or e.provider == provider)
-                    and e.resolved_on and date.fromisoformat(e.resolved_on) <= as_of]
+            done = [
+                e
+                for e in self.entries
+                if e.symbol == symbol
+                and e.lesson
+                and (provider is None or e.provider == provider)
+                and e.resolved_on
+                and date.fromisoformat(e.resolved_on) <= as_of
+            ]
             return [e.lesson for e in done[-k:] if e.lesson]
 
-    def track_record(self, symbol: str, as_of: date, k: int = 20,
-                     provider: str | None = None) -> dict[str, float]:
+    def track_record(self, symbol: str, as_of: date, k: int = 20, provider: str | None = None) -> dict[str, float]:
         with self._lock:
             self._catch_up()
-            done = [e for e in self.entries if e.symbol == symbol and e.pnl is not None
-                    and (provider is None or e.provider == provider)
-                    and e.weight != 0 and e.resolved_on is not None
-                    and date.fromisoformat(e.resolved_on) <= as_of][-k:]
+            done = [
+                e
+                for e in self.entries
+                if e.symbol == symbol
+                and e.pnl is not None
+                and (provider is None or e.provider == provider)
+                and e.weight != 0
+                and e.resolved_on is not None
+                and date.fromisoformat(e.resolved_on) <= as_of
+            ][-k:]
         pnls = [e.pnl for e in done if e.pnl is not None]
         if not pnls:
             return {}
-        return {"n": float(len(pnls)),
-                "hit_rate": sum(p > 0 for p in pnls) / len(pnls),
-                "avg_pnl": sum(pnls) / len(pnls)}
+        return {"n": float(len(pnls)), "hit_rate": sum(p > 0 for p in pnls) / len(pnls), "avg_pnl": sum(pnls) / len(pnls)}

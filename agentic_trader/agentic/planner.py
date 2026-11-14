@@ -23,6 +23,7 @@ validator:
 
 If nothing usable remains, the canonical plan is used and the fact is recorded.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,18 +48,29 @@ ANALYST_PREFIX = "analyst:"
 _PREREQ = {"debate": ("analysts",), "trader": ("debate",), "risk": ("trader",)}
 
 
-def canonical_plan(task: Task, instrument: Instrument, analysts: list[str], config: dict[str, Any],
-                   registry: ToolRegistry) -> Plan:
+def canonical_plan(
+    task: Task, instrument: Instrument, analysts: list[str], config: dict[str, Any], registry: ToolRegistry
+) -> Plan:
     steps: list[PlanStep] = []
     if "knowledge.search" in registry:
-        query = ("position sizing risk limits stop loss " +
-                 ("fx carry" if instrument.is_fx else "equity strategic weight"))
-        steps.append(PlanStep.make(StepType.TOOL, "knowledge.search", {"query": query, "k": 3},
-                                   rationale="firm policy passages for the trader and PM"))
+        query = "position sizing risk limits stop loss " + ("fx carry" if instrument.is_fx else "equity strategic weight")
+        steps.append(
+            PlanStep.make(
+                StepType.TOOL,
+                "knowledge.search",
+                {"query": query, "k": 3},
+                rationale="firm policy passages for the trader and PM",
+            )
+        )
     if config.get("agentic", {}).get("use_alpha_tool", True) and "quant.alpha" in registry:
-        steps.append(PlanStep.make(StepType.TOOL, "quant.alpha",
-                                   {"symbol": instrument.symbol, "as_of": task.as_of.isoformat(), "horizon": 10},
-                                   rationale="alpha snapshot and information coefficients"))
+        steps.append(
+            PlanStep.make(
+                StepType.TOOL,
+                "quant.alpha",
+                {"symbol": instrument.symbol, "as_of": task.as_of.isoformat(), "horizon": 10},
+                rationale="alpha snapshot and information coefficients",
+            )
+        )
     for name in analysts:
         steps.append(PlanStep.make(StepType.AGENT, f"{ANALYST_PREFIX}{name}", rationale=f"{name} report"))
     steps.append(PlanStep.make(StepType.AGENT, "debate", rationale="bull/bear debate and verdict"))
@@ -69,9 +81,11 @@ def canonical_plan(task: Task, instrument: Instrument, analysts: list[str], conf
 
 
 def governance_steps() -> list[PlanStep]:
-    return [PlanStep.make(StepType.CRITIC, "critic", id_="STEP-critic"),
-            PlanStep.make(StepType.VALIDATE, "validate_evidence", id_="STEP-validate"),
-            PlanStep.make(StepType.FINALISE, "finalise", id_="STEP-finalise")]
+    return [
+        PlanStep.make(StepType.CRITIC, "critic", id_="STEP-critic"),
+        PlanStep.make(StepType.VALIDATE, "validate_evidence", id_="STEP-validate"),
+        PlanStep.make(StepType.FINALISE, "finalise", id_="STEP-finalise"),
+    ]
 
 
 # Grammar for local constrained decoding (Ollama ``format``): the reply is guaranteed to be a
@@ -79,17 +93,36 @@ def governance_steps() -> list[PlanStep]:
 # open object, which strict API structured outputs do not accept; the validator still checks
 # every name and argument.
 PLAN_SCHEMA: dict[str, Any] = {
-    "type": "object", "required": ["steps"],
-    "properties": {"steps": {"type": "array", "items": {
-        "type": "object", "required": ["type", "name", "arguments"],
-        "properties": {"type": {"type": "string", "enum": ["tool", "agent"]},
-                       "name": {"type": "string"}, "arguments": {"type": "object"},
-                       "rationale": {"type": "string"}}}}}}
+    "type": "object",
+    "required": ["steps"],
+    "properties": {
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["type", "name", "arguments"],
+                "properties": {
+                    "type": {"type": "string", "enum": ["tool", "agent"]},
+                    "name": {"type": "string"},
+                    "arguments": {"type": "object"},
+                    "rationale": {"type": "string"},
+                },
+            },
+        }
+    },
+}
 
 
-def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[str],
-                 registry: ToolRegistry, anonymize: bool = False,
-                 compact: bool = False, structured: bool = False) -> tuple[list[dict[str, Any]] | None, str | None]:
+def propose_plan(
+    llm: LLM,
+    task: Task,
+    instrument: Instrument,
+    analysts: list[str],
+    registry: ToolRegistry,
+    anonymize: bool = False,
+    compact: bool = False,
+    structured: bool = False,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Ask the model for a plan as JSON. Returns (raw steps, raw text). With ``anonymize`` the
     prompt names neither the instrument nor the date (the validator pins both from the task)
     and the requester's question is clipped. With ``compact`` the tool catalogue keeps only the
@@ -97,10 +130,14 @@ def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[st
     words: about half the prompt and a much shorter reply, for slow local models. The tools,
     stages, order rule and validator are the same either way. With ``structured`` and a backend
     that has ``complete_json`` (``LocalLLM``), the reply is decoded under ``PLAN_SCHEMA``."""
+
     def _desc(d: Any) -> str:
         return d.description.split(". ")[0][:90] if compact else d.description
-    catalogue = [{"name": d.name, "description": _desc(d),
-                  "arguments": list(d.input_schema.get("properties", {}))} for d in registry.descriptors()]
+
+    catalogue = [
+        {"name": d.name, "description": _desc(d), "arguments": list(d.input_schema.get("properties", {}))}
+        for d in registry.descriptors()
+    ]
     cat_json = json.dumps(catalogue, separators=(",", ":")) if compact else json.dumps(catalogue, indent=1)
     why = "at most 8 words" if compact else "..."
     who = f"the instrument ({instrument.asset_class})" if anonymize else f"{instrument.display} ({instrument.asset_class})"
@@ -108,7 +145,8 @@ def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[st
     question = (task.question or "")[:500]
     prompt = (
         f"Plan a trading decision on {who} as of {when} for a {task.role.value}."
-        + (f" The requester asks: {question}" if question else "") + "\n\n"
+        + (f" The requester asks: {question}" if question else "")
+        + "\n\n"
         f"Available tools (call with exact names and only these arguments):\n{cat_json}\n\n"
         f"Available agent stages: {', '.join(ANALYST_PREFIX + a for a in analysts)}, debate, trader, risk. "
         "Stages must appear in the order analysts -> debate -> trader -> risk. Governance steps "
@@ -116,8 +154,7 @@ def propose_plan(llm: LLM, task: Task, instrument: Instrument, analysts: list[st
         'Respond with a JSON object {"steps": [{"type": "tool"|"agent", "name": "...", '
         f'"arguments": {{...}}, "rationale": "{why}"}}]}} and nothing else.'
     )
-    system = ("You are the planning assistant of a trading desk. Use only the listed tools "
-              "and stages; never invent names.")
+    system = "You are the planning assistant of a trading desk. Use only the listed tools and stages; never invent names."
     if structured and hasattr(llm, "complete_json"):
         text = llm.complete_json(system, prompt, deep=True, schema=PLAN_SCHEMA)
     else:
@@ -161,8 +198,9 @@ def max_plan_lookback_bars(config: dict[str, Any] | None) -> int:
     return int((config or {}).get("agentic", {}).get("max_plan_lookback_bars", DEFAULT_MAX_PLAN_LOOKBACK_BARS))
 
 
-def clip_symbols(symbols: list[Any] | tuple[Any, ...], universe: list[str] | tuple[str, ...] | None
-                 ) -> tuple[list[str], list[str], list[int]]:
+def clip_symbols(
+    symbols: list[Any] | tuple[Any, ...], universe: list[str] | tuple[str, ...] | None
+) -> tuple[list[str], list[str], list[int]]:
     """(kept, dropped, indices): the entries of a ``symbols`` list that are in the configured
     universe (canonical spelling, duplicates removed) with their positions in the original
     list, and the entries that are not or do not parse. With no universe every parseable
@@ -185,9 +223,16 @@ def clip_symbols(symbols: list[Any] | tuple[Any, ...], universe: list[str] | tup
     return kept, dropped, indices
 
 
-def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, analysts: list[str],
-                  registry: ToolRegistry, source: str = "llm", config: dict[str, Any] | None = None,
-                  book: dict[str, float] | None = None) -> Plan:
+def validate_plan(
+    raw_steps: list[Any],
+    task: Task,
+    instrument: Instrument,
+    analysts: list[str],
+    registry: ToolRegistry,
+    source: str = "llm",
+    config: dict[str, Any] | None = None,
+    book: dict[str, float] | None = None,
+) -> Plan:
     """``book`` is the run's position book (symbol -> weight); a model-written ``current_weight``
     is dropped when it holds the task's symbol. Without one, the task's own declaration counts."""
     notes: list[str] = []
@@ -198,7 +243,7 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
     held = (book or {}).get(instrument.symbol)
     if held is None:
         held = task.current_weight
-    for i, raw in enumerate(raw_steps[:MAX_STEPS * 2]):
+    for i, raw in enumerate(raw_steps[: MAX_STEPS * 2]):
         if not isinstance(raw, dict):
             notes.append(f"step {i}: not an object, dropped")
             continue
@@ -239,16 +284,16 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
                     notes.append(f"step {i}: {name} has no symbol in the configured universe, dropped")
                     continue
                 if len(kept) > max_symbols:
-                    notes.append(f"step {i}: {name} symbols truncated to {max_symbols} per call "
-                                 f"({len(kept) - max_symbols} dropped)")
+                    notes.append(
+                        f"step {i}: {name} symbols truncated to {max_symbols} per call ({len(kept) - max_symbols} dropped)"
+                    )
                     kept, idx = kept[:max_symbols], idx[:max_symbols]
-                targets = clean.get("targets")   # a parallel list (portfolio.construct) keeps its alignment
+                targets = clean.get("targets")  # a parallel list (portfolio.construct) keeps its alignment
                 if isinstance(targets, (list, tuple)) and len(targets) == len(clean["symbols"]):
                     clean["targets"] = [targets[j] for j in idx]
                 clean["symbols"] = kept
             if "current_weight" in clean and held is not None:
-                notes.append(f"step {i}: {name} current_weight dropped: the run's book holds {instrument.symbol} "
-                             f"at {held:+.4f}")
+                notes.append(f"step {i}: {name} current_weight dropped: the run's book holds {instrument.symbol} at {held:+.4f}")
                 del clean["current_weight"]
             if not registry.get(name).descriptor.annotations.read_only:
                 notes.append(f"step {i}: {name} changes state; a plan may not schedule it, dropped")
@@ -304,8 +349,9 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
     for s in unique_tools:
         cost = step_cost_bars(s, config)
         if spent + cost > cap:
-            notes.append(f"{s.name} dropped: plan would load {spent + cost} bars, over the "
-                         f"max_plan_lookback_bars budget of {cap}")
+            notes.append(
+                f"{s.name} dropped: plan would load {spent + cost} bars, over the max_plan_lookback_bars budget of {cap}"
+            )
             continue
         spent += cost
         kept_tools.append(s)
@@ -314,8 +360,15 @@ def validate_plan(raw_steps: list[Any], task: Task, instrument: Instrument, anal
     return Plan(tuple(steps), source if not notes else f"{source}+repaired", tuple(notes))
 
 
-def make_plan(task: Task, instrument: Instrument, analysts: list[str], config: dict[str, Any],
-              registry: ToolRegistry, llm: LLM | None, book: dict[str, float] | None = None) -> Plan:
+def make_plan(
+    task: Task,
+    instrument: Instrument,
+    analysts: list[str],
+    config: dict[str, Any],
+    registry: ToolRegistry,
+    llm: LLM | None,
+    book: dict[str, float] | None = None,
+) -> Plan:
     if llm is None or not config.get("agentic", {}).get("llm_planner", False):
         return canonical_plan(task, instrument, analysts, config, registry)
     raw, _ = propose_plan(llm, task, instrument, analysts, registry, anonymize=bool(config.get("llm_anonymize")))
@@ -326,9 +379,14 @@ def make_plan(task: Task, instrument: Instrument, analysts: list[str], config: d
 
 
 def plan_to_dict(plan: Plan) -> dict[str, Any]:
-    return {"source": plan.source, "notes": list(plan.notes),
-            "steps": [{"id": s.id, "type": s.type.value, "name": s.name, "arguments": s.arguments,
-                       "rationale": s.rationale} for s in plan.steps]}
+    return {
+        "source": plan.source,
+        "notes": list(plan.notes),
+        "steps": [
+            {"id": s.id, "type": s.type.value, "name": s.name, "arguments": s.arguments, "rationale": s.rationale}
+            for s in plan.steps
+        ],
+    }
 
 
 def _iso(d: date) -> str:

@@ -2,6 +2,7 @@
 
 Every test uses a fake LLM; no model and no network is called.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -36,10 +37,9 @@ def _value(spec: dict[str, Any]) -> Any:
         return spec["enum"][0]
     t = spec.get("type")
     t = t[0] if isinstance(t, list) else t
-    if t == "number" and "minimum" in spec:          # schema ranges are enforced since v0.17 R0.4
+    if t == "number" and "minimum" in spec:  # schema ranges are enforced since v0.17 R0.4
         return max(0.2, spec["minimum"])
-    return {"number": 0.2, "integer": 1, "string": "fake reply", "array": [], "boolean": False,
-            "object": {}}.get(t, "fake")
+    return {"number": 0.2, "integer": 1, "string": "fake reply", "array": [], "boolean": False, "object": {}}.get(t, "fake")
 
 
 class FakeLLM:
@@ -104,6 +104,7 @@ def test_critic_on_cell_keeps_the_rest_of_the_agentic_block() -> None:
 def test_selection_report_counts_unmeasured_trials() -> None:
     from agentic_trader.evaluation import registered_trial_count
     from agentic_trader.stats import selection_report
+
     r = np.random.default_rng(0).normal(0.0005, 0.01, 1000)
     sharpes = [0.2, 0.4, 0.1, 0.5, 0.3]
     base = selection_report(r, sharpes)
@@ -137,8 +138,8 @@ def test_run_checkpoints_and_resumes(tmp_path: Path) -> None:
         fh.write('{"cell": "local_analysts", "sym')
     lines.clear()
     rows = study.run_study(NAMES, dates, 1, [_cell("local_analysts")], _cfg(), out, factory, lines.append)
-    assert len(rows) == 4 and len(lines) == 2                       # only the two new decisions ran
-    assert fakes[1].n == first_calls                               # same calls per decision, no repeats
+    assert len(rows) == 4 and len(lines) == 2  # only the two new decisions ran
+    assert fakes[1].n == first_calls  # same calls per decision, no repeats
     keys = [(r["symbol"], r["as_of"]) for r in rows]
     assert len(set(keys)) == 4
     for r in rows:
@@ -162,19 +163,28 @@ def test_metrics_shape_and_bias_table(tmp_path: Path) -> None:
     out = tmp_path / "m.jsonl"
     dates = study.design_dates(20)[1:5]
     cells = [_cell("rules"), _cell("local_analysts")]
-    rows = study.run_study(NAMES, dates, 1, cells, _cfg(), out, lambda cfg: FakeLLM(bad_every=4),
-                           lambda s: None)
+    rows = study.run_study(NAMES, dates, 1, cells, _cfg(), out, lambda cfg: FakeLLM(bad_every=4), lambda s: None)
     m = study.cell_metrics(rows, _cfg())
     assert [x["cell"] for x in m] == ["rules", "local_analysts"]
     for x in m:
         assert x["decisions"] == 8 and x["periods"] == 3
-        for k in ("sharpe", "control_sharpe", "sharpe_minus_control", "ci_lo", "ci_hi", "p",
-                  "contract_rejection_rate", "fallback_share", "dispersion", "cost_usd_per_decision"):
+        for k in (
+            "sharpe",
+            "control_sharpe",
+            "sharpe_minus_control",
+            "ci_lo",
+            "ci_hi",
+            "p",
+            "contract_rejection_rate",
+            "fallback_share",
+            "dispersion",
+            "cost_usd_per_decision",
+        ):
             assert k in x
     rules, llm = m
     assert rules["calls"] == 0 and rules["admissible"] and rules["cost_usd_per_decision"] == 0
     assert llm["calls"] > 0 and llm["contract_rejection_rate"] > 0.1 and not llm["admissible"]
-    assert llm["cost_usd_per_decision"] > 0 and np.isnan(llm["dispersion"])     # one seed
+    assert llm["cost_usd_per_decision"] > 0 and np.isnan(llm["dispersion"])  # one seed
     bias = study.fallback_bias(rows)
     assert {(b["cell"], b["by"]) for b in bias} == {("local_analysts", "regime"), ("local_analysts", "as_of")}
     assert all(0.0 <= b["p"] <= 1.0 for b in bias)
@@ -213,9 +223,9 @@ def test_skip_cap_makes_a_cell_inadmissible(tmp_path: Path) -> None:
     rows = study.run_study(NAMES, dates, 1, [_cell("rules")], _cfg(), out, None, lambda s: None)
     base = study.cell_metrics(rows, _cfg())[0]
     assert base["skipped"] == 0 and base["skip_share"] == 0.0 and base["admissible"]
-    one = [{"cell": "rules", "skipped": True}]                       # 1 of 9 units: 11 % > 10 %
+    one = [{"cell": "rules", "skipped": True}]  # 1 of 9 units: 11 % > 10 %
     m = study.cell_metrics(rows, _cfg(), skips=one)[0]
     assert m["skipped"] == 1 and m["skip_share"] == pytest.approx(1 / 9) and not m["admissible"]
-    other = [{"cell": "local_all", "skipped": True}]                 # another cell's skip: ignored
+    other = [{"cell": "local_all", "skipped": True}]  # another cell's skip: ignored
     assert study.cell_metrics(rows, _cfg(), skips=other)[0]["admissible"]
     assert "| skipped |" in study.render_metrics([m], [])

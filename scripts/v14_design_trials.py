@@ -23,6 +23,7 @@ Status (2026-11-08): every output has run (``results/v14/``). The regime-conditi
 conformal-sized trials ran after follow-up 5.2b cached the per-series research inputs.
 Re-running this script fills only missing files.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,8 +45,14 @@ from agentic_trader.backtest import AGENT  # noqa: E402
 from agentic_trader.combine import desk_forecast  # noqa: E402
 from agentic_trader.config import make_config  # noqa: E402
 from agentic_trader.data import get_provider  # noqa: E402
-from agentic_trader.evaluation import (CONFORMAL_V17_TRIAL, PERIODS, TRIALS, UNIVERSES,  # noqa: E402
-                                      evaluate, trial_slug)
+from agentic_trader.evaluation import (  # noqa: E402
+    CONFORMAL_V17_TRIAL,
+    PERIODS,
+    TRIALS,
+    UNIVERSES,
+    evaluate,
+    trial_slug,
+)
 from agentic_trader.instruments import Instrument  # noqa: E402
 
 CONTROL = "B&H vol-target"
@@ -80,14 +87,21 @@ def run_eval(name: str, overrides: dict, provider) -> dict:
         boot = _jsonable(res.paired(baseline=CONTROL, period="design"))
     except ValueError as exc:
         boot = {"error": str(exc)}
-    return {"trial": name, "overrides": overrides, "period": PERIODS["design"],
-            "n_symbols": int(len(both)), "meta_failures": _jsonable(res.meta.get("failures")),
-            "sharpe": {s: {"agent": float(r[AGENT]), "control": float(r[CONTROL])} for s, r in both.iterrows()},
-            "mean_sharpe_agent": float(both[AGENT].mean()), "mean_sharpe_control": float(both[CONTROL].mean()),
-            "mean_diff_vs_control": float(diff.mean()), "beats_control": int((diff > 0).sum()),
-            "paired_bootstrap_vs_control": boot,
-            "summary": _jsonable(res.summary("design").reset_index().to_dict(orient="records")),
-            "seconds": round(time.perf_counter() - t0, 1)}
+    return {
+        "trial": name,
+        "overrides": overrides,
+        "period": PERIODS["design"],
+        "n_symbols": int(len(both)),
+        "meta_failures": _jsonable(res.meta.get("failures")),
+        "sharpe": {s: {"agent": float(r[AGENT]), "control": float(r[CONTROL])} for s, r in both.iterrows()},
+        "mean_sharpe_agent": float(both[AGENT].mean()),
+        "mean_sharpe_control": float(both[CONTROL].mean()),
+        "mean_diff_vs_control": float(diff.mean()),
+        "beats_control": int((diff > 0).sum()),
+        "paired_bootstrap_vs_control": boot,
+        "summary": _jsonable(res.summary("design").reset_index().to_dict(orient="records")),
+        "seconds": round(time.perf_counter() - t0, 1),
+    }
 
 
 def tilt_diagnostic(provider, step: int = 5) -> dict:
@@ -107,13 +121,22 @@ def tilt_diagnostic(provider, step: int = 5) -> dict:
             tilts.append(f.tilt if math.isfinite(f.tilt) else 0.0)
             active.append(len(f.active))
         t, a = np.array(tilts), np.array(active)
-        out[sym] = {"dates": int(t.size), "share_no_signal": float((a == 0).mean()),
-                    "mean_abs_tilt": float(np.abs(t).mean()), "median_abs_tilt": float(np.median(np.abs(t))),
-                    "mean_active_signals": float(a.mean())}
+        out[sym] = {
+            "dates": int(t.size),
+            "share_no_signal": float((a == 0).mean()),
+            "mean_abs_tilt": float(np.abs(t).mean()),
+            "median_abs_tilt": float(np.median(np.abs(t))),
+            "mean_active_signals": float(a.mean()),
+        }
     vals = list(out.values())
-    return {"period": PERIODS["design"], "window": 504, "step": step, "per_symbol": out,
-            "share_no_signal": float(np.mean([v["share_no_signal"] for v in vals])),
-            "mean_abs_tilt": float(np.mean([v["mean_abs_tilt"] for v in vals]))}
+    return {
+        "period": PERIODS["design"],
+        "window": 504,
+        "step": step,
+        "per_symbol": out,
+        "share_no_signal": float(np.mean([v["share_no_signal"] for v in vals])),
+        "mean_abs_tilt": float(np.mean([v["mean_abs_tilt"] for v in vals])),
+    }
 
 
 def main() -> None:
@@ -126,16 +149,20 @@ def main() -> None:
     if not path.exists():
         path.write_text(json.dumps(tilt_diagnostic(provider), indent=2), encoding="utf-8")
     d = json.loads(path.read_text(encoding="utf-8"))
-    print(f"tilt diagnostic: no surviving signal on {d['share_no_signal']:.1%} of design dates, "
-          f"mean |tilt| {d['mean_abs_tilt']:.3f}")
+    print(
+        f"tilt diagnostic: no surviving signal on {d['share_no_signal']:.1%} of design dates, "
+        f"mean |tilt| {d['mean_abs_tilt']:.3f}"
+    )
     runs = [("rules desk (current default)", {})] + [(t.name, t.overrides) for t in V14]
     for name, ov in runs:
         path = a.out / f"design_{trial_slug(name)}.json"
         if not path.exists():
             path.write_text(json.dumps(run_eval(name, ov, provider), indent=2), encoding="utf-8")
         r = json.loads(path.read_text(encoding="utf-8"))
-        print(f"{name}: mean Sharpe {r['mean_sharpe_agent']:+.3f} vs control {r['mean_sharpe_control']:+.3f} "
-              f"(diff {r['mean_diff_vs_control']:+.3f}, beats control on {r['beats_control']}/{r['n_symbols']})")
+        print(
+            f"{name}: mean Sharpe {r['mean_sharpe_agent']:+.3f} vs control {r['mean_sharpe_control']:+.3f} "
+            f"(diff {r['mean_diff_vs_control']:+.3f}, beats control on {r['beats_control']}/{r['n_symbols']})"
+        )
 
 
 if __name__ == "__main__":

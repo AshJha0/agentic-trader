@@ -8,6 +8,7 @@ Relative Markdown links must point at an existing file (and heading anchor);
 rate-limit and go down independently of this repository). Exit status is the
 number of broken internal links.
 """
+
 import argparse
 import re
 import sys
@@ -66,8 +67,10 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001 - report, do not fail
                 code = getattr(e, "code", repr(e)[:60])
             print(f"{code}  {url}")
-    print(f"checked {len(docs)} markdown files and docs/index.html; {len(external)} external URLs"
-          + ("" if args.external else " (not requested)"))
+    print(
+        f"checked {len(docs)} markdown files and docs/index.html; {len(external)} external URLs"
+        + ("" if args.external else " (not requested)")
+    )
     print("PROBLEMS:" if bad else "no broken internal links", *bad, sep="\n  ")
     return len(bad)
 

@@ -3,6 +3,7 @@ model shared by the simulator, the backtester and algo_cost_ratio; account-curre
 honest POV completion; next-session execution; dimensionless AC urgency; explicit tickets with
 a size guard; plans sized from the book; long-only truncation; the credited carry line; one
 capital convention; whole-share / whole-lot quantities. Offline, numpy backend."""
+
 import math
 import re
 from datetime import date
@@ -13,11 +14,28 @@ import pandas as pd
 import pytest
 
 from agentic_trader import make_config, quant
-from agentic_trader.agentic import (AutoApprovalGateway, EvidenceStore, PolicyEngine, QueuedApprovalGateway, Role,
-                                    Task, ToolExecutor, build_registry, validate_plan)
+from agentic_trader.agentic import (
+    AutoApprovalGateway,
+    EvidenceStore,
+    PolicyEngine,
+    QueuedApprovalGateway,
+    Role,
+    Task,
+    ToolExecutor,
+    build_registry,
+    validate_plan,
+)
 from agentic_trader.agentic.servers import DeskTools, ticket_from_plan
-from agentic_trader.algo import (algo_cost_ratio, base_to_account_rate, plan_execution, plan_reference,
-                                 simulate_execution, synthetic_intraday_bars, twap_schedule, vwap_schedule)
+from agentic_trader.algo import (
+    algo_cost_ratio,
+    base_to_account_rate,
+    plan_execution,
+    plan_reference,
+    simulate_execution,
+    synthetic_intraday_bars,
+    twap_schedule,
+    vwap_schedule,
+)
 from agentic_trader.cli import build_parser, main
 from agentic_trader.cli.common import _config
 from agentic_trader.cli.research import carry_summary, cmd_backtest
@@ -41,6 +59,7 @@ def _flat_day(price, volume=1e6):
 
 class StubProvider(MarketDataProvider):
     """Hand-built daily bars per symbol; raises for anything else (no silent data)."""
+
     name = "stub"
     real_world = False
 
@@ -58,14 +77,16 @@ def _history(close, n=30, end=AS_OF, volume=1e6, last=None, after=None):
     """``n`` flat bars ending at ``end`` (the last one optionally overridden), plus an optional
     bar for the next session, so the decision day and the execution day are distinguishable."""
     idx = pd.bdate_range(end=end, periods=n)
-    df = pd.DataFrame({"Open": close, "High": close, "Low": close, "Close": close, "Volume": volume}, index=idx,
-                      dtype=float)
+    df = pd.DataFrame({"Open": close, "High": close, "Low": close, "Close": close, "Volume": volume}, index=idx, dtype=float)
     if last:
         for k, v in last.items():
             df.loc[idx[-1], k] = v
     if after:
-        row = pd.DataFrame([{"Open": close, "High": close, "Low": close, "Close": close, "Volume": volume, **after}],
-                           index=[pd.Timestamp(NEXT)], dtype=float)
+        row = pd.DataFrame(
+            [{"Open": close, "High": close, "Low": close, "Close": close, "Volume": volume, **after}],
+            index=[pd.Timestamp(NEXT)],
+            dtype=float,
+        )
         df = pd.concat([df, row])
     return df
 
@@ -73,26 +94,32 @@ def _history(close, n=30, end=AS_OF, volume=1e6, last=None, after=None):
 # ------------------------------------------------------------------ 6: one impact model
 def test_vwap_impact_equals_the_single_shot_law_for_any_slice_count():
     Q, ADV, DV = 100_000.0, 1_000_000.0, 0.02
-    law = DV * math.sqrt(Q / ADV) * 1e4                     # 63.2456 bps: backtest.impact_coefficients' model
+    law = DV * math.sqrt(Q / ADV) * 1e4  # 63.2456 bps: backtest.impact_coefficients' model
     got = []
     for n in (10, 78, 390):
         bars = synthetic_intraday_bars(_flat_day(100.0, ADV), n, "equity")
         rep = simulate_execution(vwap_schedule(Q, bars["Volume"].to_numpy()), bars, "buy", "vwap", 2.0, 1.0, DV, ADV)
         assert rep.impact_cost_bps == pytest.approx(law, rel=1e-6)
         got.append(rep.impact_cost_bps)
-    assert max(got) - min(got) < 1e-9 * law                 # not a function of how finely the order is sliced
+    assert max(got) - min(got) < 1e-9 * law  # not a function of how finely the order is sliced
     # The old model charged sqrt(q_i / daily ADV) per slice: 7.6 bps at n=78. That is gone.
     assert got[1] > 60.0
 
 
-@pytest.mark.parametrize("algo,kind,n,kappa", [("twap", "equity", 78, 3.0), ("twap", "equity", 10, 3.0),
-                                                ("ac", "equity", 78, 3.0), ("ac", "equity", 78, 0.7),
-                                                ("twap", "fx", 288, 3.0)])
+@pytest.mark.parametrize(
+    "algo,kind,n,kappa",
+    [
+        ("twap", "equity", 78, 3.0),
+        ("twap", "equity", 10, 3.0),
+        ("ac", "equity", 78, 3.0),
+        ("ac", "equity", 78, 0.7),
+        ("twap", "fx", 288, 3.0),
+    ],
+)
 def test_simulator_reproduces_algo_cost_ratio(algo, kind, n, kappa):
     Q, ADV, DV = 100_000.0, 1_000_000.0, 0.02
     if kind == "fx":
-        bars = synthetic_intraday_bars(pd.Series({"Open": 1.1, "High": 1.1, "Low": 1.1, "Close": 1.1, "Volume": 0}),
-                                       n, "fx")
+        bars = synthetic_intraday_bars(pd.Series({"Open": 1.1, "High": 1.1, "Low": 1.1, "Close": 1.1, "Volume": 0}), n, "fx")
         prof = np.full(n, 1.0 / n)
     else:
         bars = synthetic_intraday_bars(_flat_day(100.0, ADV), n, "equity")
@@ -114,13 +141,16 @@ def test_fx_without_a_notional_adv_has_no_impact_and_nothing_fills_in_an_empty_b
 
 
 # ------------------------------------------------------------- 16: account-currency FX sizing
-@pytest.mark.parametrize("symbol,price,rate,lot,qty,notional", [
-    ("USDJPY", 145.0, None, 1000, 500_000.0, 500_000.0),      # base == account: 500k USD is 500k units
-    ("EURUSD", 1.10, None, 1, 454_545.0, 499_999.5),          # quote == account: notional / price
-    ("EURJPY", 158.0, 1.10, 1000, 454_000.0, 499_400.0),      # cross: needs EURUSD, never the JPY price
-    ("EURGBP", 0.86, 1.10, 1000, 454_000.0, 499_400.0),
-    ("EURGBP", 0.86, 1.10, 1, 454_545.0, 499_999.5),
-])
+@pytest.mark.parametrize(
+    "symbol,price,rate,lot,qty,notional",
+    [
+        ("USDJPY", 145.0, None, 1000, 500_000.0, 500_000.0),  # base == account: 500k USD is 500k units
+        ("EURUSD", 1.10, None, 1, 454_545.0, 499_999.5),  # quote == account: notional / price
+        ("EURJPY", 158.0, 1.10, 1000, 454_000.0, 499_400.0),  # cross: needs EURUSD, never the JPY price
+        ("EURGBP", 0.86, 1.10, 1000, 454_000.0, 499_400.0),
+        ("EURGBP", 0.86, 1.10, 1, 454_545.0, 499_999.5),
+    ],
+)
 def test_fx_quantity_is_base_currency_for_a_usd_account(symbol, price, rate, lot, qty, notional):
     ins = Instrument.parse(symbol)
     p = plan_execution(_decision(symbol, 0.5), ins, 0.0, 1e6, price, base_to_account=rate, lot_size=lot)
@@ -133,9 +163,10 @@ def test_cross_without_a_rate_is_refused_and_account_currency_is_explicit():
     with pytest.raises(ValueError, match="EURUSD"):
         plan_execution(_decision("EURGBP", 0.5), Instrument.parse("EURGBP"), 0.0, 1e6, 0.86)
     eur = plan_execution(_decision("EURUSD", 0.5), Instrument.parse("EURUSD"), 0.0, 1e6, 1.10, account_currency="EUR")
-    assert eur.quantity == 500_000.0 and eur.notional_currency == "EUR"          # base == account on a EUR book
-    jpy = plan_execution(_decision("USDJPY", 0.5), Instrument.parse("USDJPY"), 0.0, 1e6, 145.0, account_currency="JPY",
-                         lot_size=1)
+    assert eur.quantity == 500_000.0 and eur.notional_currency == "EUR"  # base == account on a EUR book
+    jpy = plan_execution(
+        _decision("USDJPY", 0.5), Instrument.parse("USDJPY"), 0.0, 1e6, 145.0, account_currency="JPY", lot_size=1
+    )
     assert jpy.quantity == math.floor(5e5 / 145.0) and jpy.quantity_unit == "USD"  # quote == account
 
 
@@ -153,11 +184,15 @@ def test_base_to_account_rate_reads_the_direct_or_inverse_pair():
 
 
 def test_plan_tool_carries_quantity_unit_and_notional_currency_for_a_cross():
-    prov = StubProvider({"EURJPY": _history(158.0, volume=0, after={"Open": 158.5, "High": 159, "Low": 158, "Close": 158.8}),
-                         "EURUSD": _history(1.10, volume=0)})
+    prov = StubProvider(
+        {
+            "EURJPY": _history(158.0, volume=0, after={"Open": 158.5, "High": 159, "Low": 158, "Close": 158.8}),
+            "EURUSD": _history(1.10, volume=0),
+        }
+    )
     tools = DeskTools(prov, CFG, capital=100_000.0)
     p = tools.plan("EURJPY", AS_OF, 0.5)
-    assert p["quantity"] == 45_000.0 and p["quantity_unit"] == "EUR"      # 50,000 USD / 1.10 -> whole 1,000 lots
+    assert p["quantity"] == 45_000.0 and p["quantity_unit"] == "EUR"  # 50,000 USD / 1.10 -> whole 1,000 lots
     assert p["notional"] == pytest.approx(49_500.0) and p["notional_currency"] == "USD" and p["price"] == 158.0
     assert p["simulated"] and p["execution_date"] == NEXT.isoformat() and p["arrival"] == 158.5
     with pytest.raises(ValueError, match="EURUSD"):
@@ -172,7 +207,7 @@ def test_pov_reports_the_unfilled_remainder_and_its_opportunity_cost():
     day = pd.Series({"Open": 100.0, "High": 104.0, "Low": 99.0, "Close": 103.0, "Volume": 1e6})
     bars = synthetic_intraday_bars(day, 78, "equity")
     rep = simulate_execution(plan.schedule(bars), bars, "buy", "pov", 2.0, 0.0, 0.02, 1e6, requested=plan.quantity)
-    assert rep.requested == 5_000_000 and rep.executed == pytest.approx(100_000)      # 10% of the day's volume
+    assert rep.requested == 5_000_000 and rep.executed == pytest.approx(100_000)  # 10% of the day's volume
     assert rep.completion == pytest.approx(0.02) and rep.unfilled == pytest.approx(4_900_000)
     # Perold: the 98% never bought is marked at the close, +300 bps from arrival.
     assert rep.opportunity_cost_bps == pytest.approx(300.0 * 0.98)
@@ -180,8 +215,9 @@ def test_pov_reports_the_unfilled_remainder_and_its_opportunity_cost():
     assert rep.is_bps == pytest.approx(executed_leg + rep.opportunity_cost_bps)
     assert rep.to_dict()["completion"] == 0.02 and rep.to_dict()["unfilled"] == pytest.approx(4_900_000)
     # A day with no volume fills nothing and says so; it does not report completion 1.0.
-    dead = synthetic_intraday_bars(pd.Series({"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 0}),
-                                   78, "equity")
+    dead = synthetic_intraday_bars(
+        pd.Series({"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 0}), 78, "equity"
+    )
     with np.errstate(all="ignore"):
         empty = simulate_execution(plan.schedule(dead), dead, "buy", "pov", 2.0, 0.0, 0.02, None, requested=plan.quantity)
     assert empty.executed == 0 and empty.completion == 0.0 and empty.opportunity_cost_bps == pytest.approx(50.0)
@@ -191,7 +227,9 @@ def test_pov_reports_the_unfilled_remainder_and_its_opportunity_cost():
 
 
 def test_complete_fill_shortfall_is_unchanged_by_the_opportunity_leg():
-    bars = synthetic_intraday_bars(pd.Series({"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1e6}), 20, "equity", 1)
+    bars = synthetic_intraday_bars(
+        pd.Series({"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1e6}), 20, "equity", 1
+    )
     rep = simulate_execution(twap_schedule(1000, 20), bars, "sell", "twap", 10.0, 0.0)
     assert rep.completion == 1.0 and rep.opportunity_cost_bps == 0.0
     assert rep.is_bps == pytest.approx(-(rep.avg_price / rep.arrival - 1) * 1e4)
@@ -199,12 +237,19 @@ def test_complete_fill_shortfall_is_unchanged_by_the_opportunity_leg():
 
 # ------------------------------------------------------- 31: execute on the next session
 def test_plan_tool_sizes_at_the_close_and_fills_on_the_next_session():
-    prov = StubProvider({"AAPL": _history(100.0, last={"Open": 100.0, "High": 102.0, "Close": 102.0},
-                                          after={"Open": 103.0, "High": 104.0, "Low": 102.5, "Close": 103.5})})
+    prov = StubProvider(
+        {
+            "AAPL": _history(
+                100.0,
+                last={"Open": 100.0, "High": 102.0, "Close": 102.0},
+                after={"Open": 103.0, "High": 104.0, "Low": 102.5, "Close": 103.5},
+            )
+        }
+    )
     p = DeskTools(prov, CFG, capital=100_000.0).plan("AAPL", AS_OF, 0.5)
-    assert p["price"] == 102.0 and p["quantity"] == math.floor(50_000 / 102.0)     # sized at the as-of close
+    assert p["price"] == 102.0 and p["quantity"] == math.floor(50_000 / 102.0)  # sized at the as-of close
     assert p["as_of"] == AS_OF.isoformat() and p["execution_date"] == NEXT.isoformat()
-    assert p["arrival"] == 103.0 and p["close"] == 103.5                           # filled on t+1, never on t
+    assert p["arrival"] == 103.0 and p["close"] == 103.5  # filled on t+1, never on t
     assert p["simulated"] is True and 0 < p["completion"] <= 1
 
 
@@ -216,6 +261,7 @@ def test_plan_tool_says_so_when_the_next_session_is_not_available():
 
 def test_cli_execute_says_when_the_next_session_is_not_available(monkeypatch, capsys):
     import agentic_trader.data as data
+
     monkeypatch.setattr(data, "get_provider", lambda cfg: StubProvider({"AAPL": _history(100.0)}))
     assert main(["execute", "AAPL", "--date", "2024-03-01", "--target", "0.5", "--capital", "100000"]) == 0
     out = capsys.readouterr().out
@@ -260,13 +306,18 @@ def test_cli_execute_exposes_ac_kappa(capsys):
     assert main(base + ["--algo", "twap"]) == 0
     twap = capsys.readouterr().out
     fill = re.compile(r"avg fill ([0-9.]+)")
-    assert fill.search(ac0).group(1) == fill.search(twap).group(1)      # kappa 0 is TWAP, exactly
+    assert fill.search(ac0).group(1) == fill.search(twap).group(1)  # kappa 0 is TWAP, exactly
 
 
 # ------------------------------------------------------------ 71: explicit tickets
 def _executor(tools, gateway=None, **policy):
-    return ToolExecutor(build_registry(tools), PolicyEngine({"max_position": 1.0, **policy}), EvidenceStore(),
-                        Role.TRADER, gateway or AutoApprovalGateway())
+    return ToolExecutor(
+        build_registry(tools),
+        PolicyEngine({"max_position": 1.0, **policy}),
+        EvidenceStore(),
+        Role.TRADER,
+        gateway or AutoApprovalGateway(),
+    )
 
 
 def test_submit_order_rejects_bare_floats():
@@ -292,11 +343,21 @@ def test_ticket_carries_units_notional_price_and_a_verifiable_plan_reference():
         with pytest.raises(ValueError):
             tools.submit_order(**{**args, **change})
     with pytest.raises(ValueError, match="quantity_unit"):
-        tools.submit_order(**{**args, "quantity_unit": "shares",
-                              "plan_id": plan_reference("USDJPY", "buy", 50_000.0, "shares", 50_000.0, "USD", plan["price"])})
+        tools.submit_order(
+            **{
+                **args,
+                "quantity_unit": "shares",
+                "plan_id": plan_reference("USDJPY", "buy", 50_000.0, "shares", 50_000.0, "USD", plan["price"]),
+            }
+        )
     with pytest.raises(ValueError, match="account currency"):
-        tools.submit_order(**{**args, "notional_currency": "JPY",
-                              "plan_id": plan_reference("USDJPY", "buy", 50_000.0, "USD", 50_000.0, "JPY", plan["price"])})
+        tools.submit_order(
+            **{
+                **args,
+                "notional_currency": "JPY",
+                "plan_id": plan_reference("USDJPY", "buy", 50_000.0, "USD", 50_000.0, "JPY", plan["price"]),
+            }
+        )
     # the plan was consumed by its ticket (v0.11): the same ticket again is refused
     with pytest.raises(ValueError, match="already ticketed"):
         tools.submit_order(**args)
@@ -317,18 +378,42 @@ def test_ticket_size_guard_before_approval_and_at_execution():
     with pytest.raises(ValueError, match="whole shares"):
         tools.submit_order("AAPL", "buy", 10.5, "shares", 1575.0, "USD", 150.0, frac)
     with pytest.raises(ValueError, match="whole lots"):
-        tools.submit_order("USDJPY", "buy", 1500.0, "USD", 1500.0, "USD", 145.0,
-                           plan_reference("USDJPY", "buy", 1500.0, "USD", 1500.0, "USD", 145.0))
+        tools.submit_order(
+            "USDJPY",
+            "buy",
+            1500.0,
+            "USD",
+            1500.0,
+            "USD",
+            145.0,
+            plan_reference("USDJPY", "buy", 1500.0, "USD", 1500.0, "USD", 145.0),
+        )
     gate = QueuedApprovalGateway()
     ex = _executor(tools, gate, max_order_notional=tools.order_cap)
-    res = ex.call("execution.submit_order", symbol="AAPL", side="buy", quantity=1000.0, quantity_unit="shares",
-                  notional=150_000.0, notional_currency="USD", price=150.0, plan_id=big)
+    res = ex.call(
+        "execution.submit_order",
+        symbol="AAPL",
+        side="buy",
+        quantity=1000.0,
+        quantity_unit="shares",
+        notional=150_000.0,
+        notional_currency="USD",
+        price=150.0,
+        plan_id=big,
+    )
     assert not res.ok and "argument_guard" in res.error and "per-order cap" in res.error
-    assert gate.pending() == [] and not tools.orders                # never reached an approver
-    assert tools.order_cap == float(DeskTools(SyntheticProvider(CFG), make_config(CFG, execution={"max_order_notional": 5e3}),
-                                              capital=100_000.0).order_cap) * 20
+    assert gate.pending() == [] and not tools.orders  # never reached an approver
+    assert (
+        tools.order_cap
+        == float(
+            DeskTools(
+                SyntheticProvider(CFG), make_config(CFG, execution={"max_order_notional": 5e3}), capital=100_000.0
+            ).order_cap
+        )
+        * 20
+    )
     frozen = DeskTools(SyntheticProvider(CFG), make_config(CFG, execution={"max_order_notional": 0}), capital=100_000.0)
-    assert frozen.order_cap == 0.0                                    # zero freezes ticketing; it is not "unset"
+    assert frozen.order_cap == 0.0  # zero freezes ticketing; it is not "unset"
     with pytest.raises(ValueError, match="per-order cap 0"):
         frozen.submit_order(**ticket_from_plan(frozen.plan("AAPL", AS_OF, 0.1)))
 
@@ -344,11 +429,24 @@ def test_submit_order_accepts_only_plans_this_desk_produced():
     with pytest.raises(ValueError, match="not one this desk produced"):
         tools.submit_order("AAPL", "buy", 1e9, "shares", 10_000.0, "USD", 0.00001, forged)
     assert tools.orders == []
-    ex = ToolExecutor(build_registry(tools), PolicyEngine({"max_position": 1.0, "max_order_notional": tools.order_cap}),
-                      EvidenceStore(), Role.TRADER, AutoApprovalGateway())
-    r = ex.call("execution.submit_order", symbol="USDJPY", side="buy", quantity=1e12, quantity_unit="USD", notional=1000.0,
-                notional_currency="USD", price=150.0,
-                plan_id=plan_reference("USDJPY", "buy", 1e12, "USD", 1000.0, "USD", 150.0))
+    ex = ToolExecutor(
+        build_registry(tools),
+        PolicyEngine({"max_position": 1.0, "max_order_notional": tools.order_cap}),
+        EvidenceStore(),
+        Role.TRADER,
+        AutoApprovalGateway(),
+    )
+    r = ex.call(
+        "execution.submit_order",
+        symbol="USDJPY",
+        side="buy",
+        quantity=1e12,
+        quantity_unit="USD",
+        notional=1000.0,
+        notional_currency="USD",
+        price=150.0,
+        plan_id=plan_reference("USDJPY", "buy", 1e12, "USD", 1000.0, "USD", 150.0),
+    )
     assert not r.ok and "not one this desk produced" in r.error and tools.orders == []
     # the desk's own plan is accepted, unchanged; the same numbers under another plan's id are not
     plan = tools.plan("USDJPY", AS_OF, 0.5)
@@ -361,8 +459,7 @@ def test_submit_order_accepts_only_plans_this_desk_produced():
     elsewhere = DeskTools(SyntheticProvider(CFG), CFG, capital=100_000.0).plan("AAPL", AS_OF, 0.1)
     with pytest.raises(ValueError, match="allow_external_plans"):
         tools.submit_order(**ticket_from_plan(elsewhere))
-    lenient = DeskTools(SyntheticProvider(CFG), make_config(CFG, execution={"allow_external_plans": True}),
-                        capital=100_000.0)
+    lenient = DeskTools(SyntheticProvider(CFG), make_config(CFG, execution={"allow_external_plans": True}), capital=100_000.0)
     t = lenient.submit_order(**ticket_from_plan(elsewhere))
     assert t["status"] == "ticketed" and t["plan_known"] is False
     assert CFG["execution"].get("allow_external_plans", False) is False
@@ -389,7 +486,7 @@ def test_plan_reads_the_desk_position_book():
     assert tools.plan("AAPL", AS_OF, 0.5, current_weight=0.4)["quantity"] == p["quantity"]
     with pytest.raises(ValueError, match="disagrees with the desk's book"):
         tools.plan("AAPL", AS_OF, 0.5, current_weight=0.0)
-    assert tools.plan("MSFT", AS_OF, 0.5, current_weight=0.3)["current_weight"] == 0.3   # unknown to the book
+    assert tools.plan("MSFT", AS_OF, 0.5, current_weight=0.3)["current_weight"] == 0.3  # unknown to the book
     assert tools.plan("AAPL", AS_OF, 0.4) == {"trade": False, "reason": "target equals current position"}
 
 
@@ -398,8 +495,13 @@ def test_validate_plan_leaves_a_declared_current_weight_to_the_runs_book():
     # sent a declared position above the cap into the argument guard; the run's book carries the
     # declared fact now and the plan step does not repeat it.
     reg = build_registry(DeskTools(SyntheticProvider(CFG), CFG))
-    raw = [{"type": "tool", "name": "execution.plan",
-            "arguments": {"symbol": "AAPL", "as_of": "2024-03-01", "target_weight": 0.5, "current_weight": 0.0}}]
+    raw = [
+        {
+            "type": "tool",
+            "name": "execution.plan",
+            "arguments": {"symbol": "AAPL", "as_of": "2024-03-01", "target_weight": 0.5, "current_weight": 0.0},
+        }
+    ]
     plan = validate_plan(raw, Task("AAPL", AS_OF, current_weight=0.4), Instrument.parse("AAPL"), ["technical"], reg)
     step = next(s for s in plan.steps if s.name == "execution.plan")
     assert "current_weight" not in step.arguments
@@ -434,8 +536,9 @@ def test_plan_flags_a_notional_over_the_desk_cap_as_unticketable():
     # (v0.8 final review (h): the ticket moves the book to flat, so the executor check above runs
     # before it; the same reversal now fits the cap as a second leg, see test_two_leg_reduce_...)
     # a cap of zero flags every plan, and the no-session note still travels with the cap note
-    frozen = DeskTools(StubProvider({"AAPL": _history(100.0)}), make_config(CFG, execution={"max_order_notional": 0}),
-                       capital=100_000.0)
+    frozen = DeskTools(
+        StubProvider({"AAPL": _history(100.0)}), make_config(CFG, execution={"max_order_notional": 0}), capital=100_000.0
+    )
     fp = frozen.plan("AAPL", AS_OF, 0.1)
     assert fp["ticketable"] is False and fp["order_cap"] == 0.0 and fp["simulated"] is False
     assert "per-order cap 0" in fp["note"] and "no session after 2024-03-01" in fp["note"]
@@ -452,8 +555,9 @@ def test_plan_returns_no_trade_for_a_change_below_one_lot():
     no_min = make_config(CFG, risk={"min_trade_weight": 0.0})
     fx = DeskTools(SyntheticProvider(no_min), no_min, capital=100_000.0).plan("USDJPY", AS_OF, 0.005)  # < one lot
     assert fx["trade"] is False and "below one lot of 1000 USD" in fx["reason"]
-    res = _executor(tools).call("execution.plan", symbol="AAPL", as_of=AS_OF.isoformat(), target_weight=0.25,
-                                current_weight=0.2499)
+    res = _executor(tools).call(
+        "execution.plan", symbol="AAPL", as_of=AS_OF.isoformat(), target_weight=0.25, current_weight=0.2499
+    )
     assert res.ok and res.payload["trade"] is False and tools.plans == {}
     # the long-only truncation note still travels with it
     held = DeskTools(SyntheticProvider(CFG), CFG, positions={"AAPL": 0.0001}, capital=100_000.0)
@@ -491,13 +595,14 @@ def test_long_only_equity_plan_is_truncated_to_flat_and_the_ticket_says_reduce()
     with pytest.raises(ValueError, match="long-only"):
         tools.submit_order("AAPL", "sell", 300.0, "shares", 60_000.0, "USD", 200.0, short)
     # with shorting allowed the same request is a reversal, and says so
-    loose = DeskTools(SyntheticProvider(CFG), make_config(CFG, risk={"allow_short_equity": True}),
-                      positions={"AAPL": 0.4}, capital=100_000.0)
+    loose = DeskTools(
+        SyntheticProvider(CFG), make_config(CFG, risk={"allow_short_equity": True}), positions={"AAPL": 0.4}, capital=100_000.0
+    )
     p2 = loose.plan("AAPL", AS_OF, -0.3)
     assert p2["intent"] == "reverse_to_short" and p2["quantity"] == math.floor(70_000 / p2["price"])
     assert loose.submit_order(**ticket_from_plan(p2))["intent"] == "reverse_to_short"
     fx = tools.plan("USDJPY", AS_OF, -0.5)
-    assert fx["intent"] == "sell_short" and fx["target_weight"] == -0.5       # FX shorts are allowed by default
+    assert fx["intent"] == "sell_short" and fx["target_weight"] == -0.5  # FX shorts are allowed by default
 
 
 def test_cli_execute_honours_the_long_only_policy_and_allow_short(capsys):
@@ -520,17 +625,22 @@ def test_carry_summary_reports_what_the_backtester_credited():
     assert line.startswith(f"carry {36 * 0.0325 / 62:+.2%} p.a. credited") and "+1.89%" in line
     assert "+3.25% on 36/62 accruing bars" in line and "0 on 26 with no point-in-time rate" in line
     assert carry_summary(np.full(63, 0.0325), 0.0) == "carry +3.25% p.a. credited (point-in-time, all 62 accruing bars)"
-    assert carry_summary(np.full(5, np.nan), 0.0) == \
-        "carry +0.00% p.a. credited (4/4 accruing bars with no point-in-time rate)"
+    assert carry_summary(np.full(5, np.nan), 0.0) == "carry +0.00% p.a. credited (4/4 accruing bars with no point-in-time rate)"
     assert carry_summary(None, 0.0252) == "carry +2.52% p.a."
 
 
 def test_cli_backtest_prints_the_credited_carry(monkeypatch, capsys):
     import agentic_trader.cli.research as research
+
     carry = np.array([0.0325] * 36 + [np.nan] * 27)
     bt = quant.BacktestConfig(cost_bps=0.3, slippage_bps=0.2, carry_annual=0.0325, allow_short=True)
-    fake = SimpleNamespace(instrument=Instrument.parse("USDJPY"), dates=pd.bdate_range("2026-07-01", periods=63),
-                           carry=carry, backtest_config=bt, table=lambda: pd.DataFrame({"CR%": [1.0]}, index=["x"]))
+    fake = SimpleNamespace(
+        instrument=Instrument.parse("USDJPY"),
+        dates=pd.bdate_range("2026-07-01", periods=63),
+        carry=carry,
+        backtest_config=bt,
+        table=lambda: pd.DataFrame({"CR%": [1.0]}, index=["x"]),
+    )
     monkeypatch.setattr(research, "run_agent_backtest", lambda *a, **k: fake)
     args = build_parser().parse_args(["baselines", "USDJPY", "--start", "2026-07-01", "--end", "2026-09-25"])
     assert cmd_backtest(args, include_agent=False) == 0
@@ -586,20 +696,20 @@ def test_quantities_are_rounded_once_at_plan_time_and_used_everywhere(capsys):
 # ------------------------------------------------- v0.8 final review (h): a ticket moves the book
 def test_two_leg_reduce_sizes_the_second_leg_from_the_ticketed_book():
     tools = DeskTools(SyntheticProvider(CFG), CFG, positions={"EURUSD": -0.6}, capital=100_000.0)
-    assert tools.plan("EURUSD", AS_OF, 0.6)["ticketable"] is False       # the whole reversal is over the cap
+    assert tools.plan("EURUSD", AS_OF, 0.6)["ticketable"] is False  # the whole reversal is over the cap
     leg1 = tools.submit_order(**ticket_from_plan(tools.plan("EURUSD", AS_OF, 0.0)))
     assert leg1["intent"] == "buy_to_cover" and leg1["position_before"] == -0.6
     assert leg1["position_after"] == pytest.approx(0.0, abs=0.02) and tools.positions["EURUSD"] == leg1["position_after"]
     pos = tools.position("EURUSD")
     assert pos["weight"] == leg1["position_after"] and [t["id"] for t in pos["pending"]] == [leg1["id"]]
-    leg2 = tools.plan("EURUSD", AS_OF, 0.6)                             # sized from the book the ticket left
+    leg2 = tools.plan("EURUSD", AS_OF, 0.6)  # sized from the book the ticket left
     assert leg2["trade"] and leg2["ticketable"] is True and leg2["current_weight"] == leg1["position_after"]
     assert leg2["notional"] <= 100_000.0 and leg2["side"] == "buy"
     t2 = tools.submit_order(**ticket_from_plan(leg2))
     assert t2["position_before"] == leg1["position_after"] and t2["position_after"] == pytest.approx(0.6, abs=0.02)
     assert tools.positions["EURUSD"] == t2["position_after"]
     assert [t["id"] for t in tools.position("EURUSD")["pending"]] == [leg1["id"], t2["id"]]
-    with pytest.raises(ValueError, match="disagrees with the desk's book"):   # the pre-ticket weight is stale
+    with pytest.raises(ValueError, match="disagrees with the desk's book"):  # the pre-ticket weight is stale
         tools.plan("EURUSD", AS_OF, 0.6, current_weight=-0.6)
     # a run's view moves the run's book, never the desk's; a second reduce cannot re-sell sold shares
     desk = DeskTools(SyntheticProvider(CFG), CFG, positions={"AAPL": 0.4}, capital=100_000.0)

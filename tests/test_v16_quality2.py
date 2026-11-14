@@ -3,6 +3,7 @@ deterministic fake embedder, plus error paths and edge cases in v15/v16 library 
 
 Offline and $0: no network, no model calls, no sentence-transformers, no thread timing.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -36,8 +37,15 @@ class FakeEmbedder:
     """Deterministic stand-in for a sentence model: words map to concept buckets, so
     synonyms ("liquidity", "funding") land on the same axis even with no shared token.
     Rows are unit-normalised, matching ``normalize_embeddings=True``."""
-    CONCEPTS = {"liquidity": "cash", "funding": "cash", "cash": "cash",
-                "inflation": "prices", "prices": "prices", "cpi": "prices"}
+
+    CONCEPTS = {
+        "liquidity": "cash",
+        "funding": "cash",
+        "cash": "cash",
+        "inflation": "prices",
+        "prices": "prices",
+        "cpi": "prices",
+    }
     DIM = 64
 
     def __init__(self):
@@ -58,15 +66,25 @@ class FakeEmbedder:
 
 
 def _p(i: int, text: str, days: int = 0, symbol: str = "AAA", source: str = "edgar") -> ResearchPassage:
-    return ResearchPassage(id=f"p{i}", source=source, symbol=symbol, accession=f"acc{i}", form="10-K",
-                           section="risk", visible_date=T0 + timedelta(days=days), text=text)
+    return ResearchPassage(
+        id=f"p{i}",
+        source=source,
+        symbol=symbol,
+        accession=f"acc{i}",
+        form="10-K",
+        section="risk",
+        visible_date=T0 + timedelta(days=days),
+        text=text,
+    )
 
 
 def _corpus(**kw) -> ResearchCorpus:
-    ps = [_p(0, "funding pressure rose across the quarter", 0),
-          _p(1, "revenue growth in software segment", 1),
-          _p(2, "dividend policy unchanged board said", 2),
-          _p(3, "funding markets tightened again", 30)]
+    ps = [
+        _p(0, "funding pressure rose across the quarter", 0),
+        _p(1, "revenue growth in software segment", 1),
+        _p(2, "dividend policy unchanged board said", 2),
+        _p(3, "funding markets tightened again", 30),
+    ]
     return ResearchCorpus(ps, **kw)
 
 
@@ -77,14 +95,14 @@ def test_embeddings_need_extra_without_seam(monkeypatch):
 
 
 def test_injected_embedder_used_and_encoded_once_for_corpus(monkeypatch):
-    monkeypatch.setattr(rr, "embeddings_available", lambda: False)   # seam bypasses the extra
+    monkeypatch.setattr(rr, "embeddings_available", lambda: False)  # seam bypasses the extra
     fake = FakeEmbedder()
     c = _corpus(use_embeddings=True, embedder=fake)
     assert fake.calls == [4]
     c.search("liquidity", T0 + timedelta(days=5), method="hybrid")
-    assert fake.calls == [4, 1]            # one query encode, corpus not re-encoded
+    assert fake.calls == [4, 1]  # one query encode, corpus not re-encoded
     c.search("liquidity", T0 + timedelta(days=5), method="tfidf")
-    assert fake.calls == [4, 1]            # tfidf never touches the embedder
+    assert fake.calls == [4, 1]  # tfidf never touches the embedder
 
 
 def test_embedding_ranker_recovers_synonym_tfidf_misses():
@@ -100,7 +118,7 @@ def test_embedding_ranker_recovers_synonym_tfidf_misses():
 def test_embedding_path_respects_point_in_time_and_filters():
     c = _corpus(use_embeddings=True, embedder=FakeEmbedder())
     hits = c.search("funding", T0 + timedelta(days=5), method="hybrid", k=10)
-    assert "p3" not in {h.passage.id for h in hits}          # visible on day 30 only
+    assert "p3" not in {h.passage.id for h in hits}  # visible on day 30 only
     assert c.search("funding", T0 + timedelta(days=5), method="hybrid", symbol="ZZZ") == []
     assert c.search("funding", T0 - timedelta(days=1), method="hybrid") == []
     assert c.search("   ", T0 + timedelta(days=5), method="hybrid") == []
@@ -135,8 +153,11 @@ def test_duplicate_ids_refused():
 
 
 @settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-@given(days=st.lists(st.integers(0, 60), min_size=1, max_size=12),
-       cut=st.integers(-1, 61), method=st.sampled_from(["tfidf", "hybrid"]))
+@given(
+    days=st.lists(st.integers(0, 60), min_size=1, max_size=12),
+    cut=st.integers(-1, 61),
+    method=st.sampled_from(["tfidf", "hybrid"]),
+)
 def test_property_never_returns_future_passages(days, cut, method):
     words = ["funding", "liquidity", "inflation", "revenue", "dividend", "cash"]
     ps = [_p(i, f"{words[i % 6]} {words[(i * 5) % 6]} note", d) for i, d in enumerate(days)]
@@ -162,11 +183,12 @@ def test_tape_serves_in_order_then_repeats_last_and_replays_raises():
     t.put("k", "lbl", "return", [2])
     assert [t.serve("k", "lbl") for _ in range(3)] == [[1], [2], [2]]
     first = t.serve("k", "lbl")
-    first.append(99)                                    # served values are copies
+    first.append(99)  # served values are copies
     assert t.serve("k", "lbl") == [2]
 
     def boom():
         raise ValueError("boom")
+
     with pytest.raises(ValueError, match="boom"):
         t.call("e", "err", boom)
     with pytest.raises(ValueError, match="boom"):
@@ -200,7 +222,7 @@ def test_recording_llm_round_trip_and_json_gating():
     assert rep.complete("s", "p", deep=True) == "s|p|True"
     assert rep.complete_json("s", "p", deep=False, schema={"a": 1}) == '{"ok": true}'
     with pytest.raises(ReplayMissingPayload):
-        rep.complete_json("s", "p", deep=False, schema={"a": 2})   # different schema, different key
+        rep.complete_json("s", "p", deep=False, schema={"a": 2})  # different schema, different key
     with pytest.raises(ReplayMissingPayload):
         rep.complete("s", "p", deep=False)
     assert not hasattr(RecordingLLM(_PlainModel()), "complete_json")
@@ -220,8 +242,11 @@ def test_decision_fingerprint_drops_ids_keeps_count():
 
 # --------------------------------------------------------------------------- edgar text
 @settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-@given(text=st.text(alphabet=st.sampled_from(list("ab \n")), max_size=600),
-       max_chars=st.integers(20, 120), overlap=st.integers(0, 19))
+@given(
+    text=st.text(alphabet=st.sampled_from(list("ab \n")), max_size=600),
+    max_chars=st.integers(20, 120),
+    overlap=st.integers(0, 19),
+)
 def test_property_chunk_text_bounded_substrings(text, max_chars, overlap):
     chunks = et.chunk_text(text, max_chars, overlap)
     assert all(0 < len(c) <= max_chars and c in text for c in chunks)
@@ -243,13 +268,23 @@ def test_parse_accepted_variants():
 
 
 def _edgar_fetch(docs_fail: bool = False):
-    sub = {"filings": {"recent": {"form": ["10-K", "8-K", "8-K", "S-1"],
-                                  "accessionNumber": ["a-1", "a-2", "a-3", "a-4"],
-                                  "primaryDocument": ["k.htm", "e.htm", "f.htm", "s.htm"],
-                                  "items": ["", "5.02", "2.02,9.01", ""],
-                                  "acceptanceDateTime": ["2024-02-01T21:00:00.000Z", "2024-03-01T21:00:00.000Z",
-                                                         "2024-04-01T21:00:00.000Z", "2024-01-01T00:00:00.000Z"]},
-                       "files": [{"name": "page2.json"}]}}
+    sub = {
+        "filings": {
+            "recent": {
+                "form": ["10-K", "8-K", "8-K", "S-1"],
+                "accessionNumber": ["a-1", "a-2", "a-3", "a-4"],
+                "primaryDocument": ["k.htm", "e.htm", "f.htm", "s.htm"],
+                "items": ["", "5.02", "2.02,9.01", ""],
+                "acceptanceDateTime": [
+                    "2024-02-01T21:00:00.000Z",
+                    "2024-03-01T21:00:00.000Z",
+                    "2024-04-01T21:00:00.000Z",
+                    "2024-01-01T00:00:00.000Z",
+                ],
+            },
+            "files": [{"name": "page2.json"}],
+        }
+    }
     page2 = {"form": ["10-Q"], "accessionNumber": ["a-0"], "acceptanceDateTime": [None]}
     seen: list[str] = []
 
@@ -264,6 +299,7 @@ def _edgar_fetch(docs_fail: bool = False):
         if docs_fail:
             raise OSError("reset")
         return b"<p>Item 2.02 Results of Operations</p><p>" + b"Revenue rose. " * 40 + b"</p>"
+
     return fetch, seen
 
 
@@ -277,7 +313,7 @@ def test_edgar_index_filters_forms_items_and_dot_dash_ticker():
     assert rows[-1]["accepted"] is None and rows[-1]["doc"] == ""
     n = p.requests
     p.filing_index("BRK-B")
-    assert p.requests == n                      # memoised
+    assert p.requests == n  # memoised
     assert et.EdgarProvider(fetch=fetch, min_interval=0, ciks={"ZZ": "7"}).cik("zz") == "0000000007"
     assert p.cik("NOPE") is None
 
@@ -285,16 +321,16 @@ def test_edgar_index_filters_forms_items_and_dot_dash_ticker():
 def test_edgar_sections_point_in_time_never_fetch_future(tmp_path):
     fetch, seen = _edgar_fetch()
     p = et.EdgarProvider(fetch=fetch, min_interval=0, cache_dir=tmp_path)
-    secs = p.sections("BRK-B", datetime(2024, 3, 15))          # naive read as UTC
+    secs = p.sections("BRK-B", datetime(2024, 3, 15))  # naive read as UTC
     assert all(s.visible_date <= datetime(2024, 3, 15, tzinfo=UTC) for s in secs)
-    assert not any("f.htm" in u for u in seen)                 # the April 8-K was never fetched
-    assert (tmp_path / "a-1.txt").exists()                     # cached on disk
+    assert not any("f.htm" in u for u in seen)  # the April 8-K was never fetched
+    assert (tmp_path / "a-1.txt").exists()  # cached on disk
 
     def no_fetch(url):
         raise AssertionError(url)
+
     p2 = et.EdgarProvider(fetch=no_fetch, min_interval=0, cache_dir=tmp_path)
-    assert p2.document({"accession": "a-1", "cik": "1", "doc": "k.htm"}) == \
-        (tmp_path / "a-1.txt").read_text(encoding="utf-8")
+    assert p2.document({"accession": "a-1", "cik": "1", "doc": "k.htm"}) == (tmp_path / "a-1.txt").read_text(encoding="utf-8")
 
 
 def test_edgar_unreadable_document_loses_sections_not_ticker():
@@ -322,17 +358,21 @@ def test_served_matches_latest_tag():
     assert not served_matches("qwen:7b", "qwen:14b") and not served_matches("qwen", None)
 
 
-@pytest.mark.parametrize("exc, counter", [
-    (urllib.error.URLError(socket.timeout("slow")), "timeouts"),
-    (TimeoutError("slow"), "timeouts"),
-    (urllib.error.URLError(ConnectionRefusedError("no")), None),
-    (ValueError("reply body is not a JSON object"), None),
-])
+@pytest.mark.parametrize(
+    "exc, counter",
+    [
+        (urllib.error.URLError(socket.timeout("slow")), "timeouts"),
+        (TimeoutError("slow"), "timeouts"),
+        (urllib.error.URLError(ConnectionRefusedError("no")), None),
+        (ValueError("reply body is not a JSON object"), None),
+    ],
+)
 def test_local_llm_failures_fall_back_and_count(monkeypatch, exc, counter):
     m = LocalLLM({"local_llm_model": "m"})
 
     def fail(body):
         raise exc
+
     monkeypatch.setattr(m, "_post", fail)
     assert m.complete("s", "p", deep=False) is None
     assert m.usage.errors == 1 and m.last_call is None
@@ -350,6 +390,7 @@ def test_local_llm_non_object_body_refused(monkeypatch):
 
         def read(self):
             return b"[1, 2]"
+
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: _Resp())
     m = LocalLLM({"local_llm_model": "m"})
     assert m.complete_json("s", "p", deep=False, schema={"type": "object"}) is None
@@ -409,8 +450,10 @@ def _fake_otel(monkeypatch):
         "opentelemetry.sdk.trace": types.SimpleNamespace(TracerProvider=TracerProvider),
         "opentelemetry.sdk.trace.export": types.SimpleNamespace(SimpleSpanProcessor=SimpleSpanProcessor),
         "opentelemetry.trace": types.SimpleNamespace(
-            Status=lambda code, desc: (code, desc), StatusCode=types.SimpleNamespace(ERROR="ERROR"),
-            set_span_in_context=lambda parent: ("ctx", parent.name)),
+            Status=lambda code, desc: (code, desc),
+            StatusCode=types.SimpleNamespace(ERROR="ERROR"),
+            set_span_in_context=lambda parent: ("ctx", parent.name),
+        ),
     }
     for k, v in mods.items():
         monkeypatch.setitem(sys.modules, k, v)
@@ -435,7 +478,7 @@ def test_export_otel_parents_errors_and_attribute_coercion(monkeypatch):
     assert by["decision:AAA"].attributes == {"obj": "{'x': 1}", "n": 3}
     assert rec["status"] == [("agent:risk", ("ERROR", "RuntimeError: bad"))]
     ends = dict(rec["ended"])
-    assert ends["decision:AAA"] >= max(ends["agent:tech"], ends["agent:risk"])   # parent encloses children
+    assert ends["decision:AAA"] >= max(ends["agent:tech"], ends["agent:risk"])  # parent encloses children
     assert all(e >= by[n].start for n, e in rec["ended"])
 
 
@@ -448,6 +491,7 @@ def test_configure_json_logging_formats_json_and_text():
 
         def mk(msg):
             return logging.LogRecord("agentic_trader.x", logging.INFO, __file__, 1, msg, None, None)
+
         assert json.loads(h.format(mk('{"span": "a"}')))["span"] == "a"
         assert json.loads(h.format(mk("{not json")))["message"] == "{not json"
         out = json.loads(h.format(mk("plain")))

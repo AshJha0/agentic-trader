@@ -17,6 +17,7 @@ Worked example. An AR(1) signal with ``phi = 0.9`` that predicts the next return
 This is an option (``rebalance_from_decay``), rules only, applied offline to the design
 period; it changes no default. ``scripts/horizon_table.py`` writes the design-period table.
 """
+
 from __future__ import annotations
 
 import math
@@ -49,7 +50,7 @@ def lagged_ic(signal, close, max_lag: int = 40) -> pd.Series:
     out = {}
     for k in range(max_lag + 1):
         lagged = np.full(s.size, np.nan)
-        lagged[k:] = s[:s.size - k] if k else s
+        lagged[k:] = s[: s.size - k] if k else s
         out[k] = _spearman(lagged, fwd)
     return pd.Series(out, name="IC")
 
@@ -57,7 +58,7 @@ def lagged_ic(signal, close, max_lag: int = 40) -> pd.Series:
 @dataclass(frozen=True)
 class DecayChoice:
     rebalance_every: int
-    half_life: float          # bars; NaN when not measurable
+    half_life: float  # bars; NaN when not measurable
     ic0: float
     t0: float
     reason: str
@@ -77,15 +78,22 @@ def half_life_from_ic(ic: pd.Series) -> float:
         lags.append(k)
         logs.append(math.log(sgn * x))
     if len(lags) < 3:
-        return float(len(lags)) if lags else float("nan")   # dies within a couple of lags
+        return float(len(lags)) if lags else float("nan")  # dies within a couple of lags
     slope = float(np.polyfit(lags, logs, 1)[0])
     if slope >= 0:
         return float("inf")
     return math.log(2.0) / -slope
 
 
-def rebalance_from_decay(signal, close, max_lag: int = 40, min_every: int = 1, max_every: int = 21,
-                         min_t: float = 2.0, default: int = DEFAULT_REBALANCE_EVERY) -> DecayChoice:
+def rebalance_from_decay(
+    signal,
+    close,
+    max_lag: int = 40,
+    min_every: int = 1,
+    max_every: int = 21,
+    min_t: float = 2.0,
+    default: int = DEFAULT_REBALANCE_EVERY,
+) -> DecayChoice:
     """The rebalance interval implied by the signal's IC half-life (see the module docstring)."""
     ic = lagged_ic(signal, close, max_lag)
     n = int(np.isfinite(np.asarray(signal, float)).sum())
@@ -96,7 +104,8 @@ def rebalance_from_decay(signal, close, max_lag: int = 40, min_every: int = 1, m
     h = half_life_from_ic(ic)
     if not np.isfinite(h):
         every = max_every if h == float("inf") else default
-        return DecayChoice(every, h, ic0, t0, "IC does not decay within the lags" if h == float("inf")
-                           else "half-life not measurable")
+        return DecayChoice(
+            every, h, ic0, t0, "IC does not decay within the lags" if h == float("inf") else "half-life not measurable"
+        )
     every = int(min(max(round(h), min_every), max_every))
     return DecayChoice(every, h, ic0, t0, "half-life of lagged IC")

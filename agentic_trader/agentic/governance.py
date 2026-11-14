@@ -13,6 +13,7 @@
 Hit rate counts only resolved, non-flat decisions (``weight != 0`` and ``pnl`` set): a flat
 decision has no sign to be right about and an expired entry has no verdict.
 """
+
 from __future__ import annotations
 
 import math
@@ -34,7 +35,7 @@ class OutcomeRow:
     as_of: str
     role: str
     weight: float | None
-    pnl: float | None          # realised, from DecisionMemory; None while unresolved / expired
+    pnl: float | None  # realised, from DecisionMemory; None while unresolved / expired
     resolved: bool
     expired: bool
     failed_checks: tuple[str, ...] = ()
@@ -57,8 +58,9 @@ def _memory_index(memory: DecisionMemory | Iterable[MemoryEntry]) -> dict[tuple[
     return idx
 
 
-def join_outcomes(records: Iterable[dict[str, Any]], memory: DecisionMemory | Iterable[MemoryEntry],
-                  provider: str | None = None) -> list[OutcomeRow]:
+def join_outcomes(
+    records: Iterable[dict[str, Any]], memory: DecisionMemory | Iterable[MemoryEntry], provider: str | None = None
+) -> list[OutcomeRow]:
     """One row per finished run with a decision. ``provider`` restricts the memory side (a
     synthetic session's outcome is not a live run's); with several matching entries the
     resolved one wins."""
@@ -74,13 +76,20 @@ def join_outcomes(records: Iterable[dict[str, Any]], memory: DecisionMemory | It
         e = next((c for c in cands if c.pnl is not None), cands[0] if cands else None)
         critic = r.get("critic") or {}
         failed = tuple(sorted({c["name"] for c in critic.get("checks", []) if not c.get("passed", True)}))
-        rows.append(OutcomeRow(
-            task_id=str(r.get("task_id", "")), symbol=sym, as_of=as_of, role=str(r.get("role", "")),
-            weight=(e.weight if e is not None else dec.get("target_weight")),
-            pnl=e.pnl if e is not None else None,
-            resolved=bool(e is not None and e.resolved_on is not None and not e.expired),
-            expired=bool(e is not None and e.expired), failed_checks=failed,
-            critic_passed=critic.get("passed") if critic else None))
+        rows.append(
+            OutcomeRow(
+                task_id=str(r.get("task_id", "")),
+                symbol=sym,
+                as_of=as_of,
+                role=str(r.get("role", "")),
+                weight=(e.weight if e is not None else dec.get("target_weight")),
+                pnl=e.pnl if e is not None else None,
+                resolved=bool(e is not None and e.resolved_on is not None and not e.expired),
+                expired=bool(e is not None and e.expired),
+                failed_checks=failed,
+                critic_passed=critic.get("passed") if critic else None,
+            )
+        )
     return rows
 
 
@@ -108,9 +117,13 @@ def governance_report(rows: list[OutcomeRow], checks: Iterable[str] | None = Non
     for role in sorted({r.role for r in rows}):
         rs = [r for r in scored if r.role == role]
         hits = sum(r.hit for r in rs)
-        by_role[role] = {"runs": sum(r.role == role for r in rows), "scored": len(rs), "hits": hits,
-                         "hit_rate": _rate(hits, len(rs)),
-                         "avg_pnl": (sum(r.pnl for r in rs) / len(rs)) if rs else None}  # type: ignore[misc]
+        by_role[role] = {
+            "runs": sum(r.role == role for r in rows),
+            "scored": len(rs),
+            "hits": hits,
+            "hit_rate": _rate(hits, len(rs)),
+            "avg_pnl": (sum(r.pnl for r in rs) / len(rs)) if rs else None,
+        }  # type: ignore[misc]
     names = sorted(set(checks or ()) | {c for r in rows for c in r.failed_checks})
     by_check: dict[str, dict[str, Any]] = {}
     for name in names:
@@ -118,13 +131,23 @@ def governance_report(rows: list[OutcomeRow], checks: Iterable[str] | None = Non
         loss = [not r.hit for r in scored]
         flagged = sum(flag)
         fp = sum(f and not l for f, l in zip(flag, loss))
-        by_check[name] = {"flagged_runs": sum(name in r.failed_checks for r in rows),
-                          "flagged_scored": flagged, "false_positives": fp,
-                          "false_positive_rate": _rate(fp, flagged),
-                          "flag_loss_phi": _phi(flag, loss), "n_scored": len(scored)}
-    return {"runs": len(rows), "resolved": sum(r.resolved for r in rows),
-            "expired": sum(r.expired for r in rows), "unresolved": sum(r.pnl is None and not r.expired for r in rows),
-            "scored": len(scored), "by_role": by_role, "by_check": by_check}
+        by_check[name] = {
+            "flagged_runs": sum(name in r.failed_checks for r in rows),
+            "flagged_scored": flagged,
+            "false_positives": fp,
+            "false_positive_rate": _rate(fp, flagged),
+            "flag_loss_phi": _phi(flag, loss),
+            "n_scored": len(scored),
+        }
+    return {
+        "runs": len(rows),
+        "resolved": sum(r.resolved for r in rows),
+        "expired": sum(r.expired for r in rows),
+        "unresolved": sum(r.pnl is None and not r.expired for r in rows),
+        "scored": len(scored),
+        "by_role": by_role,
+        "by_check": by_check,
+    }
 
 
 def iso_week(day: str) -> str:
@@ -141,9 +164,17 @@ def weekly_rollup(rows: list[OutcomeRow]) -> list[dict[str, Any]]:
         rs = weeks[wk]
         sc = [r for r in rs if r.scored]
         hits = sum(r.hit for r in sc)
-        out.append({"week": wk, "runs": len(rs), "scored": len(sc), "hits": hits, "hit_rate": _rate(hits, len(sc)),
-                    "pnl_sum": sum(r.pnl for r in sc) if sc else None,  # type: ignore[misc]
-                    "critic_flagged": sum(bool(r.failed_checks) for r in rs)})
+        out.append(
+            {
+                "week": wk,
+                "runs": len(rs),
+                "scored": len(sc),
+                "hits": hits,
+                "hit_rate": _rate(hits, len(sc)),
+                "pnl_sum": sum(r.pnl for r in sc) if sc else None,  # type: ignore[misc]
+                "critic_flagged": sum(bool(r.failed_checks) for r in rs),
+            }
+        )
     return out
 
 
@@ -156,21 +187,33 @@ def _fmt(x: Any, pct: bool = False) -> str:
 
 
 def render_report(rep: dict[str, Any], weeks: list[dict[str, Any]]) -> str:
-    lines = [f"Runs with a decision: {rep['runs']} (resolved {rep['resolved']}, expired {rep['expired']}, "
-             f"unresolved {rep['unresolved']}; scored non-flat {rep['scored']})", "",
-             "| Role | Runs | Scored | Hits | Hit rate | Avg P&L |", "|---|---|---|---|---|---|"]
+    lines = [
+        f"Runs with a decision: {rep['runs']} (resolved {rep['resolved']}, expired {rep['expired']}, "
+        f"unresolved {rep['unresolved']}; scored non-flat {rep['scored']})",
+        "",
+        "| Role | Runs | Scored | Hits | Hit rate | Avg P&L |",
+        "|---|---|---|---|---|---|",
+    ]
     for role, v in rep["by_role"].items():
-        lines.append(f"| {role} | {v['runs']} | {v['scored']} | {v['hits']} | {_fmt(v['hit_rate'], True)} "
-                     f"| {_fmt(v['avg_pnl'])} |")
-    lines += ["", "| Critic check | Flagged (all) | Flagged (scored) | False positives | FP rate | phi(flag, loss) |",
-              "|---|---|---|---|---|---|"]
+        lines.append(
+            f"| {role} | {v['runs']} | {v['scored']} | {v['hits']} | {_fmt(v['hit_rate'], True)} | {_fmt(v['avg_pnl'])} |"
+        )
+    lines += [
+        "",
+        "| Critic check | Flagged (all) | Flagged (scored) | False positives | FP rate | phi(flag, loss) |",
+        "|---|---|---|---|---|---|",
+    ]
     for name, v in rep["by_check"].items():
-        lines.append(f"| {name} | {v['flagged_runs']} | {v['flagged_scored']} | {v['false_positives']} "
-                     f"| {_fmt(v['false_positive_rate'], True)} | {_fmt(v['flag_loss_phi'])} |")
+        lines.append(
+            f"| {name} | {v['flagged_runs']} | {v['flagged_scored']} | {v['false_positives']} "
+            f"| {_fmt(v['false_positive_rate'], True)} | {_fmt(v['flag_loss_phi'])} |"
+        )
     lines += ["", "| Week | Runs | Scored | Hits | Hit rate | P&L sum | Critic flagged |", "|---|---|---|---|---|---|---|"]
     for w in weeks:
-        lines.append(f"| {w['week']} | {w['runs']} | {w['scored']} | {w['hits']} | {_fmt(w['hit_rate'], True)} "
-                     f"| {_fmt(w['pnl_sum'])} | {w['critic_flagged']} |")
+        lines.append(
+            f"| {w['week']} | {w['runs']} | {w['scored']} | {w['hits']} | {_fmt(w['hit_rate'], True)} "
+            f"| {_fmt(w['pnl_sum'])} | {w['critic_flagged']} |"
+        )
     return "\n".join(lines)
 
 
@@ -183,13 +226,16 @@ def planner_survival(raw_steps: list[Any] | None, plan: Any) -> dict[str, Any]:
     steps that appear (by type and name) in the validated plan; additions are validated
     non-governance steps that were not proposed; budget hits are data-budget drops."""
     from .domain import GOVERNANCE_STEPS
+
     gov = {t.value for t in GOVERNANCE_STEPS} | {"critic", "validate", "finalise"}
     final = [(s.type.value, s.name) for s in plan.steps if s.type.value not in gov]
     if raw_steps is None:
-        return {"proposed": 0, "survived": 0, "added": len(final), "budget_hits": 0, "unusable": True,
-                "repaired": True}
-    proposed = [(str(r.get("type", "")).lower(), str(r.get("name", "")).strip()) for r in raw_steps
-                if isinstance(r, dict) and str(r.get("type", "")).lower() in {"tool", "agent"}]
+        return {"proposed": 0, "survived": 0, "added": len(final), "budget_hits": 0, "unusable": True, "repaired": True}
+    proposed = [
+        (str(r.get("type", "")).lower(), str(r.get("name", "")).strip())
+        for r in raw_steps
+        if isinstance(r, dict) and str(r.get("type", "")).lower() in {"tool", "agent"}
+    ]
     remaining = list(final)
     survived = 0
     for p in proposed:
@@ -199,8 +245,14 @@ def planner_survival(raw_steps: list[Any] | None, plan: Any) -> dict[str, Any]:
     proposed_set = set(proposed)
     added = sum(1 for f in final if f not in proposed_set)
     budget = sum("max_plan_lookback_bars" in n for n in plan.notes)
-    return {"proposed": len(raw_steps), "survived": survived, "added": added, "budget_hits": budget,
-            "unusable": False, "repaired": bool(plan.notes)}
+    return {
+        "proposed": len(raw_steps),
+        "survived": survived,
+        "added": added,
+        "budget_hits": budget,
+        "unusable": False,
+        "repaired": bool(plan.notes),
+    }
 
 
 def survival_table(results: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -208,12 +260,20 @@ def survival_table(results: dict[str, list[dict[str, Any]]]) -> list[dict[str, A
     for source, rs in results.items():
         prop = sum(r["proposed"] for r in rs)
         surv = sum(r["survived"] for r in rs)
-        rows.append({"source": source, "tasks": len(rs), "steps_proposed": prop, "steps_survived": surv,
-                     "step_survival": _rate(surv, prop), "steps_added": sum(r["added"] for r in rs),
-                     "plans_repaired": sum(r["repaired"] for r in rs),
-                     "plans_unusable": sum(r["unusable"] for r in rs),
-                     "budget_hits": sum(r["budget_hits"] for r in rs),
-                     "plans_with_budget_hit": sum(r["budget_hits"] > 0 for r in rs)})
+        rows.append(
+            {
+                "source": source,
+                "tasks": len(rs),
+                "steps_proposed": prop,
+                "steps_survived": surv,
+                "step_survival": _rate(surv, prop),
+                "steps_added": sum(r["added"] for r in rs),
+                "plans_repaired": sum(r["repaired"] for r in rs),
+                "plans_unusable": sum(r["unusable"] for r in rs),
+                "budget_hits": sum(r["budget_hits"] for r in rs),
+                "plans_with_budget_hit": sum(r["budget_hits"] > 0 for r in rs),
+            }
+        )
     return rows
 
 
@@ -236,6 +296,7 @@ class MemoryTool:
       ``as_of``, summaries are clipped, and each run has a write budget;
     * every call, allowed or refused, is appended to ``audit``.
     """
+
     memory: DecisionMemory
     as_of: date
     provider: str = ""
@@ -268,12 +329,24 @@ class MemoryTool:
         lessons = self.memory.lessons(sym, self.as_of, k=k, provider=self.provider or None)
         rec = self.memory.track_record(sym, self.as_of, provider=self.provider or None)
         self._log("recall", True, f"{sym}: {len(lessons)} lessons")
-        head = (f"track record {sym}: n={int(rec['n'])}, hit rate {rec['hit_rate']:.0%}" if rec
-                else f"track record {sym}: none resolved by {self.as_of.isoformat()}")
+        head = (
+            f"track record {sym}: n={int(rec['n'])}, hit rate {rec['hit_rate']:.0%}"
+            if rec
+            else f"track record {sym}: none resolved by {self.as_of.isoformat()}"
+        )
         return head + "\n" + untrusted_block("decision memory (earlier model-written reasoning)", lessons)
 
-    def remember(self, symbol: str, action: str, weight: float, price: float, summary: str,
-                 horizon_days: int = 10, as_of: date | None = None, price_basis: str = "") -> str:
+    def remember(
+        self,
+        symbol: str,
+        action: str,
+        weight: float,
+        price: float,
+        summary: str,
+        horizon_days: int = 10,
+        as_of: date | None = None,
+        price_basis: str = "",
+    ) -> str:
         try:
             sym = self._check_symbol(symbol)
             day = as_of or self.as_of
@@ -286,15 +359,20 @@ class MemoryTool:
                     raise MemoryToolError(f"{nm} must be a finite number")
             # A bool is an int and a str may parse: accept only a real integer, so a bad
             # horizon is a refusal written to the audit trail, not a bare ValueError.
-            if (isinstance(horizon_days, bool) or not isinstance(horizon_days, (int, float))
-                    or not math.isfinite(horizon_days) or horizon_days != int(horizon_days)):
+            if (
+                isinstance(horizon_days, bool)
+                or not isinstance(horizon_days, (int, float))
+                or not math.isfinite(horizon_days)
+                or horizon_days != int(horizon_days)
+            ):
                 raise MemoryToolError(f"horizon_days must be a whole number, got {horizon_days!r}")
             if price <= 0 or not 1 <= int(horizon_days) <= 260:
                 raise MemoryToolError("price must be positive and horizon_days in 1..260")
             if self.output_guard:
                 from .output_guard import check_output
+
                 allowed = (sym,) + tuple(self.universe or ())
-                g = check_output(str(summary)[:self.max_summary_chars], allowed, self.canaries)
+                g = check_output(str(summary)[: self.max_summary_chars], allowed, self.canaries)
                 if not g.ok:
                     raise MemoryToolError(f"output guard refused summary: {g.reason}")
             key = f"{sym}|{day.isoformat()}|{self.provider}"
@@ -304,9 +382,17 @@ class MemoryTool:
         except MemoryToolError as e:
             self._log("remember", False, str(e))
             raise
-        self.memory.record(sym, day, str(action)[:16], float(weight), float(price),
-                           str(summary)[:self.max_summary_chars], horizon_days=int(horizon_days),
-                           provider=self.provider, price_basis=price_basis)
+        self.memory.record(
+            sym,
+            day,
+            str(action)[:16],
+            float(weight),
+            float(price),
+            str(summary)[: self.max_summary_chars],
+            horizon_days=int(horizon_days),
+            provider=self.provider,
+            price_basis=price_basis,
+        )
         self._writes += 1
         self._log("remember", True, key)
         return key

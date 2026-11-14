@@ -6,6 +6,7 @@ Kept separate from the ``cmd_*`` handlers (``decisions.py``, ``research.py``,
 those can be read, tested and changed without pulling in the whole CLI surface -- the
 single 700-line ``cli.py`` this package replaces mixed all four concerns in one file.
 """
+
 from __future__ import annotations
 
 import json
@@ -115,6 +116,7 @@ def _config(args) -> dict:
         over["analysts"] = _symbols(args.analysts)
     if getattr(args, "xalpha_universe", None):
         from ..evaluation import UNIVERSES
+
         x = args.xalpha_universe
         over["xalpha_universe"] = UNIVERSES[x] if x in UNIVERSES else _symbols(x)
     if getattr(args, "no_memory", False):
@@ -132,7 +134,7 @@ def _config(args) -> dict:
         # configuration block (secret env-var names), so the block must already be there.
         block = cfg.get("agentic", {}).get("approval")
         if not isinstance(block, dict) or not block.get("approvers"):
-            raise SystemExit('--approval signed needs an agentic.approval block with approvers in the config file')
+            raise SystemExit("--approval signed needs an agentic.approval block with approvers in the config file")
         cfg["agentic"]["approval"] = {**block, "gateway": "signed"}
     return cfg
 
@@ -155,24 +157,26 @@ def _symbols(text: str) -> list[str]:
 def _header(what: str, cfg: dict) -> None:
     prov = provenance()
     commit = (prov["git_commit"] or "unknown")[:12] + ("+dirty" if prov["git_dirty"] else "")
-    print(f"AgenticTrader | {what} | llm={cfg['llm_provider']} data={cfg['data_provider']} "
-          f"quant={quant.BACKEND} | v{prov['version']} {commit}")
+    print(
+        f"AgenticTrader | {what} | llm={cfg['llm_provider']} data={cfg['data_provider']} "
+        f"quant={quant.BACKEND} | v{prov['version']} {commit}"
+    )
 
 
 def write_sidecar(out: str, extra: dict | None = None) -> str:
     """Write ``<out stem>.provenance.json`` next to a CSV result so the numbers in it can be
     tied to the version, commit, backend and dependency set that produced them."""
     path = Path(out).with_suffix(".provenance.json")
-    path.write_text(json.dumps({"for": str(out), **(extra or {}), "provenance": provenance()},
-                               indent=1, default=str), encoding="utf-8")
+    path.write_text(
+        json.dumps({"for": str(out), **(extra or {}), "provenance": provenance()}, indent=1, default=str), encoding="utf-8"
+    )
     return str(path)
 
 
 def _print_usage(usage: dict | None, sources: dict | None = None) -> None:
     if not usage:
         return
-    print(f"\nLLM: {usage['calls']} calls, {usage['errors']} errors, {usage['refusals']} refusals, "
-          f"cost ${usage['cost_usd']:.2f}")
+    print(f"\nLLM: {usage['calls']} calls, {usage['errors']} errors, {usage['refusals']} refusals, cost ${usage['cost_usd']:.2f}")
     for model, u in usage["by_model"].items():
         cost = "n/a" if u["cost_usd"] is None else f"${u['cost_usd']:.2f}"
         print(f"  {model:<18} {u['calls']:>5} calls  in {u['input_tokens']:>9,}  out {u['output_tokens']:>9,}  {cost}")

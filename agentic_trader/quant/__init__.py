@@ -12,6 +12,7 @@ Boundary contract: every entry point either returns a well-formed result or rais
 validated here (an integer in ``[1, 2**31 - 1]``; ``bool`` is rejected) so the
 compiled ``int`` parameters and the numpy twin see the same values.
 """
+
 from __future__ import annotations
 
 import operator
@@ -22,11 +23,12 @@ import numpy as np
 from . import pycore
 from .pycore import ZERO_VARIANCE_TOL, BacktestConfig, BacktestResult, Metrics, Trade
 
+
 def stale_fields(module: object) -> list[str]:
     """Fields of the Python ``BacktestConfig`` that a compiled core's ``BacktestConfig`` lacks.
     Empty for a current build. A non-empty list means the binary predates the source."""
     try:
-        compiled = module.BacktestConfig()          # type: ignore[attr-defined]
+        compiled = module.BacktestConfig()  # type: ignore[attr-defined]
     except Exception:
         return ["BacktestConfig"]
     return [f for f in BacktestConfig.__dataclass_fields__ if not hasattr(compiled, f)]
@@ -46,7 +48,10 @@ try:  # pragma: no cover - depends on the local build
         warnings.warn(
             "agentic_trader.quant: the compiled C++ core (_atcore) was built from older source "
             f"(its BacktestConfig lacks {_missing}); using the numpy backend instead. Rebuild it "
-            "with CMake (see README).", RuntimeWarning, stacklevel=2)
+            "with CMake (see README).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         raise ImportError("stale compiled core")
     BACKEND = "cpp"
 except ImportError:  # pragma: no cover
@@ -59,25 +64,65 @@ except ImportError:  # pragma: no cover
             "agentic_trader.quant: the compiled C++ core (_atcore) is not importable for this "
             "interpreter, so every number comes from the numpy backend (quant.BACKEND='python'). "
             "Build it with CMake (see README) or set AGENTIC_TRADER_BACKEND=python to choose the "
-            "numpy backend explicitly.", RuntimeWarning, stacklevel=2)
+            "numpy backend explicitly.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 __all__ = [
-    "BACKEND", "ZERO_VARIANCE_TOL", "BacktestConfig", "BacktestResult", "Metrics", "Trade",
-    "sma", "ema", "rolling_std", "zscore", "rsi", "macd", "bollinger", "atr", "kdj",
-    "pct_change", "realized_vol", "rolling_max", "rolling_min", "spearman", "almgren_chriss",
-    "quantile", "historical_var", "historical_cvar",
-    "kelly_fraction", "vol_target_weight", "position_units", "strat_buy_hold",
-    "strat_sma_cross", "strat_macd", "strat_kdj_rsi", "strat_zmr", "strat_tsmom", "run_backtest",
-    "compute_metrics", "max_drawdown",
+    "BACKEND",
+    "ZERO_VARIANCE_TOL",
+    "BacktestConfig",
+    "BacktestResult",
+    "Metrics",
+    "Trade",
+    "sma",
+    "ema",
+    "rolling_std",
+    "zscore",
+    "rsi",
+    "macd",
+    "bollinger",
+    "atr",
+    "kdj",
+    "pct_change",
+    "realized_vol",
+    "rolling_max",
+    "rolling_min",
+    "spearman",
+    "almgren_chriss",
+    "quantile",
+    "historical_var",
+    "historical_cvar",
+    "kelly_fraction",
+    "vol_target_weight",
+    "position_units",
+    "strat_buy_hold",
+    "strat_sma_cross",
+    "strat_macd",
+    "strat_kdj_rsi",
+    "strat_zmr",
+    "strat_tsmom",
+    "run_backtest",
+    "compute_metrics",
+    "max_drawdown",
 ]
 
 MAX_WINDOW = 2**31 - 1
 
 # Window-length parameters per function: (positional index, keyword name).
 _WINDOW_ARGS: dict[str, tuple[tuple[int, str], ...]] = {
-    "sma": ((1, "n"),), "ema": ((1, "n"),), "rolling_std": ((1, "n"),), "zscore": ((1, "n"),),
-    "rsi": ((1, "n"),), "rolling_max": ((1, "n"),), "rolling_min": ((1, "n"),),
-    "realized_vol": ((1, "n"),), "atr": ((3, "n"),), "kdj": ((3, "n"),), "bollinger": ((1, "n"),),
+    "sma": ((1, "n"),),
+    "ema": ((1, "n"),),
+    "rolling_std": ((1, "n"),),
+    "zscore": ((1, "n"),),
+    "rsi": ((1, "n"),),
+    "rolling_max": ((1, "n"),),
+    "rolling_min": ((1, "n"),),
+    "realized_vol": ((1, "n"),),
+    "atr": ((3, "n"),),
+    "kdj": ((3, "n"),),
+    "bollinger": ((1, "n"),),
     "macd": ((1, "fast"), (2, "slow"), (3, "signal")),
     "strat_sma_cross": ((1, "fast"), (2, "slow")),
     "strat_macd": ((1, "fast"), (2, "slow"), (3, "signal")),
@@ -216,8 +261,7 @@ def _metrics_from_cpp(m) -> Metrics:
     return Metrics(**{f: getattr(m, f) for f in Metrics.__dataclass_fields__})
 
 
-def compute_metrics(equity, positions, periods_per_year: float,
-                    risk_free_annual=0.0, traded=None) -> Metrics:
+def compute_metrics(equity, positions, periods_per_year: float, risk_free_annual=0.0, traded=None) -> Metrics:
     """Metrics of an equity curve (see ``pycore.compute_metrics``).
 
     ``risk_free_annual`` is a constant or a per-bar array of the same length as ``equity``
@@ -247,10 +291,23 @@ def compute_metrics(equity, positions, periods_per_year: float,
     return _metrics_from_cpp(m)
 
 
-def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *,
-                 carry=None, open=None, high=None, low=None, stop=None, take=None,
-                 rebalance=None, impact=None, cash_rate=None, keep=None,
-                 quote_fx=None) -> BacktestResult:
+def run_backtest(
+    prices,
+    target_weights,
+    config: BacktestConfig | None = None,
+    *,
+    carry=None,
+    open=None,
+    high=None,
+    low=None,
+    stop=None,
+    take=None,
+    rebalance=None,
+    impact=None,
+    cash_rate=None,
+    keep=None,
+    quote_fx=None,
+) -> BacktestResult:
     """Backtest a target-weight path (conventions in cpp/include/at/backtest.hpp).
 
     A target is executed on a decision bar (the target changes, or ``rebalance`` is set);
@@ -288,9 +345,21 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
     """
     config = config or BacktestConfig()
     prices, target_weights, extras = pycore.validate_backtest_inputs(
-        prices, target_weights, config, carry=carry, open=open, high=high, low=low, stop=stop,
-        take=take, rebalance=rebalance, impact=impact, cash_rate=cash_rate, keep=keep,
-        quote_fx=quote_fx)
+        prices,
+        target_weights,
+        config,
+        carry=carry,
+        open=open,
+        high=high,
+        low=low,
+        stop=stop,
+        take=take,
+        rebalance=rebalance,
+        impact=impact,
+        cash_rate=cash_rate,
+        keep=keep,
+        quote_fx=quote_fx,
+    )
     if _cpp is None:
         return pycore.run_backtest_ex(prices, target_weights, config, **extras)
     c = _cpp.BacktestConfig()
@@ -299,6 +368,15 @@ def run_backtest(prices, target_weights, config: BacktestConfig | None = None, *
     kw = {k: _l(v) for k, v in extras.items() if v is not None}
     r = _cpp.run_backtest_ex(_l(prices), _l(target_weights), c, **kw)
     trades = [Trade(t.index, t.from_weight, t.to_weight, t.price) for t in r.trades]
-    return BacktestResult(_a(r.equity), _a(r.returns), _a(r.positions), trades,
-                          _metrics_from_cpp(r.metrics), int(r.stop_exits), float(r.impact_paid),
-                          _a(r.traded), _a(r.exits), int(r.ruined_at))
+    return BacktestResult(
+        _a(r.equity),
+        _a(r.returns),
+        _a(r.positions),
+        trades,
+        _metrics_from_cpp(r.metrics),
+        int(r.stop_exits),
+        float(r.impact_paid),
+        _a(r.traded),
+        _a(r.exits),
+        int(r.ruined_at),
+    )

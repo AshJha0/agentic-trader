@@ -6,6 +6,7 @@ The version has one source of truth, ``pyproject.toml``. A source checkout reads
 directly (an editable install's distribution metadata goes stale the moment the file is
 bumped); an installed wheel has no ``pyproject.toml`` and reads the metadata instead.
 """
+
 from __future__ import annotations
 
 import platform
@@ -27,11 +28,12 @@ def _version_from_pyproject(path: Path) -> str | None:
         return None
     try:
         import tomllib
+
         project = tomllib.loads(text).get("project", {})
         if project.get("name") == DIST_NAME:
             return str(project.get("version")) if project.get("version") else None
         return None
-    except ModuleNotFoundError:                   # Python 3.10: no tomllib
+    except ModuleNotFoundError:  # Python 3.10: no tomllib
         block = text.split("[project]", 1)[-1].split("\n[", 1)[0]
         if f'name = "{DIST_NAME}"' not in block:
             return None
@@ -70,8 +72,6 @@ def git_info(root: str | None = None) -> tuple[str | None, bool | None]:
     return sha, (bool(status) if status is not None else None)
 
 
-
-
 def _dist_version(name: str) -> str | None:
     try:
         return metadata.version(name)
@@ -83,10 +83,17 @@ def provenance() -> dict:
     """Everything a saved result needs to be tied back to the code and environment that
     produced it. Cheap enough to call per command; all fields are JSON scalars."""
     from . import quant
+
     sha, dirty = git_info()
-    return {"version": package_version(), "git_commit": sha, "git_dirty": dirty,
-            "quant_backend": quant.BACKEND,
-            "python": platform.python_version(), "implementation": platform.python_implementation(),
-            "platform": platform.platform(), "machine": platform.machine(),
-            "executable": sys.executable,
-            "dependencies": {name: _dist_version(name) for name in KEY_DEPENDENCIES}}
+    return {
+        "version": package_version(),
+        "git_commit": sha,
+        "git_dirty": dirty,
+        "quant_backend": quant.BACKEND,
+        "python": platform.python_version(),
+        "implementation": platform.python_implementation(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "executable": sys.executable,
+        "dependencies": {name: _dist_version(name) for name in KEY_DEPENDENCIES},
+    }

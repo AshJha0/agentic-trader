@@ -2,6 +2,7 @@
 
 Offline and model-free: fake backends only.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,18 +20,19 @@ from agentic_trader.combine import calibration_points, conformal_halfwidth, conf
 from agentic_trader.config import make_config
 from agentic_trader.evaluation import CORE_UNIVERSE
 from agentic_trader.instruments import Instrument
-from agentic_trader.text_analysts import (FundamentalsTextAnalyst, MacroTextAnalyst, TextInputs,
-                                          text_reports)
+from agentic_trader.text_analysts import FundamentalsTextAnalyst, MacroTextAnalyst, TextInputs, text_reports
 
 UTC = timezone.utc
 AAPL = Instrument.parse("AAPL")
 AS_OF = date(2021, 3, 1)
-ACC = "0000320193-20-000096"          # Apple's CIK 320193 is its first 10 digits
+ACC = "0000320193-20-000096"  # Apple's CIK 320193 is its first 10 digits
 
-FILING = ("Apple Inc. (CIK 0000320193) designs the iPhone and Mac. AAPL competes with "
-          "Microsoft Corporation, GOOGL and Amazon. On October 30, 2020 the Company reported "
-          "fiscal 2020 results; the board met 2020-10-29 and again 10/15/2020, and in January 2021. "
-          "Revenue increased across every segment.")
+FILING = (
+    "Apple Inc. (CIK 0000320193) designs the iPhone and Mac. AAPL competes with "
+    "Microsoft Corporation, GOOGL and Amazon. On October 30, 2020 the Company reported "
+    "fiscal 2020 results; the board met 2020-10-29 and again 10/15/2020, and in January 2021. "
+    "Revenue increased across every segment."
+)
 
 
 class Recorder:
@@ -46,8 +48,16 @@ class Recorder:
 
 
 def _sections():
-    return [SimpleNamespace(symbol="AAPL", accession=ACC, form="10-K", section="7",
-                            visible_date=datetime(2020, 10, 30, 21, 30, tzinfo=UTC), text=FILING)]
+    return [
+        SimpleNamespace(
+            symbol="AAPL",
+            accession=ACC,
+            form="10-K",
+            section="7",
+            visible_date=datetime(2020, 10, 30, 21, 30, tzinfo=UTC),
+            text=FILING,
+        )
+    ]
 
 
 def _leaks(prompt: str) -> list[str]:
@@ -70,7 +80,7 @@ def test_scrub_text_removes_names_cik_accession_and_dates():
     assert _leaks(out) == [], out
     assert "COMPANY_X" in out and "PRODUCT_X" in out and "OTHER_CO" in out and "CIK_X" in out
     assert "ACC_1" in out and anon.accession_real("ACC_1") == ACC
-    assert "D-122" in out and "Y-1" in out and "M-2" in out     # 2020-10-30, 2020, Jan 2021
+    assert "D-122" in out and "Y-1" in out and "M-2" in out  # 2020-10-30, 2020, Jan 2021
     # ordinary words that happen to be product names in another case stay
     assert "prime" in anon.scrub_text("a prime example")
 
@@ -78,13 +88,19 @@ def test_scrub_text_removes_names_cik_accession_and_dates():
 def test_fundamentals_prompt_is_anonymised_and_claims_map_back():
     def reply(prompt):
         quote = "Revenue increased across every segment."
-        return json.dumps({"claims": [{"claim": "COMPANY_X growing", "direction": "positive",
-                                       "accession": "ACC_1", "section": "7", "quote": quote}]})
+        return json.dumps(
+            {
+                "claims": [
+                    {"claim": "COMPANY_X growing", "direction": "positive", "accession": "ACC_1", "section": "7", "quote": quote}
+                ]
+            }
+        )
+
     llm = Recorder(reply)
     anon = Anonymizer(AAPL, AS_OF, 120.0)
     res = FundamentalsTextAnalyst(llm, anon=anon).analyze("AAPL", _sections())
     assert _leaks(llm.prompts[0]) == [], llm.prompts[0]
-    assert res.ok and res.result["claims"][0]["accession"] == ACC      # audit keeps the real id
+    assert res.ok and res.result["claims"][0]["accession"] == ACC  # audit keeps the real id
 
 
 def test_old_path_leaks_without_anon():
@@ -105,16 +121,23 @@ def test_text_reports_passes_the_anonymiser_and_edgar_names():
 
     secs = _sections()
     secs[0].text += " Cupertino Fruit Holdings is the former name."
-    llm = Recorder(json.dumps({"claims": [{"claim": "x", "direction": "positive", "accession": "ACC_1",
-                                           "section": "7", "quote": "Revenue increased"}]}))
+    llm = Recorder(
+        json.dumps(
+            {
+                "claims": [
+                    {"claim": "x", "direction": "positive", "accession": "ACC_1", "section": "7", "quote": "Revenue increased"}
+                ]
+            }
+        )
+    )
     anon = Anonymizer(AAPL, AS_OF, 120.0)
     edgar = Edgar()
     edgar.sections = lambda symbol, cut: secs
     reps = text_reports(["fundamentals_text"], llm, TextInputs(edgar=edgar), AAPL, AS_OF, anon=anon)
     p = llm.prompts[0]
     assert _leaks(p) == [] and "Cupertino" not in p, p
-    assert not any(_leaks(x) for x in reps[0].key_points)                  # later agents see aliases
-    assert reps[0].facts["sections"] == [f"{ACC}/7"]                   # audit trail keeps the real id
+    assert not any(_leaks(x) for x in reps[0].key_points)  # later agents see aliases
+    assert reps[0].facts["sections"] == [f"{ACC}/7"]  # audit trail keeps the real id
 
 
 def test_macro_prompt_dates_scrubbed():
@@ -133,19 +156,22 @@ def test_price_path_scrub_keeps_numbers_and_scrubs_names():
 def test_price_path_headlines_do_not_name_the_company():
     # v0.17 boundary fix: on v0.16 code ``scrub`` left every name in a headline untouched.
     anon = Anonymizer(AAPL, AS_OF, 120.0)
-    heads = ["Apple Inc. beats estimates as iPhone sales jump",
-             "Microsoft and Apple trade blows over the App Store",
-             "APPLE files 10-K; Nvidia rallies"]
+    heads = [
+        "Apple Inc. beats estimates as iPhone sales jump",
+        "Microsoft and Apple trade blows over the App Store",
+        "APPLE files 10-K; Nvidia rallies",
+    ]
     out = [anon.scrub(h) for h in heads]
-    assert out == ["COMPANY_X beats estimates as PRODUCT_X sales jump",
-                   "OTHER_CO and COMPANY_X trade blows over the PRODUCT_X",
-                   "COMPANY_X files 10-K; OTHER_CO rallies"]
+    assert out == [
+        "COMPANY_X beats estimates as PRODUCT_X sales jump",
+        "OTHER_CO and COMPANY_X trade blows over the PRODUCT_X",
+        "COMPANY_X files 10-K; OTHER_CO rallies",
+    ]
     names = [n for t in CORE_UNIVERSE for n in COMPANY_NAMES.get(t, ()) if len(n) >= 3]
-    assert not any(re.search(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])", o)
-                   for o in out for n in names)
+    assert not any(re.search(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])", o) for o in out for n in names)
     # peer tickers are not aliased on the price path (``MA``, ``CAT`` collide with prompt text)
     assert anon.scrub("MA crossover; CAT score 3") == "MA crossover; CAT score 3"
-    assert anon.scrub(anon.scrub(heads[0])) == out[0]                  # idempotent
+    assert anon.scrub(anon.scrub(heads[0])) == out[0]  # idempotent
 
 
 # ------------------------------------------------------------------ N8
@@ -156,11 +182,12 @@ def test_model_path_forces_anonymisation(caplog):
     assert cfg["llm_anonymize"] and cfg["llm_anonymize_forced"] and "forced on" in caplog.text
     ctl = make_config({"allow_deanonymized_llm": True})
     assert enforce_llm_anonymize(ctl) is False and not ctl["llm_anonymize"]
-    assert make_config()["llm_anonymize"] is False                     # rules path default unchanged
+    assert make_config()["llm_anonymize"] is False  # rules path default unchanged
 
 
 def test_graph_with_model_turns_anonymisation_on():
     from agentic_trader.graph import TradingGraph
+
     g = TradingGraph({"memory_path": None}, llm=Recorder(None))
     assert g.config["llm_anonymize"] is True
     assert TradingGraph({"memory_path": None}).config["llm_anonymize"] is False
@@ -168,6 +195,7 @@ def test_graph_with_model_turns_anonymisation_on():
 
 def test_remote_local_llm_url_refused_unless_flagged():
     from agentic_trader.local_llm import LocalLLM, is_loopback_host
+
     base = {"local_llm_model": "qwen2.5:7b"}
     for ok in ("http://127.0.0.1:11434", "http://localhost:11434", "http://[::1]:11434", "http://127.0.0.2"):
         assert LocalLLM({**base, "local_llm_url": ok}).host
@@ -219,14 +247,14 @@ def test_normalised_conformal_covers_on_garch_paths():
         # trailing 20-bar realised vol, known at each bar (the desk's horizon_vol analogue)
         rv = np.full(close.size, np.nan)
         for i in range(20, close.size):
-            rv[i] = r[i - 19:i + 1].std(ddof=1) * math.sqrt(h)
+            rv[i] = r[i - 19 : i + 1].std(ddof=1) * math.sqrt(h)
         mus = np.zeros(close.size)
         q75 = np.nanquantile(rv, 0.75)
         for end in range(win + 40, close.size - h, 25):
             fwd = close[end + h] / close[end] - 1.0
             for d in ("v14", "v17"):
                 cal = calibration_points(end - win, end, h, design=d)
-                w = conformal_interval(close[:end + 1], mus[:end + 1], rv[:end + 1], cal, h, alpha, d)
+                w = conformal_interval(close[: end + 1], mus[: end + 1], rv[: end + 1], cal, h, alpha, d)
                 hit = w is not None and abs(fwd) <= w
                 cover[d].append(hit)
                 if rv[end] > q75:
@@ -244,6 +272,7 @@ def test_conformal_halfwidth_unchanged():
 def test_dev_keys_refused_on_loopback_without_flag():
     pytest.importorskip("fastapi")
     from agentic_trader.agentic.api import serve_options
+
     cfg = make_config()
     with pytest.raises(ValueError, match="development API keys"):
         serve_options("127.0.0.1", cfg)
@@ -254,10 +283,11 @@ def test_dev_keys_refused_on_loopback_without_flag():
 def test_secrets_never_written_to_the_temp_config(monkeypatch, tmp_path):
     pytest.importorskip("fastapi")
     uvicorn = pytest.importorskip("uvicorn")
-    from agentic_trader.agentic.api import (CONFIG_ENV, REDACTED, SECRETS_ENV, app_factory, merge_secrets,
-                                            serve, split_secrets)
-    cfg = make_config(agentic={"api_keys": {"real-secret-1": "trader"}, "task_db": str(tmp_path / "t.sqlite")},
-                      fred_api_token="tok-123")
+    from agentic_trader.agentic.api import CONFIG_ENV, REDACTED, SECRETS_ENV, app_factory, merge_secrets, serve, split_secrets
+
+    cfg = make_config(
+        agentic={"api_keys": {"real-secret-1": "trader"}, "task_db": str(tmp_path / "t.sqlite")}, fred_api_token="tok-123"
+    )
     red, sec = split_secrets(cfg)
     assert red["agentic"]["api_keys"] == REDACTED and red["fred_api_token"] == REDACTED
     assert merge_secrets(json.loads(json.dumps(red)), sec)["agentic"]["api_keys"] == {"real-secret-1": "trader"}
@@ -265,10 +295,12 @@ def test_secrets_never_written_to_the_temp_config(monkeypatch, tmp_path):
 
     def fake_run(app, **kw):
         import os
+
         path = os.environ[CONFIG_ENV]
         seen["file"] = open(path, encoding="utf-8").read()
         seen["app"] = app_factory()
         seen["secrets_env"] = os.environ[SECRETS_ENV]
+
     monkeypatch.setattr(uvicorn, "run", fake_run)
     serve("127.0.0.1", 9, cfg, processes=2)
     assert "real-secret-1" not in seen["file"] and "tok-123" not in seen["file"]

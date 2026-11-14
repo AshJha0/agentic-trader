@@ -2,6 +2,7 @@
 
 Synthetic data only; no network.
 """
+
 from __future__ import annotations
 
 import copy
@@ -20,8 +21,9 @@ from agentic_trader.quant import BacktestResult
 from agentic_trader.stats import rolling_var_forecast, var_backtest
 
 
-def garch_returns(n: int, seed: int, trend: float = 3.0, w: float = 2e-6, a: float = 0.08,
-                  b: float = 0.90, df: int = 6) -> np.ndarray:
+def garch_returns(
+    n: int, seed: int, trend: float = 3.0, w: float = 2e-6, a: float = 0.08, b: float = 0.90, df: int = 6
+) -> np.ndarray:
     """GARCH(1,1) with unit-variance Student-t innovations, scaled by a volatility that rises
     linearly to ``trend`` times its start: clustered and drifting volatility, the two things a
     250-day historical window reacts to slowly."""
@@ -67,7 +69,7 @@ def test_no_look_ahead_and_alignment(method):
     assert f.shape == r.shape
     assert np.isnan(f[:100]).all() and np.isfinite(f[100:]).all() and (f[100:] >= 0).all()
     shocked = r.copy()
-    shocked[300:] *= 5.0          # change the future only
+    shocked[300:] *= 5.0  # change the future only
     np.testing.assert_array_equal(rm.var_forecast(shocked, method, window=100)[:301], f[:301])
 
 
@@ -76,7 +78,7 @@ def test_var_next_is_last_forecast_and_scales_with_returns():
     for m in rm.VAR_METHODS:
         nxt = rm.var_next(r, m)
         assert nxt == pytest.approx(rm.var_forecast(np.append(r, 0.0), m)[-1])
-        assert rm.var_next(2 * r, m) == pytest.approx(2 * nxt)   # VaR is positively homogeneous
+        assert rm.var_next(2 * r, m) == pytest.approx(2 * nxt)  # VaR is positively homogeneous
 
 
 def test_ewma_reacts_to_a_vol_jump_faster_than_historical():
@@ -105,15 +107,14 @@ def test_bad_arguments_and_short_history():
         rm.var_forecast(r, alpha=0.4)
     assert rm.var_next(np.full(10, 0.01)) is None
     assert rm.var_next(np.full(300, np.nan)) is None
-    assert rm.var_next(np.zeros(300), "fhs") is None      # zero volatility: no residuals
+    assert rm.var_next(np.zeros(300), "fhs") is None  # zero volatility: no residuals
 
 
 # ---------------------------------------------------------------- book VaR default
 def _book_frame(n: int = 300) -> pd.DataFrame:
     rng = np.random.default_rng(2)
     common = rng.normal(0, 0.01, n)
-    return pd.DataFrame({"A": common + rng.normal(0, 0.004, n),
-                         "B": common + rng.normal(0, 0.004, n)})
+    return pd.DataFrame({"A": common + rng.normal(0, 0.004, n), "B": common + rng.normal(0, 0.004, n)})
 
 
 def test_book_var_default_on_and_ewma():
@@ -124,11 +125,11 @@ def test_book_var_default_on_and_ewma():
 def test_book_var_methods():
     df = _book_frame()
     w = {"A": 1.0, "B": 0.5}
-    port = (df.to_numpy() @ np.array([1.0, 0.5]))
+    port = df.to_numpy() @ np.array([1.0, 0.5])
     assert book_var_95(w, df, method="fhs") == pytest.approx(rm.var_next(port, "fhs"))
     assert book_var_95(w, df) == pytest.approx(book_var_95(w, df, method="historical"))
     assert book_var_95({"A": 0.0}, df, method="fhs") == 0.0
-    assert book_var_95(w, df.iloc[:30], method="fhs") is None   # too short to forecast
+    assert book_var_95(w, df.iloc[:30], method="fhs") is None  # too short to forecast
 
 
 def test_book_var_scale_uses_method():
@@ -142,6 +143,7 @@ def test_scan_builds_book_by_default():
     from agentic_trader.config import make_config
     from agentic_trader.graph import TradingGraph
     from agentic_trader.memory import DecisionMemory
+
     cfg = make_config(memory_path=None)
     g = TradingGraph(cfg, memory=DecisionMemory(None), on_event=lambda *_: None)
     seen = []
@@ -203,8 +205,7 @@ def test_capacity_aum_closed_form_and_edges():
 def test_capacity_row_from_backtest_result():
     rng = np.random.default_rng(0)
     rets = rng.normal(0, 0.01, 504)
-    res = BacktestResult(equity=np.cumprod(1 + rets), returns=rets, positions=np.ones(504),
-                         impact_paid=0.01)
+    res = BacktestResult(equity=np.cumprod(1 + rets), returns=rets, positions=np.ones(504), impact_paid=0.01)
     row = rm.capacity_row(res, capital=1e6)
     vol = rets.std(ddof=1) * math.sqrt(252)
     assert row["impact_drag%"] == pytest.approx(0.5)
