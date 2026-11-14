@@ -77,6 +77,7 @@ from agentic_trader.evaluation import CORE_UNIVERSE, HoldoutLocked  # noqa: E402
 from agentic_trader.graph import TradingGraph  # noqa: E402
 from agentic_trader.llm import extract_json  # noqa: E402
 from agentic_trader import recall_audit as ra  # noqa: E402
+from agentic_trader import memorisation as memo  # noqa: E402
 from agentic_trader import study_design as design  # noqa: E402
 from agentic_trader import study_lineage as lineage  # noqa: E402
 from agentic_trader.local_llm import LocalLLM, reachable  # noqa: E402
@@ -846,7 +847,7 @@ def _smoke_exit(rows: list[dict]) -> int:
 def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespace], Any] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("recall", "calibration", "recall2", "design"):
+    for name in ("recall", "calibration", "recall2", "design", "memo"):
         s = sub.add_parser(name)
         s.add_argument("--model", default="qwen2.5:7b-instruct")
         s.add_argument("--out", required=True)
@@ -875,6 +876,9 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
             s.add_argument("--no-futility", action="store_true")
         elif name == "recall":
             s.add_argument("--no-ablation", action="store_true")
+        elif name == "memo":
+            s.add_argument("--dry-run", action="store_true", help="counts and wall-clock only (no prices, no model)")
+            s.add_argument("--score", action="store_true", help="score the rows in --out (no model)")
         else:
             s.add_argument("--repeats", type=int, default=5)
             s.add_argument("--temperature", type=float, default=0.7)
@@ -893,18 +897,49 @@ def main(argv: list[str] | None = None, llm_factory: Callable[[argparse.Namespac
         print(json.dumps({k: v for k, v in res.items() if k != "per_state"}, indent=1))
         return 0
 
+    if a.cmd == "memo" and (a.dry_run or a.score):
+        if a.dry_run:
+            print(json.dumps(memo.dry_run(NAMES), indent=1))
+            return 0
+        rows = [json.loads(x) for x in Path(a.out).read_text(encoding="utf-8").splitlines() if x.strip()]
+        rep = memo.score(rows)
+        _write(Path(a.out).with_suffix(".report.json"), rep)
+        print(json.dumps(rep, indent=1, default=str))
+        return 0
+
     limit = 3 if a.smoke else a.limit
     llm = (llm_factory or _llm)(a)
     graph = make_graph(a.data)
     out = _out(a)
-    if a.cmd in ("recall2", "design"):
+    if a.cmd in ("recall2", "design", "memo"):
         hdr = _header(a, llm, graph, {"data": a.data, "limit": limit})
-        rows_path = out if a.cmd == "design" else out.with_suffix(".rows.jsonl")
+        rows_path = out if a.cmd in ("design", "memo") else out.with_suffix(".rows.jsonl")
         try:
             hdr = lineage.check_resume(rows_path, hdr, allow_version_change=a.allow_version_change)
         except lineage.LineageMismatch as e:
             print(str(e), file=sys.stderr)
             return 2
+        if a.cmd == "memo":
+            # Round 4 part B: only under the signed registration, never on a truncated grid
+            # (the smoke test, three decisions in its own file, is the one exception).
+            if not a.smoke:
+                if limit:
+                    print("refusing memo --limit: the registered grid is the only population", file=sys.stderr)
+                    return 2
+                try:
+                    gate = memo.registration_gate(ROOT) | design.holdout_access(design.POSTCUTOFF)
+                except (memo.RegistrationNotSigned, HoldoutLocked) as e:
+                    print(f"refusing memo: {e}", file=sys.stderr)
+                    return 2
+                out.with_suffix(".gate.json").write_text(json.dumps(gate, indent=1), encoding="utf-8")
+            mrows = memo.run(NAMES, graph, llm, out, header=hdr, limit=limit)
+            if a.smoke:
+                bad = [f"{r['arm']} {r['symbol']}@{r['as_of']}" for r in mrows if r.get("signal_model") is None]
+                if bad:
+                    print(f"SMOKE FAILED: {len(bad)} decisions without a model signal: {bad}", file=sys.stderr)
+                    return 1
+                print(f"smoke ok: {len(mrows)} decisions")
+            return 0
         if a.cmd == "design":
             cell = next(c for c in design.DESIGN_CELLS if c.name == a.cell)
             # Review B4 / B3 / B10: a registered cell runs only under the signed pre-registration,
