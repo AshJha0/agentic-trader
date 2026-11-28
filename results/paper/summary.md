@@ -16,4 +16,4 @@ No decision before session 3600 (pre-registered, docs/evaluation/v09_preregistra
 
 The ledger is append-only: sessions are added from each run's recomputation and never rewritten; differences between a recomputation and the ledger are logged in revisions.csv and runs.jsonl.
 
-**Same-day revision:** 3 cell(s) of 2026-11-24, the session the previous run recorded, moved in this run (columns: etf11/B&H vol-target, etf11/Buy&Hold, etf11/TSMOM(12-1)). The bar was probably not final when it was fetched; the ledger keeps the first value, see revisions.csv.
+**Same-day revision:** 3 cell(s) of 2026-11-25, the session the previous run recorded, moved in this run (columns: etf11/B&H vol-target, etf11/Buy&Hold, etf11/TSMOM(12-1)). The bar was probably not final when it was fetched; the ledger keeps the first value, see revisions.csv.
